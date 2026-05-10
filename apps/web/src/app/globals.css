@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #1A1A2E;
+  --foreground: #F8F9FA;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: 'Inter', Arial, sans-serif;
+}
+
+/* Game-specific styles */
+@layer components {
+  .btn-primary {
+    @apply bg-arena-primary hover:bg-orange-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 active:scale-95;
+  }
+
+  .btn-secondary {
+    @apply bg-arena-secondary hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition-all duration-200;
+  }
+
+  .btn-danger {
+    @apply bg-arena-danger hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-200;
+  }
+
+  .card {
+    @apply bg-gray-800/50 backdrop-blur-sm rounded-xl p-6 border border-gray-700;
+  }
+
+  .game-timer {
+    @apply text-6xl font-bold text-arena-primary animate-pulse-fast;
+  }
+
+  .player-avatar {
+    @apply w-12 h-12 rounded-full bg-gradient-to-br from-arena-primary to-arena-secondary flex items-center justify-center text-white font-bold;
+  }
+
+  .eliminated {
+    @apply opacity-50 line-through;
+  }
+
+  .winner-glow {
+    @apply ring-4 ring-yellow-400 animate-bounce-in;
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1A1A2E;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #4A4A6A;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #6A6A8A;
+}

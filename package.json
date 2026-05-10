@@ -1,0 +1,29 @@
+{
+  "name": "arena-of-100",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Game Đấu Trường 100 - Real-time multiplayer quiz battle royale",
+  "author": "",
+  "license": "MIT",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+    "db:generate": "pnpm --filter @arena/api exec prisma generate",
+    "db:migrate": "pnpm --filter @arena/api exec prisma migrate dev",
+    "db:push": "pnpm --filter @arena/api exec prisma db push",
+    "db:studio": "pnpm --filter @arena/api exec prisma studio",
+    "docker:up": "docker compose -f infrastructure/docker-compose.yml up -d",
+    "docker:down": "docker compose -f infrastructure/docker-compose.yml down"
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.3"
+  },
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
