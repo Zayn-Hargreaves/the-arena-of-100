@@ -6,7 +6,7 @@
     "build": "next build",
     "dev": "next dev --port 3000",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint --cache-location .eslintcache"
   },
   "dependencies": {
     "@arena/shared": "workspace:*",
