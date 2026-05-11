@@ -9,6 +9,8 @@
     "build": "turbo run build",
     "dev": "turbo run dev",
     "lint": "turbo run lint",
+    "test": "turbo run test",
+    "test:coverage": "turbo run test:coverage",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "db:generate": "pnpm --filter @arena/api exec prisma generate",
     "db:migrate": "pnpm --filter @arena/api exec prisma migrate dev",
