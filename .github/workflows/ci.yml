@@ -10,10 +10,6 @@ env:
   # Turbo Remote Cache (Optional: only needed if using Vercel Remote Caching)
   TURBO_TOKEN: ${{ secrets.TURBO_TOKEN || '' }}
   TURBO_TEAM: ${{ secrets.TURBO_TEAM || '' }}
-  # Cache key for Prisma based on schema hash
-  PRISMA_CACHE_KEY: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
-  # Cache key for node_modules based on lockfile
-  NODE_MODULES_CACHE_KEY: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
   # Default DB credentials for CI (safe for ephemeral containers)
   CI_DB_USER: arena
   CI_DB_PASSWORD: arena123
@@ -22,6 +18,9 @@ env:
 jobs:
   install:
     runs-on: ubuntu-latest
+    env:
+      PRISMA_CACHE_KEY: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
+      NODE_MODULES_CACHE_KEY: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
     strategy:
       matrix:
         node-version: [20, 22]
@@ -78,6 +77,9 @@ jobs:
   lint:
     needs: install
     runs-on: ubuntu-latest
+    env:
+      PRISMA_CACHE_KEY: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
+      NODE_MODULES_CACHE_KEY: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
     strategy:
       matrix:
         node-version: [20, 22]
@@ -128,6 +130,9 @@ jobs:
   test:
     needs: install
     runs-on: ubuntu-latest
+    env:
+      PRISMA_CACHE_KEY: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
+      NODE_MODULES_CACHE_KEY: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
     strategy:
       matrix:
         node-version: [20, 22]
@@ -218,6 +223,9 @@ jobs:
   build:
     needs: install
     runs-on: ubuntu-latest
+    env:
+      PRISMA_CACHE_KEY: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
+      NODE_MODULES_CACHE_KEY: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
     strategy:
       matrix:
         node-version: [20, 22]
