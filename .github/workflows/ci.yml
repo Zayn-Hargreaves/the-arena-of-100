@@ -7,10 +7,13 @@ on:
     branches: [main]
 
 env:
-  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-  TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
+  # Turbo Remote Cache (Optional: only needed if using Vercel Remote Caching)
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN || '' }}
+  TURBO_TEAM: ${{ secrets.TURBO_TEAM || '' }}
   # Cache key for Prisma based on schema hash
   PRISMA_CACHE_KEY: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
+  # Cache key for node_modules based on lockfile
+  NODE_MODULES_CACHE_KEY: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
   # Default DB credentials for CI (safe for ephemeral containers)
   CI_DB_USER: arena
   CI_DB_PASSWORD: arena123
@@ -34,7 +37,15 @@ jobs:
           node-version: 20
           cache: 'pnpm'
 
+      - name: Cache node_modules
+        id: node-modules-cache
+        uses: actions/cache@v4
+        with:
+          path: '**/node_modules'
+          key: ${{ env.NODE_MODULES_CACHE_KEY }}-20
+
       - name: Install dependencies
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Check for Prisma Cache
@@ -79,7 +90,15 @@ jobs:
           node-version: 20
           cache: 'pnpm'
 
+      - name: Restore node_modules
+        id: node-modules-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: '**/node_modules'
+          key: ${{ env.NODE_MODULES_CACHE_KEY }}-20
+
       - name: Install dependencies
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Restore Prisma Client
@@ -147,7 +166,15 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'pnpm'
 
+      - name: Restore node_modules
+        id: node-modules-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: '**/node_modules'
+          key: ${{ env.NODE_MODULES_CACHE_KEY }}-${{ matrix.node-version }}
+
       - name: Install dependencies
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Restore Prisma Client
@@ -200,7 +227,15 @@ jobs:
           node-version: 20
           cache: 'pnpm'
 
+      - name: Restore node_modules
+        id: node-modules-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: '**/node_modules'
+          key: ${{ env.NODE_MODULES_CACHE_KEY }}-20
+
       - name: Install dependencies
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Restore Prisma Client
