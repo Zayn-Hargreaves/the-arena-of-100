@@ -2,7 +2,7 @@
 // Match Controller - REST Endpoints
 // ============================================================
 
-import { Controller, Get, Post, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Param } from '@nestjs/common';
 import { MatchService } from './match.service';
 
 @Controller('matches')

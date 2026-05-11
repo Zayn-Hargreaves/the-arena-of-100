@@ -63,6 +63,12 @@ export interface MatchCreatedPayload {
   playerIds: string[];
 }
 
+export interface MatchStartedPayload {
+  matchId: string;
+  playerIds: string[];
+  startTime: number;
+}
+
 export interface RoundStartedPayload {
   matchId: string;
   roundNo: number;

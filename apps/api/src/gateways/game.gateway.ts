@@ -21,7 +21,6 @@ import {
   ClientEvent,
   ServerEvent,
   ErrorCode,
-  MatchStatus,
   GAME_CONFIG,
   type JoinRoomPayload,
   type CreateRoomPayload,
@@ -38,7 +37,7 @@ import {
 })
 export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
-  server: Server;
+  private _server!: Server;
 
   private readonly logger = new Logger(GameGateway.name);
   private readonly connectedPlayers = new Map<string, { socketId: string; userId: string }>();
@@ -126,9 +125,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.logger.log(`Room created via socket: ${room.code}`);
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       client.emit(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: error.message,
+        message: errorMessage,
       });
     }
   }
@@ -168,9 +168,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.logger.log(`Player ${userId} joined room ${room.code} via socket`);
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorCode =
+        errorMessage === ErrorCode.ROOM_NOT_FOUND
+          ? ErrorCode.ROOM_NOT_FOUND
+          : ErrorCode.INTERNAL_ERROR;
       client.emit(ServerEvent.ERROR, {
-        code: error.message || ErrorCode.INTERNAL_ERROR,
-        message: error.message,
+        code: errorCode,
+        message: errorMessage,
       });
     }
   }
@@ -189,14 +194,15 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       client.leave(`room:${payload.roomId}`);
 
-      this.server.to(`room:${payload.roomId}`).emit(ServerEvent.PLAYER_LEFT, {
+      this._server.to(`room:${payload.roomId}`).emit(ServerEvent.PLAYER_LEFT, {
         playerId: userId,
         reason: 'LEFT',
       });
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       client.emit(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: error.message,
+        message: errorMessage,
       });
     }
   }
@@ -223,16 +229,17 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const match = await this.matchService.createMatch(payload.roomId);
 
       // Notify room
-      this.server.to(`room:${payload.roomId}`).emit(ServerEvent.MATCH_STARTING, {
+      this._server.to(`room:${payload.roomId}`).emit(ServerEvent.MATCH_STARTING, {
         matchId: match.id,
         countdown: GAME_CONFIG.COUNTDOWN_DURATION_MS / 1000,
       });
 
       this.logger.log(`Match starting: ${match.id}`);
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       client.emit(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: error.message,
+        message: errorMessage,
       });
     }
   }
@@ -274,9 +281,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.logger.log(`Answer submitted: ${userId} - ${result.isCorrect ? 'correct' : 'wrong'}`);
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       client.emit(ServerEvent.ERROR, {
-        code: error.message || ErrorCode.INTERNAL_ERROR,
-        message: error.message,
+        code: errorMessage || ErrorCode.INTERNAL_ERROR,
+        message: errorMessage,
       });
     }
   }
@@ -304,9 +312,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.logger.log(`Snapshot sent to ${userId} for match ${payload.matchId}`);
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       client.emit(ServerEvent.ERROR, {
-        code: error.message || ErrorCode.INTERNAL_ERROR,
-        message: error.message,
+        code: errorMessage || ErrorCode.INTERNAL_ERROR,
+        message: errorMessage,
       });
     }
   }
