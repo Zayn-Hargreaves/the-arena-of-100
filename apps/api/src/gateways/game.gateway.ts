@@ -37,14 +37,7 @@ import {
 })
 export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
-  private _server: Server | null = null;
-
-  public get server(): Server {
-    if (!this._server) {
-      throw new Error('GameGateway: WebSocket server is not initialized yet');
-    }
-    return this._server;
-  }
+  private _server!: Server;
 
   private readonly logger = new Logger(GameGateway.name);
   private readonly connectedPlayers = new Map<string, { socketId: string; userId: string }>();
@@ -197,7 +190,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       client.leave(`room:${payload.roomId}`);
 
-      this.server.to(`room:${payload.roomId}`).emit(ServerEvent.PLAYER_LEFT, {
+      this._server.to(`room:${payload.roomId}`).emit(ServerEvent.PLAYER_LEFT, {
         playerId: userId,
         reason: 'LEFT',
       });
@@ -232,7 +225,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const match = await this.matchService.createMatch(payload.roomId);
 
       // Notify room
-      this.server.to(`room:${payload.roomId}`).emit(ServerEvent.MATCH_STARTING, {
+      this._server.to(`room:${payload.roomId}`).emit(ServerEvent.MATCH_STARTING, {
         matchId: match.id,
         countdown: GAME_CONFIG.COUNTDOWN_DURATION_MS / 1000,
       });
