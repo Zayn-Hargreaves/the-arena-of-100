@@ -169,8 +169,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.log(`Player ${userId} joined room ${room.code} via socket`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorCode =
+        errorMessage === ErrorCode.ROOM_NOT_FOUND
+          ? ErrorCode.ROOM_NOT_FOUND
+          : ErrorCode.INTERNAL_ERROR;
       client.emit(ServerEvent.ERROR, {
-        code: errorMessage || ErrorCode.INTERNAL_ERROR,
+        code: errorCode,
         message: errorMessage,
       });
     }
