@@ -13,6 +13,17 @@
     "sourceMap": true,
     "outDir": "./dist",
     "baseUrl": ".",
+    
+    /* Enterprise Strictness Rules */
+    "noImplicitAny": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "useUnknownInCatchVariables": true,
+    
     "paths": {
       "@arena/shared": ["packages/shared/src"],
       "@arena/shared/*": ["packages/shared/src/*"],

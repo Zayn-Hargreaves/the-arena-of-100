@@ -10,7 +10,6 @@ import {
   type PlayerInfo,
   type RoundState,
   type AnswerState,
-  type TieBreakResult,
   GAME_CONFIG,
   ErrorCode,
 } from '@arena/shared';

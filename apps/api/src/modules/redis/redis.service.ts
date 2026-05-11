@@ -2,18 +2,16 @@
 // Redis Service - Cache & Session Store
 // ============================================================
 
-import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
+import { Injectable, OnModuleDestroy, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 
 @Injectable()
-export class RedisService implements OnModuleInit, OnModuleDestroy {
+export class RedisService implements OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
-  private client: Redis;
+  private readonly client: Redis;
 
-  constructor(private configService: ConfigService) {}
-
-  async onModuleInit() {
+  constructor(private configService: ConfigService) {
     const redisUrl = this.configService.get<string>(
       'REDIS_URL',
       'redis://localhost:6379',
@@ -33,8 +31,6 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     this.client.on('error', (err) => {
       this.logger.error('❌ Redis error:', err.message);
     });
-
-    await this.client.ping();
   }
 
   async onModuleDestroy() {

@@ -21,7 +21,6 @@ import {
   ClientEvent,
   ServerEvent,
   ErrorCode,
-  MatchStatus,
   GAME_CONFIG,
   type JoinRoomPayload,
   type CreateRoomPayload,
@@ -31,14 +30,21 @@ import {
 
 @WebSocketGateway({
   cors: {
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    origin: process.env['CORS_ORIGIN'] || 'http://localhost:3000',
     credentials: true,
   },
   namespace: '/game',
 })
 export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
-  server: Server;
+  private _server: Server | null = null;
+
+  public get server(): Server {
+    if (!this._server) {
+      throw new Error('GameGateway: WebSocket server is not initialized yet');
+    }
+    return this._server;
+  }
 
   private readonly logger = new Logger(GameGateway.name);
   private readonly connectedPlayers = new Map<string, { socketId: string; userId: string }>();
@@ -126,9 +132,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.logger.log(`Room created via socket: ${room.code}`);
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       client.emit(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: error.message,
+        message: errorMessage,
       });
     }
   }
@@ -168,9 +175,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.logger.log(`Player ${userId} joined room ${room.code} via socket`);
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       client.emit(ServerEvent.ERROR, {
-        code: error.message || ErrorCode.INTERNAL_ERROR,
-        message: error.message,
+        code: errorMessage || ErrorCode.INTERNAL_ERROR,
+        message: errorMessage,
       });
     }
   }
@@ -194,9 +202,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         reason: 'LEFT',
       });
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       client.emit(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: error.message,
+        message: errorMessage,
       });
     }
   }
@@ -230,9 +239,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.logger.log(`Match starting: ${match.id}`);
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       client.emit(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: error.message,
+        message: errorMessage,
       });
     }
   }
@@ -274,9 +284,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.logger.log(`Answer submitted: ${userId} - ${result.isCorrect ? 'correct' : 'wrong'}`);
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       client.emit(ServerEvent.ERROR, {
-        code: error.message || ErrorCode.INTERNAL_ERROR,
-        message: error.message,
+        code: errorMessage || ErrorCode.INTERNAL_ERROR,
+        message: errorMessage,
       });
     }
   }
@@ -304,9 +315,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.logger.log(`Snapshot sent to ${userId} for match ${payload.matchId}`);
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       client.emit(ServerEvent.ERROR, {
-        code: error.message || ErrorCode.INTERNAL_ERROR,
-        message: error.message,
+        code: errorMessage || ErrorCode.INTERNAL_ERROR,
+        message: errorMessage,
       });
     }
   }
