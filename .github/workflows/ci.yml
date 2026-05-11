@@ -64,7 +64,7 @@ jobs:
         if: steps.prisma-cache.outputs.cache-hit != 'true'
         run: pnpm db:generate
         env:
-          DATABASE_URL: "postgresql://postgres:password@localhost:5432/db"
+          DATABASE_URL: postgresql://${{ env.CI_DB_USER }}:${{ env.CI_DB_PASSWORD }}@localhost:5432/${{ env.CI_DB_NAME }}
 
       - name: Save Prisma Cache
         if: steps.prisma-cache.outputs.cache-hit != 'true'
@@ -120,7 +120,7 @@ jobs:
         if: steps.prisma-cache.outputs.cache-hit != 'true'
         run: pnpm db:generate
         env:
-          DATABASE_URL: "postgresql://postgres:password@localhost:5432/db"
+          DATABASE_URL: postgresql://${{ env.CI_DB_USER }}:${{ env.CI_DB_PASSWORD }}@localhost:5432/${{ env.CI_DB_NAME }}
 
       - name: Run Lint
         run: pnpm lint
@@ -136,9 +136,9 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: arena
-          POSTGRES_PASSWORD: arena123
-          POSTGRES_DB: arena_of_100
+          POSTGRES_USER: ${{ env.CI_DB_USER }}
+          POSTGRES_PASSWORD: ${{ env.CI_DB_PASSWORD }}
+          POSTGRES_DB: ${{ env.CI_DB_NAME }}
         ports:
           - 5432:5432
         options: >-
@@ -196,7 +196,7 @@ jobs:
         if: steps.prisma-cache.outputs.cache-hit != 'true'
         run: pnpm db:generate
         env:
-          DATABASE_URL: "postgresql://postgres:password@localhost:5432/db"
+          DATABASE_URL: postgresql://${{ env.CI_DB_USER }}:${{ env.CI_DB_PASSWORD }}@localhost:5432/${{ env.CI_DB_NAME }}
 
       - name: Run Tests with Coverage
         run: pnpm turbo run test:coverage
@@ -260,7 +260,7 @@ jobs:
         if: steps.prisma-cache.outputs.cache-hit != 'true'
         run: pnpm db:generate
         env:
-          DATABASE_URL: "postgresql://postgres:password@localhost:5432/db"
+          DATABASE_URL: postgresql://${{ env.CI_DB_USER }}:${{ env.CI_DB_PASSWORD }}@localhost:5432/${{ env.CI_DB_NAME }}
 
       - name: Build
         run: pnpm build
