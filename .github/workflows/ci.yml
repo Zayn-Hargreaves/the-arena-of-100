@@ -22,6 +22,9 @@ env:
 jobs:
   install:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,7 +37,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
           cache: 'pnpm'
 
       - name: Cache node_modules
@@ -42,7 +45,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: '**/node_modules'
-          key: ${{ env.NODE_MODULES_CACHE_KEY }}-20
+          key: ${{ env.NODE_MODULES_CACHE_KEY }}-${{ matrix.node-version }}
 
       - name: Install dependencies
         if: steps.node-modules-cache.outputs.cache-hit != 'true'
@@ -75,6 +78,9 @@ jobs:
   lint:
     needs: install
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -87,7 +93,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
           cache: 'pnpm'
 
       - name: Restore node_modules
@@ -95,7 +101,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: '**/node_modules'
-          key: ${{ env.NODE_MODULES_CACHE_KEY }}-20
+          key: ${{ env.NODE_MODULES_CACHE_KEY }}-${{ matrix.node-version }}
 
       - name: Install dependencies
         if: steps.node-modules-cache.outputs.cache-hit != 'true'
@@ -212,6 +218,9 @@ jobs:
   build:
     needs: install
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -224,7 +233,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
           cache: 'pnpm'
 
       - name: Restore node_modules
@@ -232,7 +241,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: '**/node_modules'
-          key: ${{ env.NODE_MODULES_CACHE_KEY }}-20
+          key: ${{ env.NODE_MODULES_CACHE_KEY }}-${{ matrix.node-version }}
 
       - name: Install dependencies
         if: steps.node-modules-cache.outputs.cache-hit != 'true'
