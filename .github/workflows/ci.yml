@@ -1,0 +1,283 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  # Turbo Remote Cache (Optional: only needed if using Vercel Remote Caching)
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN || '' }}
+  TURBO_TEAM: ${{ secrets.TURBO_TEAM || '' }}
+  # Default DB credentials for CI (safe for ephemeral containers)
+  CI_DB_USER: arena
+  CI_DB_PASSWORD: arena123
+  CI_DB_NAME: arena_of_100
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    env:
+      PRISMA_CACHE_KEY: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
+      NODE_MODULES_CACHE_KEY: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+    strategy:
+      matrix:
+        node-version: [20, 22]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
+      - name: Cache node_modules
+        id: node-modules-cache
+        uses: actions/cache@v4
+        with:
+          path: '**/node_modules'
+          key: ${{ env.NODE_MODULES_CACHE_KEY }}-${{ matrix.node-version }}
+
+      - name: Install dependencies
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Check for Prisma Cache
+        id: prisma-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules/.prisma
+            apps/api/node_modules/.prisma
+          key: ${{ env.PRISMA_CACHE_KEY }}
+
+      - name: Generate Prisma Client
+        if: steps.prisma-cache.outputs.cache-hit != 'true'
+        run: pnpm db:generate
+        env:
+          DATABASE_URL: postgresql://${{ env.CI_DB_USER }}:${{ env.CI_DB_PASSWORD }}@localhost:5432/${{ env.CI_DB_NAME }}
+
+      - name: Save Prisma Cache
+        if: steps.prisma-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            node_modules/.prisma
+            apps/api/node_modules/.prisma
+          key: ${{ env.PRISMA_CACHE_KEY }}
+
+  lint:
+    needs: install
+    runs-on: ubuntu-latest
+    env:
+      PRISMA_CACHE_KEY: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
+      NODE_MODULES_CACHE_KEY: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+    strategy:
+      matrix:
+        node-version: [20, 22]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
+      - name: Restore node_modules
+        id: node-modules-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: '**/node_modules'
+          key: ${{ env.NODE_MODULES_CACHE_KEY }}-${{ matrix.node-version }}
+
+      - name: Install dependencies
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore Prisma Client
+        id: prisma-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules/.prisma
+            apps/api/node_modules/.prisma
+          key: ${{ env.PRISMA_CACHE_KEY }}
+
+      - name: Fallback Generate Prisma
+        if: steps.prisma-cache.outputs.cache-hit != 'true'
+        run: pnpm db:generate
+        env:
+          DATABASE_URL: postgresql://${{ env.CI_DB_USER }}:${{ env.CI_DB_PASSWORD }}@localhost:5432/${{ env.CI_DB_NAME }}
+
+      - name: Run Lint
+        run: pnpm lint
+
+  test:
+    needs: install
+    runs-on: ubuntu-latest
+    env:
+      PRISMA_CACHE_KEY: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
+      NODE_MODULES_CACHE_KEY: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+    strategy:
+      matrix:
+        node-version: [20, 22]
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ${{ env.CI_DB_USER }}
+          POSTGRES_PASSWORD: ${{ env.CI_DB_PASSWORD }}
+          POSTGRES_DB: ${{ env.CI_DB_NAME }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
+      - name: Restore node_modules
+        id: node-modules-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: '**/node_modules'
+          key: ${{ env.NODE_MODULES_CACHE_KEY }}-${{ matrix.node-version }}
+
+      - name: Install dependencies
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore Prisma Client
+        id: prisma-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules/.prisma
+            apps/api/node_modules/.prisma
+          key: ${{ env.PRISMA_CACHE_KEY }}
+
+      - name: Fallback Generate Prisma
+        if: steps.prisma-cache.outputs.cache-hit != 'true'
+        run: pnpm db:generate
+        env:
+          DATABASE_URL: postgresql://${{ env.CI_DB_USER }}:${{ env.CI_DB_PASSWORD }}@localhost:5432/${{ env.CI_DB_NAME }}
+
+      - name: Run Tests with Coverage
+        run: pnpm turbo run test:coverage
+        env:
+          DATABASE_URL: postgresql://${{ env.CI_DB_USER }}:${{ env.CI_DB_PASSWORD }}@localhost:5432/${{ env.CI_DB_NAME }}
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: ${{ secrets.CI_JWT_SECRET || 'ci-test-secret-key' }}
+          NODE_ENV: test
+
+      - name: Upload Coverage
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: |
+            apps/api/coverage/lcov.info
+            packages/game-core/coverage/lcov.info
+          fail_ci_if_error: true
+
+  build:
+    needs: install
+    runs-on: ubuntu-latest
+    env:
+      PRISMA_CACHE_KEY: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
+      NODE_MODULES_CACHE_KEY: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+    strategy:
+      matrix:
+        node-version: [20, 22]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
+      - name: Restore node_modules
+        id: node-modules-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: '**/node_modules'
+          key: ${{ env.NODE_MODULES_CACHE_KEY }}-${{ matrix.node-version }}
+
+      - name: Install dependencies
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore Prisma Client
+        id: prisma-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules/.prisma
+            apps/api/node_modules/.prisma
+          key: ${{ env.PRISMA_CACHE_KEY }}
+
+      - name: Fallback Generate Prisma
+        if: steps.prisma-cache.outputs.cache-hit != 'true'
+        run: pnpm db:generate
+        env:
+          DATABASE_URL: postgresql://${{ env.CI_DB_USER }}:${{ env.CI_DB_PASSWORD }}@localhost:5432/${{ env.CI_DB_NAME }}
+
+      - name: Build
+        run: pnpm build
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            apps/api/dist
+            apps/web/.next
+            !apps/web/.next/cache
