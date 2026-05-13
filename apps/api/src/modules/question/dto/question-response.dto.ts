@@ -7,13 +7,13 @@ export class QuestionResponseDto {
     type: [Question],
     description: "Array of questions",
   })
-  data: Question[];
+  data!: Question[];
 
   @ApiProperty({
     type: () => PaginationMetaDto,
     description: "Pagination metadata",
   })
-  meta: PaginationMetaDto;
+  meta!: PaginationMetaDto;
 
   constructor(partial: Partial<QuestionResponseDto>) {
     Object.assign(this, partial);

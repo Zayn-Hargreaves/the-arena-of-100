@@ -5,19 +5,19 @@ export class PaginationMetaDto {
     example: 100,
     description: "Total number of items",
   })
-  total: number;
+  total!: number;
 
   @ApiProperty({
     example: 1,
     description: "Current page number",
   })
-  page: number;
+  page!: number;
 
   @ApiProperty({
     example: 20,
     description: "Number of items per page",
   })
-  limit: number;
+  limit!: number;
 
   constructor(partial: Partial<PaginationMetaDto>) {
     Object.assign(this, partial);
