@@ -46,16 +46,28 @@ export class HttpExceptionFilter implements ExceptionFilter {
     };
 
     // Log the error
+    const logMessage = this.getLogMessage(status >= 500 ? exception : null, message);
+    const logInfo = `${request.method} ${request.url} ${status} - ${logMessage}`;
+
     if (status >= 500) {
-      this.logger.error(
-        `${request.method} ${request.url} ${status} - ${typeof exception === "object" && exception !== null && "stack" in exception ? (exception as Error).stack : typeof exception === "object" && exception !== null && "message" in exception ? (exception as Error).message : "Unknown error"}`,
-      );
+      this.logger.error(logInfo);
     } else {
-      this.logger.warn(
-        `${request.method} ${request.url} ${status} - ${Array.isArray(message) ? JSON.stringify(message) : message}`,
-      );
+      this.logger.warn(logInfo);
     }
 
     response.status(status).send(errorResponse);
+  }
+
+  private getLogMessage(exception: any, message: any): string {
+    if (exception && typeof exception === "object") {
+      if ("stack" in exception && exception.stack) return exception.stack;
+      if ("message" in exception && exception.message) return exception.message;
+    }
+
+    if (Array.isArray(message)) {
+      return JSON.stringify(message);
+    }
+
+    return (message as string) || "Unknown error";
   }
 }
