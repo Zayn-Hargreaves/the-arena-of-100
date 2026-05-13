@@ -3,14 +3,14 @@
 // Real-time WebSocket Connection Management
 // ============================================================
 
-import { create } from 'zustand';
-import { io, Socket } from 'socket.io-client';
+import { create } from "zustand";
+import { io, Socket } from "socket.io-client";
 import {
   ClientEvent,
   ServerEvent,
   type SnapshotPayload,
   type AnswerResultPayload,
-} from '@arena/shared';
+} from "@arena/shared";
 
 interface Player {
   id: string;
@@ -57,7 +57,7 @@ interface SocketState extends ConnectionState {
   connect: () => void;
   disconnect: () => void;
   authenticate: (token: string) => void;
-  createRoom: (roomType: 'PUBLIC' | 'PRIVATE') => void;
+  createRoom: (roomType: "PUBLIC" | "PRIVATE") => void;
   joinRoom: (roomCode: string) => void;
   leaveRoom: (roomId: string) => void;
   startMatch: (roomId: string) => void;
@@ -65,7 +65,7 @@ interface SocketState extends ConnectionState {
   requestSnapshot: (matchId: string, lastSeenSeqNo: number) => void;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
 export const useSocketStore = create<SocketState>((set, get) => ({
   // Initial state
@@ -85,18 +85,18 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     if (socket?.connected) return;
 
     const newSocket = io(`${API_URL}/game`, {
-      transports: ['websocket', 'polling'],
+      transports: ["websocket", "polling"],
       autoConnect: true,
     });
 
-    newSocket.on('connect', () => {
+    newSocket.on("connect", () => {
       set({ isConnected: true, error: null });
-      console.log('🔌 Connected to game server');
+      console.log("🔌 Connected to game server");
     });
 
-    newSocket.on('disconnect', () => {
+    newSocket.on("disconnect", () => {
       set({ isConnected: false, isAuthenticated: false });
-      console.log('🔌 Disconnected from game server');
+      console.log("🔌 Disconnected from game server");
     });
 
     newSocket.on(ServerEvent.AUTHENTICATED, (data) => {
@@ -105,7 +105,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         userId: data.userId,
         username: data.username,
       });
-      console.log('✅ Authenticated:', data.username);
+      console.log("✅ Authenticated:", data.username);
     });
 
     newSocket.on(ServerEvent.ROOM_CREATED, (data) => {
@@ -113,23 +113,23 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         room: {
           id: data.roomId,
           code: data.code,
-          status: 'WAITING',
+          status: "WAITING",
           players: [],
         },
       });
-      console.log('🏠 Room created:', data.code);
+      console.log("🏠 Room created:", data.code);
     });
 
     newSocket.on(ServerEvent.PLAYER_JOINED, (data) => {
-      console.log('👤 Player joined:', data);
+      console.log("👤 Player joined:", data);
     });
 
     newSocket.on(ServerEvent.PLAYER_LEFT, (data) => {
-      console.log('👤 Player left:', data);
+      console.log("👤 Player left:", data);
     });
 
     newSocket.on(ServerEvent.MATCH_STARTING, (data) => {
-      console.log('⚔️ Match starting:', data);
+      console.log("⚔️ Match starting:", data);
     });
 
     newSocket.on(ServerEvent.SNAPSHOT, (data: SnapshotPayload) => {
@@ -143,17 +143,17 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           roundEndTime: data.roundEndTime,
         },
       });
-      console.log('📸 Snapshot received');
+      console.log("📸 Snapshot received");
     });
 
     newSocket.on(ServerEvent.ANSWER_RESULT, (data: AnswerResultPayload) => {
       set({ lastAnswerResult: data });
-      console.log('✅ Answer result:', data);
+      console.log("✅ Answer result:", data);
     });
 
     newSocket.on(ServerEvent.ERROR, (data) => {
       set({ error: data.message });
-      console.error('❌ Error:', data.message);
+      console.error("❌ Error:", data.message);
     });
 
     set({ socket: newSocket });
@@ -183,7 +183,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   },
 
   // Create Room
-  createRoom: (roomType: 'PUBLIC' | 'PRIVATE') => {
+  createRoom: (roomType: "PUBLIC" | "PRIVATE") => {
     const { socket } = get();
     if (socket) {
       socket.emit(ClientEvent.CREATE_ROOM, { roomType });

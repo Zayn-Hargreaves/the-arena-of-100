@@ -61,9 +61,10 @@ function hasPaginationStructure<T, M>(
 }
 
 @Injectable()
-export class TransformInterceptor<T, M = unknown>
-  implements NestInterceptor<T | { data: T; meta: M }, Response<T, M>>
-{
+export class TransformInterceptor<T, M = unknown> implements NestInterceptor<
+  T | { data: T; meta: M },
+  Response<T, M>
+> {
   intercept(
     _context: ExecutionContext,
     next: CallHandler,

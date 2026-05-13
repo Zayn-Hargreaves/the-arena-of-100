@@ -50,7 +50,7 @@ export class IsInArrayConstraint implements ValidatorConstraintInterface {
  * @example
  * class MyClass {
  *   allowedValues = ['a', 'b', 'c'];
- *   
+ *
  *   @IsInArray('allowedValues')
  *   selectedValue: string;
  * }

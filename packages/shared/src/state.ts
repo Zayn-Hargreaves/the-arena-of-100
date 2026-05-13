@@ -5,28 +5,28 @@
 
 // Room States
 export enum RoomStatus {
-  WAITING = 'WAITING',
-  COUNTDOWN = 'COUNTDOWN',
-  IN_GAME = 'IN_GAME',
-  FINISHED = 'FINISHED',
+  WAITING = "WAITING",
+  COUNTDOWN = "COUNTDOWN",
+  IN_GAME = "IN_GAME",
+  FINISHED = "FINISHED",
 }
 
 // Match States (State Machine Pattern)
 export enum MatchStatus {
-  CREATED = 'CREATED',
-  COUNTDOWN = 'COUNTDOWN',
-  ROUND_ACTIVE = 'ROUND_ACTIVE',
-  ROUND_EVALUATING = 'ROUND_EVALUATING',
-  ROUND_RESULT = 'ROUND_RESULT',
-  FINISHED = 'FINISHED',
+  CREATED = "CREATED",
+  COUNTDOWN = "COUNTDOWN",
+  ROUND_ACTIVE = "ROUND_ACTIVE",
+  ROUND_EVALUATING = "ROUND_EVALUATING",
+  ROUND_RESULT = "ROUND_RESULT",
+  FINISHED = "FINISHED",
 }
 
 // Player States in Match
 export enum PlayerStatus {
-  ACTIVE = 'ACTIVE',
-  ELIMINATED = 'ELIMINATED',
-  DISCONNECTED = 'DISCONNECTED',
-  WINNER = 'WINNER',
+  ACTIVE = "ACTIVE",
+  ELIMINATED = "ELIMINATED",
+  DISCONNECTED = "DISCONNECTED",
+  WINNER = "WINNER",
 }
 
 // Room State
@@ -35,7 +35,7 @@ export interface RoomState {
   code: string;
   status: RoomStatus;
   hostId: string;
-  roomType: 'PUBLIC' | 'PRIVATE';
+  roomType: "PUBLIC" | "PRIVATE";
   maxPlayers: number;
   currentPlayers: PlayerInfo[];
   currentMatchId: string | null;
@@ -76,7 +76,7 @@ export interface RoundState {
   startedAt: number;
   endsAt: number;
   answers: Map<string, AnswerState>;
-  status: 'PENDING' | 'ACTIVE' | 'EVALUATING' | 'COMPLETED';
+  status: "PENDING" | "ACTIVE" | "EVALUATING" | "COMPLETED";
 }
 
 // Question State (client-safe, no correct answer)
@@ -84,7 +84,7 @@ export interface QuestionState {
   id: string;
   content: string;
   options: string[];
-  difficulty?: 'EASY' | 'MEDIUM' | 'HARD';
+  difficulty?: "EASY" | "MEDIUM" | "HARD";
 }
 
 // Answer State
@@ -111,7 +111,7 @@ export interface MatchSnapshot {
 export interface TieBreakResult {
   winnerId: string;
   tiedPlayerIds: string[];
-  tieBreakReason: 'TOTAL_RESPONSE_TIME' | 'EARLIEST_CORRECT' | 'RANDOM';
+  tieBreakReason: "TOTAL_RESPONSE_TIME" | "EARLIEST_CORRECT" | "RANDOM";
   details: {
     totalResponseTimeMs: Map<string, number>;
     earliestCorrectRound: Map<string, number>;

@@ -5,58 +5,58 @@
 
 // Socket Namespaces
 export enum SocketNamespace {
-  ROOM = 'room',
-  MATCH = 'match',
+  ROOM = "room",
+  MATCH = "match",
 }
 
 // Client -> Server Events (Commands)
 export enum ClientEvent {
   // Room Events
-  JOIN_ROOM = 'join_room',
-  LEAVE_ROOM = 'leave_room',
-  CREATE_ROOM = 'create_room',
-  START_MATCH = 'start_match',
+  JOIN_ROOM = "join_room",
+  LEAVE_ROOM = "leave_room",
+  CREATE_ROOM = "create_room",
+  START_MATCH = "start_match",
 
   // Match Events
-  SUBMIT_ANSWER = 'submit_answer',
-  REQUEST_SNAPSHOT = 'request_snapshot',
+  SUBMIT_ANSWER = "submit_answer",
+  REQUEST_SNAPSHOT = "request_snapshot",
 
   // Connection Events
-  AUTHENTICATE = 'authenticate',
-  PING = 'ping',
+  AUTHENTICATE = "authenticate",
+  PING = "ping",
 }
 
 // Server -> Client Events (Notifications)
 export enum ServerEvent {
   // Room Events
-  ROOM_CREATED = 'room_created',
-  PLAYER_JOINED = 'player_joined',
-  PLAYER_LEFT = 'player_left',
-  MATCH_STARTING = 'match_starting',
+  ROOM_CREATED = "room_created",
+  PLAYER_JOINED = "player_joined",
+  PLAYER_LEFT = "player_left",
+  MATCH_STARTING = "match_starting",
 
   // Match Events
-  MATCH_STARTED = 'match_started',
-  ROUND_STARTED = 'round_started',
-  ROUND_ENDED = 'round_ended',
-  ANSWER_RESULT = 'answer_result',
-  PLAYER_ELIMINATED = 'player_eliminated',
-  MATCH_FINISHED = 'match_finished',
+  MATCH_STARTED = "match_started",
+  ROUND_STARTED = "round_started",
+  ROUND_ENDED = "round_ended",
+  ANSWER_RESULT = "answer_result",
+  PLAYER_ELIMINATED = "player_eliminated",
+  MATCH_FINISHED = "match_finished",
 
   // Sync Events
-  SNAPSHOT = 'snapshot',
-  EVENT_BATCH = 'event_batch',
+  SNAPSHOT = "snapshot",
+  EVENT_BATCH = "event_batch",
 
   // Connection Events
-  AUTHENTICATED = 'authenticated',
-  ERROR = 'error',
-  PONG = 'pong',
-  KICKED = 'kicked',
+  AUTHENTICATED = "authenticated",
+  ERROR = "error",
+  PONG = "pong",
+  KICKED = "kicked",
 }
 
 // Client Event Payloads
 export interface JoinRoomPayload {
   roomCode?: string;
-  roomType?: 'PUBLIC' | 'PRIVATE';
+  roomType?: "PUBLIC" | "PRIVATE";
 }
 
 export interface LeaveRoomPayload {
@@ -64,7 +64,7 @@ export interface LeaveRoomPayload {
 }
 
 export interface CreateRoomPayload {
-  roomType: 'PUBLIC' | 'PRIVATE';
+  roomType: "PUBLIC" | "PRIVATE";
   maxPlayers?: number;
 }
 

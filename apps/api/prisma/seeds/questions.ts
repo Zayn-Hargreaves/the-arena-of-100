@@ -153,7 +153,7 @@ export const questionSeeds: Question[] = [
 function validateQuestion(question: Question): void {
   if (!question.options.includes(question.correctAnswer)) {
     throw new Error(
-      `Invalid question: correctAnswer "${question.correctAnswer}" is not in options [${question.options.join(", ")}] for question "${question.content}"`
+      `Invalid question: correctAnswer "${question.correctAnswer}" is not in options [${question.options.join(", ")}] for question "${question.content}"`,
     );
   }
 }

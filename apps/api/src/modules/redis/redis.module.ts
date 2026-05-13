@@ -2,8 +2,8 @@
 // Redis Module - Cache & Session Store
 // ============================================================
 
-import { Global, Module } from '@nestjs/common';
-import { RedisService } from './redis.service';
+import { Global, Module } from "@nestjs/common";
+import { RedisService } from "./redis.service";
 
 @Global()
 @Module({

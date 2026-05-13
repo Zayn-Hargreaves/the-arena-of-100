@@ -27,7 +27,9 @@ describe("IsInArrayValidator", () => {
     expect(errors.length).toBe(1);
     expect(errors[0].property).toBe("selectedValue");
     expect(errors[0].constraints).toBeDefined();
-    expect(errors[0].constraints?.IsInArrayConstraint).toContain("value not found in related array");
+    expect(errors[0].constraints?.IsInArrayConstraint).toContain(
+      "value not found in related array",
+    );
   });
 
   it("should not validate when related field is not an array", async () => {
@@ -39,14 +41,16 @@ describe("IsInArrayValidator", () => {
     expect(errors.length).toBe(1);
     expect(errors[0].property).toBe("selectedValue");
     expect(errors[0].constraints).toBeDefined();
-    expect(errors[0].constraints?.IsInArrayConstraint).toContain("related field 'options' is not an array");
+    expect(errors[0].constraints?.IsInArrayConstraint).toContain(
+      "related field 'options' is not an array",
+    );
   });
 
   it("should work with object values using deep equality", async () => {
     const dto = new TestDto();
     dto.options = [
       { id: 1, name: "option1" },
-      { id: 2, name: "option2" }
+      { id: 2, name: "option2" },
     ];
     dto.selectedValue = { id: 2, name: "option2" }; // Same values, different reference
 
@@ -58,7 +62,7 @@ describe("IsInArrayValidator", () => {
     const dto = new TestDto();
     dto.options = [
       { id: 1, name: "option1" },
-      { id: 2, name: "option2" }
+      { id: 2, name: "option2" },
     ];
     dto.selectedValue = { id: 3, name: "option3" };
 
@@ -66,6 +70,8 @@ describe("IsInArrayValidator", () => {
     expect(errors.length).toBe(1);
     expect(errors[0].property).toBe("selectedValue");
     expect(errors[0].constraints).toBeDefined();
-    expect(errors[0].constraints?.IsInArrayConstraint).toContain("value not found in related array");
+    expect(errors[0].constraints?.IsInArrayConstraint).toContain(
+      "value not found in related array",
+    );
   });
 });

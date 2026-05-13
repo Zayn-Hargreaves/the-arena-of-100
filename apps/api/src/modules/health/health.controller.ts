@@ -2,11 +2,11 @@
 // Health Controller - System Health Check
 // ============================================================
 
-import { Controller, Get } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { RedisService } from '../redis/redis.service';
+import { Controller, Get } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { RedisService } from "../redis/redis.service";
 
-@Controller('health')
+@Controller("health")
 export class HealthController {
   constructor(
     private readonly prisma: PrismaService,
@@ -16,7 +16,7 @@ export class HealthController {
   @Get()
   async check() {
     const checks = {
-      status: 'ok',
+      status: "ok",
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       services: {
@@ -33,11 +33,11 @@ export class HealthController {
       const start = Date.now();
       await this.prisma.$queryRaw`SELECT 1`;
       return {
-        status: 'connected',
+        status: "connected",
         latency: Date.now() - start,
       };
     } catch {
-      return { status: 'disconnected' };
+      return { status: "disconnected" };
     }
   }
 
@@ -46,11 +46,11 @@ export class HealthController {
       const start = Date.now();
       await this.redis.getClient().ping();
       return {
-        status: 'connected',
+        status: "connected",
         latency: Date.now() - start,
       };
     } catch {
-      return { status: 'disconnected' };
+      return { status: "disconnected" };
     }
   }
 }

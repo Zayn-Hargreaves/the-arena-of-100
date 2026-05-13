@@ -19,6 +19,12 @@ export class PaginationMetaDto {
   })
   limit!: number;
 
+  @ApiProperty({
+    example: 5,
+    description: "Total number of pages",
+  })
+  totalPages!: number;
+
   constructor(partial: Partial<PaginationMetaDto>) {
     Object.assign(this, partial);
   }

@@ -12,7 +12,7 @@ import {
   type AnswerState,
   GAME_CONFIG,
   ErrorCode,
-} from '@arena/shared';
+} from "@arena/shared";
 
 // State Transition Handler (Strategy Pattern)
 export interface StateTransitionHandler {
@@ -25,8 +25,14 @@ export interface StateTransitionHandler {
 const VALID_TRANSITIONS: Record<MatchStatus, MatchStatus[]> = {
   [MatchStatus.CREATED]: [MatchStatus.COUNTDOWN],
   [MatchStatus.COUNTDOWN]: [MatchStatus.ROUND_ACTIVE, MatchStatus.FINISHED],
-  [MatchStatus.ROUND_ACTIVE]: [MatchStatus.ROUND_EVALUATING, MatchStatus.FINISHED],
-  [MatchStatus.ROUND_EVALUATING]: [MatchStatus.ROUND_RESULT, MatchStatus.FINISHED],
+  [MatchStatus.ROUND_ACTIVE]: [
+    MatchStatus.ROUND_EVALUATING,
+    MatchStatus.FINISHED,
+  ],
+  [MatchStatus.ROUND_EVALUATING]: [
+    MatchStatus.ROUND_RESULT,
+    MatchStatus.FINISHED,
+  ],
   [MatchStatus.ROUND_RESULT]: [MatchStatus.ROUND_ACTIVE, MatchStatus.FINISHED],
   [MatchStatus.FINISHED]: [],
 };
@@ -35,7 +41,11 @@ const VALID_TRANSITIONS: Record<MatchStatus, MatchStatus[]> = {
 export class MatchStateMachine {
   private state: MatchState;
   private currentRound: RoundState | null = null;
-  private eventLog: Array<{ type: string; payload: unknown; timestamp: number }> = [];
+  private eventLog: Array<{
+    type: string;
+    payload: unknown;
+    timestamp: number;
+  }> = [];
 
   constructor(matchId: string, roomId: string, players: PlayerInfo[]) {
     this.state = {
@@ -71,12 +81,10 @@ export class MatchStateMachine {
   // Execute Transition
   transition(to: MatchStatus): void {
     if (!this.canTransition(to)) {
-      throw new Error(
-        `Invalid transition: ${this.state.status} -> ${to}`,
-      );
+      throw new Error(`Invalid transition: ${this.state.status} -> ${to}`);
     }
 
-    this.logEvent('STATE_TRANSITION', {
+    this.logEvent("STATE_TRANSITION", {
       from: this.state.status,
       to,
     });
@@ -95,13 +103,22 @@ export class MatchStateMachine {
   }
 
   // Start New Round
-  startRound(question: { id: string; content: string; options: string[]; correctAnswer: string; difficulty?: 'EASY' | 'MEDIUM' | 'HARD' }): RoundState {
+  startRound(question: {
+    id: string;
+    content: string;
+    options: string[];
+    correctAnswer: string;
+    difficulty?: "EASY" | "MEDIUM" | "HARD";
+  }): RoundState {
     if (this.state.status !== MatchStatus.ROUND_ACTIVE) {
-      throw new Error('Cannot start round: match is not in ROUND_ACTIVE state');
+      throw new Error("Cannot start round: match is not in ROUND_ACTIVE state");
     }
 
     this.state.currentRoundNo++;
-    this.state.totalRounds = Math.max(this.state.totalRounds, this.state.currentRoundNo);
+    this.state.totalRounds = Math.max(
+      this.state.totalRounds,
+      this.state.currentRoundNo,
+    );
 
     const now = Date.now();
     this.currentRound = {
@@ -111,16 +128,16 @@ export class MatchStateMachine {
         id: question.id,
         content: question.content,
         options: question.options,
-        difficulty: question.difficulty ?? 'MEDIUM', // Default to MEDIUM if not provided
+        difficulty: question.difficulty ?? "MEDIUM", // Default to MEDIUM if not provided
       },
       startedAt: now,
       endsAt: now + GAME_CONFIG.ROUND_DURATION_MS,
       answers: new Map(),
-      status: 'ACTIVE',
+      status: "ACTIVE",
       correctAnswer: question.correctAnswer,
     } as RoundState & { correctAnswer: string };
 
-    this.logEvent('ROUND_STARTED', {
+    this.logEvent("ROUND_STARTED", {
       roundNo: this.state.currentRoundNo,
       questionId: question.id,
     });
@@ -129,8 +146,12 @@ export class MatchStateMachine {
   }
 
   // Submit Answer (Command Pattern)
-  submitAnswer(playerId: string, answer: string, serverTimestamp: number): AnswerState {
-    if (!this.currentRound || this.currentRound.status !== 'ACTIVE') {
+  submitAnswer(
+    playerId: string,
+    answer: string,
+    serverTimestamp: number,
+  ): AnswerState {
+    if (!this.currentRound || this.currentRound.status !== "ACTIVE") {
       throw new Error(ErrorCode.ROUND_NOT_ACTIVE);
     }
 
@@ -147,7 +168,9 @@ export class MatchStateMachine {
       throw new Error(ErrorCode.PLAYER_NOT_IN_ROOM);
     }
 
-    const roundWithAnswer = this.currentRound as RoundState & { correctAnswer: string };
+    const roundWithAnswer = this.currentRound as RoundState & {
+      correctAnswer: string;
+    };
     const isCorrect = answer === roundWithAnswer.correctAnswer;
     const responseTimeMs = serverTimestamp - this.currentRound.startedAt;
 
@@ -161,7 +184,7 @@ export class MatchStateMachine {
 
     this.currentRound.answers.set(playerId, answerState);
 
-    this.logEvent('ANSWER_SUBMITTED', {
+    this.logEvent("ANSWER_SUBMITTED", {
       playerId,
       isCorrect,
       responseTimeMs,
@@ -171,14 +194,20 @@ export class MatchStateMachine {
   }
 
   // Evaluate Round Results
-  evaluateRound(): { survivingIds: string[]; eliminatedIds: string[]; correctAnswer: string } {
+  evaluateRound(): {
+    survivingIds: string[];
+    eliminatedIds: string[];
+    correctAnswer: string;
+  } {
     if (!this.currentRound) {
-      throw new Error('No active round to evaluate');
+      throw new Error("No active round to evaluate");
     }
 
-    this.currentRound.status = 'EVALUATING';
+    this.currentRound.status = "EVALUATING";
 
-    const roundWithAnswer = this.currentRound as RoundState & { correctAnswer: string };
+    const roundWithAnswer = this.currentRound as RoundState & {
+      correctAnswer: string;
+    };
     const correctAnswer = roundWithAnswer.correctAnswer;
     const survivingIds: string[] = [];
     const eliminatedIds: string[] = [];
@@ -209,9 +238,9 @@ export class MatchStateMachine {
     this.state.survivingPlayerIds = survivingIds;
     this.state.eliminatedPlayerIds.push(...eliminatedIds);
 
-    this.currentRound.status = 'COMPLETED';
+    this.currentRound.status = "COMPLETED";
 
-    this.logEvent('ROUND_EVALUATED', {
+    this.logEvent("ROUND_EVALUATED", {
       roundNo: this.currentRound.roundNo,
       survivingCount: survivingIds.length,
       eliminatedCount: eliminatedIds.length,
@@ -266,7 +295,7 @@ export class MatchStateMachine {
 
     const winnerId = sorted[0];
 
-    this.logEvent('TIE_BREAK', {
+    this.logEvent("TIE_BREAK", {
       winnerId,
       tiedPlayerIds: playerIds,
     });
@@ -287,7 +316,7 @@ export class MatchStateMachine {
     this.state.winnerId = winnerId;
     this.state.endedAt = Date.now();
 
-    this.logEvent('MATCH_FINISHED', {
+    this.logEvent("MATCH_FINISHED", {
       winnerId,
       totalRounds: this.state.totalRounds,
     });
@@ -323,7 +352,11 @@ export class MatchStateMachine {
     });
   }
 
-  getEventLog(): ReadonlyArray<{ type: string; payload: unknown; timestamp: number }> {
+  getEventLog(): ReadonlyArray<{
+    type: string;
+    payload: unknown;
+    timestamp: number;
+  }> {
     return [...this.eventLog];
   }
 }

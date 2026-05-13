@@ -4,6 +4,8 @@ import { CreateQuestionDto } from "./dto/create-question.dto";
 import { UpdateQuestionDto } from "./dto/update-question.dto";
 import { GetQuestionsDto } from "./dto/get-questions.dto";
 import { Prisma } from "@prisma/client";
+import { Question } from "./entities/question.entity";
+import { QuestionResponseDto } from "./dto/question-response.dto";
 
 @Injectable()
 export class QuestionService {
@@ -11,8 +13,8 @@ export class QuestionService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(createQuestionDto: CreateQuestionDto) {
-    return this.prisma.question.create({
+  async create(createQuestionDto: CreateQuestionDto): Promise<Question> {
+    const question = await this.prisma.question.create({
       data: {
         content: createQuestionDto.content,
         options: createQuestionDto.options,
@@ -21,9 +23,11 @@ export class QuestionService {
         active: createQuestionDto.active ?? true,
       },
     });
+
+    return question as unknown as Question;
   }
 
-  async findAll(query: GetQuestionsDto) {
+  async findAll(query: GetQuestionsDto): Promise<QuestionResponseDto> {
     const { page = 1, limit = 20, difficulty, search, active } = query;
     const cappedLimit = Math.min(limit, this.MAX_LIMIT);
     const skip = (page - 1) * cappedLimit;
@@ -56,7 +60,7 @@ export class QuestionService {
     ]);
 
     return {
-      data,
+      data: data as unknown as Question[],
       meta: {
         total,
         page,
@@ -66,7 +70,7 @@ export class QuestionService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string): Promise<Question> {
     const question = await this.prisma.question.findUnique({
       where: { id },
     });
@@ -75,7 +79,7 @@ export class QuestionService {
       throw new NotFoundException(`Question with ID ${id} not found`);
     }
 
-    return question;
+    return question as unknown as Question;
   }
   private handlePrismaNotFound(error: unknown, id: string): never {
     if (
@@ -87,12 +91,16 @@ export class QuestionService {
     throw error;
   }
 
-  async update(id: string, updateQuestionDto: UpdateQuestionDto) {
+  async update(
+    id: string,
+    updateQuestionDto: UpdateQuestionDto,
+  ): Promise<Question> {
     try {
-      return await this.prisma.question.update({
+      const question = await this.prisma.question.update({
         where: { id },
         data: updateQuestionDto,
       });
+      return question as unknown as Question;
     } catch (error) {
       return this.handlePrismaNotFound(error, id);
     }

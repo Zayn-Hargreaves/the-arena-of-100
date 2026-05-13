@@ -3,6 +3,7 @@
 ## Issue
 
 The project currently uses `class-transformer@^0.5.1` and `class-validator@^0.15.1`, both of which are effectively unmaintained:
+
 - No releases since November 2021
 - Minimal activity in their respective GitHub repositories
 - Potential future security/compatibility risks
@@ -22,7 +23,7 @@ The project currently uses `class-transformer@^0.5.1` and `class-validator@^0.15
 ### class-transformer
 
 1. **@Exclude()** - Used in `question.entity.ts` to hide the `correctAnswer` field from serialization
-2. **@Transform()** - Used in `get-questions.dto.ts` to transform boolean query parameters 
+2. **@Transform()** - Used in `get-questions.dto.ts` to transform boolean query parameters
 3. **@Type()** - Used in `get-questions.dto.ts` to convert query parameters to numbers
 
 ### class-validator
@@ -45,7 +46,7 @@ The project currently uses `class-transformer@^0.5.1` and `class-validator@^0.15
 ### Phase 2: Gradual Migration
 
 - [ ] Migrate auth module to Zod validation
-- [ ] Migrate room module to Zod validation  
+- [ ] Migrate room module to Zod validation
 - [ ] Migrate question module to Zod validation
 - [ ] Migrate match module to Zod validation
 
@@ -58,6 +59,7 @@ The project currently uses `class-transformer@^0.5.1` and `class-validator@^0.15
 ## Risk Mitigation
 
 Until full migration:
+
 - Monitor security advisories for these packages
 - Dependabot configured to ignore these packages to prevent automated updates
 - Document workaround procedures for potential issues

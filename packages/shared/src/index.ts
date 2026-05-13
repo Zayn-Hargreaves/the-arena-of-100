@@ -4,13 +4,13 @@
 // ============================================================
 
 // Events
-export * from './events';
+export * from "./events";
 
 // State Types
-export * from './state';
+export * from "./state";
 
 // Socket Protocol
-export * from './socket';
+export * from "./socket";
 
 // Game Constants
 export const GAME_CONFIG = {
@@ -24,11 +24,13 @@ export const GAME_CONFIG = {
 } as const;
 
 // Room Code Alphabet (excluding ambiguous chars: 0, O, I, 1, l)
-export const ROOM_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+export const ROOM_CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
 // Generate Room Code (Strategy Pattern - can be swapped)
-export function generateRoomCode(length = GAME_CONFIG.ROOM_CODE_LENGTH): string {
-  let code = '';
+export function generateRoomCode(
+  length = GAME_CONFIG.ROOM_CODE_LENGTH,
+): string {
+  let code = "";
   for (let i = 0; i < length; i++) {
     const randomIndex = Math.floor(Math.random() * ROOM_CODE_CHARS.length);
     code += ROOM_CODE_CHARS[randomIndex];
@@ -38,34 +40,34 @@ export function generateRoomCode(length = GAME_CONFIG.ROOM_CODE_LENGTH): string 
 
 // Error Codes
 export enum ErrorCode {
-  ROOM_NOT_FOUND = 'ROOM_NOT_FOUND',
-  ROOM_FULL = 'ROOM_FULL',
-  ROOM_ALREADY_STARTED = 'ROOM_ALREADY_STARTED',
-  PLAYER_NOT_IN_ROOM = 'PLAYER_NOT_IN_ROOM',
-  MATCH_NOT_FOUND = 'MATCH_NOT_FOUND',
-  MATCH_ALREADY_STARTED = 'MATCH_ALREADY_STARTED',
-  ROUND_NOT_ACTIVE = 'ROUND_NOT_ACTIVE',
-  ALREADY_ANSWERED = 'ALREADY_ANSWERED',
-  ANSWER_SUBMISSION_CLOSED = 'ANSWER_SUBMISSION_CLOSED',
-  UNAUTHORIZED = 'UNAUTHORIZED',
-  INVALID_TOKEN = 'INVALID_TOKEN',
-  RATE_LIMITED = 'RATE_LIMITED',
-  INTERNAL_ERROR = 'INTERNAL_ERROR',
+  ROOM_NOT_FOUND = "ROOM_NOT_FOUND",
+  ROOM_FULL = "ROOM_FULL",
+  ROOM_ALREADY_STARTED = "ROOM_ALREADY_STARTED",
+  PLAYER_NOT_IN_ROOM = "PLAYER_NOT_IN_ROOM",
+  MATCH_NOT_FOUND = "MATCH_NOT_FOUND",
+  MATCH_ALREADY_STARTED = "MATCH_ALREADY_STARTED",
+  ROUND_NOT_ACTIVE = "ROUND_NOT_ACTIVE",
+  ALREADY_ANSWERED = "ALREADY_ANSWERED",
+  ANSWER_SUBMISSION_CLOSED = "ANSWER_SUBMISSION_CLOSED",
+  UNAUTHORIZED = "UNAUTHORIZED",
+  INVALID_TOKEN = "INVALID_TOKEN",
+  RATE_LIMITED = "RATE_LIMITED",
+  INTERNAL_ERROR = "INTERNAL_ERROR",
 }
 
 // Error Messages (Vietnamese)
 export const ERROR_MESSAGES: Record<ErrorCode, string> = {
-  [ErrorCode.ROOM_NOT_FOUND]: 'Không tìm thấy phòng',
-  [ErrorCode.ROOM_FULL]: 'Phòng đã đầy',
-  [ErrorCode.ROOM_ALREADY_STARTED]: 'Trận đấu đã bắt đầu',
-  [ErrorCode.PLAYER_NOT_IN_ROOM]: 'Bạn không ở trong phòng này',
-  [ErrorCode.MATCH_NOT_FOUND]: 'Không tìm thấy trận đấu',
-  [ErrorCode.MATCH_ALREADY_STARTED]: 'Trận đấu đã bắt đầu',
-  [ErrorCode.ROUND_NOT_ACTIVE]: 'Câu hỏi không còn hoạt động',
-  [ErrorCode.ALREADY_ANSWERED]: 'Bạn đã trả lời rồi',
-  [ErrorCode.ANSWER_SUBMISSION_CLOSED]: 'Hết thời gian trả lời',
-  [ErrorCode.UNAUTHORIZED]: 'Chưa xác thực',
-  [ErrorCode.INVALID_TOKEN]: 'Token không hợp lệ',
-  [ErrorCode.RATE_LIMITED]: 'Quá nhiều yêu cầu, vui lòng thử lại sau',
-  [ErrorCode.INTERNAL_ERROR]: 'Lỗi hệ thống',
+  [ErrorCode.ROOM_NOT_FOUND]: "Không tìm thấy phòng",
+  [ErrorCode.ROOM_FULL]: "Phòng đã đầy",
+  [ErrorCode.ROOM_ALREADY_STARTED]: "Trận đấu đã bắt đầu",
+  [ErrorCode.PLAYER_NOT_IN_ROOM]: "Bạn không ở trong phòng này",
+  [ErrorCode.MATCH_NOT_FOUND]: "Không tìm thấy trận đấu",
+  [ErrorCode.MATCH_ALREADY_STARTED]: "Trận đấu đã bắt đầu",
+  [ErrorCode.ROUND_NOT_ACTIVE]: "Câu hỏi không còn hoạt động",
+  [ErrorCode.ALREADY_ANSWERED]: "Bạn đã trả lời rồi",
+  [ErrorCode.ANSWER_SUBMISSION_CLOSED]: "Hết thời gian trả lời",
+  [ErrorCode.UNAUTHORIZED]: "Chưa xác thực",
+  [ErrorCode.INVALID_TOKEN]: "Token không hợp lệ",
+  [ErrorCode.RATE_LIMITED]: "Quá nhiều yêu cầu, vui lòng thử lại sau",
+  [ErrorCode.INTERNAL_ERROR]: "Lỗi hệ thống",
 };

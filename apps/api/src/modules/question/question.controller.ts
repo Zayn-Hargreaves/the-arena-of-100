@@ -42,8 +42,14 @@ export class QuestionController {
   })
   @ApiResponse({ status: 400, description: "Validation failed" })
   async create(
-    @Body(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
-     createQuestionDto: CreateQuestionDto,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    createQuestionDto: CreateQuestionDto,
   ): Promise<Question> {
     return this.questionService.create(createQuestionDto);
   }
@@ -56,7 +62,13 @@ export class QuestionController {
     type: QuestionResponseDto,
   })
   async findAll(
-    @Query(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
     query: GetQuestionsDto,
   ): Promise<QuestionResponseDto> {
     return this.questionService.findAll(query);
@@ -85,7 +97,13 @@ export class QuestionController {
   @ApiResponse({ status: 400, description: "Bad Request" })
   async update(
     @Param("id", ParseUUIDPipe) id: string,
-    @Body(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+    @Body(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    )
     updateQuestionDto: UpdateQuestionDto,
   ): Promise<Question> {
     return this.questionService.update(id, updateQuestionDto);

@@ -35,9 +35,11 @@ describe("CreateQuestionDto", () => {
 
     const errors = await validate(dto);
     expect(errors.length).toBeGreaterThan(0);
-    const optionsError = errors.find(error => error.property === "options");
+    const optionsError = errors.find((error) => error.property === "options");
     expect(optionsError).toBeDefined();
-    expect(Object.keys(optionsError!.constraints || {}).length).toBeGreaterThan(0);
+    expect(Object.keys(optionsError!.constraints || {}).length).toBeGreaterThan(
+      0,
+    );
   });
 
   it("should not validate when content is missing", async () => {

@@ -29,7 +29,9 @@ async function main() {
 
   // Validate questionSeeds before proceeding
   if (!Array.isArray(questionSeeds) || questionSeeds.length === 0) {
-    throw new Error("❌ questionSeeds is undefined, not an array, or empty. Seeding aborted.");
+    throw new Error(
+      "❌ questionSeeds is undefined, not an array, or empty. Seeding aborted.",
+    );
   }
 
   // Safety check for clearing existing questions

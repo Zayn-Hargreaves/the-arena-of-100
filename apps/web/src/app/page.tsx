@@ -14,12 +14,8 @@ export default function HomePage() {
 
         {/* Main Actions */}
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <button className="btn-primary text-lg">
-            🎮 Tạo Phòng
-          </button>
-          <button className="btn-secondary text-lg">
-            🚪 Vào Phòng
-          </button>
+          <button className="btn-primary text-lg">🎮 Tạo Phòng</button>
+          <button className="btn-secondary text-lg">🚪 Vào Phòng</button>
         </div>
 
         {/* Quick Match */}
@@ -33,7 +29,9 @@ export default function HomePage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-12 max-w-4xl mx-auto">
           <div className="card text-center">
             <div className="text-4xl mb-4">👥</div>
-            <h3 className="text-xl font-bold text-white mb-2">100 Người Chơi</h3>
+            <h3 className="text-xl font-bold text-white mb-2">
+              100 Người Chơi
+            </h3>
             <p className="text-gray-400">
               Tham gia cùng 99 người chơi khác trong trận đấu sinh tử
             </p>
@@ -47,7 +45,9 @@ export default function HomePage() {
           </div>
           <div className="card text-center">
             <div className="text-4xl mb-4">🏆</div>
-            <h3 className="text-xl font-bold text-white mb-2">Người Chiến Thắng</h3>
+            <h3 className="text-xl font-bold text-white mb-2">
+              Người Chiến Thắng
+            </h3>
             <p className="text-gray-400">
               Người cuối cùng sống sót sẽ trở thành nhà vô địch
             </p>

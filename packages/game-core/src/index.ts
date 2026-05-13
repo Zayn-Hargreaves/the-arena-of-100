@@ -4,8 +4,8 @@
 // ============================================================
 
 // State Machine
-export { MatchStateMachine } from './match-state-machine';
-export type { StateTransitionHandler } from './match-state-machine';
+export { MatchStateMachine } from "./match-state-machine";
+export type { StateTransitionHandler } from "./match-state-machine";
 
 // Re-export shared types for convenience
 export {
@@ -15,4 +15,4 @@ export {
   GAME_CONFIG,
   ErrorCode,
   ERROR_MESSAGES,
-} from '@arena/shared';
+} from "@arena/shared";
