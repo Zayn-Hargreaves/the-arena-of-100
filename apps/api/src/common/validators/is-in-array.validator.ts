@@ -9,38 +9,36 @@ import fastDeepEqual from "fast-deep-equal";
 
 @ValidatorConstraint({ async: false })
 export class IsInArrayConstraint implements ValidatorConstraintInterface {
-  private relatedNotArray = false;
-  private notFound = false;
-
-  validate(value: any, args: ValidationArguments) {
-    // Reset flags for each validation
-    this.relatedNotArray = false;
-    this.notFound = false;
-    
+  validate(value: unknown, args: ValidationArguments) {
     const [relatedPropertyName] = args.constraints;
-    const relatedValue = (args.object as any)[relatedPropertyName];
+    const relatedValue = (args.object as Record<string, unknown>)[
+      relatedPropertyName
+    ];
 
     if (!Array.isArray(relatedValue)) {
-      this.relatedNotArray = true;
       return false;
     }
 
     // Use deep equality check instead of includes for object comparison
-    this.notFound = !relatedValue.some(item => fastDeepEqual(item, value));
-    return !this.notFound;
+    return relatedValue.some((item) => fastDeepEqual(item, value));
   }
 
   defaultMessage(args: ValidationArguments) {
     const [relatedPropertyName] = args.constraints;
-    
-    if (this.relatedNotArray) {
+    const relatedValue = (args.object as Record<string, unknown>)[
+      relatedPropertyName
+    ];
+    const value = args.value;
+
+    if (!Array.isArray(relatedValue)) {
       return `related field '${relatedPropertyName}' is not an array`;
     }
-    
-    if (this.notFound) {
+
+    const isFound = relatedValue.some((item) => fastDeepEqual(item, value));
+    if (!isFound) {
       return `value not found in related array '${relatedPropertyName}'`;
     }
-    
+
     return `${args.property} must be one of the provided ${relatedPropertyName}`;
   }
 }
