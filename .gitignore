@@ -15,6 +15,7 @@ dist/
 **/prisma/seeds/*.js
 **/prisma/seeds/*.js.map
 **/prisma/seeds/*.d.ts
+**/prisma/seeds/*.d.ts.map
 
 # Environment files
 .env
