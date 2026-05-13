@@ -119,4 +119,18 @@ describe("CreateQuestionDto", () => {
     expect(errors.length).toBeGreaterThan(0);
     expect(errors[0].property).toBe("options");
   });
+
+  it("should not validate when content is shorter than 10 characters", async () => {
+    const dto = new CreateQuestionDto();
+    dto.content = "Short";
+    dto.options = ["Paris", "London", "Berlin", "Madrid"];
+    dto.correctAnswer = "Paris";
+    dto.difficulty = QuestionDifficulty.EASY;
+
+    const errors = await validate(dto);
+    expect(errors.length).toBeGreaterThan(0);
+    const contentError = errors.find((error) => error.property === "content");
+    expect(contentError).toBeDefined();
+    expect(contentError?.constraints?.minLength).toBeDefined();
+  });
 });

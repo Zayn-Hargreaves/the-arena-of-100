@@ -21,7 +21,7 @@ export class CreateQuestionDto {
     description: "The question text",
   })
   @IsString()
-  @MinLength(3)
+  @MinLength(10)
   @MaxLength(1000)
   content!: string;
 
