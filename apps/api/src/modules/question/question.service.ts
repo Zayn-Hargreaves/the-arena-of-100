@@ -94,7 +94,7 @@ export class QuestionService {
         data: updateQuestionDto,
       });
     } catch (error) {
-      this.handlePrismaNotFound(error, id);
+      return this.handlePrismaNotFound(error, id);
     }
   }
 
@@ -104,7 +104,7 @@ export class QuestionService {
         where: { id },
       });
     } catch (error) {
-      this.handlePrismaNotFound(error, id);
+      return this.handlePrismaNotFound(error, id);
     }
   }
 }
