@@ -39,7 +39,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       success: false,
       error: {
         statusCode: status,
-        message: message, // Preserve array for validation errors
+        message: message, // Mirrors extracted message (string or string[])
         path: request.url,
         timestamp: new Date().toISOString(),
       },
