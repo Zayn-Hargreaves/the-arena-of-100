@@ -1,3 +1,7 @@
+// ============================================================
+// Question Module - Question Management
+// ============================================================
+
 import { Module } from "@nestjs/common";
 import { QuestionService } from "./question.service";
 import { QuestionController } from "./question.controller";
@@ -8,5 +12,6 @@ import { AuthModule } from "../auth/auth.module";
   imports: [PrismaModule, AuthModule],
   controllers: [QuestionController],
   providers: [QuestionService],
+  exports: [QuestionService],
 })
 export class QuestionModule {}

@@ -1,3 +1,7 @@
+// ============================================================
+// Question Service - Question Management Logic
+// ============================================================
+
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateQuestionDto } from "./dto/create-question.dto";
