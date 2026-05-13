@@ -11,7 +11,8 @@ import {
 import { AppModule } from "./app.module";
 import { Logger, ValidationPipe, VersioningType } from "@nestjs/common";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
-import helmet from "@fastify/helmet";
+import helmet, { FastifyHelmetOptions } from "@fastify/helmet";
+import type { FastifyPluginAsync } from "fastify";
 
 async function bootstrap() {
   const logger = new Logger("Bootstrap");
@@ -23,13 +24,13 @@ async function bootstrap() {
     }),
   );
 
-  // Security: Helmet (relax CSP for Swagger UI requirements)
-  await app.register(helmet as any, {
+  // Security: Helmet (strict CSP, relaxed for Swagger via hook)
+  await app.register(helmet as unknown as FastifyPluginAsync<FastifyHelmetOptions>, {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'"],
+        scriptSrc: ["'self'"],
         imgSrc: ["'self'", "data:", "blob:"],
         objectSrc: ["'none'"],
         frameAncestors: ["'self'"],
@@ -76,6 +77,17 @@ async function bootstrap() {
 
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup("docs", app, document);
+
+  // Relax CSP for Swagger UI
+  const fastifyInstance = app.getHttpAdapter().getInstance();
+  fastifyInstance.addHook("onRequest", async (request, reply) => {
+    if (request.url.startsWith("/docs")) {
+      reply.header(
+        "Content-Security-Policy",
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; object-src 'none'; frame-ancestors 'self'; base-uri 'self'; form-action 'self';",
+      );
+    }
+  });
 
   const port = process.env.PORT || 3001;
   await app.listen(port, "0.0.0.0");
