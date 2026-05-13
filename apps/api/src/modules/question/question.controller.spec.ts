@@ -12,7 +12,7 @@ describe("QuestionController", () => {
 
   // Mock data
   const mockQuestion: Question = {
-    id: "1",
+    id: "cjld2cjxh0000qzrmn831i7rn",
     content: "What is the capital of France?",
     options: ["Paris", "London", "Berlin", "Madrid"],
     correctAnswer: "Paris",
@@ -24,7 +24,7 @@ describe("QuestionController", () => {
   const mockQuestions = [
     mockQuestion,
     {
-      id: "2",
+      id: "cjld2cjxh0001qzrmn831i7rn",
       content: "What is 2+2?",
       options: ["3", "4", "5", "6"],
       correctAnswer: "4",
@@ -40,6 +40,7 @@ describe("QuestionController", () => {
       total: 2,
       page: 1,
       limit: 20,
+      totalPages: 1,
     },
   };
 
@@ -73,7 +74,7 @@ describe("QuestionController", () => {
     };
 
     it("should create a question successfully", async () => {
-      service.create.mockResolvedValue(mockQuestion);
+      vi.mocked(service.create).mockResolvedValue(mockQuestion);
 
       const result = await controller.create(createQuestionDto);
 
@@ -83,7 +84,7 @@ describe("QuestionController", () => {
 
     it("should handle service errors", async () => {
       const error = new BadRequestException("Validation failed");
-      service.create.mockRejectedValue(error);
+      vi.mocked(service.create).mockRejectedValue(error);
 
       await expect(controller.create(createQuestionDto)).rejects.toThrow(
         BadRequestException,
@@ -100,7 +101,7 @@ describe("QuestionController", () => {
     };
 
     it("should return paginated questions successfully", async () => {
-      service.findAll.mockResolvedValue(mockQuestionResponse);
+      vi.mocked(service.findAll).mockResolvedValue(mockQuestionResponse);
 
       const result = await controller.findAll(getQuestionsDto);
 
@@ -110,7 +111,7 @@ describe("QuestionController", () => {
 
     it("should handle service errors", async () => {
       const error = new BadRequestException("Invalid query parameters");
-      service.findAll.mockRejectedValue(error);
+      vi.mocked(service.findAll).mockRejectedValue(error);
 
       await expect(controller.findAll(getQuestionsDto)).rejects.toThrow(
         BadRequestException,
@@ -120,7 +121,7 @@ describe("QuestionController", () => {
 
     it("should work with minimal query parameters", async () => {
       const minimalQuery: GetQuestionsDto = {};
-      service.findAll.mockResolvedValue(mockQuestionResponse);
+      vi.mocked(service.findAll).mockResolvedValue(mockQuestionResponse);
 
       const result = await controller.findAll(minimalQuery);
 
@@ -130,10 +131,10 @@ describe("QuestionController", () => {
   });
 
   describe("findOne", () => {
-    const questionId = "1";
+    const questionId = "cjld2cjxh0000qzrmn831i7rn";
 
     it("should return a question by ID successfully", async () => {
-      service.findOne.mockResolvedValue(mockQuestion);
+      vi.mocked(service.findOne).mockResolvedValue(mockQuestion);
 
       const result = await controller.findOne(questionId);
 
@@ -145,7 +146,7 @@ describe("QuestionController", () => {
       const error = new NotFoundException(
         `Question with ID ${questionId} not found`,
       );
-      service.findOne.mockRejectedValue(error);
+      vi.mocked(service.findOne).mockRejectedValue(error);
 
       await expect(controller.findOne(questionId)).rejects.toThrow(
         NotFoundException,
@@ -153,10 +154,10 @@ describe("QuestionController", () => {
       expect(service.findOne).toHaveBeenCalledWith(questionId);
     });
 
-    it("should handle invalid UUID errors", async () => {
-      const invalidId = "invalid-uuid";
-      const error = new BadRequestException("Invalid UUID");
-      service.findOne.mockRejectedValue(error);
+    it("should handle invalid CUID errors", async () => {
+      const invalidId = "invalid-cuid";
+      const error = new BadRequestException("Invalid ID format");
+      vi.mocked(service.findOne).mockRejectedValue(error);
 
       await expect(controller.findOne(invalidId)).rejects.toThrow(
         BadRequestException,
@@ -166,7 +167,7 @@ describe("QuestionController", () => {
   });
 
   describe("update", () => {
-    const questionId = "1";
+    const questionId = "cjld2cjxh0000qzrmn831i7rn";
     const updateQuestionDto: UpdateQuestionDto = {
       content: "Updated question content",
       difficulty: QuestionDifficulty.MEDIUM,
@@ -174,7 +175,7 @@ describe("QuestionController", () => {
 
     it("should update a question successfully", async () => {
       const updatedQuestion = { ...mockQuestion, ...updateQuestionDto };
-      service.update.mockResolvedValue(updatedQuestion);
+      vi.mocked(service.update).mockResolvedValue(updatedQuestion);
 
       const result = await controller.update(questionId, updateQuestionDto);
 
@@ -189,7 +190,7 @@ describe("QuestionController", () => {
       const error = new NotFoundException(
         `Question with ID ${questionId} not found`,
       );
-      service.update.mockRejectedValue(error);
+      vi.mocked(service.update).mockRejectedValue(error);
 
       await expect(
         controller.update(questionId, updateQuestionDto),
@@ -202,7 +203,7 @@ describe("QuestionController", () => {
 
     it("should handle validation errors", async () => {
       const error = new BadRequestException("Bad Request");
-      service.update.mockRejectedValue(error);
+      vi.mocked(service.update).mockRejectedValue(error);
 
       await expect(
         controller.update(questionId, updateQuestionDto),
@@ -215,10 +216,10 @@ describe("QuestionController", () => {
   });
 
   describe("remove", () => {
-    const questionId = "1";
+    const questionId = "cjld2cjxh0000qzrmn831i7rn";
 
     it("should delete a question successfully", async () => {
-      service.remove.mockResolvedValue(undefined);
+      vi.mocked(service.remove).mockResolvedValue(undefined);
 
       const result = await controller.remove(questionId);
 
@@ -230,7 +231,7 @@ describe("QuestionController", () => {
       const error = new NotFoundException(
         `Question with ID ${questionId} not found`,
       );
-      service.remove.mockRejectedValue(error);
+      vi.mocked(service.remove).mockRejectedValue(error);
 
       await expect(controller.remove(questionId)).rejects.toThrow(
         NotFoundException,
@@ -238,10 +239,10 @@ describe("QuestionController", () => {
       expect(service.remove).toHaveBeenCalledWith(questionId);
     });
 
-    it("should handle invalid UUID errors", async () => {
-      const invalidId = "invalid-uuid";
-      const error = new BadRequestException("Invalid UUID");
-      service.remove.mockRejectedValue(error);
+    it("should handle invalid CUID errors", async () => {
+      const invalidId = "invalid-cuid";
+      const error = new BadRequestException("Invalid ID format");
+      vi.mocked(service.remove).mockRejectedValue(error);
 
       await expect(controller.remove(invalidId)).rejects.toThrow(
         BadRequestException,

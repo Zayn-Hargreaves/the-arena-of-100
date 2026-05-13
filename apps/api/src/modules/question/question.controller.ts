@@ -8,10 +8,10 @@ import {
   Delete,
   Query,
   ValidationPipe,
-  ParseUUIDPipe,
   UseGuards,
   HttpCode,
 } from "@nestjs/common";
+import { ParseCuidPipe } from "../../common/pipes/parse-cuid.pipe";
 import {
   ApiTags,
   ApiOperation,
@@ -82,7 +82,7 @@ export class QuestionController {
     type: Question,
   })
   @ApiResponse({ status: 404, description: "Question not found" })
-  async findOne(@Param("id", ParseUUIDPipe) id: string): Promise<Question> {
+  async findOne(@Param("id", ParseCuidPipe) id: string): Promise<Question> {
     return this.questionService.findOne(id);
   }
 
@@ -96,7 +96,7 @@ export class QuestionController {
   @ApiResponse({ status: 404, description: "Question not found" })
   @ApiResponse({ status: 400, description: "Bad Request" })
   async update(
-    @Param("id", ParseUUIDPipe) id: string,
+    @Param("id", ParseCuidPipe) id: string,
     @Body(
       new ValidationPipe({
         whitelist: true,
@@ -113,9 +113,9 @@ export class QuestionController {
   @ApiOperation({ summary: "Delete a question" })
   @ApiResponse({ status: 204, description: "Question deleted successfully" })
   @ApiResponse({ status: 404, description: "Question not found" })
-  @ApiResponse({ status: 400, description: "Invalid UUID" })
+  @ApiResponse({ status: 400, description: "Invalid CUID" })
   @HttpCode(204)
-  async remove(@Param("id", ParseUUIDPipe) id: string): Promise<void> {
+  async remove(@Param("id", ParseCuidPipe) id: string): Promise<void> {
     await this.questionService.remove(id);
   }
 }

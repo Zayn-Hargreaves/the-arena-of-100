@@ -34,7 +34,7 @@ describe("IsInArrayValidator", () => {
 
   it("should not validate when related field is not an array", async () => {
     const dto = new TestDto();
-    dto.options = "not-an-array";
+    dto.options = "not-an-array" as any;
     dto.selectedValue = "a";
 
     const errors = await validate(dto);
