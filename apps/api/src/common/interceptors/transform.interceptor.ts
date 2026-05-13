@@ -27,9 +27,9 @@ function isWrappedResponse(data: unknown): data is Response<unknown> {
 }
 
 // Type guard to check if data has the expected pagination structure
-function hasPaginationStructure(
+function hasPaginationStructure<T, M>(
   data: unknown,
-): data is { data: Record<string, unknown> | unknown[]; meta: Record<string, unknown> } {
+): data is { data: T; meta: M } {
   if (data === null || typeof data !== "object") {
     return false;
   }
@@ -61,27 +61,26 @@ function hasPaginationStructure(
 }
 
 @Injectable()
-export class TransformInterceptor<T> implements NestInterceptor<
-  T,
-  Response<T>
-> {
+export class TransformInterceptor<T, M = unknown>
+  implements NestInterceptor<T | { data: T; meta: M }, Response<T, M>>
+{
   intercept(
     _context: ExecutionContext,
     next: CallHandler,
-  ): Observable<Response<T>> {
+  ): Observable<Response<T, M>> {
     return next.handle().pipe(
       map((data) => {
         // If the response is already wrapped with success/message, return as-is
         if (isWrappedResponse(data)) {
-          return data as Response<T>;
+          return data as Response<T, M>;
         }
 
         // If the response has data and meta (like pagination)
-        if (hasPaginationStructure(data)) {
+        if (hasPaginationStructure<T, M>(data)) {
           return {
             success: true,
             message: "Success",
-            data: data.data as T, // We've validated the structure, so we can safely cast
+            data: data.data,
             meta: data.meta,
           };
         }
