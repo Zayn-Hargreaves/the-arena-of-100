@@ -76,21 +76,21 @@ Architecture review complete. Base scaffold is **structurally sound** — no res
 
 ### Critical Fixes (Before Features)
 
-3. Add `QuestionModule` + seed data
-4. Add `MatchStateMachine.serialize()/deserialize()` + Redis persistence
-5. Refactor `GameGateway` → split or delegate to handler classes
+1. Add `QuestionModule` + seed data
+2. Add `MatchStateMachine.serialize()/deserialize()` + Redis persistence
+3. Refactor `GameGateway` → split or delegate to handler classes
 
 ### Core Game Loop (MVP Minimum)
 
-6. Implement `GameLoopService` (countdown → round → evaluate → repeat)
-7. Implement round timer (auto-end round when time expires)
-8. Unit tests for `game-core` state machine
+1. Implement `GameLoopService` (countdown → round → evaluate → repeat)
+2. Implement round timer (auto-end round when time expires)
+3. Unit tests for `game-core` state machine
 
 ### Frontend + Integration
 
-9. Build lobby + game UI pages with routing
-10. Connect socket-store to UI components
-11. End-to-end flow test
+1. Build lobby + game UI pages with routing
+2. Connect socket-store to UI components
+3. End-to-end flow test
 
 ## Key Files Reference
 
