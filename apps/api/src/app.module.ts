@@ -12,6 +12,7 @@ import { RedisModule } from "./modules/redis/redis.module";
 import { AuthModule } from "./modules/auth/auth.module";
 import { RoomModule } from "./modules/room/room.module";
 import { MatchModule } from "./modules/match/match.module";
+import { QuestionModule } from "./modules/question/question.module";
 import { GameGateway } from "./gateways/game.gateway";
 import { TransformInterceptor } from "./common/interceptors/transform.interceptor";
 import { HttpExceptionFilter } from "./common/filters/http-exception.filter";
@@ -33,6 +34,7 @@ import { HttpExceptionFilter } from "./common/filters/http-exception.filter";
     AuthModule,
     RoomModule,
     MatchModule,
+    QuestionModule,
   ],
   providers: [
     GameGateway,
