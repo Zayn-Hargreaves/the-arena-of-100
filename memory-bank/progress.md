@@ -1,8 +1,9 @@
 # Progress: Arena of 100
 
-## Current Status: 🏗️ Base Scaffold Complete → Architecture Reviewed
+## Current Status: 🏗️ Base Scaffold Complete → CI/CD & Testing Setup
 
 ### ✅ Completed (Phase 0: Planning & Setup)
+
 - [x] Requirements analysis and scope definition
 - [x] Tech stack selection (NestJS + Fastify + Next.js + Zustand)
 - [x] Architecture design (Modular Monolith + Event-Driven)
@@ -15,8 +16,10 @@
 - [x] Infrastructure (Docker Compose for PostgreSQL + Redis)
 - [x] Memory bank documentation
 - [x] **Architecture assessment & review (2025-05-09)**
+- [x] **CI/CD Pipeline with GitHub Actions & Vitest setup (2026-05-12)**
 
 ### 🔴 Critical Fixes (Phase 0.5: Before Feature Development)
+
 - [ ] Add QuestionModule (service + controller + seed data)
 - [ ] Add MatchStateMachine.serialize()/deserialize() for Redis persistence
 - [ ] Refactor GameGateway from God Object → split or handler delegation
@@ -24,7 +27,8 @@
 - [ ] Fix shallow copy issue in `getState()` (Map not deep cloned)
 
 ### 🚧 In Progress (Phase 1: Core Implementation)
-- [ ] Install dependencies (`pnpm install`)
+
+- [x] Install dependencies (`pnpm install`)
 - [ ] Database migration and seeding
 - [ ] Implement GameLoopService (countdown → round → evaluate → repeat)
 - [ ] Implement round timer management (auto-end on timeout)
@@ -43,6 +47,7 @@
 - [ ] Game operations tools for emergency interventions
 
 ### 📋 Upcoming (Phase 2: Polish & Testing)
+
 - [ ] Drop-in spectating for late joiners
 - [ ] AFK sweeping logic
 - [ ] Reconnect logic with snapshot + event replay
@@ -60,6 +65,7 @@
 - [ ] Testing of game operations emergency procedures
 
 ### 🔮 Future (Phase 3: Production Ready)
+
 - [ ] Rate limiting
 - [ ] Sound effects
 - [ ] Advanced question management
@@ -70,6 +76,7 @@
 ## Known Issues / Technical Debt
 
 ### 🔴 Critical (Blocks Development)
+
 - **GameGateway God Object** — 319 LOC, single file handles all socket events
 - **In-memory state machines** — server restart loses all active matches
 - **Missing QuestionModule** — no way to seed/fetch questions
@@ -77,6 +84,7 @@
 - **`getState()` shallow copy** — `{...this.state}` doesn't deep clone `players` Map
 
 ### 🟡 Significant
+
 - No Game Loop Orchestrator (match lifecycle not implemented)
 - No round timer enforcement (15s timeout not scheduled)
 - Gateway does transport + application logic (missing Use Case layer)
@@ -88,6 +96,7 @@
 - `packages/config` directory exists but is empty
 
 ### 🟢 Nice-to-Have
+
 - Missing frictionless onboarding functionality with content moderation
 - No lobby lifecycle management with heartbeat validation
 - No drop-in spectating for late joiners
@@ -106,29 +115,35 @@
 - No game operations tools for emergency interventions
 
 ## Architecture Assessment Scores
-| Dimension | Score | Notes |
-|-----------|-------|-------|
-| Monorepo Structure | 9/10 | Near-perfect, missing test setup |
-| Package Boundaries | 9/10 | Clean separation, correct dependency flow |
-| Domain Logic (game-core) | 8/10 | Good state machine, needs serialization |
-| Backend Architecture | 6/10 | Modules OK, gateway bloated, no game loop |
-| Frontend Architecture | 4/10 | Only scaffold, no real UI |
-| Infrastructure | 7/10 | Docker OK, missing dev tooling |
-| Testing | 0/10 | No tests at all |
-| **Overall** | **6.5/10** | Solid foundation, needs implementation |
+
+| Dimension                | Score      | Notes                                     |
+| ------------------------ | ---------- | ----------------------------------------- |
+| Monorepo Structure       | 10/10      | Turborepo + Remote Caching                |
+| Package Boundaries       | 9/10       | Clean separation, correct dependency flow |
+| Domain Logic (game-core) | 8/10       | Good state machine, needs serialization   |
+| Backend Architecture     | 6/10       | Modules OK, gateway bloated, no game loop |
+| Frontend Architecture    | 4/10       | Only scaffold, no real UI                 |
+| Infrastructure           | 7/10       | Docker OK, missing dev tooling            |
+| DevOps/CI-CD             | 10/10      | GitHub Actions pipeline configured        |
+| Testing                  | 3/10       | Vitest setup with coverage enabled        |
+| **Overall**              | **6.7/10** | Solid foundation, CI/CD & Testing ready   |
 
 ## Milestones
-| Milestone | Target | Status |
-|-----------|--------|--------|
-| Base Scaffold | Week 1 | ✅ Complete |
-| Architecture Review | Week 1 | ✅ Complete |
-| Critical Fixes | Week 2 (start) | 🔴 Next |
-| Core Game Loop + Product UX | Week 2 | 🚧 Next |
-| Reconnect & Polish | Week 3 | 📋 Pending |
-| MVP Launch | Week 4 | 🔮 Future |
+
+| Milestone                   | Target         | Status      |
+| --------------------------- | -------------- | ----------- |
+| Base Scaffold               | Week 1         | ✅ Complete |
+| Architecture Review         | Week 1         | ✅ Complete |
+| Critical Fixes              | Week 2 (start) | 🔴 Next     |
+| Core Game Loop + Product UX | Week 2         | 🚧 Next     |
+| Reconnect & Polish          | Week 3         | 📋 Pending  |
+| MVP Launch                  | Week 4         | 🔮 Future   |
 
 ## What Works Now
-- Project structure and configuration
+
+- Project structure and CI/CD configuration
+- Vitest testing infrastructure with coverage reporting
+- Turborepo Remote Caching
 - Shared type definitions (events, state, socket protocol)
 - Match state machine (pure logic, no dependencies)
 - Backend module skeletons (auth, room, match)
@@ -137,12 +152,17 @@
 - Redis service with full operation support
 
 ## What's Next (Priority Order)
-1. Run `pnpm install` to install dependencies
-2. Start Docker containers (PostgreSQL + Redis)
-3. Run `pnpm db:push` to create database tables
-4. **🔴 Fix critical issues (QuestionModule, state persistence, gateway refactor)**
-5. Implement Game Loop Service
-6. Implement round timer management
-7. Write unit tests for game-core
-8. Build frontend lobby + game UI
-9. End-to-end integration
+
+1. Start Docker containers (PostgreSQL + Redis)
+2. Run `pnpm db:push` to create database tables
+3. **🔴 Fix critical issues (QuestionModule, state persistence, gateway refactor)**
+4. Implement Game Loop Service
+5. Implement round timer management
+6. Write unit tests for game-core
+7. Build frontend lobby + game UI
+8. End-to-end integration
+9. Implement Game Loop Service
+10. Implement round timer management
+11. Write unit tests for game-core
+12. Build frontend lobby + game UI
+13. End-to-end integration

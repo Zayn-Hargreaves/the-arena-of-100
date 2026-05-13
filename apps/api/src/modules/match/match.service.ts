@@ -47,7 +47,7 @@ export class MatchService {
     });
 
     // Create player records
-    const playerInfos: PlayerInfo[] = room.players.map((p) => ({
+    const playerInfos: PlayerInfo[] = room.players.map((p: any) => ({
       id: p.user.id,
       name: p.user.username,
       status: PlayerStatus.ACTIVE,
@@ -59,7 +59,7 @@ export class MatchService {
 
     // Create match players
     await this.prisma.matchPlayer.createMany({
-      data: room.players.map((p) => ({
+      data: room.players.map((p: any) => ({
         matchId: match.id,
         userId: p.user.id,
       })),

@@ -5,6 +5,18 @@ reviews:
   profile: "assertive"
   request_changes_workflow: false
   high_level_summary: true
+  instructions: |
+    - Project context: Real-time multiplayer quiz battle royale game (Arena of 100).
+    - Tech stack: Next.js 15, NestJS, Prisma, PostgreSQL, Redis, Socket.io.
+    - Monorepo structure (pnpm + Turborepo).
+    - Package Boundaries:
+      - @arena/shared: Shared types, events, constants.
+      - @arena/game-core: Pure game logic (state machine) - no external dependencies.
+      - @arena/api: NestJS backend. Depends on shared and game-core.
+      - @arena/web: Next.js frontend. Depends only on shared.
+    - Architecture: Server-Authoritative, Event Sourcing, Clean Architecture.
+    - Prioritize clean code, testability, and strict TypeScript types.
+    - Game core logic must not have external dependencies.
   auto_review:
     enabled: true
     ignore_title_keywords:

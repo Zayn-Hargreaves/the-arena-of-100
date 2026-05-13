@@ -1,9 +1,11 @@
 # Active Context: Arena of 100
 
 ## Current Focus
+
 Architecture review complete. Base scaffold is **structurally sound** — no restructuring needed. Now transitioning to Phase 1 implementation with 3 critical fixes that must be resolved first.
 
 ## Recent Changes
+
 - Created full monorepo structure with pnpm + Turborepo
 - Implemented shared types package (events, state, socket protocol)
 - Built MatchStateMachine in game-core (pure domain logic)
@@ -14,26 +16,31 @@ Architecture review complete. Base scaffold is **structurally sound** — no res
 - Created comprehensive memory bank documentation
 - **Completed architecture assessment (2025-05-09)**
 - **Identified 3 critical issues + 5 significant gaps**
+- **Set up CI/CD Pipeline & Vitest Infrastructure (2026-05-12)**
 
 ## Architecture Assessment Summary
 
 ### 🔴 Critical Issues (Fix Before Phase 1)
+
 1. **GameGateway God Object**: 319 LOC handling auth, room, match, answer, reconnect. Will balloon to 1000+ with spectator/emotes/admin. Must split or delegate.
 2. **In-Memory State Machines**: `Map<string, MatchStateMachine>` in RAM. Server restart = ALL matches lost. Need Redis persistence.
 3. **Missing QuestionModule**: Prisma has `Question` model but no service to seed/fetch questions. Game loop can't work without this.
 
 ### 🟡 Significant Gaps
-1. **No Game Loop Orchestrator**: `createMatch()` creates match but doesn't RUN it (countdown → round → evaluate → repeat)
+
+1. **Missing Test Coverage**: Vitest + coverage infrastructure complete, but no tests implemented yet
 2. **No Round Timer Management**: `ROUND_DURATION_MS = 15s` defined but no scheduler enforces it
 3. **Gateway ↔ Service Coupling**: Gateway does transport + application logic, needs Use Case layer
 4. **Frontend Only Has Landing Page**: No lobby/game/spectator routes or components
-5. **Zero Tests**: game-core is pure logic ideal for unit tests but none exist
+5. **No Lobby Lifecycle Management**: Missing heartbeat validation and auto-start mechanisms for rooms
 
-### 🟢 Architecture Score: 6.5/10
-- Monorepo: 9/10, Package Boundaries: 9/10, Domain Logic: 8/10
-- Backend: 6/10, Frontend: 4/10, Infra: 7/10, Testing: 0/10
+### 🟢 Architecture Score: 7.1/10
+
+- Monorepo: 10/10, Package Boundaries: 9/10, Domain Logic: 8/10
+- Backend: 6/10, Frontend: 4/10, Infra: 7/10, Testing: 3/10
 
 ## Active Decisions
+
 1. **NestJS + Fastify**: Chosen for performance and enterprise patterns
 2. **Socket.io**: Chosen for WebSocket with fallback support
 3. **Zustand**: Chosen over Redux for simplicity and performance
@@ -51,35 +58,42 @@ Architecture review complete. Base scaffold is **structurally sound** — no res
 15. **Anonymous Identity Tracking**: Device fingerprinting for persistent guest identity
 16. **Optimistic UI**: Instant feedback with smart recovery mechanisms
 17. **Game Operations**: Administrative tools for emergency interventions
+18. **Testing Framework**: Vitest chosen for its performance and native ESM support
 
 ## Pending Decisions (From Assessment)
+
 - [ ] Gateway refactor strategy: split into multiple gateways vs. 1 gateway + handler classes
 - [ ] Timer strategy: `setTimeout` in NestJS vs. Redis-based distributed timers
-- [ ] Test framework: Vitest vs. Jest for game-core
+- [x] Test framework: Vitest vs. Jest for game-core (Vitest selected)
 - [ ] Frontend routing structure: `/lobby/[code]`, `/game/[matchId]`
 
 ## Next Steps (Immediate — Priority Order)
+
 ### Pre-requisites
-1. Run `pnpm install` to install dependencies
-2. Start Docker containers for PostgreSQL + Redis
-3. Run `pnpm db:push` to create database tables
+
+1. Start Docker containers for PostgreSQL + Redis
+2. Run `pnpm db:push` to create database tables
 
 ### Critical Fixes (Before Features)
-4. Add `QuestionModule` + seed data
-5. Add `MatchStateMachine.serialize()/deserialize()` + Redis persistence
-6. Refactor `GameGateway` → split or delegate to handler classes
+
+3. Add `QuestionModule` + seed data
+4. Add `MatchStateMachine.serialize()/deserialize()` + Redis persistence
+5. Refactor `GameGateway` → split or delegate to handler classes
 
 ### Core Game Loop (MVP Minimum)
-7. Implement `GameLoopService` (countdown → round → evaluate → repeat)
-8. Implement round timer (auto-end round when time expires)
-9. Unit tests for `game-core` state machine
+
+6. Implement `GameLoopService` (countdown → round → evaluate → repeat)
+7. Implement round timer (auto-end round when time expires)
+8. Unit tests for `game-core` state machine
 
 ### Frontend + Integration
-10. Build lobby + game UI pages with routing
-11. Connect socket-store to UI components
-12. End-to-end flow test
+
+9. Build lobby + game UI pages with routing
+10. Connect socket-store to UI components
+11. End-to-end flow test
 
 ## Key Files Reference
+
 ```
 packages/shared/src/
 ├── events.ts      # Event types and factory
@@ -103,6 +117,7 @@ apps/web/src/
 ```
 
 ## Important Patterns to Remember
+
 - All timestamps are server-side (anti-cheat)
 - Client sends intent, server validates and executes
 - State transitions are guarded (can't skip states)
@@ -123,8 +138,9 @@ apps/web/src/
 - Administrative tools need secure access controls
 
 ## Current Blockers
+
 - **🔴 No QuestionModule** — game loop can't work without questions
-- **🔴 In-memory state machines** — no crash recovery
+- **🔴 In-Memory state machines** — no crash recovery
 - **🔴 GameGateway monolith** — blocks clean feature development
 - Missing frictionless onboarding functionality with content moderation
 - No lobby lifecycle management with heartbeat validation
