@@ -21,7 +21,7 @@ export class Question {
   })
   options!: string[];
 
-  @Exclude()
+  @Exclude({ toPlainOnly: true })
   correctAnswer!: string;
 
   @ApiProperty({

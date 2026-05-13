@@ -10,6 +10,7 @@ import { GetQuestionsDto } from "./dto/get-questions.dto";
 import { Prisma } from "@prisma/client";
 import { Question } from "./entities/question.entity";
 import { QuestionResponseDto } from "./dto/question-response.dto";
+import { plainToInstance } from "class-transformer";
 
 @Injectable()
 export class QuestionService {
@@ -28,7 +29,7 @@ export class QuestionService {
       },
     });
 
-    return question as unknown as Question;
+    return plainToInstance(Question, question);
   }
 
   async findAll(query: GetQuestionsDto): Promise<QuestionResponseDto> {
@@ -63,15 +64,16 @@ export class QuestionService {
       this.prisma.question.count({ where }),
     ]);
 
-    return {
-      data: data as unknown as Question[],
+
+    return plainToInstance(QuestionResponseDto, {
+      data: plainToInstance(Question, data),
       meta: {
         total,
         page,
         limit: cappedLimit,
         totalPages: Math.ceil(total / cappedLimit),
       },
-    };
+    });
   }
 
   async findOne(id: string): Promise<Question> {
@@ -83,7 +85,7 @@ export class QuestionService {
       throw new NotFoundException(`Question with ID ${id} not found`);
     }
 
-    return question as unknown as Question;
+    return plainToInstance(Question, question);
   }
   private handlePrismaNotFound(error: unknown, id: string): never {
     if (
@@ -104,7 +106,8 @@ export class QuestionService {
         where: { id },
         data: updateQuestionDto,
       });
-      return question as unknown as Question;
+
+      return plainToInstance(Question, question);
     } catch (error) {
       return this.handlePrismaNotFound(error, id);
     }

@@ -9,10 +9,15 @@ import {
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
 import { AppModule } from "./app.module";
-import { Logger, ValidationPipe, VersioningType } from "@nestjs/common";
+import {
+  Logger,
+  ValidationPipe,
+  VersioningType,
+  ClassSerializerInterceptor,
+} from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
-import helmet, { FastifyHelmetOptions } from "@fastify/helmet";
-import type { FastifyPluginAsync } from "fastify";
+import helmet from "@fastify/helmet";
 
 async function bootstrap() {
   const logger = new Logger("Bootstrap");
@@ -26,7 +31,7 @@ async function bootstrap() {
 
   // Security: Helmet (strict CSP, relaxed for Swagger via hook)
   await app.register(
-    helmet as unknown as FastifyPluginAsync<FastifyHelmetOptions>,
+    helmet,
     {
       contentSecurityPolicy: {
         directives: {
@@ -66,6 +71,7 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
+  app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
 
   // Swagger Documentation
   const config = new DocumentBuilder()
