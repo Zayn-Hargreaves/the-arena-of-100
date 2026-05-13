@@ -5,9 +5,10 @@
     "outDir": "dist",
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
-    "types": ["node", "vitest/globals"]
+    "types": ["node"]
   },
   "include": ["src"],
+  "exclude": ["node_modules", "dist", "src/**/*.spec.ts", "src/**/*.test.ts"],
   "references": [
     { "path": "../../packages/shared" },
     { "path": "../../packages/game-core" }
