@@ -8,12 +8,13 @@ dist/
 .turbo/
 
 # Prisma compiled files
-prisma/*.js
-prisma/*.js.map
-prisma/*.d.ts
-prisma/*.d.ts.map
-prisma/seeds/*.js
-prisma/seeds/*.js.map
+**/prisma/*.js
+**/prisma/*.js.map
+**/prisma/*.d.ts
+**/prisma/*.d.ts.map
+**/prisma/seeds/*.js
+**/prisma/seeds/*.js.map
+**/prisma/seeds/*.d.ts
 
 # Environment files
 .env
