@@ -3,7 +3,7 @@ import { of } from 'rxjs';
 import { ExecutionContext } from '@nestjs/common';
 
 describe('TransformInterceptor', () => {
-  let interceptor: TransformInterceptor<any>;
+  let interceptor: TransformInterceptor<unknown>;
   const mockContext = {} as ExecutionContext;
   
   beforeEach(() => {
@@ -29,7 +29,7 @@ describe('TransformInterceptor', () => {
   });
 
   it('should preserve already wrapped responses', () => {
-    const testData: Response<any> = {
+    const testData: Response<unknown> = {
       success: false,
       message: 'Custom error message',
       data: { error: 'something went wrong' },

@@ -27,12 +27,36 @@ function isWrappedResponse(data: unknown): data is Response<unknown> {
 }
 
 // Type guard to check if data has the expected pagination structure
-function hasPaginationStructure(data: unknown): data is { data: unknown; meta: unknown } {
-  return (
-    data !== null &&
-    typeof data === "object" &&
-    "data" in data &&
-    "meta" in data
+function hasPaginationStructure(
+  data: unknown,
+): data is { data: Record<string, unknown> | unknown[]; meta: Record<string, unknown> } {
+  if (data === null || typeof data !== "object") {
+    return false;
+  }
+
+  const record = data as Record<string, unknown>;
+
+  if (!("data" in record) || !("meta" in record)) {
+    return false;
+  }
+
+  const dataProp = record.data;
+  const metaProp = record.meta;
+
+  // data should be an object or array (not a primitive string/number/boolean/null)
+  const isDataValid = dataProp !== null && typeof dataProp === "object";
+
+  // meta should be a non-null object
+  const isMetaValid = metaProp !== null && typeof metaProp === "object";
+
+  if (!isDataValid || !isMetaValid) {
+    return false;
+  }
+
+  const meta = metaProp as Record<string, unknown>;
+
+  return ["total", "page", "limit", "totalCount", "perPage"].some(
+    (key) => typeof meta[key] === "number",
   );
 }
 
