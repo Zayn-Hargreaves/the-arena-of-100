@@ -193,6 +193,7 @@ export class RoomService {
     const room = await this.prisma.room.update({
       where: { id: roomId },
       data: { status },
+      include: { players: true },
     });
 
     await this.redis.setJSON(
@@ -202,6 +203,7 @@ export class RoomService {
         code: room.code,
         status: room.status,
         hostId: room.hostId,
+        playerCount: room.players.length,
       },
       3600,
     );

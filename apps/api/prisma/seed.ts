@@ -1,5 +1,22 @@
 import { PrismaClient } from "@prisma/client";
 import { questionSeeds } from "./seeds/questions";
+import { z } from "zod";
+
+// Define environment schema
+const envSchema = z.object({
+  SEED_CLEAR: z
+    .string()
+    .transform((val) => val === "true")
+    .default("false"),
+  NODE_ENV: z.string().default("development"),
+  FORCE_SEED_CLEANUP: z
+    .string()
+    .transform((val) => val === "true")
+    .default("false"),
+});
+
+// Parse environment variables
+const parsedEnv = envSchema.parse(process.env);
 
 const prisma = new PrismaClient();
 
@@ -9,35 +26,41 @@ async function main() {
   // 1. Seed Questions
   console.log("🌱 Seeding questions...");
 
+  // Validate questionSeeds before proceeding
+  if (!Array.isArray(questionSeeds) || questionSeeds.length === 0) {
+    throw new Error("❌ questionSeeds is undefined, not an array, or empty. Seeding aborted.");
+  }
+
   // Safety check for clearing existing questions
-  const shouldClear = process.env.SEED_CLEAR === "true";
-  const isProduction = process.env.NODE_ENV === "production";
-  const forceCleanup = process.env.FORCE_SEED_CLEANUP === "true";
+  const shouldClear = parsedEnv.SEED_CLEAR;
+  const isProduction = parsedEnv.NODE_ENV === "production";
+  const forceCleanup = parsedEnv.FORCE_SEED_CLEANUP;
 
   if (shouldClear) {
     // Additional safety check for production environment
     if (isProduction && !forceCleanup) {
       console.log("⚠️  Skipping question deletion in production environment");
+      
+      // Just seed new questions without deleting existing ones
+      const { count } = await prisma.question.createMany({
+        data: questionSeeds,
+        skipDuplicates: true,
+      });
+      console.log(`✅ Seeded ${count} questions`);
     } else {
       // Confirmation prompt for destructive operation
       console.log("⚠️  About to delete all existing questions!");
-
-      if (forceCleanup) {
-        console.log(
-          "✅ Force cleanup enabled, proceeding with seeding in transaction...",
-        );
-        const [created] = await prisma.$transaction([
-          prisma.question.createMany({
-            data: questionSeeds,
-            skipDuplicates: true,
-          }),
-        ]);
-        console.log(`✅ Seeded ${created.count} questions`);
-      } else {
-        console.log(
-          "⏭️  Skipping question deletion (set SEED_CLEAR=true and FORCE_SEED_CLEANUP=true to enable)",
-        );
-      }
+      
+      // Perform deletion and seeding together inside a single transaction
+      const [deleted, created] = await prisma.$transaction([
+        prisma.question.deleteMany(),
+        prisma.question.createMany({
+          data: questionSeeds,
+          skipDuplicates: true,
+        }),
+      ]);
+      console.log(`🗑️ Deleted ${deleted.count} existing questions`);
+      console.log(`✅ Seeded ${created.count} questions`);
     }
   } else {
     console.log(

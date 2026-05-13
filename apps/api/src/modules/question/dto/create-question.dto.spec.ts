@@ -26,7 +26,7 @@ describe("CreateQuestionDto", () => {
     expect(errors[0].property).toBe("correctAnswer");
   });
 
-  it("should not validate correctAnswer when options is not an array", async () => {
+  it("should not validate when options is not an array", async () => {
     const dto = new CreateQuestionDto();
     dto.content = "What is the capital of France?";
     dto.options = "Paris" as any; // Invalid type
@@ -35,5 +35,88 @@ describe("CreateQuestionDto", () => {
 
     const errors = await validate(dto);
     expect(errors.length).toBeGreaterThan(0);
+    const optionsError = errors.find(error => error.property === "options");
+    expect(optionsError).toBeDefined();
+    expect(Object.keys(optionsError!.constraints || {}).length).toBeGreaterThan(0);
+  });
+
+  it("should not validate when content is missing", async () => {
+    const dto = new CreateQuestionDto();
+    dto.options = ["Paris", "London", "Berlin", "Madrid"];
+    dto.correctAnswer = "Paris";
+    dto.difficulty = QuestionDifficulty.EASY;
+
+    const errors = await validate(dto);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].property).toBe("content");
+  });
+
+  it("should not validate when options is missing", async () => {
+    const dto = new CreateQuestionDto();
+    dto.content = "What is the capital of France?";
+    dto.correctAnswer = "Paris";
+    dto.difficulty = QuestionDifficulty.EASY;
+
+    const errors = await validate(dto);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].property).toBe("options");
+  });
+
+  it("should not validate when correctAnswer is missing", async () => {
+    const dto = new CreateQuestionDto();
+    dto.content = "What is the capital of France?";
+    dto.options = ["Paris", "London", "Berlin", "Madrid"];
+    dto.difficulty = QuestionDifficulty.EASY;
+
+    const errors = await validate(dto);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].property).toBe("correctAnswer");
+  });
+
+  it("should not validate when difficulty is missing", async () => {
+    const dto = new CreateQuestionDto();
+    dto.content = "What is the capital of France?";
+    dto.options = ["Paris", "London", "Berlin", "Madrid"];
+    dto.correctAnswer = "Paris";
+
+    const errors = await validate(dto);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].property).toBe("difficulty");
+  });
+
+  it("should not validate when options is an empty array", async () => {
+    const dto = new CreateQuestionDto();
+    dto.content = "What is the capital of France?";
+    dto.options = [];
+    dto.correctAnswer = "Paris";
+    dto.difficulty = QuestionDifficulty.EASY;
+
+    const errors = await validate(dto);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].property).toBe("options");
+  });
+
+  it("should not validate when correctAnswer is an empty string", async () => {
+    const dto = new CreateQuestionDto();
+    dto.content = "What is the capital of France?";
+    dto.options = ["Paris", "London", "Berlin", "Madrid"];
+    dto.correctAnswer = "";
+    dto.difficulty = QuestionDifficulty.EASY;
+
+    const errors = await validate(dto);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].property).toBe("correctAnswer");
+  });
+
+  it("should not validate when options contains duplicate values", async () => {
+    const dto = new CreateQuestionDto();
+    dto.content = "What is the capital of France?";
+    dto.options = ["Paris", "London", "Paris", "Madrid"];
+    dto.correctAnswer = "Paris";
+    dto.difficulty = QuestionDifficulty.EASY;
+
+    const errors = await validate(dto);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].property).toBe("options");
   });
 });

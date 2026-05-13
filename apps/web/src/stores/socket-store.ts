@@ -109,14 +109,14 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     });
 
     newSocket.on(ServerEvent.ROOM_CREATED, (data) => {
-      set((state) => ({
+      set({
         room: {
           id: data.roomId,
           code: data.code,
           status: 'WAITING',
           players: [],
         },
-      }));
+      });
       console.log('🏠 Room created:', data.code);
     });
 
@@ -133,7 +133,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     });
 
     newSocket.on(ServerEvent.SNAPSHOT, (data: SnapshotPayload) => {
-      set((state) => ({
+      set({
         match: {
           id: data.matchId,
           status: data.status,
@@ -142,7 +142,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           currentQuestion: data.currentQuestion,
           roundEndTime: data.roundEndTime,
         },
-      }));
+      });
       console.log('📸 Snapshot received');
     });
 

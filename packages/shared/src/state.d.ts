@@ -64,6 +64,7 @@ export interface QuestionState {
     id: string;
     content: string;
     options: string[];
+    difficulty?: 'EASY' | 'MEDIUM' | 'HARD';
 }
 export interface AnswerState {
     playerId: string;

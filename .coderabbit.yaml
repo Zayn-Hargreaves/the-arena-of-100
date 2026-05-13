@@ -5,7 +5,7 @@ reviews:
   profile: "assertive"
   request_changes_workflow: false
   high_level_summary: true
-  instructions: |
+  path_instructions: |
     - Project context: Real-time multiplayer quiz battle royale game (Arena of 100).
     - Tech stack: Next.js 15, NestJS, Prisma, PostgreSQL, Redis, Socket.io.
     - Monorepo structure (pnpm + Turborepo).

@@ -14,7 +14,7 @@ Architecture review complete. Base scaffold is **structurally sound** — no res
 - Defined Prisma schema for PostgreSQL
 - Set up Docker Compose for infrastructure
 - Created comprehensive memory bank documentation
-- **Completed architecture assessment (2025-05-09)**
+- **Completed architecture assessment (2026-05-09)**
 - **Identified 3 critical issues + 5 significant gaps**
 - **Set up CI/CD Pipeline & Vitest Infrastructure (2026-05-12)**
 
@@ -28,7 +28,7 @@ Architecture review complete. Base scaffold is **structurally sound** — no res
 
 ### 🟡 Significant Gaps
 
-1. **Missing Test Coverage**: Vitest + coverage infrastructure complete, but no tests implemented yet
+1. **Missing Test Coverage**: Vitest + coverage infrastructure set up, but no tests implemented yet
 2. **No Round Timer Management**: `ROUND_DURATION_MS = 15s` defined but no scheduler enforces it
 3. **Gateway ↔ Service Coupling**: Gateway does transport + application logic, needs Use Case layer
 4. **Frontend Only Has Landing Page**: No lobby/game/spectator routes or components

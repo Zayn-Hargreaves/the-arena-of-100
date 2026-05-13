@@ -61,6 +61,7 @@ export class QuestionService {
         total,
         page,
         limit: cappedLimit,
+        totalPages: Math.ceil(total / cappedLimit),
       },
     };
   }
@@ -76,6 +77,15 @@ export class QuestionService {
 
     return question;
   }
+  private handlePrismaNotFound(error: unknown, id: string): never {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2025"
+    ) {
+      throw new NotFoundException(`Question with ID ${id} not found`);
+    }
+    throw error;
+  }
 
   async update(id: string, updateQuestionDto: UpdateQuestionDto) {
     try {
@@ -84,15 +94,7 @@ export class QuestionService {
         data: updateQuestionDto,
       });
     } catch (error) {
-      // Handle Prisma's P2025 error (Record not found)
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2025"
-      ) {
-        throw new NotFoundException(`Question with ID ${id} not found`);
-      }
-      // Re-throw other errors
-      throw error;
+      this.handlePrismaNotFound(error, id);
     }
   }
 
@@ -102,15 +104,7 @@ export class QuestionService {
         where: { id },
       });
     } catch (error) {
-      // Handle Prisma's P2025 error (Record not found)
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2025"
-      ) {
-        throw new NotFoundException(`Question with ID ${id} not found`);
-      }
-      // Re-throw other errors
-      throw error;
+      this.handlePrismaNotFound(error, id);
     }
   }
 }

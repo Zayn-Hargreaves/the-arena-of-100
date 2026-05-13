@@ -1,5 +1,6 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { Exclude } from "class-transformer";
+import { QuestionDifficulty } from "../dto/get-questions.dto";
 
 export class Question {
   @ApiProperty({
@@ -20,16 +21,15 @@ export class Question {
   })
   options!: string[];
 
-  @ApiProperty({ example: "Paris", description: "The correct answer" })
   @Exclude()
   correctAnswer!: string;
 
   @ApiProperty({
     example: "EASY",
     description: "The difficulty level",
-    enum: ["EASY", "MEDIUM", "HARD"],
+    enum: QuestionDifficulty,
   })
-  difficulty!: string;
+  difficulty!: QuestionDifficulty;
 
   @ApiProperty({ example: true, description: "Whether the question is active" })
   active!: boolean;

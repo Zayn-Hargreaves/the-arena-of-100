@@ -1,4 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
+import { QuestionDifficulty } from "../get-questions.dto";
 
 export class QuestionAdminResponseDto {
   @ApiProperty({
@@ -25,9 +26,9 @@ export class QuestionAdminResponseDto {
   @ApiProperty({
     example: "EASY",
     description: "The difficulty level",
-    enum: ["EASY", "MEDIUM", "HARD"],
+    enum: QuestionDifficulty,
   })
-  difficulty!: string;
+  difficulty!: QuestionDifficulty;
 
   @ApiProperty({ example: true, description: "Whether the question is active" })
   active!: boolean;

@@ -10,6 +10,7 @@ import {
 } from "class-validator";
 import { Transform, Type } from "class-transformer";
 import { ApiPropertyOptional } from "@nestjs/swagger";
+import { BadRequestException } from "@nestjs/common";
 
 export enum QuestionDifficulty {
   EASY = "EASY",
@@ -22,6 +23,7 @@ export class GetQuestionsDto {
   @IsOptional()
   @IsInt()
   @Min(1)
+  @Max(1000)
   @Type(() => Number)
   page?: number = 1;
 
@@ -62,7 +64,7 @@ export class GetQuestionsDto {
     if (value === undefined || value === null || value === "") return undefined;
     else if (value === "true" || value === true) return true;
     else if (value === "false" || value === false) return false;
-    else return undefined;
+    else throw new BadRequestException("Invalid boolean value for active");
   })
   active?: boolean;
 }

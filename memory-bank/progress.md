@@ -161,8 +161,3 @@
 6. Write unit tests for game-core
 7. Build frontend lobby + game UI
 8. End-to-end integration
-9. Implement Game Loop Service
-10. Implement round timer management
-11. Write unit tests for game-core
-12. Build frontend lobby + game UI
-13. End-to-end integration

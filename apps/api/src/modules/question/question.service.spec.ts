@@ -66,14 +66,6 @@ describe("QuestionService", () => {
     it("should cap the limit at MAX_LIMIT", async () => {
       const query: GetQuestionsDto = { page: 1, limit: 150 }; // Exceeds MAX_LIMIT of 100
 
-
-      mockPrismaService.question.findMany.mockImplementationOnce(() =>
-        Promise.resolve(mockQuestions),
-      );
-      mockPrismaService.question.count.mockImplementationOnce(() =>
-        Promise.resolve(mockCount),
-      );
-
       const result = await service.findAll(query);
 
       // Should use capped limit of 100 instead of 150
@@ -97,14 +89,6 @@ describe("QuestionService", () => {
     it("should use provided limit when below MAX_LIMIT", async () => {
       const query: GetQuestionsDto = { page: 1, limit: 50 }; // Below MAX_LIMIT of 100
 
-
-      mockPrismaService.question.findMany.mockImplementationOnce(() =>
-        Promise.resolve(mockQuestions),
-      );
-      mockPrismaService.question.count.mockImplementationOnce(() =>
-        Promise.resolve(mockCount),
-      );
-
       const result = await service.findAll(query);
 
       // Should use the provided limit of 50
@@ -127,14 +111,6 @@ describe("QuestionService", () => {
 
     it("should use default limit when none provided", async () => {
       const query: GetQuestionsDto = { page: 1 }; // No limit provided, should default to 20
-
-
-      mockPrismaService.question.findMany.mockImplementationOnce(() =>
-        Promise.resolve(mockQuestions),
-      );
-      mockPrismaService.question.count.mockImplementationOnce(() =>
-        Promise.resolve(mockCount),
-      );
 
       const result = await service.findAll(query);
 
@@ -224,7 +200,7 @@ describe("QuestionService", () => {
         id,
         content: "Question",
         options: [],
-        correctAnswer: 0,
+        correctAnswer: "0",
         difficulty: QuestionDifficulty.EASY,
         active: true,
         createdAt: new Date(),

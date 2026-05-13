@@ -3,6 +3,9 @@ export type Difficulty = "EASY" | "MEDIUM" | "HARD";
 export interface Question {
   content: string;
   options: string[];
+  /**
+   * Must be one of the entries in the options array
+   */
   correctAnswer: string;
   difficulty: Difficulty;
 }
@@ -141,3 +144,26 @@ export const questionSeeds: Question[] = [
     difficulty: "HARD",
   },
 ];
+
+/**
+ * Validates that correctAnswer is one of the options
+ * @param question The question to validate
+ * @throws Error if correctAnswer is not in options
+ */
+function validateQuestion(question: Question): void {
+  if (!question.options.includes(question.correctAnswer)) {
+    throw new Error(
+      `Invalid question: correctAnswer "${question.correctAnswer}" is not in options [${question.options.join(", ")}] for question "${question.content}"`
+    );
+  }
+}
+
+/**
+ * Validates all questions in the seed data
+ */
+function validateQuestions(): void {
+  questionSeeds.forEach(validateQuestion);
+}
+
+// Validate all questions on module load
+validateQuestions();

@@ -10,6 +10,7 @@ import {
   ValidationPipe,
   ParseUUIDPipe,
   UseGuards,
+  HttpCode,
 } from "@nestjs/common";
 import {
   ApiTags,
@@ -22,16 +23,8 @@ import { CreateQuestionDto } from "./dto/create-question.dto";
 import { UpdateQuestionDto } from "./dto/update-question.dto";
 import { GetQuestionsDto } from "./dto/get-questions.dto";
 import { Question } from "./entities/question.entity";
+import { QuestionResponseDto } from "./dto/question-response.dto";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
-
-interface QuestionResponse {
-  data: Question[];
-  meta: {
-    total: number;
-    page: number;
-    limit: number;
-  };
-}
 
 @ApiTags("Questions")
 @ApiBearerAuth()
@@ -49,8 +42,8 @@ export class QuestionController {
   })
   @ApiResponse({ status: 400, description: "Validation failed" })
   async create(
-    @Body(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
-    createQuestionDto: CreateQuestionDto,
+    @Body(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+     createQuestionDto: CreateQuestionDto,
   ): Promise<Question> {
     return this.questionService.create(createQuestionDto);
   }
@@ -60,12 +53,12 @@ export class QuestionController {
   @ApiResponse({
     status: 200,
     description: "Return all questions",
-    type: [Question],
+    type: QuestionResponseDto,
   })
   async findAll(
-    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    @Query(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
     query: GetQuestionsDto,
-  ): Promise<QuestionResponse> {
+  ): Promise<QuestionResponseDto> {
     return this.questionService.findAll(query);
   }
 
@@ -100,9 +93,10 @@ export class QuestionController {
 
   @Delete(":id")
   @ApiOperation({ summary: "Delete a question" })
-  @ApiResponse({ status: 200, description: "Question deleted successfully" })
+  @ApiResponse({ status: 204, description: "Question deleted successfully" })
   @ApiResponse({ status: 404, description: "Question not found" })
   @ApiResponse({ status: 400, description: "Invalid UUID" })
+  @HttpCode(204)
   async remove(@Param("id", ParseUUIDPipe) id: string): Promise<void> {
     await this.questionService.remove(id);
   }

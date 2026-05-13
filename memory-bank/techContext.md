@@ -103,8 +103,11 @@ pnpm dev
 - Coverage reporting via `@vitest/coverage-v8`
 - Target: 80% coverage
 - Automated execution in CI/CD pipeline
-- Focus on game-core logic first
-- Prioritize unit/integration tests for game-core; add E2E tests for critical user flows (future)
+- Vitest for unit and integration tests
+- Coverage reporting via `@vitest/coverage-v8`
+- Target: 80% coverage
+- Automated execution in CI/CD pipeline
+- Testing priorities: unit/integration tests for game-core package first, then E2E tests for critical user flows (future)
 
 ## Performance Considerations
 

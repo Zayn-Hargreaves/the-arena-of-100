@@ -5,6 +5,11 @@ import {
   IsBoolean,
   IsOptional,
   MinLength,
+  MaxLength,
+  ArrayMinSize,
+  ArrayMaxSize,
+  ArrayUnique,
+  IsNotEmpty,
 } from "class-validator";
 import { ApiProperty } from "@nestjs/swagger";
 import { QuestionDifficulty } from "./get-questions.dto";
@@ -17,6 +22,7 @@ export class CreateQuestionDto {
   })
   @IsString()
   @MinLength(3)
+  @MaxLength(1000)
   content!: string;
 
   @ApiProperty({
@@ -24,7 +30,11 @@ export class CreateQuestionDto {
     description: "The possible answers",
   })
   @IsArray()
+  @ArrayMinSize(2)
+  @ArrayMaxSize(6)
+  @ArrayUnique()
   @IsString({ each: true })
+  @IsNotEmpty({ each: true })
   options!: string[];
 
   @ApiProperty({ example: "Paris", description: "The correct answer" })
