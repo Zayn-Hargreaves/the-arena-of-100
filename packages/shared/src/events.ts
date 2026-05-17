@@ -5,24 +5,24 @@
 
 // Room Events
 export enum RoomEventType {
-  ROOM_CREATED = 'ROOM_CREATED',
-  PLAYER_JOINED = 'PLAYER_JOINED',
-  PLAYER_LEFT = 'PLAYER_LEFT',
-  ROOM_SETTINGS_UPDATED = 'ROOM_SETTINGS_UPDATED',
-  MATCH_STARTED = 'MATCH_STARTED',
+  ROOM_CREATED = "ROOM_CREATED",
+  PLAYER_JOINED = "PLAYER_JOINED",
+  PLAYER_LEFT = "PLAYER_LEFT",
+  ROOM_SETTINGS_UPDATED = "ROOM_SETTINGS_UPDATED",
+  MATCH_STARTED = "MATCH_STARTED",
 }
 
 // Match Events
 export enum MatchEventType {
-  MATCH_CREATED = 'MATCH_CREATED',
-  MATCH_STARTED = 'MATCH_STARTED',
-  ROUND_STARTED = 'ROUND_STARTED',
-  ROUND_ENDED = 'ROUND_ENDED',
-  ANSWER_SUBMITTED = 'ANSWER_SUBMITTED',
-  PLAYER_ELIMINATED = 'PLAYER_ELIMINATED',
-  MATCH_FINISHED = 'MATCH_FINISHED',
-  PLAYER_RECONNECTED = 'PLAYER_RECONNECTED',
-  PLAYER_DISCONNECTED = 'PLAYER_DISCONNECTED',
+  MATCH_CREATED = "MATCH_CREATED",
+  MATCH_STARTED = "MATCH_STARTED",
+  ROUND_STARTED = "ROUND_STARTED",
+  ROUND_ENDED = "ROUND_ENDED",
+  ANSWER_SUBMITTED = "ANSWER_SUBMITTED",
+  PLAYER_ELIMINATED = "PLAYER_ELIMINATED",
+  MATCH_FINISHED = "MATCH_FINISHED",
+  PLAYER_RECONNECTED = "PLAYER_RECONNECTED",
+  PLAYER_DISCONNECTED = "PLAYER_DISCONNECTED",
 }
 
 // Base Event Interface
@@ -39,7 +39,7 @@ export interface RoomCreatedPayload {
   roomId: string;
   roomCode: string;
   hostId: string;
-  roomType: 'PUBLIC' | 'PRIVATE';
+  roomType: "PUBLIC" | "PRIVATE";
   maxPlayers: number;
 }
 
@@ -53,7 +53,7 @@ export interface PlayerJoinedPayload {
 export interface PlayerLeftPayload {
   roomId: string;
   playerId: string;
-  reason: 'DISCONNECTED' | 'KICKED' | 'LEFT';
+  reason: "DISCONNECTED" | "KICKED" | "LEFT";
 }
 
 // Match Event Payloads
@@ -99,7 +99,7 @@ export interface PlayerEliminatedPayload {
   matchId: string;
   roundNo: number;
   playerId: string;
-  reason: 'WRONG_ANSWER' | 'TIMEOUT';
+  reason: "WRONG_ANSWER" | "TIMEOUT";
 }
 
 export interface MatchFinishedPayload {
@@ -147,7 +147,9 @@ export function createEvent<T>(
   seqNo: number,
 ): BaseEvent<T> {
   return {
-    id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    id:
+      crypto.randomUUID?.() ??
+      `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     type,
     timestamp: Date.now(),
     payload,

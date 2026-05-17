@@ -7,6 +7,16 @@ dist/
 .next/
 .turbo/
 
+# Prisma compiled files
+**/prisma/*.js
+**/prisma/*.js.map
+**/prisma/*.d.ts
+**/prisma/*.d.ts.map
+**/prisma/seeds/*.js
+**/prisma/seeds/*.js.map
+**/prisma/seeds/*.d.ts
+**/prisma/seeds/*.d.ts.map
+
 # Environment files
 .env
 .env.local

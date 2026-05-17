@@ -2,11 +2,22 @@
 // Match Service - Match Management Logic
 // ============================================================
 
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { RedisService } from '../redis/redis.service';
-import { MatchStateMachine } from '@arena/game-core';
-import { MatchStatus, RoomStatus, PlayerStatus, ErrorCode, type PlayerInfo } from '@arena/shared';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+} from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { RedisService } from "../redis/redis.service";
+import { MatchStateMachine } from "@arena/game-core";
+import {
+  MatchStatus,
+  RoomStatus,
+  PlayerStatus,
+  ErrorCode,
+  type PlayerInfo,
+} from "@arena/shared";
 
 @Injectable()
 export class MatchService {
@@ -35,7 +46,7 @@ export class MatchService {
     }
 
     if (room.players.length < 2) {
-      throw new BadRequestException('Cần ít nhất 2 người chơi');
+      throw new BadRequestException("Cần ít nhất 2 người chơi");
     }
 
     // Create match in DB
@@ -76,7 +87,11 @@ export class MatchService {
     });
 
     // Cache match state in Redis
-    await this.redis.setJSON(`match:${match.id}`, stateMachine.getSnapshot(0), 7200);
+    await this.redis.setJSON(
+      `match:${match.id}`,
+      stateMachine.getSnapshot(0),
+      7200,
+    );
 
     this.logger.log(`Match created: ${match.id} for room ${roomId}`);
     return match;
@@ -143,7 +158,14 @@ export class MatchService {
   }
 
   // Save answer
-  async saveAnswer(matchId: string, roundId: string, userId: string, answer: string, isCorrect: boolean, responseTimeMs: number) {
+  async saveAnswer(
+    matchId: string,
+    roundId: string,
+    userId: string,
+    answer: string,
+    isCorrect: boolean,
+    responseTimeMs: number,
+  ) {
     return this.prisma.answer.create({
       data: {
         matchId,

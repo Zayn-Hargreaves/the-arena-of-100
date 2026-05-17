@@ -11,12 +11,12 @@ import {
   OnGatewayDisconnect,
   ConnectedSocket,
   MessageBody,
-} from '@nestjs/websockets';
-import { Logger } from '@nestjs/common';
-import { Server, Socket } from 'socket.io';
-import { AuthService } from '../modules/auth/auth.service';
-import { RoomService } from '../modules/room/room.service';
-import { MatchService } from '../modules/match/match.service';
+} from "@nestjs/websockets";
+import { Logger } from "@nestjs/common";
+import { Server, Socket } from "socket.io";
+import { AuthService } from "../modules/auth/auth.service";
+import { RoomService } from "../modules/room/room.service";
+import { MatchService } from "../modules/match/match.service";
 import {
   ClientEvent,
   ServerEvent,
@@ -26,21 +26,24 @@ import {
   type CreateRoomPayload,
   type SubmitAnswerPayload,
   type RequestSnapshotPayload,
-} from '@arena/shared';
+} from "@arena/shared";
 
 @WebSocketGateway({
   cors: {
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    origin: process.env.CORS_ORIGIN || "http://localhost:3000",
     credentials: true,
   },
-  namespace: '/game',
+  namespace: "/game",
 })
 export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   private _server!: Server;
 
   private readonly logger = new Logger(GameGateway.name);
-  private readonly connectedPlayers = new Map<string, { socketId: string; userId: string }>();
+  private readonly connectedPlayers = new Map<
+    string,
+    { socketId: string; userId: string }
+  >();
 
   constructor(
     private readonly authService: AuthService,
@@ -91,7 +94,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     } catch {
       client.emit(ServerEvent.ERROR, {
         code: ErrorCode.INVALID_TOKEN,
-        message: 'Token không hợp lệ',
+        message: "Token không hợp lệ",
       });
     }
   }
@@ -125,7 +128,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.logger.log(`Room created via socket: ${room.code}`);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       client.emit(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
         message: errorMessage,
@@ -168,7 +172,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.logger.log(`Player ${userId} joined room ${room.code} via socket`);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       const errorCode =
         errorMessage === ErrorCode.ROOM_NOT_FOUND
           ? ErrorCode.ROOM_NOT_FOUND
@@ -196,10 +201,11 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this._server.to(`room:${payload.roomId}`).emit(ServerEvent.PLAYER_LEFT, {
         playerId: userId,
-        reason: 'LEFT',
+        reason: "LEFT",
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       client.emit(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
         message: errorMessage,
@@ -222,21 +228,24 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Verify host
       const room = await this.roomService.getRoom(payload.roomId);
       if (room.hostId !== userId) {
-        throw new Error('Chỉ chủ phòng mới có thể bắt đầu');
+        throw new Error("Chỉ chủ phòng mới có thể bắt đầu");
       }
 
       // Create match
       const match = await this.matchService.createMatch(payload.roomId);
 
       // Notify room
-      this._server.to(`room:${payload.roomId}`).emit(ServerEvent.MATCH_STARTING, {
-        matchId: match.id,
-        countdown: GAME_CONFIG.COUNTDOWN_DURATION_MS / 1000,
-      });
+      this._server
+        .to(`room:${payload.roomId}`)
+        .emit(ServerEvent.MATCH_STARTING, {
+          matchId: match.id,
+          countdown: GAME_CONFIG.COUNTDOWN_DURATION_MS / 1000,
+        });
 
       this.logger.log(`Match starting: ${match.id}`);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       client.emit(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
         message: errorMessage,
@@ -279,9 +288,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         responseTimeMs: result.responseTimeMs,
       });
 
-      this.logger.log(`Answer submitted: ${userId} - ${result.isCorrect ? 'correct' : 'wrong'}`);
+      this.logger.log(
+        `Answer submitted: ${userId} - ${result.isCorrect ? "correct" : "wrong"}`,
+      );
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       client.emit(ServerEvent.ERROR, {
         code: errorMessage || ErrorCode.INTERNAL_ERROR,
         message: errorMessage,
@@ -310,9 +322,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       client.emit(ServerEvent.SNAPSHOT, snapshot);
 
-      this.logger.log(`Snapshot sent to ${userId} for match ${payload.matchId}`);
+      this.logger.log(
+        `Snapshot sent to ${userId} for match ${payload.matchId}`,
+      );
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       client.emit(ServerEvent.ERROR, {
         code: errorMessage || ErrorCode.INTERNAL_ERROR,
         message: errorMessage,

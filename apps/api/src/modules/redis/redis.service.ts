@@ -2,9 +2,9 @@
 // Redis Service - Cache & Session Store
 // ============================================================
 
-import { Injectable, OnModuleDestroy, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import Redis from 'ioredis';
+import { Injectable, OnModuleDestroy, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import Redis from "ioredis";
 
 @Injectable()
 export class RedisService implements OnModuleDestroy {
@@ -13,8 +13,8 @@ export class RedisService implements OnModuleDestroy {
 
   constructor(private configService: ConfigService) {
     const redisUrl = this.configService.get<string>(
-      'REDIS_URL',
-      'redis://localhost:6379',
+      "REDIS_URL",
+      "redis://localhost:6379",
     );
 
     this.client = new Redis(redisUrl, {
@@ -24,18 +24,18 @@ export class RedisService implements OnModuleDestroy {
       },
     });
 
-    this.client.on('connect', () => {
-      this.logger.log('✅ Redis connected');
+    this.client.on("connect", () => {
+      this.logger.log("✅ Redis connected");
     });
 
-    this.client.on('error', (err) => {
-      this.logger.error('❌ Redis error:', err.message);
+    this.client.on("error", (err) => {
+      this.logger.error("❌ Redis error:", err.message);
     });
   }
 
   async onModuleDestroy() {
     await this.client.quit();
-    this.logger.log('🔌 Redis disconnected');
+    this.logger.log("🔌 Redis disconnected");
   }
 
   getClient(): Redis {
@@ -49,7 +49,7 @@ export class RedisService implements OnModuleDestroy {
 
   async set(key: string, value: string, ttl?: number): Promise<void> {
     if (ttl) {
-      await this.client.set(key, value, 'EX', ttl);
+      await this.client.set(key, value, "EX", ttl);
     } else {
       await this.client.set(key, value);
     }

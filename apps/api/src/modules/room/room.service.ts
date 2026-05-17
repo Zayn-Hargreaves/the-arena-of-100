@@ -2,10 +2,20 @@
 // Room Service - Room Management Logic
 // ============================================================
 
-import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { RedisService } from '../redis/redis.service';
-import { RoomStatus, generateRoomCode, GAME_CONFIG, ErrorCode } from '@arena/shared';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  NotFoundException,
+} from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { RedisService } from "../redis/redis.service";
+import {
+  RoomStatus,
+  generateRoomCode,
+  GAME_CONFIG,
+  ErrorCode,
+} from "@arena/shared";
 
 @Injectable()
 export class RoomService {
@@ -17,7 +27,11 @@ export class RoomService {
   ) {}
 
   // Create room
-  async createRoom(hostId: string, roomType: 'PUBLIC' | 'PRIVATE', maxPlayers?: number) {
+  async createRoom(
+    hostId: string,
+    roomType: "PUBLIC" | "PRIVATE",
+    maxPlayers?: number,
+  ) {
     const code = generateRoomCode();
     const room = await this.prisma.room.create({
       data: {
@@ -38,13 +52,17 @@ export class RoomService {
     });
 
     // Cache room in Redis
-    await this.redis.setJSON(`room:${room.id}`, {
-      id: room.id,
-      code: room.code,
-      status: room.status,
-      hostId: room.hostId,
-      playerCount: 1,
-    }, 3600);
+    await this.redis.setJSON(
+      `room:${room.id}`,
+      {
+        id: room.id,
+        code: room.code,
+        status: room.status,
+        hostId: room.hostId,
+        playerCount: 1,
+      },
+      3600,
+    );
 
     // Add to player set
     await this.redis.sadd(`room:${room.id}:players`, hostId);
@@ -85,7 +103,9 @@ export class RoomService {
       await this.redis.sadd(`room:${room.id}:players`, userId);
 
       // Update cache
-      const cached = await this.redis.getJSON<{ playerCount: number }>(`room:${room.id}`);
+      const cached = await this.redis.getJSON<{ playerCount: number }>(
+        `room:${room.id}`,
+      );
       if (cached) {
         cached.playerCount++;
         await this.redis.setJSON(`room:${room.id}`, cached, 3600);
@@ -105,7 +125,10 @@ export class RoomService {
     await this.redis.srem(`room:${roomId}:players`, userId);
 
     // Update cache
-    const cached = await this.redis.getJSON<{ playerCount: number; hostId: string }>(`room:${roomId}`);
+    const cached = await this.redis.getJSON<{
+      playerCount: number;
+      hostId: string;
+    }>(`room:${roomId}`);
     if (cached) {
       cached.playerCount--;
       await this.redis.setJSON(`room:${roomId}`, cached, 3600);
@@ -154,13 +177,13 @@ export class RoomService {
   async listPublicRooms() {
     return this.prisma.room.findMany({
       where: {
-        type: 'PUBLIC',
+        type: "PUBLIC",
         status: RoomStatus.WAITING,
       },
       include: {
         _count: { select: { players: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
       take: 20,
     });
   }
@@ -170,14 +193,20 @@ export class RoomService {
     const room = await this.prisma.room.update({
       where: { id: roomId },
       data: { status },
+      include: { players: true },
     });
 
-    await this.redis.setJSON(`room:${roomId}`, {
-      id: room.id,
-      code: room.code,
-      status: room.status,
-      hostId: room.hostId,
-    }, 3600);
+    await this.redis.setJSON(
+      `room:${roomId}`,
+      {
+        id: room.id,
+        code: room.code,
+        status: room.status,
+        hostId: room.hostId,
+        playerCount: room.players.length,
+      },
+      3600,
+    );
 
     return room;
   }

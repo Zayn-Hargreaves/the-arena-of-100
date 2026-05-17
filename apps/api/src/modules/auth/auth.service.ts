@@ -8,10 +8,12 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import * as jwt from "jsonwebtoken";
 import { nanoid } from "nanoid";
+import { Role } from "@prisma/client";
 
 export interface TokenPayload {
   userId: string;
   username: string;
+  role: Role;
 }
 
 export interface AuthResult {
@@ -20,6 +22,7 @@ export interface AuthResult {
   user: {
     id: string;
     username: string;
+    role: Role;
   };
 }
 
@@ -54,24 +57,32 @@ export class AuthService {
     });
 
     if (!user) {
+      // Prevent creation of "admin" user via guest login
+      if (username === "admin") {
+        throw new UnauthorizedException("Cannot create admin user via guest login");
+      }
+      
       user = await this.prisma.user.create({
         data: {
           username,
           guestId: nanoid(12),
+          role: Role.GUEST, // Always create new users as GUEST
         },
       });
-      this.logger.log(`New guest user created: ${username}`);
+      this.logger.log(`New guest user created: ${username} with role ${user.role}`);
     }
+    // If user exists, preserve their existing role when logging in
 
-    return this.generateTokens(user.id, user.username);
+    return this.generateTokens(user.id, user.username, user.role);
   }
 
   // Generate JWT tokens
   private async generateTokens(
     userId: string,
     username: string,
+    role: Role,
   ): Promise<AuthResult> {
-    const payload: TokenPayload = { userId, username };
+    const payload: TokenPayload = { userId, username, role };
 
     const accessToken = jwt.sign(payload, this.jwtSecret, {
       expiresIn: this.jwtExpiresIn,
@@ -89,7 +100,7 @@ export class AuthService {
     return {
       accessToken,
       refreshToken,
-      user: { id: userId, username },
+      user: { id: userId, username, role },
     };
   }
 
@@ -121,7 +132,7 @@ export class AuthService {
     // Delete old refresh token
     await this.redis.del(`refresh:${refreshToken}`);
 
-    return this.generateTokens(user.id, user.username);
+    return this.generateTokens(user.id, user.username, user.role);
   }
 
   // Logout
