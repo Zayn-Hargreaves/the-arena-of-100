@@ -5,16 +5,15 @@
 import { Controller, Post, Body, HttpCode, HttpStatus } from "@nestjs/common";
 import { AuthService, AuthResult } from "./auth.service";
 import { Public } from "../../common/decorators/public.decorator";
-import { z } from "zod";
+import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
+import { GuestLoginDto, guestLoginSchema } from "./dto/guest-login.dto";
+import { RefreshDto, refreshSchema } from "./dto/refresh.dto";
+import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
 
-const guestLoginSchema = z.object({
-  username: z.string().min(3).max(20).trim(),
-});
+const guestLoginPipe = new ZodValidationPipe(guestLoginSchema);
+const refreshPipe = new ZodValidationPipe(refreshSchema);
 
-const refreshSchema = z.object({
-  refreshToken: z.string(),
-});
-
+@ApiTags("Authentication")
 @Controller("auth")
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
@@ -22,23 +21,38 @@ export class AuthController {
   @Post("guest")
   @Public()
   @HttpCode(HttpStatus.OK)
-  async guestLogin(@Body() body: unknown): Promise<AuthResult> {
-    const { username } = guestLoginSchema.parse(body);
-    return this.authService.guestLogin(username);
+  @ApiOperation({ summary: "Guest login" })
+  @ApiResponse({ status: 200, description: "Login successful" })
+  @ApiResponse({ status: 400, description: "Validation failed" })
+  async guestLogin(
+    @Body(guestLoginPipe)
+    guestLoginDto: GuestLoginDto,
+  ): Promise<AuthResult> {
+    return this.authService.guestLogin(guestLoginDto.username);
   }
 
   @Post("refresh")
   @Public()
   @HttpCode(HttpStatus.OK)
-  async refresh(@Body() body: unknown): Promise<AuthResult> {
-    const { refreshToken } = refreshSchema.parse(body);
-    return this.authService.refreshAccessToken(refreshToken);
+  @ApiOperation({ summary: "Refresh access token" })
+  @ApiResponse({ status: 200, description: "Token refreshed successfully" })
+  @ApiResponse({ status: 401, description: "Invalid token" })
+  async refresh(
+    @Body(refreshPipe)
+    refreshDto: RefreshDto,
+  ): Promise<AuthResult> {
+    return this.authService.refreshAccessToken(refreshDto.refreshToken);
   }
 
   @Post("logout")
   @HttpCode(HttpStatus.NO_CONTENT)
-  async logout(@Body() body: unknown): Promise<void> {
-    const { refreshToken } = refreshSchema.parse(body);
-    await this.authService.logout(refreshToken);
+  @ApiOperation({ summary: "Logout player" })
+  @ApiResponse({ status: 204, description: "Logout successful" })
+  @ApiResponse({ status: 401, description: "Invalid token" })
+  async logout(
+    @Body(refreshPipe)
+    refreshDto: RefreshDto,
+  ): Promise<void> {
+    await this.authService.logout(refreshDto.refreshToken);
   }
 }

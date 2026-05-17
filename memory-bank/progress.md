@@ -20,7 +20,7 @@
 
 ### 🔴 Critical Fixes (Phase 0.5: Before Feature Development)
 
-- [ ] Add QuestionModule (service + controller + seed data)
+- [x] Add QuestionModule (service + controller + seed data)
 - [ ] Add MatchStateMachine.serialize()/deserialize() for Redis persistence
 - [ ] Refactor GameGateway from God Object → split or handler delegation
 - [ ] Fix `MatchStartedPayload` missing interface in events.ts
@@ -79,7 +79,7 @@
 
 - **GameGateway God Object** — 319 LOC, single file handles all socket events
 - **In-memory state machines** — server restart loses all active matches
-- **Missing QuestionModule** — no way to seed/fetch questions
+- ~~**Missing QuestionModule**~~ [RESOLVED] — QuestionModule fully implemented with REST endpoints for CRUD and bulk import, along with database seeding.
 - **`MatchStartedPayload` undefined** — referenced in union type but never defined
 - **`getState()` shallow copy** — `{...this.state}` doesn't deep clone `players` Map
 
@@ -94,6 +94,7 @@
 - `correctAnswer` potentially leaks via state machine type casting
 - `SocketNamespace` missing SPECTATOR entry
 - `packages/config` directory exists but is empty
+- **Dependency Risk**: `class-validator` & `class-transformer` are unmaintained, migration to Zod completed (packages removed as direct dependencies, code migrated to use Zod validation/serialization)
 
 ### 🟢 Nice-to-Have
 

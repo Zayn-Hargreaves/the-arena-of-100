@@ -1,45 +1,46 @@
-import {
-  IsString,
-  IsArray,
-  IsEnum,
-  IsBoolean,
-  IsOptional,
-  MinLength,
-  MaxLength,
-  ArrayMinSize,
-  ArrayMaxSize,
-  ArrayUnique,
-  IsNotEmpty,
-} from "class-validator";
+import { z } from "zod";
 import { ApiProperty } from "@nestjs/swagger";
 import { QuestionDifficulty } from "./get-questions.dto";
-import { IsInArray } from "../../../common/validators/is-in-array.validator";
 
-export class CreateQuestionDto {
+// Define the base object schema separately so it can be partial()ed without effect/refinement issues in PATCH
+export const createQuestionObjectSchema = z.object({
+  content: z.string().min(10).max(1000),
+  options: z
+    .array(z.string().min(1))
+    .min(2)
+    .max(6)
+    .refine((arr) => new Set(arr).size === arr.length, {
+      message: "options must contain unique values",
+    }),
+  correctAnswer: z.string().min(1),
+  difficulty: z.nativeEnum(QuestionDifficulty),
+  active: z.boolean().optional(),
+});
+
+export const createQuestionSchema = createQuestionObjectSchema.refine(
+  (data) => data.options.includes(data.correctAnswer),
+  {
+    message: "correctAnswer must be one of the options",
+    path: ["correctAnswer"],
+  },
+);
+
+export type CreateQuestionInput = z.infer<typeof createQuestionSchema>;
+
+export class CreateQuestionDto implements CreateQuestionInput {
   @ApiProperty({
     example: "What is the capital of France?",
     description: "The question text",
   })
-  @IsString()
-  @MinLength(10)
-  @MaxLength(1000)
   content!: string;
 
   @ApiProperty({
     example: ["Paris", "London", "Berlin", "Madrid"],
     description: "The possible answers",
   })
-  @IsArray()
-  @ArrayMinSize(2)
-  @ArrayMaxSize(6)
-  @ArrayUnique()
-  @IsString({ each: true })
-  @IsNotEmpty({ each: true })
   options!: string[];
 
   @ApiProperty({ example: "Paris", description: "The correct answer" })
-  @IsString()
-  @IsInArray("options")
   correctAnswer!: string;
 
   @ApiProperty({
@@ -47,7 +48,6 @@ export class CreateQuestionDto {
     description: "The difficulty level",
     enum: QuestionDifficulty,
   })
-  @IsEnum(QuestionDifficulty)
   difficulty!: QuestionDifficulty;
 
   @ApiProperty({
@@ -55,7 +55,5 @@ export class CreateQuestionDto {
     description: "Whether the question is active",
     required: false,
   })
-  @IsOptional()
-  @IsBoolean()
   active?: boolean;
 }

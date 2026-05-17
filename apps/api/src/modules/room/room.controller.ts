@@ -8,59 +8,96 @@ import {
   Post,
   Body,
   Param,
-  Query,
+  Req,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from "@nestjs/common";
 import { RoomService } from "./room.service";
-import { z } from "zod";
+import { CreateRoomDto, createRoomSchema } from "./dto/create-room.dto";
+import { JoinRoomDto, joinRoomSchema } from "./dto/join-room.dto";
+import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
+import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
+import { FastifyRequest } from "fastify";
+import { TokenPayload } from "../auth/auth.service";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { Public } from "../../common/decorators/public.decorator";
 
-const createRoomSchema = z.object({
-  roomType: z.enum(["PUBLIC", "PRIVATE"]),
-  maxPlayers: z.number().min(2).max(100).optional(),
-});
+export interface AuthenticatedRequest extends FastifyRequest {
+  user: TokenPayload;
+}
 
-const joinRoomSchema = z.object({
-  roomCode: z.string().length(6),
-});
-
+@ApiTags("Rooms")
 @Controller("rooms")
+@UseGuards(JwtAuthGuard)
 export class RoomController {
   constructor(private readonly roomService: RoomService) {}
 
   @Post()
-  async create(@Body() body: unknown, @Query("userId") userId: string) {
-    const { roomType, maxPlayers } = createRoomSchema.parse(body);
-    return this.roomService.createRoom(userId, roomType, maxPlayers);
+  @ApiOperation({ summary: "Create a new game room" })
+  @ApiResponse({ status: 201, description: "Room created successfully" })
+  @ApiResponse({ status: 400, description: "Validation failed" })
+  async create(
+    @Body(new ZodValidationPipe(createRoomSchema))
+    createRoomDto: CreateRoomDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const userId = req.user.userId;
+    return this.roomService.createRoom(
+      userId,
+      createRoomDto.roomType,
+      createRoomDto.maxPlayers,
+    );
   }
 
   @Post("join")
   @HttpCode(HttpStatus.OK)
-  async join(@Body() body: unknown, @Query("userId") userId: string) {
-    const { roomCode } = joinRoomSchema.parse(body);
-    return this.roomService.joinRoom(roomCode, userId);
+  @ApiOperation({ summary: "Join a game room by its code" })
+  @ApiResponse({ status: 200, description: "Joined room successfully" })
+  @ApiResponse({ status: 400, description: "Validation failed" })
+  async join(
+    @Body(new ZodValidationPipe(joinRoomSchema))
+    joinRoomDto: JoinRoomDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const userId = req.user.userId;
+    return this.roomService.joinRoom(joinRoomDto.roomCode, userId);
   }
 
   @Post(":roomId/leave")
   @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: "Leave a game room" })
+  @ApiResponse({ status: 204, description: "Left room successfully" })
   async leave(
     @Param("roomId") roomId: string,
-    @Query("userId") userId: string,
+    @Req() req: AuthenticatedRequest,
   ) {
+    const userId = req.user.userId;
     await this.roomService.leaveRoom(roomId, userId);
   }
 
   @Get("public")
+  @Public()
+  @ApiOperation({ summary: "Get all public game rooms" })
+  @ApiResponse({ status: 200, description: "Return public rooms list" })
   async listPublic() {
     return this.roomService.listPublicRooms();
   }
 
   @Get(":roomId")
+  @Public()
+  @ApiOperation({ summary: "Get room details by ID" })
+  @ApiResponse({ status: 200, description: "Return room details" })
+  @ApiResponse({ status: 404, description: "Room not found" })
   async getRoom(@Param("roomId") roomId: string) {
     return this.roomService.getRoom(roomId);
   }
 
   @Get("code/:code")
+  @Public()
+  @ApiOperation({ summary: "Get room details by room code" })
+  @ApiResponse({ status: 200, description: "Return room details" })
+  @ApiResponse({ status: 404, description: "Room not found" })
   async getByCode(@Param("code") code: string) {
     return this.roomService.getRoomByCode(code);
   }

@@ -38,23 +38,23 @@ The project currently uses `class-transformer@^0.5.1` and `class-validator@^0.15
 
 ### Phase 1: Evaluation & Preparation
 
-- [ ] Evaluate Zod as primary replacement (already in dependencies)
-- [ ] Assess `@anatine/zod-nestjs` for NestJS integration
-- [ ] Create proof-of-concept migration for one module
-- [ ] Document migration guidelines and best practices
+- [x] Evaluate Zod as primary replacement (already in dependencies)
+- [x] Assess `@anatine/zod-nestjs` for NestJS integration (custom pipeline chosen to minimize deps)
+- [x] Create proof-of-concept migration for one module
+- [x] Document migration guidelines and best practices
 
 ### Phase 2: Gradual Migration
 
-- [ ] Migrate auth module to Zod validation
-- [ ] Migrate room module to Zod validation
-- [ ] Migrate question module to Zod validation
-- [ ] Migrate match module to Zod validation
+- [x] Migrate auth module to Zod validation
+- [x] Migrate room module to Zod validation
+- [x] Migrate question module to Zod validation
+- [x] Migrate match module to Zod validation
 
 ### Phase 3: Removal
 
-- [ ] Remove `class-transformer` and `class-validator` dependencies
-- [ ] Update documentation and setup guides
-- [ ] Remove Dependabot ignore rules for these packages
+- [x] Remove `class-transformer` and `class-validator` dependencies
+- [x] Update documentation and setup guides
+- [x] Remove Dependabot ignore rules for these packages
 
 ## Risk Mitigation
 
@@ -84,13 +84,24 @@ Until full migration:
    - Limited community adoption
    - Uncertain long-term viability
 
-## Room Module Security Vulnerability (RoomController spoofing)
+## Room Module Security Vulnerability (RoomController spoofing) [RESOLVED]
 
 ### Issue
-The REST endpoints in `RoomController` (such as `POST /rooms`, `POST /rooms/join`, and `POST /rooms/:roomId/leave`) currently accept `userId` as a plain Query Parameter (`@Query("userId") userId: string`) without verifying that it belongs to the authenticated requester.
-- This creates an access control vulnerability where a user can spoof any other user's ID to maliciously perform operations (create rooms, force join other rooms, force leave other rooms) on their behalf.
 
-### Remediation Plan
+The REST endpoints in `RoomController` (such as `POST /rooms`, `POST /rooms/join`, and `POST /rooms/:roomId/leave`) previously accepted `userId` as a plain Query Parameter (`@Query("userId") userId: string`) without verifying that it belonged to the authenticated requester.
+
+- This created an access control vulnerability where a user could spoof any other user's ID to maliciously perform operations (create rooms, force join other rooms, force leave other rooms) on their behalf.
+
+### Remediation Plan (Completed)
+
 1. Ensure `RoomController` is not marked with `@Public()` decorator (authentication is enforced via global `JwtAuthGuard`).
 2. Remove `@Query("userId")` from all controller methods.
 3. Retrieve `userId` securely from the authenticated Fastify request context: `req.user.userId`.
+
+### Status: RESOLVED
+
+This vulnerability has been fully resolved:
+
+1. All unverified `@Query("userId")` inputs were removed from REST endpoints in `RoomController`.
+2. The user's ID is retrieved securely from the JWT-decoded payload stored in the Fastify request context (`req.user.userId`) populated by the global `JwtAuthGuard`.
+3. A complete Vitest unit test suite was added to `room.controller.spec.ts` covering request-context-based secure route execution for room creation, joining, and leaving. All tests pass successfully and no lint errors are present.

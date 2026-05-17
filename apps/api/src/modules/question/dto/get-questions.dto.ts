@@ -1,16 +1,5 @@
-import {
-  IsOptional,
-  IsInt,
-  Min,
-  Max,
-  IsString,
-  IsEnum,
-  IsBoolean,
-  MaxLength,
-} from "class-validator";
-import { Transform, Type } from "class-transformer";
+import { z } from "zod";
 import { ApiPropertyOptional } from "@nestjs/swagger";
-import { BadRequestException } from "@nestjs/common";
 
 export enum QuestionDifficulty {
   EASY = "EASY",
@@ -18,53 +7,55 @@ export enum QuestionDifficulty {
   HARD = "HARD",
 }
 
-export class GetQuestionsDto {
+export const getQuestionsSchema = z.object({
+  page: z.preprocess(
+    (val) => (val !== undefined ? Number(val) : undefined),
+    z.number().int().min(1).max(1000).default(1),
+  ),
+  limit: z.preprocess(
+    (val) => (val !== undefined ? Number(val) : undefined),
+    z.number().int().min(1).max(100).default(20),
+  ),
+  difficulty: z.nativeEnum(QuestionDifficulty).optional(),
+  search: z.string().max(256).optional(),
+  active: z.preprocess(
+    (val) => {
+      if (val === undefined || val === null || val === "") return undefined;
+      if (val === "true" || val === true) return true;
+      if (val === "false" || val === false) return false;
+      return val; // If invalid, return it so Zod's boolean check fails
+    },
+    z
+      .boolean({ invalid_type_error: "Invalid boolean value for active" })
+      .optional(),
+  ),
+});
+
+export type GetQuestionsInput = z.input<typeof getQuestionsSchema>;
+
+export class GetQuestionsDto implements GetQuestionsInput {
   @ApiPropertyOptional({ example: 1, description: "Page number" })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  @Max(1000)
-  @Type(() => Number)
-  page?: number = 1;
+  page?: number;
 
   @ApiPropertyOptional({ example: 20, description: "Items per page" })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  @Max(100)
-  @Type(() => Number)
-  limit?: number = 20;
+  limit?: number;
 
   @ApiPropertyOptional({
     example: "EASY",
     description: "Filter by difficulty",
     enum: QuestionDifficulty,
   })
-  @IsOptional()
-  @IsEnum(QuestionDifficulty)
   difficulty?: QuestionDifficulty;
 
   @ApiPropertyOptional({
     example: "capital",
     description: "Search questions by content (max 256 characters)",
-    maxLength: 256,
   })
-  @IsOptional()
-  @IsString()
-  @MaxLength(256)
   search?: string;
 
   @ApiPropertyOptional({
     example: true,
     description: "Filter by active status",
-  })
-  @IsOptional()
-  @IsBoolean()
-  @Transform(({ value }) => {
-    if (value === undefined || value === null || value === "") return undefined;
-    else if (value === "true" || value === true) return true;
-    else if (value === "false" || value === false) return false;
-    else throw new BadRequestException("Invalid boolean value for active");
   })
   active?: boolean;
 }
