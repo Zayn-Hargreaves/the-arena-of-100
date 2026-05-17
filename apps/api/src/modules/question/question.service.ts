@@ -157,6 +157,31 @@ export class QuestionService {
       }
     }
 
+    // When options is provided but correctAnswer is not, we need to ensure
+    // the new options include the existing question's correctAnswer
+    if (
+      updateQuestionDto.options !== undefined &&
+      updateQuestionDto.correctAnswer === undefined
+    ) {
+      const existingQuestion = await this.prisma.question.findUnique({
+        where: { id },
+      });
+
+      if (!existingQuestion) {
+        throw new NotFoundException(`Question with ID ${id} not found`);
+      }
+
+      if (
+        existingQuestion.correctAnswer &&
+        (!Array.isArray(updateQuestionDto.options) ||
+          !updateQuestionDto.options.includes(existingQuestion.correctAnswer))
+      ) {
+        throw new BadRequestException(
+          "options must include existing correctAnswer",
+        );
+      }
+    }
+
     try {
       const question = await this.prisma.question.update({
         where: { id },

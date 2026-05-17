@@ -134,7 +134,7 @@ await this.redis.setJSON(`room:${roomId}`, cached);
 - **Input Validation**: Dùng custom `ZodValidationPipe` gắn ở route parameter level để validate DTO.
 - **Output Serialization**: Dùng `@ZodSerialize(schema)` decorator gắn ở controller method level để tự động lọc dữ liệu nhạy cảm (như `correctAnswer` của câu hỏi) trả về cho client.
 - **Swagger Integration**: Định nghĩa DTO class `implements` type infer từ Zod schema, kết hợp sử dụng các decorator `@ApiProperty()` để tài liệu hóa API.
-- Chi tiết hướng dẫn xem tại [Zod Migration Guide](file:///home/zayn-hargreaves/Documents/the-arena-of-100/memory-bank/zodMigrationGuide.md).
+- Chi tiết hướng dẫn xem tại [Zod Migration Guide](./zodMigrationGuide.md).
 
 ### Module Structure — Mỗi Feature Một Module
 ```

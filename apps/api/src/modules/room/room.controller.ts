@@ -11,7 +11,6 @@ import {
   Req,
   HttpCode,
   HttpStatus,
-  UseGuards,
 } from "@nestjs/common";
 import { RoomService } from "./room.service";
 import { CreateRoomDto, createRoomSchema } from "./dto/create-room.dto";
@@ -20,7 +19,6 @@ import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
 import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
 import { FastifyRequest } from "fastify";
 import { TokenPayload } from "../auth/auth.service";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { Public } from "../../common/decorators/public.decorator";
 
 export interface AuthenticatedRequest extends FastifyRequest {
@@ -29,7 +27,6 @@ export interface AuthenticatedRequest extends FastifyRequest {
 
 @ApiTags("Rooms")
 @Controller("rooms")
-@UseGuards(JwtAuthGuard)
 export class RoomController {
   constructor(private readonly roomService: RoomService) {}
 

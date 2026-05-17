@@ -52,6 +52,10 @@ describe("ZodValidationPipe", () => {
     const nestedPipe = new ZodValidationPipe(nestedSchema);
     const input = { user: { profile: { email: "invalid-email" } } };
 
+    expect(() => nestedPipe.transform(input, mockMetadata)).toThrow(
+      BadRequestException,
+    );
+
     try {
       nestedPipe.transform(input, mockMetadata);
     } catch (error: unknown) {

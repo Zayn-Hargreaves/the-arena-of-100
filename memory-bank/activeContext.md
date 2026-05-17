@@ -80,7 +80,7 @@ Architecture review complete. Base scaffold is **structurally sound** — no res
 1. ~~Add `QuestionModule` + seed data~~ (Completed)
 2. Add `MatchStateMachine.serialize()/deserialize()` + Redis persistence
 3. Refactor `GameGateway` → split or delegate to handler classes
-4. ~~Migrate validation/serialization from class-validator/transformer to Zod~~ (Completed - see [processTechDebt.md](file:///home/zayn-hargreaves/Documents/the-arena-of-100/memory-bank/processTechDebt.md))
+4. ~~Migrate validation/serialization from class-validator/transformer to Zod~~ (Completed - see [processTechDebt.md](./processTechDebt.md))
 
 ### Core Game Loop (MVP Minimum)
 

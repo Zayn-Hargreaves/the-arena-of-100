@@ -8,4 +8,5 @@ export const questionResponseSchema = z.object({
   difficulty: z.nativeEnum(QuestionDifficulty),
   active: z.boolean(),
   createdAt: z.date().or(z.string()),
+  updatedAt: z.date().or(z.string()),
 });

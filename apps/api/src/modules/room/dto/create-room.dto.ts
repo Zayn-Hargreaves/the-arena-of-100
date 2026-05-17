@@ -3,7 +3,7 @@ import { ApiProperty } from "@nestjs/swagger";
 
 export const createRoomSchema = z.object({
   roomType: z.enum(["PUBLIC", "PRIVATE"]),
-  maxPlayers: z.number().min(2).max(100).optional(),
+  maxPlayers: z.number().int().min(2).max(100).optional(),
 });
 
 export type CreateRoomInput = z.infer<typeof createRoomSchema>;
