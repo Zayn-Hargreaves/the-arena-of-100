@@ -1,5 +1,4 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { Exclude } from "class-transformer";
 import { QuestionDifficulty } from "../dto/get-questions.dto";
 
 export class Question {
@@ -21,7 +20,6 @@ export class Question {
   })
   options!: string[];
 
-  @Exclude({ toPlainOnly: true })
   correctAnswer!: string;
 
   @ApiProperty({
@@ -39,4 +37,10 @@ export class Question {
     description: "The creation date",
   })
   createdAt!: Date;
+
+  @ApiProperty({
+    example: "2024-05-12T07:00:00Z",
+    description: "The last update date",
+  })
+  updatedAt!: Date;
 }

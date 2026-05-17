@@ -1,19 +1,19 @@
-import { IsArray, ValidateNested, ArrayMinSize, ArrayMaxSize } from "class-validator";
-import { Type } from "class-transformer";
-import { CreateQuestionDto } from "./create-question.dto";
+import { z } from "zod";
 import { ApiProperty } from "@nestjs/swagger";
+import { createQuestionSchema, CreateQuestionDto } from "./create-question.dto";
 
 export const MAX_BULK_IMPORT_SIZE = 100;
 
-export class BulkImportDto {
+export const bulkImportSchema = z.object({
+  questions: z.array(createQuestionSchema).min(1).max(MAX_BULK_IMPORT_SIZE),
+});
+
+export type BulkImportInput = z.infer<typeof bulkImportSchema>;
+
+export class BulkImportDto implements BulkImportInput {
   @ApiProperty({
     type: [CreateQuestionDto],
     description: "List of questions to import",
   })
-  @IsArray()
-  @ArrayMinSize(1)
-  @ArrayMaxSize(MAX_BULK_IMPORT_SIZE) // Avoid excessively large payloads in a single request
-  @ValidateNested({ each: true })
-  @Type(() => CreateQuestionDto)
   questions!: CreateQuestionDto[];
 }

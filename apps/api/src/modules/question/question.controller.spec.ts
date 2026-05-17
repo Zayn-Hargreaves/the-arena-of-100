@@ -20,9 +20,10 @@ describe("QuestionController", () => {
     difficulty: QuestionDifficulty.EASY,
     active: true,
     createdAt: new Date(),
+    updatedAt: new Date(),
   };
 
-  const mockQuestions = [
+  const mockQuestions: Question[] = [
     mockQuestion,
     {
       id: "cjld2cjxh0001qzrmn831i7rn",
@@ -32,6 +33,7 @@ describe("QuestionController", () => {
       difficulty: QuestionDifficulty.EASY,
       active: true,
       createdAt: new Date(),
+      updatedAt: new Date(),
     },
   ];
 
@@ -269,7 +271,10 @@ describe("QuestionController", () => {
     };
 
     it("should import questions in bulk successfully", async () => {
-      const expectedResponse = { count: 1, message: "Successfully imported 1 questions" };
+      const expectedResponse = {
+        count: 1,
+        message: "Successfully imported 1 questions",
+      };
       vi.mocked(service.bulkImport).mockResolvedValue(expectedResponse);
 
       const result = await controller.bulkImport(bulkImportDto);
@@ -293,9 +298,14 @@ describe("QuestionController", () => {
     it("should return a random question successfully", async () => {
       vi.mocked(service.getRandom).mockResolvedValue(mockQuestion);
 
-      const result = await controller.getRandom({ difficulty: QuestionDifficulty.EASY, excludeIds: ["q-1"] });
+      const result = await controller.getRandom({
+        difficulty: QuestionDifficulty.EASY,
+        excludeIds: ["q-1"],
+      });
 
-      expect(service.getRandom).toHaveBeenCalledWith(QuestionDifficulty.EASY, ["q-1"]);
+      expect(service.getRandom).toHaveBeenCalledWith(QuestionDifficulty.EASY, [
+        "q-1",
+      ]);
       expect(result).toEqual(mockQuestion);
     });
 
@@ -303,9 +313,7 @@ describe("QuestionController", () => {
       const error = new NotFoundException("No questions found");
       vi.mocked(service.getRandom).mockRejectedValue(error);
 
-      await expect(
-        controller.getRandom({}),
-      ).rejects.toThrow(NotFoundException);
+      await expect(controller.getRandom({})).rejects.toThrow(NotFoundException);
       expect(service.getRandom).toHaveBeenCalledWith(undefined, undefined);
     });
   });

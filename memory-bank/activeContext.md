@@ -24,7 +24,7 @@ Architecture review complete. Base scaffold is **structurally sound** — no res
 
 1. **GameGateway God Object**: 319 LOC handling auth, room, match, answer, reconnect. Will balloon to 1000+ with spectator/emotes/admin. Must split or delegate.
 2. **In-Memory State Machines**: `Map<string, MatchStateMachine>` in RAM. Server restart = ALL matches lost. Need Redis persistence.
-3. **Missing QuestionModule**: Prisma has `Question` model but no service to seed/fetch questions. Game loop can't work without this.
+3. ~~**Missing QuestionModule**~~ [RESOLVED]: QuestionModule fully implemented with REST endpoints for CRUD and bulk import, along with database seeding.
 
 ### 🟡 Significant Gaps
 
@@ -59,6 +59,7 @@ Architecture review complete. Base scaffold is **structurally sound** — no res
 16. **Optimistic UI**: Instant feedback with smart recovery mechanisms
 17. **Game Operations**: Administrative tools for emergency interventions
 18. **Testing Framework**: Vitest chosen for its performance and native ESM support
+19. ~~**Zod Validation Migration**~~: Custom `ZodValidationPipe` for request/body parsing, gradual module-by-module migration, and Zod schema-based response serialization. (Completed)
 
 ## Pending Decisions (From Assessment)
 
@@ -76,9 +77,10 @@ Architecture review complete. Base scaffold is **structurally sound** — no res
 
 ### Critical Fixes (Before Features)
 
-1. Add `QuestionModule` + seed data
+1. ~~Add `QuestionModule` + seed data~~ (Completed)
 2. Add `MatchStateMachine.serialize()/deserialize()` + Redis persistence
 3. Refactor `GameGateway` → split or delegate to handler classes
+4. ~~Migrate validation/serialization from class-validator/transformer to Zod~~ (Completed - see [processTechDebt.md](./processTechDebt.md))
 
 ### Core Game Loop (MVP Minimum)
 
@@ -139,7 +141,6 @@ apps/web/src/
 
 ## Current Blockers
 
-- **🔴 No QuestionModule** — game loop can't work without questions
 - **🔴 In-Memory state machines** — no crash recovery
 - **🔴 GameGateway monolith** — blocks clean feature development
 - Missing frictionless onboarding functionality with content moderation

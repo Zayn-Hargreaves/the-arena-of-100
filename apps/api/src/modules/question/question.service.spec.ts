@@ -138,6 +138,31 @@ describe("QuestionService", () => {
       expect(result.meta.limit).toBe(20);
     });
 
+    it("should apply difficulty, active, and search filters correctly", async () => {
+      const query: GetQuestionsDto = {
+        page: 1,
+        limit: 10,
+        difficulty: QuestionDifficulty.EASY,
+        active: true,
+        search: "Paris",
+      };
+
+      await service.findAll(query);
+
+      expect(mockPrismaService.question.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            difficulty: QuestionDifficulty.EASY,
+            active: true,
+            content: {
+              contains: "Paris",
+              mode: "insensitive",
+            },
+          },
+        }),
+      );
+    });
+
     it("should throw when dependency fails", async () => {
       const query: GetQuestionsDto = { page: 1, limit: 20 };
       const dbError = new Error("DB failed");
@@ -276,12 +301,184 @@ describe("QuestionService", () => {
         NotFoundException,
       );
     });
+
+    it("should re-throw generic errors in handlePrismaNotFound", async () => {
+      const genericError = new Error("Connection failed");
+      mockPrismaService.question.update.mockRejectedValueOnce(genericError);
+
+      await expect(service.update(id, updateDto)).rejects.toThrow(
+        "Connection failed",
+      );
+    });
+
+    describe("partial update validation", () => {
+      const existingQuestion = {
+        id,
+        content: "Original question",
+        options: ["A", "B", "C", "D"],
+        correctAnswer: "A",
+        difficulty: QuestionDifficulty.EASY,
+        active: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      it("should throw BadRequestException when correctAnswer is not in existing options", async () => {
+        const updateDtoWithInvalidAnswer = {
+          correctAnswer: "X", // Not in existing options
+        };
+
+        mockPrismaService.question.findUnique.mockResolvedValueOnce(
+          existingQuestion,
+        );
+
+        await expect(
+          service.update(id, updateDtoWithInvalidAnswer),
+        ).rejects.toThrow(
+          new BadRequestException(
+            "correctAnswer must be one of the existing options",
+          ),
+        );
+
+        // Should not call update since validation failed
+        expect(mockPrismaService.question.update).not.toHaveBeenCalled();
+      });
+
+      it("should allow valid correctAnswer when it exists in options", async () => {
+        const updateDtoWithValidAnswer = {
+          correctAnswer: "B", // Exists in existing options
+        };
+
+        const updated = {
+          ...existingQuestion,
+          correctAnswer: "B",
+          updatedAt: new Date(),
+        };
+
+        mockPrismaService.question.findUnique.mockResolvedValueOnce(
+          existingQuestion,
+        );
+        mockPrismaService.question.update.mockResolvedValueOnce(updated);
+
+        const result = await service.update(id, updateDtoWithValidAnswer);
+
+        expect(mockPrismaService.question.findUnique).toHaveBeenCalledWith({
+          where: { id },
+        });
+        expect(mockPrismaService.question.update).toHaveBeenCalledWith({
+          where: { id },
+          data: updateDtoWithValidAnswer,
+        });
+        expect(result).toEqual(updated);
+      });
+
+      it("should not validate correctAnswer against existing options when both options and correctAnswer are provided", async () => {
+        const updateDtoWithBothFields = {
+          options: ["X", "Y", "Z"],
+          correctAnswer: "X", // Valid in new options, but not in existing ones
+        };
+
+        const updated = {
+          ...existingQuestion,
+          options: ["X", "Y", "Z"],
+          correctAnswer: "X",
+          updatedAt: new Date(),
+        };
+
+        // Should not call findUnique since we don't need to validate against existing options
+        mockPrismaService.question.update.mockResolvedValueOnce(updated);
+
+        const result = await service.update(id, updateDtoWithBothFields);
+
+        expect(mockPrismaService.question.findUnique).not.toHaveBeenCalled();
+        expect(mockPrismaService.question.update).toHaveBeenCalledWith({
+          where: { id },
+          data: updateDtoWithBothFields,
+        });
+        expect(result).toEqual(updated);
+      });
+
+      it("should throw NotFoundException when trying to update non-existent question", async () => {
+        const updateDtoWithCorrectAnswer = {
+          correctAnswer: "B",
+        };
+
+        mockPrismaService.question.findUnique.mockResolvedValueOnce(null);
+
+        await expect(
+          service.update(id, updateDtoWithCorrectAnswer),
+        ).rejects.toThrow(NotFoundException);
+      });
+
+      it("should throw BadRequestException when options does not include existing correctAnswer", async () => {
+        const updateDtoWithInvalidOptions = {
+          options: ["B", "C", "D"], // Does not include "A" (existing correctAnswer)
+        };
+
+        mockPrismaService.question.findUnique.mockResolvedValueOnce(
+          existingQuestion,
+        );
+
+        await expect(
+          service.update(id, updateDtoWithInvalidOptions),
+        ).rejects.toThrow(
+          new BadRequestException(
+            "options must include existing correctAnswer",
+          ),
+        );
+
+        expect(mockPrismaService.question.update).not.toHaveBeenCalled();
+      });
+
+      it("should allow options update when it includes existing correctAnswer", async () => {
+        const updateDtoWithValidOptions = {
+          options: ["A", "X", "Y", "Z"], // Includes "A" (existing correctAnswer)
+        };
+
+        const updated = {
+          ...existingQuestion,
+          options: ["A", "X", "Y", "Z"],
+          updatedAt: new Date(),
+        };
+
+        mockPrismaService.question.findUnique.mockResolvedValueOnce(
+          existingQuestion,
+        );
+        mockPrismaService.question.update.mockResolvedValueOnce(updated);
+
+        const result = await service.update(id, updateDtoWithValidOptions);
+
+        expect(mockPrismaService.question.findUnique).toHaveBeenCalledWith({
+          where: { id },
+        });
+        expect(mockPrismaService.question.update).toHaveBeenCalledWith({
+          where: { id },
+          data: updateDtoWithValidOptions,
+        });
+        expect(result).toEqual(updated);
+      });
+
+      it("should throw NotFoundException when trying to update options for non-existent question", async () => {
+        const updateDtoWithOptions = {
+          options: ["A", "B", "C"],
+        };
+
+        mockPrismaService.question.findUnique.mockResolvedValueOnce(null);
+
+        await expect(service.update(id, updateDtoWithOptions)).rejects.toThrow(
+          NotFoundException,
+        );
+      });
+    });
   });
 
   describe("remove", () => {
     it("should soft delete question successfully", async () => {
       const id = "q-1";
-      mockPrismaService.question.update.mockResolvedValueOnce({ id, active: false });
+      mockPrismaService.question.update.mockResolvedValueOnce({
+        id,
+        active: false,
+      });
 
       await expect(service.remove(id)).resolves.toBeUndefined();
       expect(mockPrismaService.question.update).toHaveBeenCalledWith({
@@ -300,6 +497,14 @@ describe("QuestionService", () => {
       mockPrismaService.question.update.mockRejectedValueOnce(prismaError);
 
       await expect(service.remove(id)).rejects.toThrow(NotFoundException);
+    });
+
+    it("should re-throw generic errors in handlePrismaNotFound", async () => {
+      const id = "q-1";
+      const genericError = new Error("Connection failed");
+      mockPrismaService.question.update.mockRejectedValueOnce(genericError);
+
+      await expect(service.remove(id)).rejects.toThrow("Connection failed");
     });
   });
 
@@ -356,7 +561,9 @@ describe("QuestionService", () => {
       const dbError = new Error("Bulk insert failed");
       mockPrismaService.question.createMany.mockRejectedValueOnce(dbError);
 
-      await expect(service.bulkImport(bulkImportDto)).rejects.toThrow("Bulk insert failed");
+      await expect(service.bulkImport(bulkImportDto)).rejects.toThrow(
+        "Bulk insert failed",
+      );
     });
 
     it("should handle Prisma unique constraint errors", async () => {
@@ -367,7 +574,32 @@ describe("QuestionService", () => {
       mockPrismaService.question.createMany.mockRejectedValueOnce(prismaError);
 
       await expect(service.bulkImport(bulkImportDto)).rejects.toThrow(
-        new BadRequestException("Failed to import questions due to unique constraint violation. Some questions may already exist.")
+        new BadRequestException(
+          "Failed to import questions due to unique constraint violation. Some questions may already exist.",
+        ),
+      );
+    });
+
+    it("should re-throw generic non-Prisma errors", async () => {
+      const genericError = new Error("Database offline");
+      mockPrismaService.question.createMany.mockRejectedValueOnce(genericError);
+
+      await expect(service.bulkImport(bulkImportDto)).rejects.toThrow(
+        "Database offline",
+      );
+    });
+
+    it("should handle and throw BadRequestException for other Prisma errors (not P2002)", async () => {
+      const prismaError = Object.assign(
+        Object.create(Prisma.PrismaClientKnownRequestError.prototype),
+        { code: "P2003", message: "Foreign key constraint failed" },
+      );
+      mockPrismaService.question.createMany.mockRejectedValueOnce(prismaError);
+
+      await expect(service.bulkImport(bulkImportDto)).rejects.toThrow(
+        new BadRequestException(
+          "Failed to import questions: Foreign key constraint failed",
+        ),
       );
     });
   });
@@ -403,7 +635,9 @@ describe("QuestionService", () => {
       mockPrismaService.question.count.mockResolvedValueOnce(1);
       mockPrismaService.question.findFirst.mockResolvedValueOnce(mockQuestion);
 
-      const result = await service.getRandom(QuestionDifficulty.MEDIUM, ["q-old-1"]);
+      const result = await service.getRandom(QuestionDifficulty.MEDIUM, [
+        "q-old-1",
+      ]);
 
       expect(mockPrismaService.question.count).toHaveBeenCalledWith({
         where: {
@@ -444,7 +678,9 @@ describe("QuestionService", () => {
     it("should throw NotFoundException if question does not exist", async () => {
       mockPrismaService.question.findUnique.mockResolvedValueOnce(null);
 
-      await expect(service.getStats(questionId)).rejects.toThrow(NotFoundException);
+      await expect(service.getStats(questionId)).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it("should return zeroed statistics if question has never been played", async () => {
