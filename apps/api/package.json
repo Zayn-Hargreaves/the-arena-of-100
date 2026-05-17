@@ -47,7 +47,7 @@
   "devDependencies": {
     "@nestjs/cli": "^10.4.9",
     "@nestjs/schematics": "^10.2.3",
-    "@nestjs/testing": "^10.4.15",
+    "@nestjs/testing": "^11.1.21",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.10.5",
     "@vitest/coverage-v8": "^2.1.8",
