@@ -1,0 +1,27 @@
+# .codecov.yml
+# Xem tài liệu cấu hình chi tiết tại: https://docs.codecov.com/docs/codecovyml-reference
+
+coverage:
+  status:
+    project:
+      default:
+        # 'auto' nghĩa là tỷ lệ coverage của PR phải BẰNG hoặc CAO HƠN nhánh gốc (nhánh main)
+        target: auto
+        # '0%' threshold nghĩa là KHÔNG cho phép giảm dù chỉ 0.01%. 
+        # Nếu coverage bị giảm, status check trên GitHub sẽ bị đánh dấu FAIL (Đỏ).
+        threshold: 0%
+        only_pulls: true
+    
+    patch:
+      default:
+        # Yêu cầu riêng cho các phần code mới viết hoặc chỉnh sửa (patch) trong PR.
+        # Các dòng code mới được thêm/sửa bắt buộc phải được test bao phủ ít nhất 80%.
+        target: 80%
+        threshold: 0%
+        only_pulls: true
+
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  # Luôn hiển thị comment báo cáo ngay cả khi không có sự thay đổi nào về coverage
+  require_changes: no

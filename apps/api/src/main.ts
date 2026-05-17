@@ -30,24 +30,20 @@ async function bootstrap() {
   );
 
   // Security: Helmet (strict CSP, relaxed for Swagger via hook)
-  await app.register(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    helmet as any,
-    {
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: ["'self'"],
-          styleSrc: ["'self'"],
-          scriptSrc: ["'self'"],
-          imgSrc: ["'self'", "data:", "blob:"],
-          objectSrc: ["'none'"],
-          frameAncestors: ["'self'"],
-          baseUri: ["'self'"],
-          formAction: ["'self'"],
-        },
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        imgSrc: ["'self'", "data:", "blob:"],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'self'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
       },
     },
-  );
+  });
 
   // Enable CORS
   app.enableCors({
