@@ -31,7 +31,8 @@ async function bootstrap() {
 
   // Security: Helmet (strict CSP, relaxed for Swagger via hook)
   await app.register(
-    helmet,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    helmet as any,
     {
       contentSecurityPolicy: {
         directives: {

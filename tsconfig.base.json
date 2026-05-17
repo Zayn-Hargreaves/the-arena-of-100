@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "commonjs",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -13,7 +13,8 @@
     "sourceMap": true,
     "outDir": "./dist",
     "baseUrl": ".",
-    
+    "ignoreDeprecations": "6.0",
+
     /* Enterprise Strictness Rules */
     "noImplicitAny": true,
     "noUnusedLocals": true,
@@ -22,7 +23,7 @@
     "noFallthroughCasesInSwitch": true,
     "noImplicitOverride": true,
     "useUnknownInCatchVariables": true,
-    
+
     "paths": {
       "@arena/shared": ["packages/shared/src"],
       "@arena/shared/*": ["packages/shared/src/*"],
