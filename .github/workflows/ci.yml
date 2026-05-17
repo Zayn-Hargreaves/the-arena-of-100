@@ -19,9 +19,6 @@ env:
 jobs:
   install:
     runs-on: ubuntu-latest
-    env:
-      PRISMA_CACHE_KEY: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
-      NODE_MODULES_CACHE_KEY: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
     strategy:
       matrix:
         node-version: [20, 22]
@@ -45,7 +42,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: '**/node_modules'
-          key: ${{ env.NODE_MODULES_CACHE_KEY }}-${{ matrix.node-version }}
+          key: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ matrix.node-version }}
 
       - name: Install dependencies
         if: steps.node-modules-cache.outputs.cache-hit != 'true'
@@ -58,7 +55,7 @@ jobs:
           path: |
             node_modules/.prisma
             apps/api/node_modules/.prisma
-          key: ${{ env.PRISMA_CACHE_KEY }}
+          key: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
 
       - name: Generate Prisma Client
         if: steps.prisma-cache.outputs.cache-hit != 'true'
@@ -73,14 +70,11 @@ jobs:
           path: |
             node_modules/.prisma
             apps/api/node_modules/.prisma
-          key: ${{ env.PRISMA_CACHE_KEY }}
+          key: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
 
   lint:
     needs: install
     runs-on: ubuntu-latest
-    env:
-      PRISMA_CACHE_KEY: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
-      NODE_MODULES_CACHE_KEY: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
     strategy:
       matrix:
         node-version: [20, 22]
@@ -104,7 +98,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: '**/node_modules'
-          key: ${{ env.NODE_MODULES_CACHE_KEY }}-${{ matrix.node-version }}
+          key: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ matrix.node-version }}
 
       - name: Install dependencies
         if: steps.node-modules-cache.outputs.cache-hit != 'true'
@@ -117,7 +111,7 @@ jobs:
           path: |
             node_modules/.prisma
             apps/api/node_modules/.prisma
-          key: ${{ env.PRISMA_CACHE_KEY }}
+          key: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
 
       - name: Fallback Generate Prisma
         if: steps.prisma-cache.outputs.cache-hit != 'true'
@@ -131,9 +125,6 @@ jobs:
   test:
     needs: install
     runs-on: ubuntu-latest
-    env:
-      PRISMA_CACHE_KEY: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
-      NODE_MODULES_CACHE_KEY: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
     strategy:
       matrix:
         node-version: [20, 22]
@@ -183,7 +174,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: '**/node_modules'
-          key: ${{ env.NODE_MODULES_CACHE_KEY }}-${{ matrix.node-version }}
+          key: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ matrix.node-version }}
 
       - name: Install dependencies
         if: steps.node-modules-cache.outputs.cache-hit != 'true'
@@ -196,7 +187,7 @@ jobs:
           path: |
             node_modules/.prisma
             apps/api/node_modules/.prisma
-          key: ${{ env.PRISMA_CACHE_KEY }}
+          key: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
 
       - name: Fallback Generate Prisma
         if: steps.prisma-cache.outputs.cache-hit != 'true'
@@ -224,9 +215,6 @@ jobs:
   build:
     needs: install
     runs-on: ubuntu-latest
-    env:
-      PRISMA_CACHE_KEY: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
-      NODE_MODULES_CACHE_KEY: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
     strategy:
       matrix:
         node-version: [20, 22]
@@ -250,7 +238,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: '**/node_modules'
-          key: ${{ env.NODE_MODULES_CACHE_KEY }}-${{ matrix.node-version }}
+          key: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ matrix.node-version }}
 
       - name: Install dependencies
         if: steps.node-modules-cache.outputs.cache-hit != 'true'
@@ -263,7 +251,7 @@ jobs:
           path: |
             node_modules/.prisma
             apps/api/node_modules/.prisma
-          key: ${{ env.PRISMA_CACHE_KEY }}
+          key: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
 
       - name: Fallback Generate Prisma
         if: steps.prisma-cache.outputs.cache-hit != 'true'
