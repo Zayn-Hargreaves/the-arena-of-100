@@ -12,8 +12,6 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "./dist",
-    "baseUrl": ".",
-    "ignoreDeprecations": "6.0",
 
     /* Enterprise Strictness Rules */
     "noImplicitAny": true,
@@ -25,10 +23,10 @@
     "useUnknownInCatchVariables": true,
 
     "paths": {
-      "@arena/shared": ["packages/shared/src"],
-      "@arena/shared/*": ["packages/shared/src/*"],
-      "@arena/game-core": ["packages/game-core/src"],
-      "@arena/game-core/*": ["packages/game-core/src/*"]
+      "@arena/shared": ["./packages/shared/src"],
+      "@arena/shared/*": ["./packages/shared/src/*"],
+      "@arena/game-core": ["./packages/game-core/src"],
+      "@arena/game-core/*": ["./packages/game-core/src/*"]
     }
   },
   "exclude": ["node_modules", "dist"]
