@@ -83,3 +83,14 @@ Until full migration:
 4. **Maintained forks**:
    - Limited community adoption
    - Uncertain long-term viability
+
+## Room Module Security Vulnerability (RoomController spoofing)
+
+### Issue
+The REST endpoints in `RoomController` (such as `POST /rooms`, `POST /rooms/join`, and `POST /rooms/:roomId/leave`) currently accept `userId` as a plain Query Parameter (`@Query("userId") userId: string`) without verifying that it belongs to the authenticated requester.
+- This creates an access control vulnerability where a user can spoof any other user's ID to maliciously perform operations (create rooms, force join other rooms, force leave other rooms) on their behalf.
+
+### Remediation Plan
+1. Ensure `RoomController` is not marked with `@Public()` decorator (authentication is enforced via global `JwtAuthGuard`).
+2. Remove `@Query("userId")` from all controller methods.
+3. Retrieve `userId` securely from the authenticated Fastify request context: `req.user.userId`.

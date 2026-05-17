@@ -13,7 +13,7 @@ import { HttpExceptionBody } from "@nestjs/common/interfaces/http/http-exception
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
 
-  catch(exception: any, host: ArgumentsHost): void {
+  catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<FastifyReply>();
     const request = ctx.getRequest<FastifyRequest>();
@@ -61,10 +61,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
     response.status(status).send(errorResponse);
   }
 
-  private getLogMessage(exception: any, message: any): string {
+  private getLogMessage(exception: unknown, message: unknown): string {
     if (exception && typeof exception === "object") {
-      if ("stack" in exception && exception.stack) return exception.stack;
-      if ("message" in exception && exception.message) return exception.message;
+      const err = exception as Record<string, unknown>;
+      if (typeof err.stack === "string") return err.stack;
+      if (typeof err.message === "string") return err.message;
     }
 
     if (Array.isArray(message)) {

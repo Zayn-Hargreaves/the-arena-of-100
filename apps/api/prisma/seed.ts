@@ -1,7 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { questionSeeds } from "./seeds/questions";
 import { z } from "zod";
-import process from "node:process";
 
 // Define environment schema
 const envSchema = z.object({
@@ -76,8 +75,16 @@ async function main() {
   }
 
   // Add other seeds here as needed...
-  // console.log('🌱 Seeding users...');
-  // ...
+  console.log("🌱 Seeding admin user...");
+  await prisma.user.upsert({
+    where: { username: "admin" },
+    update: { role: "ADMIN" },
+    create: {
+      username: "admin",
+      role: "ADMIN",
+    },
+  });
+  console.log("✅ Seeded admin user");
 
   console.log("🚀 Seeding completed successfully!");
 }

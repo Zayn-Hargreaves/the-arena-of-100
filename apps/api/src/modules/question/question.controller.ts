@@ -12,7 +12,6 @@ import {
   Delete,
   Query,
   ValidationPipe,
-  UseGuards,
   HttpCode,
 } from "@nestjs/common";
 import { ParseCuidPipe } from "../../common/pipes/parse-cuid.pipe";
@@ -28,16 +27,19 @@ import { UpdateQuestionDto } from "./dto/update-question.dto";
 import { GetQuestionsDto } from "./dto/get-questions.dto";
 import { Question } from "./entities/question.entity";
 import { QuestionResponseDto } from "./dto/question-response.dto";
-import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { Roles } from "../../common/decorators/roles.decorator";
+import { Role } from "@prisma/client";
+import { BulkImportDto } from "./dto/bulk-import.dto";
+import { RandomQueryDto } from "./dto/random-query.dto";
 
 @ApiTags("Questions")
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
 @Controller("questions")
 export class QuestionController {
   constructor(private readonly questionService: QuestionService) {}
 
   @Post()
+  @Roles(Role.ADMIN)
   @ApiOperation({ summary: "Create a new question" })
   @ApiResponse({
     status: 201,
@@ -58,7 +60,29 @@ export class QuestionController {
     return this.questionService.create(createQuestionDto);
   }
 
+  @Post("bulk")
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: "Bulk import multiple questions" })
+  @ApiResponse({
+    status: 201,
+    description: "Questions imported successfully",
+  })
+  @ApiResponse({ status: 400, description: "Validation failed" })
+  async bulkImport(
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    bulkImportDto: BulkImportDto,
+  ) {
+    return this.questionService.bulkImport(bulkImportDto);
+  }
+
   @Get()
+  @Roles(Role.ADMIN)
   @ApiOperation({ summary: "Get all questions with pagination and filters" })
   @ApiResponse({
     status: 200,
@@ -78,7 +102,41 @@ export class QuestionController {
     return this.questionService.findAll(query);
   }
 
+  @Get("random")
+  @ApiOperation({ summary: "Get a random active question" })
+  @ApiResponse({
+    status: 200,
+    description: "Random question retrieved successfully",
+    type: Question,
+  })
+  @ApiResponse({ status: 404, description: "No questions found" })
+  async getRandom(
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    query: RandomQueryDto,
+  ) {
+    return this.questionService.getRandom(query.difficulty, query.excludeIds);
+  }
+
+  @Get(":id/stats")
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: "Get dynamic analytics and performance stats for a question" })
+  @ApiResponse({
+    status: 200,
+    description: "Dynamic question statistics retrieved successfully",
+  })
+  @ApiResponse({ status: 404, description: "Question not found" })
+  async getStats(@Param("id", ParseCuidPipe) id: string) {
+    return this.questionService.getStats(id);
+  }
+
   @Get(":id")
+  @Roles(Role.ADMIN)
   @ApiOperation({ summary: "Get a single question by ID" })
   @ApiResponse({
     status: 200,
@@ -91,6 +149,7 @@ export class QuestionController {
   }
 
   @Patch(":id")
+  @Roles(Role.ADMIN)
   @ApiOperation({ summary: "Update a question" })
   @ApiResponse({
     status: 200,
@@ -114,6 +173,7 @@ export class QuestionController {
   }
 
   @Delete(":id")
+  @Roles(Role.ADMIN)
   @ApiOperation({ summary: "Delete a question" })
   @ApiResponse({ status: 204, description: "Question deleted successfully" })
   @ApiResponse({ status: 404, description: "Question not found" })

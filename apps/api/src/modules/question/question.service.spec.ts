@@ -1,8 +1,9 @@
-import { NotFoundException } from "@nestjs/common";
+import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { QuestionService } from "./question.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { GetQuestionsDto, QuestionDifficulty } from "./dto/get-questions.dto";
+import { BulkImportDto } from "./dto/bulk-import.dto";
 
 describe("QuestionService", () => {
   let service: QuestionService;
@@ -15,6 +16,11 @@ describe("QuestionService", () => {
       count: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+      createMany: vi.fn(),
+      findFirst: vi.fn(),
+    },
+    answer: {
+      findMany: vi.fn(),
     },
   };
 
@@ -273,13 +279,14 @@ describe("QuestionService", () => {
   });
 
   describe("remove", () => {
-    it("should delete question successfully", async () => {
+    it("should soft delete question successfully", async () => {
       const id = "q-1";
-      mockPrismaService.question.delete.mockResolvedValueOnce({ id });
+      mockPrismaService.question.update.mockResolvedValueOnce({ id, active: false });
 
       await expect(service.remove(id)).resolves.toBeUndefined();
-      expect(mockPrismaService.question.delete).toHaveBeenCalledWith({
+      expect(mockPrismaService.question.update).toHaveBeenCalledWith({
         where: { id },
+        data: { active: false },
       });
     });
 
@@ -290,9 +297,195 @@ describe("QuestionService", () => {
         { code: "P2025" },
       );
 
-      mockPrismaService.question.delete.mockRejectedValueOnce(prismaError);
+      mockPrismaService.question.update.mockRejectedValueOnce(prismaError);
 
       await expect(service.remove(id)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe("bulkImport", () => {
+    const bulkImportDto: BulkImportDto = {
+      questions: [
+        {
+          content: "What is 2 + 2?",
+          options: ["3", "4", "5", "6"],
+          correctAnswer: "4",
+          difficulty: QuestionDifficulty.EASY,
+          active: true,
+        },
+        {
+          content: "What is the capital of Spain?",
+          options: ["Madrid", "Barcelona", "Seville", "Valencia"],
+          correctAnswer: "Madrid",
+          difficulty: QuestionDifficulty.MEDIUM,
+        },
+      ],
+    };
+
+    it("should import questions in bulk and return count summary", async () => {
+      mockPrismaService.question.createMany.mockResolvedValueOnce({ count: 2 });
+
+      const result = await service.bulkImport(bulkImportDto);
+
+      expect(mockPrismaService.question.createMany).toHaveBeenCalledWith({
+        data: [
+          {
+            content: "What is 2 + 2?",
+            options: ["3", "4", "5", "6"],
+            correctAnswer: "4",
+            difficulty: QuestionDifficulty.EASY,
+            active: true,
+          },
+          {
+            content: "What is the capital of Spain?",
+            options: ["Madrid", "Barcelona", "Seville", "Valencia"],
+            correctAnswer: "Madrid",
+            difficulty: QuestionDifficulty.MEDIUM,
+            active: true,
+          },
+        ],
+        skipDuplicates: true,
+      });
+      expect(result).toEqual({
+        count: 2,
+        message: "Successfully imported 2 questions",
+      });
+    });
+
+    it("should throw when dependency fails", async () => {
+      const dbError = new Error("Bulk insert failed");
+      mockPrismaService.question.createMany.mockRejectedValueOnce(dbError);
+
+      await expect(service.bulkImport(bulkImportDto)).rejects.toThrow("Bulk insert failed");
+    });
+
+    it("should handle Prisma unique constraint errors", async () => {
+      const prismaError = Object.assign(
+        Object.create(Prisma.PrismaClientKnownRequestError.prototype),
+        { code: "P2002" },
+      );
+      mockPrismaService.question.createMany.mockRejectedValueOnce(prismaError);
+
+      await expect(service.bulkImport(bulkImportDto)).rejects.toThrow(
+        new BadRequestException("Failed to import questions due to unique constraint violation. Some questions may already exist.")
+      );
+    });
+  });
+
+  describe("getRandom", () => {
+    const mockQuestion = {
+      id: "q-random-1",
+      content: "Random question?",
+      options: ["A", "B", "C", "D"],
+      correctAnswer: "A",
+      difficulty: QuestionDifficulty.EASY,
+      active: true,
+      createdAt: new Date(),
+    };
+
+    it("should return a random active question successfully", async () => {
+      mockPrismaService.question.count.mockResolvedValueOnce(5);
+      mockPrismaService.question.findFirst.mockResolvedValueOnce(mockQuestion);
+
+      const result = await service.getRandom();
+
+      expect(mockPrismaService.question.count).toHaveBeenCalledWith({
+        where: { active: true },
+      });
+      expect(mockPrismaService.question.findFirst).toHaveBeenCalledWith({
+        where: { active: true },
+        skip: expect.any(Number),
+      });
+      expect(result).toEqual(mockQuestion);
+    });
+
+    it("should apply difficulty and excludeIds filters", async () => {
+      mockPrismaService.question.count.mockResolvedValueOnce(1);
+      mockPrismaService.question.findFirst.mockResolvedValueOnce(mockQuestion);
+
+      const result = await service.getRandom(QuestionDifficulty.MEDIUM, ["q-old-1"]);
+
+      expect(mockPrismaService.question.count).toHaveBeenCalledWith({
+        where: {
+          active: true,
+          difficulty: QuestionDifficulty.MEDIUM,
+          id: { notIn: ["q-old-1"] },
+        },
+      });
+      expect(mockPrismaService.question.findFirst).toHaveBeenCalledWith({
+        where: {
+          active: true,
+          difficulty: QuestionDifficulty.MEDIUM,
+          id: { notIn: ["q-old-1"] },
+        },
+        skip: 0,
+      });
+      expect(result).toEqual(mockQuestion);
+    });
+
+    it("should throw NotFoundException if count is 0", async () => {
+      mockPrismaService.question.count.mockResolvedValueOnce(0);
+
+      await expect(service.getRandom()).rejects.toThrow(NotFoundException);
+    });
+
+    it("should throw NotFoundException if findFirst returns null", async () => {
+      mockPrismaService.question.count.mockResolvedValueOnce(2);
+      mockPrismaService.question.findFirst.mockResolvedValueOnce(null);
+
+      await expect(service.getRandom()).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe("getStats", () => {
+    const questionId = "q-stats-1";
+    const mockQuestion = { id: questionId, content: "Stats?" };
+
+    it("should throw NotFoundException if question does not exist", async () => {
+      mockPrismaService.question.findUnique.mockResolvedValueOnce(null);
+
+      await expect(service.getStats(questionId)).rejects.toThrow(NotFoundException);
+    });
+
+    it("should return zeroed statistics if question has never been played", async () => {
+      mockPrismaService.question.findUnique.mockResolvedValueOnce(mockQuestion);
+      mockPrismaService.answer.findMany.mockResolvedValueOnce([]);
+
+      const result = await service.getStats(questionId);
+
+      expect(mockPrismaService.answer.findMany).toHaveBeenCalledWith({
+        where: { round: { questionId } },
+        select: { isCorrect: true, responseTimeMs: true },
+      });
+      expect(result).toEqual({
+        questionId,
+        totalAppearances: 0,
+        correctAnswers: 0,
+        incorrectAnswers: 0,
+        averageResponseTimeMs: 0,
+        actualDifficultyScore: 0,
+      });
+    });
+
+    it("should calculate correctRatio and averageResponseTimeMs from answers successfully", async () => {
+      mockPrismaService.question.findUnique.mockResolvedValueOnce(mockQuestion);
+      mockPrismaService.answer.findMany.mockResolvedValueOnce([
+        { isCorrect: true, responseTimeMs: 1000 },
+        { isCorrect: false, responseTimeMs: 2000 },
+        { isCorrect: true, responseTimeMs: 1500 },
+        { isCorrect: true, responseTimeMs: 1200 },
+      ]);
+
+      const result = await service.getStats(questionId);
+
+      expect(result).toEqual({
+        questionId,
+        totalAppearances: 4,
+        correctAnswers: 3,
+        incorrectAnswers: 1,
+        averageResponseTimeMs: 1425, // (1000+2000+1500+1200)/4 = 1425
+        actualDifficultyScore: 0.75, // 3 / 4
+      });
     });
   });
 });

@@ -4,6 +4,7 @@
 
 import { Controller, Post, Body, HttpCode, HttpStatus } from "@nestjs/common";
 import { AuthService, AuthResult } from "./auth.service";
+import { Public } from "../../common/decorators/public.decorator";
 import { z } from "zod";
 
 const guestLoginSchema = z.object({
@@ -19,6 +20,7 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post("guest")
+  @Public()
   @HttpCode(HttpStatus.OK)
   async guestLogin(@Body() body: unknown): Promise<AuthResult> {
     const { username } = guestLoginSchema.parse(body);
@@ -26,6 +28,7 @@ export class AuthController {
   }
 
   @Post("refresh")
+  @Public()
   @HttpCode(HttpStatus.OK)
   async refresh(@Body() body: unknown): Promise<AuthResult> {
     const { refreshToken } = refreshSchema.parse(body);

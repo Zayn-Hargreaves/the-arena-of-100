@@ -5,6 +5,7 @@ import { UpdateQuestionDto } from "./dto/update-question.dto";
 import { GetQuestionsDto, QuestionDifficulty } from "./dto/get-questions.dto";
 import { Question } from "./entities/question.entity";
 import { NotFoundException, BadRequestException } from "@nestjs/common";
+import { BulkImportDto } from "./dto/bulk-import.dto";
 
 describe("QuestionController", () => {
   let controller: QuestionController;
@@ -51,6 +52,9 @@ describe("QuestionController", () => {
       findOne: vi.fn(),
       update: vi.fn(),
       remove: vi.fn(),
+      bulkImport: vi.fn(),
+      getRandom: vi.fn(),
+      getStats: vi.fn(),
     };
     service = mockQuestionService as unknown as QuestionService;
     controller = new QuestionController(service);
@@ -248,6 +252,92 @@ describe("QuestionController", () => {
         BadRequestException,
       );
       expect(service.remove).toHaveBeenCalledWith(invalidId);
+    });
+  });
+
+  describe("bulkImport", () => {
+    const bulkImportDto: BulkImportDto = {
+      questions: [
+        {
+          content: "What is the capital of France?",
+          options: ["Paris", "London", "Berlin", "Madrid"],
+          correctAnswer: "Paris",
+          difficulty: QuestionDifficulty.EASY,
+          active: true,
+        },
+      ],
+    };
+
+    it("should import questions in bulk successfully", async () => {
+      const expectedResponse = { count: 1, message: "Successfully imported 1 questions" };
+      vi.mocked(service.bulkImport).mockResolvedValue(expectedResponse);
+
+      const result = await controller.bulkImport(bulkImportDto);
+
+      expect(service.bulkImport).toHaveBeenCalledWith(bulkImportDto);
+      expect(result).toEqual(expectedResponse);
+    });
+
+    it("should handle validation or service errors", async () => {
+      const error = new BadRequestException("Invalid data payload");
+      vi.mocked(service.bulkImport).mockRejectedValue(error);
+
+      await expect(controller.bulkImport(bulkImportDto)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(service.bulkImport).toHaveBeenCalledWith(bulkImportDto);
+    });
+  });
+
+  describe("getRandom", () => {
+    it("should return a random question successfully", async () => {
+      vi.mocked(service.getRandom).mockResolvedValue(mockQuestion);
+
+      const result = await controller.getRandom({ difficulty: QuestionDifficulty.EASY, excludeIds: ["q-1"] });
+
+      expect(service.getRandom).toHaveBeenCalledWith(QuestionDifficulty.EASY, ["q-1"]);
+      expect(result).toEqual(mockQuestion);
+    });
+
+    it("should handle not found errors", async () => {
+      const error = new NotFoundException("No questions found");
+      vi.mocked(service.getRandom).mockRejectedValue(error);
+
+      await expect(
+        controller.getRandom({}),
+      ).rejects.toThrow(NotFoundException);
+      expect(service.getRandom).toHaveBeenCalledWith(undefined, undefined);
+    });
+  });
+
+  describe("getStats", () => {
+    const questionId = "cjld2cjxh0000qzrmn831i7rn";
+
+    it("should return question stats successfully", async () => {
+      const mockStats = {
+        questionId,
+        totalAppearances: 10,
+        correctAnswers: 8,
+        incorrectAnswers: 2,
+        averageResponseTimeMs: 1200,
+        actualDifficultyScore: 0.8,
+      };
+      vi.mocked(service.getStats).mockResolvedValue(mockStats);
+
+      const result = await controller.getStats(questionId);
+
+      expect(service.getStats).toHaveBeenCalledWith(questionId);
+      expect(result).toEqual(mockStats);
+    });
+
+    it("should handle not found errors", async () => {
+      const error = new NotFoundException("Question not found");
+      vi.mocked(service.getStats).mockRejectedValue(error);
+
+      await expect(controller.getStats(questionId)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(service.getStats).toHaveBeenCalledWith(questionId);
     });
   });
 });

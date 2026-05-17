@@ -2,10 +2,10 @@ import { validate } from "class-validator";
 import { IsInArray } from "./is-in-array.validator";
 
 class TestDto {
-  options!: any[];
+  options!: unknown[];
 
   @IsInArray("options")
-  selectedValue!: any;
+  selectedValue!: unknown;
 }
 
 describe("IsInArrayValidator", () => {
@@ -34,7 +34,7 @@ describe("IsInArrayValidator", () => {
 
   it("should not validate when related field is not an array", async () => {
     const dto = new TestDto();
-    dto.options = "not-an-array" as any;
+    dto.options = "not-an-array" as unknown as unknown[];
     dto.selectedValue = "a";
 
     const errors = await validate(dto);

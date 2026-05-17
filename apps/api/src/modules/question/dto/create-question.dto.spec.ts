@@ -29,7 +29,7 @@ describe("CreateQuestionDto", () => {
   it("should not validate when options is not an array", async () => {
     const dto = new CreateQuestionDto();
     dto.content = "What is the capital of France?";
-    dto.options = "Paris" as any; // Invalid type
+    dto.options = "Paris" as unknown as string[]; // Invalid type
     dto.correctAnswer = "Paris";
     dto.difficulty = QuestionDifficulty.EASY;
 
