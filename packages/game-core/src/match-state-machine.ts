@@ -64,13 +64,24 @@ export class MatchStateMachine {
     };
   }
 
-  // State Accessor
+  // State Accessor (deep clone Maps to prevent external mutation)
   getState(): Readonly<MatchState> {
-    return { ...this.state };
+    return {
+      ...this.state,
+      players: new Map(
+        Array.from(this.state.players.entries()).map(([id, p]) => [id, { ...p }]),
+      ),
+      survivingPlayerIds: [...this.state.survivingPlayerIds],
+      eliminatedPlayerIds: [...this.state.eliminatedPlayerIds],
+    };
   }
 
   getCurrentRound(): Readonly<RoundState> | null {
-    return this.currentRound ? { ...this.currentRound } : null;
+    if (!this.currentRound) return null;
+    return {
+      ...this.currentRound,
+      answers: new Map(this.currentRound.answers),
+    };
   }
 
   // Validate Transition (Guard)
@@ -358,5 +369,55 @@ export class MatchStateMachine {
     timestamp: number;
   }> {
     return [...this.eventLog];
+  }
+
+  // Serialize state to JSON string for Redis persistence
+  serialize(): string {
+    const roundData = this.currentRound
+      ? {
+          ...this.currentRound,
+          answers: Array.from(this.currentRound.answers.entries()),
+          correctAnswer: (
+            this.currentRound as RoundState & { correctAnswer: string }
+          ).correctAnswer,
+        }
+      : null;
+
+    return JSON.stringify({
+      state: {
+        ...this.state,
+        players: Array.from(this.state.players.entries()),
+      },
+      currentRound: roundData,
+      eventLog: this.eventLog,
+    });
+  }
+
+  // Restore MatchStateMachine from serialized JSON string
+  static deserialize(json: string): MatchStateMachine {
+    const data = JSON.parse(json);
+
+    // Create instance with dummy data, then overwrite
+    const instance = new MatchStateMachine("", "", []);
+
+    instance.state = {
+      ...data.state,
+      players: new Map(data.state.players),
+    };
+
+    if (data.currentRound) {
+      const { correctAnswer, answers, ...rest } = data.currentRound;
+      instance.currentRound = {
+        ...rest,
+        answers: new Map(answers),
+        correctAnswer,
+      } as RoundState & { correctAnswer: string };
+    } else {
+      instance.currentRound = null;
+    }
+
+    instance.eventLog = data.eventLog ?? [];
+
+    return instance;
   }
 }
