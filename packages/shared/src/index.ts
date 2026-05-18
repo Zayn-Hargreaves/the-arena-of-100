@@ -1,6 +1,6 @@
 // ============================================================
 // @arena/shared - Main Entry Point
-// Game Đấu Trường 100 - Shared Types & Constants
+// Game Đ đấu Trường 100 - Shared Types & Constants
 // ============================================================
 
 // Events
@@ -11,6 +11,9 @@ export * from "./state";
 
 // Socket Protocol
 export * from "./socket";
+
+// Errors
+export * from "./errors";
 
 // Game Constants
 export const GAME_CONFIG = {
