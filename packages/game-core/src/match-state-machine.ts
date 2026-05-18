@@ -80,6 +80,10 @@ export class MatchStateMachine {
     if (!this.currentRound) return null;
     return {
       ...this.currentRound,
+      question: {
+        ...this.currentRound.question,
+        options: [...this.currentRound.question.options],
+      },
       answers: new Map(this.currentRound.answers),
     };
   }
@@ -395,18 +399,71 @@ export class MatchStateMachine {
 
   // Restore MatchStateMachine from serialized JSON string
   static deserialize(json: string): MatchStateMachine {
-    const data = JSON.parse(json);
+    let data: unknown;
+    
+    try {
+      data = JSON.parse(json);
+    } catch (error) {
+      throw new Error(`Failed to parse MatchStateMachine JSON: ${error instanceof Error ? error.message : String(error)}. Raw JSON: ${json.substring(0, 100)}${json.length > 100 ? '...' : ''}`);
+    }
+
+    // Type guard for our parsed data
+    if (typeof data !== 'object' || data === null) {
+      throw new Error('Invalid deserialized data: expected object');
+    }
+    
+    // Cast to a more specific type for easier handling
+    const parsedData = data as {
+      state?: {
+        players?: unknown;
+        [key: string]: unknown;
+      };
+      currentRound?: {
+        correctAnswer?: unknown;
+        answers?: unknown;
+        [key: string]: unknown;
+      };
+      eventLog?: unknown;
+    };
+    
+    // Validate required fields
+    if (!parsedData.state) {
+      throw new Error('Missing required field: data.state');
+    }
+    
+    if (!Array.isArray(parsedData.state.players)) {
+      throw new Error('Invalid players data: expected array');
+    }
+    
+    if (parsedData.eventLog && !Array.isArray(parsedData.eventLog)) {
+      throw new Error('Invalid eventLog data: expected array or null/undefined');
+    }
 
     // Create instance with dummy data, then overwrite
     const instance = new MatchStateMachine("", "", []);
 
     instance.state = {
-      ...data.state,
-      players: new Map(data.state.players),
+      ...parsedData.state,
+      players: new Map(parsedData.state.players),
     };
 
-    if (data.currentRound) {
-      const { correctAnswer, answers, ...rest } = data.currentRound;
+    if (parsedData.currentRound) {
+      // Validate currentRound structure
+      if (typeof parsedData.currentRound !== 'object') {
+        throw new Error('Invalid currentRound data: expected object');
+      }
+      
+      const { correctAnswer, answers, ...rest } = parsedData.currentRound;
+      
+      // Validate required fields in currentRound
+      if (correctAnswer === undefined) {
+        throw new Error('Missing required field in currentRound: correctAnswer');
+      }
+      
+      if (!Array.isArray(answers)) {
+        throw new Error('Invalid answers data: expected array');
+      }
+      
       instance.currentRound = {
         ...rest,
         answers: new Map(answers),
@@ -416,7 +473,7 @@ export class MatchStateMachine {
       instance.currentRound = null;
     }
 
-    instance.eventLog = data.eventLog ?? [];
+    instance.eventLog = Array.isArray(parsedData.eventLog) ? parsedData.eventLog : [];
 
     return instance;
   }

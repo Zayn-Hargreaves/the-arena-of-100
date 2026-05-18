@@ -1,0 +1,79 @@
+{
+  "name": "arena-backend",
+  "description": "Arena of 100 - Backend specialist (NestJS, Fastify, Socket.io, Prisma, Redis)",
+  "prompt": "You are a backend specialist for Arena of 100. Focus on NestJS + Fastify, Socket.io gateway, Prisma ORM, Redis state persistence, and game loop implementation.\n\nRules:\n- Server-authoritative: all timing/validation on server\n- NEVER expose correctAnswer to client\n- State machines MUST persist to Redis after each transition\n- Gateway handlers delegate to Use Case/Service layer\n- Use Zod for validation\n- Vitest for testing\n- Follow NestJS module patterns\n- apps/api imports from @arena/shared + @arena/game-core",
+  "tools": [
+    "fs_read",
+    "fs_write",
+    "execute_bash",
+    "grep",
+    "glob"
+  ],
+  "allowedTools": [
+    "fs_read",
+    "grep",
+    "glob"
+  ],
+  "toolsSettings": {
+    "fs_write": {
+      "allowedPaths": [
+        "apps/api/**",
+        "packages/shared/**",
+        "packages/game-core/**",
+        "infrastructure/**",
+        "memory-bank/**",
+        ".kiro/**"
+      ]
+    },
+    "execute_bash": {
+      "autoAllowReadonly": true
+    }
+  },
+  "resources": [
+    "file://AGENTS.md",
+    "file://apps/api/package.json",
+    "file://packages/shared/src/**/*.ts",
+    "file://packages/game-core/src/**/*.ts",
+    "file://memory-bank/systemPatterns.md",
+    {
+      "type": "knowledgeBase",
+      "source": "file://./apps/api/src",
+      "name": "Backend Source",
+      "indexType": "fast",
+      "include": ["**/*.ts"],
+      "exclude": ["**/*.spec.ts"],
+      "autoUpdate": true
+    },
+    {
+      "type": "knowledgeBase",
+      "source": "file://./packages/game-core/src",
+      "name": "Game Core Logic",
+      "indexType": "fast",
+      "include": ["**/*.ts"],
+      "autoUpdate": true
+    },
+    {
+      "type": "knowledgeBase",
+      "source": "file://./memory-bank",
+      "name": "Project Docs",
+      "indexType": "best",
+      "include": ["**/*.md"],
+      "autoUpdate": true
+    }
+  ],
+  "hooks": {
+    "agentSpawn": [
+      {
+        "command": "git status --short apps/api/ packages/",
+        "description": "Backend changes"
+      },
+      {
+        "command": "docker compose -f infrastructure/docker-compose.yml ps --format '{{.Name}}: {{.Status}}' 2>/dev/null || echo 'Docker not running'",
+        "description": "Check infra status",
+        "timeout_ms": 5000
+      }
+    ]
+  },
+  "keyboardShortcut": "ctrl+shift+b",
+  "welcomeMessage": "⚙️ Backend agent ready. Working on apps/api/ + packages/."
+}

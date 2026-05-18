@@ -23,7 +23,7 @@
 - [x] Add QuestionModule (service + controller + seed data)
 - [ ] Add MatchStateMachine.serialize()/deserialize() for Redis persistence
 - [ ] Refactor GameGateway from God Object → split or handler delegation
-- [ ] Fix `MatchStartedPayload` missing interface in events.ts
+- [x] ~~Fix `MatchStartedPayload` missing interface in events.ts~~ [RESOLVED - already defined]
 - [ ] Fix shallow copy issue in `getState()` (Map not deep cloned)
 
 ### 🚧 In Progress (Phase 1: Core Implementation)
@@ -80,7 +80,7 @@
 - **GameGateway God Object** — 319 LOC, single file handles all socket events
 - **In-memory state machines** — server restart loses all active matches
 - ~~**Missing QuestionModule**~~ [RESOLVED] — QuestionModule fully implemented with REST endpoints for CRUD and bulk import, along with database seeding.
-- **`MatchStartedPayload` undefined** — referenced in union type but never defined
+- ~~**`MatchStartedPayload` undefined**~~ [RESOLVED] — already defined in events.ts with matchId, playerIds, startTime
 - **`getState()` shallow copy** — `{...this.state}` doesn't deep clone `players` Map
 
 ### 🟡 Significant

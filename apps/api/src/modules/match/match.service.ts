@@ -86,20 +86,47 @@ export class MatchService {
       data: { status: RoomStatus.IN_GAME, currentMatchId: match.id },
     });
 
-    // Cache match state in Redis
-    await this.redis.setJSON(
-      `match:${match.id}`,
-      stateMachine.getSnapshot(0),
-      7200,
-    );
+    // Persist state machine to Redis for crash recovery
+    await this.persistStateMachine(match.id);
 
     this.logger.log(`Match created: ${match.id} for room ${roomId}`);
     return match;
   }
 
-  // Get state machine for match
-  getStateMachine(matchId: string): MatchStateMachine | undefined {
-    return this.stateMachines.get(matchId);
+  // Get state machine for match (restores from Redis if not in memory)
+  async getStateMachine(
+    matchId: string,
+  ): Promise<MatchStateMachine | undefined> {
+    const cached = this.stateMachines.get(matchId);
+    if (cached) return cached;
+
+    // Try restore from Redis
+    const json = await this.redis.get(`match:state:${matchId}`);
+    if (!json) return undefined;
+
+    try {
+      const restored = MatchStateMachine.deserialize(json);
+      this.stateMachines.set(matchId, restored);
+      this.logger.log(`Match state restored from Redis: ${matchId}`);
+      return restored;
+    } catch (error) {
+      this.logger.error(`Failed to deserialize match state for ${matchId}`, error);
+      // Optionally remove corrupted key
+      await this.redis.del(`match:state:${matchId}`);
+      return undefined;
+    }
+  }
+
+  // Persist current state machine to Redis
+  async persistStateMachine(matchId: string): Promise<void> {
+    const machine = this.stateMachines.get(matchId);
+    if (!machine) return;
+
+    await this.redis.set(
+      `match:state:${matchId}`,
+      machine.serialize(),
+      7200, // 2 hour TTL
+    );
   }
 
   // Get match by ID
@@ -140,7 +167,7 @@ export class MatchService {
 
     // Clean up state machine
     this.stateMachines.delete(matchId);
-    await this.redis.del(`match:${matchId}`);
+    await this.redis.del(`match:state:${matchId}`);
 
     this.logger.log(`Match finished: ${matchId}, winner: ${winnerId}`);
     return match;

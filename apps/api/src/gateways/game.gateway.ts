@@ -265,7 +265,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         throw new Error(ErrorCode.UNAUTHORIZED);
       }
 
-      const stateMachine = this.matchService.getStateMachine(payload.matchId);
+      const stateMachine = await this.matchService.getStateMachine(
+        payload.matchId,
+      );
       if (!stateMachine) {
         throw new Error(ErrorCode.MATCH_NOT_FOUND);
       }
@@ -279,6 +281,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         payload.answer,
         serverTimestamp,
       );
+
+      // Persist state after mutation
+      await this.matchService.persistStateMachine(payload.matchId);
 
       // Send result to player
       client.emit(ServerEvent.ANSWER_RESULT, {
@@ -313,7 +318,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         throw new Error(ErrorCode.UNAUTHORIZED);
       }
 
-      const stateMachine = this.matchService.getStateMachine(payload.matchId);
+      const stateMachine = await this.matchService.getStateMachine(
+        payload.matchId,
+      );
       if (!stateMachine) {
         throw new Error(ErrorCode.MATCH_NOT_FOUND);
       }

@@ -1,0 +1,118 @@
+{
+  "name": "arena-dev",
+  "description": "Arena of 100 - Real-time multiplayer quiz battle royale. Full-stack dev agent.",
+  "prompt": "You are an expert developer on Arena of 100 — a real-time multiplayer quiz battle royale (100 players, wrong answer = eliminated, last standing wins).\n\nCritical rules:\n- Server-authoritative: all timing/validation on server (anti-cheat)\n- NEVER expose correctAnswer to client\n- State machines MUST persist to Redis after each transition\n- Gateway handlers delegate to Use Case/Service layer\n- Dependencies flow inward: transport → application → domain\n- packages/shared: ZERO imports from other packages\n- packages/game-core: only imports from @arena/shared\n- apps/web: only imports from @arena/shared (NOT game-core)\n- Events are immutable (append-only)\n- Use Zod for validation (not class-validator)\n- Vitest for testing\n- Follow NestJS module patterns for backend\n- Zustand for frontend state\n- Socket.io for real-time communication",
+  "tools": [
+    "fs_read",
+    "fs_write",
+    "execute_bash",
+    "grep",
+    "glob"
+  ],
+  "allowedTools": [
+    "fs_read",
+    "grep",
+    "glob"
+  ],
+  "toolsSettings": {
+    "fs_write": {
+      "allowedPaths": [
+        "apps/**",
+        "packages/**",
+        "infrastructure/**",
+        "memory-bank/**",
+        ".kiro/**"
+      ],
+      "deniedPaths": [
+        "node_modules/**",
+        ".git/**",
+        "pnpm-lock.yaml"
+      ]
+    },
+    "execute_bash": {
+      "autoAllowReadonly": true
+    }
+  },
+  "resources": [
+    "file://AGENTS.md",
+    "file://memory-bank/activeContext.md",
+    "file://memory-bank/codingGuidelines.md",
+    "file://packages/shared/src/**/*.ts",
+    "file://packages/game-core/src/**/*.ts",
+    {
+      "type": "knowledgeBase",
+      "source": "file://./memory-bank",
+      "name": "Project Documentation",
+      "indexType": "best",
+      "include": ["**/*.md"],
+      "autoUpdate": true
+    },
+    {
+      "type": "knowledgeBase",
+      "source": "file://./packages/game-core/src",
+      "name": "Game Core Logic",
+      "indexType": "fast",
+      "include": ["**/*.ts"],
+      "autoUpdate": true
+    },
+    {
+      "type": "knowledgeBase",
+      "source": "file://./packages/shared/src",
+      "name": "Shared Types & Events",
+      "indexType": "fast",
+      "include": ["**/*.ts"],
+      "autoUpdate": true
+    },
+    {
+      "type": "knowledgeBase",
+      "source": "file://./apps/api/src",
+      "name": "Backend Source",
+      "indexType": "fast",
+      "include": ["**/*.ts"],
+      "exclude": ["**/*.spec.ts", "**/*.e2e-spec.ts"],
+      "autoUpdate": true
+    },
+    {
+      "type": "knowledgeBase",
+      "source": "file://./apps/web/src",
+      "name": "Frontend Source",
+      "indexType": "fast",
+      "include": ["**/*.ts", "**/*.tsx"],
+      "autoUpdate": true
+    }
+  ],
+  "hooks": {
+    "agentSpawn": [
+      {
+        "command": "git status --short",
+        "description": "Show current git status"
+      },
+      {
+        "command": "head -60 memory-bank/activeContext.md",
+        "description": "Load active project context",
+        "timeout_ms": 5000
+      }
+    ],
+    "userPromptSubmit": [
+      {
+        "command": "git diff --stat HEAD",
+        "description": "Show uncommitted changes",
+        "cache_ttl_seconds": 30
+      }
+    ],
+    "stop": [
+      {
+        "command": "echo 'Remember: pnpm test before committing'",
+        "description": "Remind to test"
+      }
+    ]
+  },
+  "mcpServers": {
+    "shadcn": {
+      "command": "npx",
+      "args": ["shadcn@latest", "mcp"]
+    }
+  },
+  "keyboardShortcut": "ctrl+shift+a",
+  "welcomeMessage": "🏟️ Arena of 100 dev agent ready. What are we building today?"
+}
