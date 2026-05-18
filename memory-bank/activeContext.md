@@ -22,8 +22,8 @@ Architecture review complete. Base scaffold is **structurally sound** — no res
 
 ### 🔴 Critical Issues (Fix Before Phase 1)
 
-1. **GameGateway God Object**: 319 LOC handling auth, room, match, answer, reconnect. Will balloon to 1000+ with spectator/emotes/admin. Must split or delegate.
-2. **In-Memory State Machines**: `Map<string, MatchStateMachine>` in RAM. Server restart = ALL matches lost. Need Redis persistence.
+1. ~~**GameGateway God Object**~~ [RESOLVED]: Refactored GameGateway into separate event handler classes (AuthHandler, RoomHandler, MatchHandler), making the main gateway a lean router.
+2. ~~**In-Memory State Machines**~~ [RESOLVED]: Implemented Redis serialization & persistence for MatchStateMachine crash recovery.
 3. ~~**Missing QuestionModule**~~ [RESOLVED]: QuestionModule fully implemented with REST endpoints for CRUD and bulk import, along with database seeding.
 
 ### 🟡 Significant Gaps
@@ -63,7 +63,7 @@ Architecture review complete. Base scaffold is **structurally sound** — no res
 
 ## Pending Decisions (From Assessment)
 
-- [ ] Gateway refactor strategy: split into multiple gateways vs. 1 gateway + handler classes
+- [x] Gateway refactor strategy: Split 1 gateway into multiple handler classes (Command Pattern selected & implemented)
 - [ ] Timer strategy: `setTimeout` in NestJS vs. Redis-based distributed timers
 - [x] Test framework: Vitest vs. Jest for game-core (Vitest selected)
 - [ ] Frontend routing structure: `/lobby/[code]`, `/game/[matchId]`
@@ -78,8 +78,8 @@ Architecture review complete. Base scaffold is **structurally sound** — no res
 ### Critical Fixes (Before Features)
 
 1. ~~Add `QuestionModule` + seed data~~ (Completed)
-2. Add `MatchStateMachine.serialize()/deserialize()` + Redis persistence
-3. Refactor `GameGateway` → split or delegate to handler classes
+2. ~~Add `MatchStateMachine.serialize()/deserialize()` + Redis persistence~~ (Completed)
+3. ~~Refactor `GameGateway` → split or delegate to handler classes~~ (Completed)
 4. ~~Migrate validation/serialization from class-validator/transformer to Zod~~ (Completed - see [processTechDebt.md](./processTechDebt.md))
 
 ### Core Game Loop (MVP Minimum)

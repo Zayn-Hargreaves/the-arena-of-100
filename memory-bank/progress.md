@@ -21,10 +21,10 @@
 ### 🔴 Critical Fixes (Phase 0.5: Before Feature Development)
 
 - [x] Add QuestionModule (service + controller + seed data)
-- [ ] Add MatchStateMachine.serialize()/deserialize() for Redis persistence
-- [ ] Refactor GameGateway from God Object → split or handler delegation
+- [x] Add MatchStateMachine.serialize()/deserialize() for Redis persistence
+- [x] Refactor GameGateway from God Object → split or handler delegation
 - [x] ~~Fix `MatchStartedPayload` missing interface in events.ts~~ [RESOLVED - already defined]
-- [ ] Fix shallow copy issue in `getState()` (Map not deep cloned)
+- [x] Fix shallow copy issue in `getState()` (Map not deep cloned)
 
 ### 🚧 In Progress (Phase 1: Core Implementation)
 
@@ -32,7 +32,7 @@
 - [ ] Database migration and seeding
 - [ ] Implement GameLoopService (countdown → round → evaluate → repeat)
 - [ ] Implement round timer management (auto-end on timeout)
-- [ ] Unit tests for game-core state machine
+- [x] Unit tests for game-core state machine
 - [ ] End-to-end room creation → join → match flow
 - [ ] Frontend lobby and game UI components with routing
 - [ ] Connect socket-store to UI components
@@ -77,11 +77,11 @@
 
 ### 🔴 Critical (Blocks Development)
 
-- **GameGateway God Object** — 319 LOC, single file handles all socket events
-- **In-memory state machines** — server restart loses all active matches
+- ~~**GameGateway God Object**~~ [RESOLVED] — Refactored to delegate Socket.io events to separate class handlers (AuthHandler, RoomHandler, MatchHandler).
+- ~~**In-memory state machines**~~ [RESOLVED] — Implemented Redis serialization & persistence for MatchStateMachine crash recovery.
 - ~~**Missing QuestionModule**~~ [RESOLVED] — QuestionModule fully implemented with REST endpoints for CRUD and bulk import, along with database seeding.
 - ~~**`MatchStartedPayload` undefined**~~ [RESOLVED] — already defined in events.ts with matchId, playerIds, startTime
-- **`getState()` shallow copy** — `{...this.state}` doesn't deep clone `players` Map
+- ~~**`getState()` shallow copy**~~ [RESOLVED] — Fixed shallow copy issue in getState() by deep cloning the players Map.
 
 ### 🟡 Significant
 
