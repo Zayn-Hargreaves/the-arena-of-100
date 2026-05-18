@@ -75,7 +75,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
           // Check if there's an active match for this room
           if (room.currentMatchId) {
-            const stateMachine = this.matchService.getStateMachine(
+            const stateMachine = await this.matchService.getStateMachine(
               room.currentMatchId,
             );
             if (stateMachine) {

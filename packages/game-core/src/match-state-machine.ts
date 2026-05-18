@@ -64,13 +64,31 @@ export class MatchStateMachine {
     };
   }
 
-  // State Accessor
+  // State Accessor (deep clone Maps to prevent external mutation)
   getState(): Readonly<MatchState> {
-    return { ...this.state };
+    return {
+      ...this.state,
+      players: new Map(
+        Array.from(this.state.players.entries()).map(([id, p]) => [
+          id,
+          { ...p },
+        ]),
+      ),
+      survivingPlayerIds: [...this.state.survivingPlayerIds],
+      eliminatedPlayerIds: [...this.state.eliminatedPlayerIds],
+    };
   }
 
   getCurrentRound(): Readonly<RoundState> | null {
-    return this.currentRound ? { ...this.currentRound } : null;
+    if (!this.currentRound) return null;
+    return {
+      ...this.currentRound,
+      question: {
+        ...this.currentRound.question,
+        options: [...this.currentRound.question.options],
+      },
+      answers: new Map(this.currentRound.answers),
+    };
   }
 
   // Validate Transition (Guard)
@@ -358,5 +376,116 @@ export class MatchStateMachine {
     timestamp: number;
   }> {
     return [...this.eventLog];
+  }
+
+  // Serialize state to JSON string for Redis persistence
+  serialize(): string {
+    const roundData = this.currentRound
+      ? {
+          ...this.currentRound,
+          answers: Array.from(this.currentRound.answers.entries()),
+          correctAnswer: (
+            this.currentRound as RoundState & { correctAnswer: string }
+          ).correctAnswer,
+        }
+      : null;
+
+    return JSON.stringify({
+      state: {
+        ...this.state,
+        players: Array.from(this.state.players.entries()),
+      },
+      currentRound: roundData,
+      eventLog: this.eventLog,
+    });
+  }
+
+  // Restore MatchStateMachine from serialized JSON string
+  static deserialize(json: string): MatchStateMachine {
+    let data: unknown;
+
+    try {
+      data = JSON.parse(json);
+    } catch (error) {
+      throw new Error(
+        `Failed to parse MatchStateMachine JSON: ${error instanceof Error ? error.message : String(error)}. Raw JSON: ${json.substring(0, 100)}${json.length > 100 ? "..." : ""}`,
+      );
+    }
+
+    // Type guard for our parsed data
+    if (typeof data !== "object" || data === null) {
+      throw new Error("Invalid deserialized data: expected object");
+    }
+
+    // Cast to a more specific type for easier handling
+    const parsedData = data as {
+      state?: {
+        players?: unknown;
+        [key: string]: unknown;
+      };
+      currentRound?: {
+        correctAnswer?: unknown;
+        answers?: unknown;
+        [key: string]: unknown;
+      };
+      eventLog?: unknown;
+    };
+
+    // Validate required fields
+    if (!parsedData.state) {
+      throw new Error("Missing required field: data.state");
+    }
+
+    if (!Array.isArray(parsedData.state.players)) {
+      throw new Error("Invalid players data: expected array");
+    }
+
+    if (parsedData.eventLog && !Array.isArray(parsedData.eventLog)) {
+      throw new Error(
+        "Invalid eventLog data: expected array or null/undefined",
+      );
+    }
+
+    // Create instance with dummy data, then overwrite
+    const instance = new MatchStateMachine("", "", []);
+
+    instance.state = {
+      ...parsedData.state,
+      players: new Map(parsedData.state.players),
+    } as MatchState;
+
+    if (parsedData.currentRound) {
+      // Validate currentRound structure
+      if (typeof parsedData.currentRound !== "object") {
+        throw new Error("Invalid currentRound data: expected object");
+      }
+
+      const { correctAnswer, answers, ...rest } = parsedData.currentRound;
+
+      // Validate required fields in currentRound
+      if (correctAnswer === undefined) {
+        throw new Error(
+          "Missing required field in currentRound: correctAnswer",
+        );
+      }
+
+      if (!Array.isArray(answers)) {
+        throw new Error("Invalid answers data: expected array");
+      }
+
+      instance.currentRound = {
+        ...rest,
+        answers: new Map(answers),
+        correctAnswer,
+      } as RoundState & { correctAnswer: string };
+    } else {
+      instance.currentRound = null;
+    }
+
+    instance.eventLog = Array.isArray(parsedData.eventLog)
+      ? parsedData.eventLog
+      : [];
+
+    return instance;
   }
 }

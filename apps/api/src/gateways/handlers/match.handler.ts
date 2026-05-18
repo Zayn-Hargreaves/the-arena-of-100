@@ -57,7 +57,9 @@ export class MatchHandler extends BaseHandler {
     try {
       const userId = this.requireAuth(client);
 
-      const stateMachine = this.matchService.getStateMachine(payload.matchId);
+      const stateMachine = await this.matchService.getStateMachine(
+        payload.matchId,
+      );
       if (!stateMachine) throw new Error(ErrorCode.MATCH_NOT_FOUND);
 
       const serverTimestamp = Date.now();
@@ -66,6 +68,9 @@ export class MatchHandler extends BaseHandler {
         payload.answer,
         serverTimestamp,
       );
+
+      // Persist state after mutation
+      await this.matchService.persistStateMachine(payload.matchId);
 
       client.emit(ServerEvent.ANSWER_RESULT, {
         matchId: payload.matchId,
@@ -91,7 +96,9 @@ export class MatchHandler extends BaseHandler {
     try {
       const userId = this.requireAuth(client);
 
-      const stateMachine = this.matchService.getStateMachine(payload.matchId);
+      const stateMachine = await this.matchService.getStateMachine(
+        payload.matchId,
+      );
       if (!stateMachine) throw new Error(ErrorCode.MATCH_NOT_FOUND);
 
       const snapshot = stateMachine.getSnapshot(payload.lastSeenSeqNo);

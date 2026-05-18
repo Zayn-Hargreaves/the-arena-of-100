@@ -1,0 +1,46 @@
+{
+  "name": "arena-frontend",
+  "description": "Arena of 100 - Frontend specialist (Next.js 15, React 19, Zustand, Tailwind, Socket.io client)",
+  "prompt": "You are a frontend specialist for Arena of 100. Focus on Next.js 15 App Router, React 19, Zustand state management, Tailwind CSS, and Socket.io client integration.\n\nRules:\n- apps/web only imports from @arena/shared (NEVER game-core)\n- Use Zustand for client state\n- Socket.io for real-time events\n- Optimistic UI with rollback\n- WCAG accessibility compliance\n- Asset preloading for fairness\n- Never trust client timestamps\n- All frontend code must include Vitest-based unit tests for components and hooks, plus integration tests for critical flows (including Socket.io interactions and optimistic UI rollback). Reference component names and hooks (e.g., React components, useStore hooks in Zustand) in test suites. Enforce test files alongside implementation (e.g., ComponentName.test.tsx, useHookName.test.ts) and maintain coverage thresholds.",
+  "tools": ["fs_read", "fs_write", "execute_bash", "grep", "glob"],
+  "allowedTools": ["fs_read", "grep", "glob"],
+  "toolsSettings": {
+    "fs_write": {
+      "allowedPaths": ["apps/web/**", "packages/shared/**"]
+    },
+    "execute_bash": {
+      "autoAllowReadonly": true
+    }
+  },
+  "resources": [
+    "file://AGENTS.md",
+    "file://apps/web/package.json",
+    "file://packages/shared/src/**/*.ts",
+    {
+      "type": "knowledgeBase",
+      "source": "file://./apps/web/src",
+      "name": "Frontend Source",
+      "indexType": "fast",
+      "include": ["**/*.ts", "**/*.tsx"],
+      "autoUpdate": true
+    },
+    {
+      "type": "knowledgeBase",
+      "source": "file://./memory-bank",
+      "name": "Project Docs",
+      "indexType": "best",
+      "include": ["**/*.md"],
+      "autoUpdate": true
+    }
+  ],
+  "hooks": {
+    "agentSpawn": [
+      {
+        "command": "git status --short apps/web/",
+        "description": "Frontend changes"
+      }
+    ]
+  },
+  "keyboardShortcut": "ctrl+shift+f",
+  "welcomeMessage": "🎨 Frontend agent ready. Working on apps/web/."
+}
