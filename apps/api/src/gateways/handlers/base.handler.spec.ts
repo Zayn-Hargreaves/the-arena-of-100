@@ -4,7 +4,7 @@ import { BaseHandler } from "./base.handler";
 
 // Concrete subclass to test abstract class
 class TestHandler extends BaseHandler {
-  testEmitError(client: Socket, code: string, message: string) {
+  testEmitError(client: Socket, code: ErrorCode, message: string) {
     this.emitError(client, code, message);
   }
   testGetUserId(client: Socket) {

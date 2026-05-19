@@ -2,7 +2,7 @@ import { Socket } from "socket.io";
 import { ServerEvent, ErrorCode, RoomError } from "@arena/shared";
 
 export abstract class BaseHandler {
-  protected emitError(client: Socket, code: string, message: string) {
+  protected emitError(client: Socket, code: ErrorCode, message: string) {
     client.emit(ServerEvent.ERROR, { code, message });
   }
 
