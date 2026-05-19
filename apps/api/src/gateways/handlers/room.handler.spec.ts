@@ -20,7 +20,7 @@ describe("RoomHandler", () => {
       emit: vi.fn(),
       join: vi.fn(),
       leave: vi.fn(),
-      to: vi.fn().mockReturnThis(),
+      to: vi.fn().mockImplementation(() => ({ emit: vi.fn() })),
       data: { userId: "u1", username: "Alice" },
     } as unknown as Socket;
     server = {
@@ -84,7 +84,10 @@ describe("RoomHandler", () => {
       });
       expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.ERROR,
-        expect.objectContaining({ code: ErrorCode.INTERNAL_ERROR }),
+        expect.objectContaining({
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "Internal server error",
+        }),
       );
     });
   });
@@ -153,7 +156,10 @@ describe("RoomHandler", () => {
       await handler.handleLeaveRoom(client, server, { roomId: "r1" });
       expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.ERROR,
-        expect.objectContaining({ code: ErrorCode.INTERNAL_ERROR }),
+        expect.objectContaining({
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "Internal server error",
+        }),
       );
     });
   });

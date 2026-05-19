@@ -37,9 +37,13 @@ export class RoomHandler extends BaseHandler {
 
       this.logger.log(`Room created via socket: ${room.code}`);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
       const code =
         error instanceof RoomError ? error.code : ErrorCode.INTERNAL_ERROR;
+      let msg = error instanceof Error ? error.message : String(error);
+      if (code === ErrorCode.INTERNAL_ERROR) {
+        this.logger.error("Error creating room:", error);
+        msg = "Internal server error";
+      }
       this.emitError(client, code, msg);
     }
   }
@@ -64,9 +68,13 @@ export class RoomHandler extends BaseHandler {
 
       this.logger.log(`Player ${userId} joined room ${room.code} via socket`);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
       const code =
         error instanceof RoomError ? error.code : ErrorCode.INTERNAL_ERROR;
+      let msg = error instanceof Error ? error.message : String(error);
+      if (code === ErrorCode.INTERNAL_ERROR) {
+        this.logger.error("Error joining room:", error);
+        msg = "Internal server error";
+      }
       this.emitError(client, code, msg);
     }
   }
@@ -87,9 +95,13 @@ export class RoomHandler extends BaseHandler {
         reason: "LEFT",
       });
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
       const code =
         error instanceof RoomError ? error.code : ErrorCode.INTERNAL_ERROR;
+      let msg = error instanceof Error ? error.message : String(error);
+      if (code === ErrorCode.INTERNAL_ERROR) {
+        this.logger.error("Error leaving room:", error);
+        msg = "Internal server error";
+      }
       this.emitError(client, code, msg);
     }
   }

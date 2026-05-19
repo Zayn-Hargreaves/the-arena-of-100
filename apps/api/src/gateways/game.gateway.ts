@@ -4,6 +4,7 @@ import {
   SubscribeMessage,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
   ConnectedSocket,
   MessageBody,
 } from "@nestjs/websockets";
@@ -21,6 +22,7 @@ import {
 import { AuthHandler, RoomHandler, MatchHandler } from "./handlers";
 import { RoomService } from "../modules/room/room.service";
 import { MatchService } from "../modules/match/match.service";
+import { AuthService } from "../modules/auth/auth.service";
 
 @WebSocketGateway({
   cors: {
@@ -29,7 +31,9 @@ import { MatchService } from "../modules/match/match.service";
   },
   namespace: "/game",
 })
-export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class GameGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   private _server!: Server;
 
@@ -41,7 +45,42 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly matchHandler: MatchHandler,
     private readonly roomService: RoomService,
     private readonly matchService: MatchService,
+    private readonly authService: AuthService,
   ) {}
+
+  afterInit(server: Server) {
+    server.use((socket: Socket, next: (err?: Error) => void) => {
+      let token = socket.handshake.auth?.token;
+
+      if (!token) {
+        const authHeader = socket.handshake.headers?.authorization;
+        if (authHeader) {
+          token = authHeader.startsWith("Bearer ")
+            ? authHeader.replace("Bearer ", "").trim()
+            : authHeader.trim();
+        }
+      }
+
+      if (token) {
+        try {
+          const decoded = this.authService.verifyToken(token);
+          socket.data.userId = decoded.userId;
+          socket.data.username = decoded.username;
+          this.logger.log(
+            `Handshake authentication successful for user: ${decoded.username}`,
+          );
+        } catch (error) {
+          this.logger.warn(
+            `Handshake authentication failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+
+      next();
+    });
+  }
 
   async handleConnection(@ConnectedSocket() client: Socket) {
     this.logger.log(`Client connected: ${client.id}`);
