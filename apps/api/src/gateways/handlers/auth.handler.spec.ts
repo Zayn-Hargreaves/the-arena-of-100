@@ -2,22 +2,33 @@ import { Socket } from "socket.io";
 import { ServerEvent, ErrorCode, ERROR_MESSAGES } from "@arena/shared";
 import { AuthHandler } from "./auth.handler";
 import { AuthService } from "../../modules/auth/auth.service";
+import { RoomService } from "../../modules/room/room.service";
+import { MatchService } from "../../modules/match/match.service";
 
 describe("AuthHandler", () => {
   let handler: AuthHandler;
   let authService: AuthService;
+  let roomService: RoomService;
+  let matchService: MatchService;
   let client: Socket;
 
   let mockSockets: Map<string, any>;
 
   beforeEach(() => {
     authService = { verifyToken: vi.fn() } as unknown as AuthService;
-    handler = new AuthHandler(authService);
+    roomService = {
+      getUserActiveRooms: vi.fn().mockResolvedValue([]),
+    } as unknown as RoomService;
+    matchService = {
+      getStateMachine: vi.fn(),
+    } as unknown as MatchService;
+    handler = new AuthHandler(authService, roomService, matchService);
     mockSockets = new Map();
     client = {
       id: "socket-1",
       emit: vi.fn(),
       disconnect: vi.fn(),
+      join: vi.fn(),
       data: {},
       nsp: {
         sockets: mockSockets,
@@ -80,6 +91,7 @@ describe("AuthHandler", () => {
         id: "socket-old",
         emit: vi.fn(),
         disconnect: vi.fn(),
+        join: vi.fn(),
         data: { userId: "u1" },
         nsp: { sockets: mockSockets },
       } as unknown as Socket;
@@ -93,6 +105,7 @@ describe("AuthHandler", () => {
         id: "socket-new",
         emit: vi.fn(),
         disconnect: vi.fn(),
+        join: vi.fn(),
         data: {},
         nsp: { sockets: mockSockets },
       } as unknown as Socket;
@@ -106,6 +119,13 @@ describe("AuthHandler", () => {
         message: ERROR_MESSAGES[ErrorCode.UNAUTHORIZED],
       });
       expect(oldSocket.disconnect).toHaveBeenCalledWith(true);
+
+      // Verify new socket authenticated successfully
+      expect(newSocket.data.userId).toBe("u1");
+      expect(newSocket.emit).toHaveBeenCalledWith(ServerEvent.AUTHENTICATED, {
+        userId: "u1",
+        username: "Alice",
+      });
     });
   });
 
@@ -124,6 +144,7 @@ describe("AuthHandler", () => {
       const client2 = {
         id: "socket-2",
         emit: vi.fn(),
+        join: vi.fn(),
         data: {},
         nsp: {
           sockets: mockSockets,
@@ -153,6 +174,7 @@ describe("AuthHandler", () => {
         id: "socket-old",
         emit: vi.fn(),
         disconnect: vi.fn(),
+        join: vi.fn(),
         data: { userId: "u1" },
         nsp: { sockets: mockSockets },
       } as unknown as Socket;
@@ -166,6 +188,7 @@ describe("AuthHandler", () => {
         id: "socket-new",
         emit: vi.fn(),
         disconnect: vi.fn(),
+        join: vi.fn(),
         data: { userId: "u1" },
         nsp: { sockets: mockSockets },
       } as unknown as Socket;
@@ -182,6 +205,7 @@ describe("AuthHandler", () => {
         id: "socket-third",
         emit: vi.fn(),
         disconnect: vi.fn(),
+        join: vi.fn(),
         data: {},
         nsp: { sockets: mockSockets },
       } as unknown as Socket;
@@ -191,6 +215,70 @@ describe("AuthHandler", () => {
 
       // newSocket should have been kicked because it was still in the map
       expect(newSocket.disconnect).toHaveBeenCalledWith(true);
+    });
+  });
+
+  describe("reconnection sync", () => {
+    beforeEach(() => {
+      vi.mocked(authService.verifyToken).mockReturnValue({
+        userId: "u1",
+        username: "Alice",
+        role: "GUEST" as any,
+      });
+    });
+
+    it("rejoins active rooms after authentication", async () => {
+      vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
+        {
+          room: {
+            id: "r1",
+            code: "ABC",
+            currentMatchId: null,
+            players: [{ userId: "u1", user: { username: "Alice" } }],
+          },
+        },
+      ] as any);
+
+      await handler.handleAuthenticate(client, { token: "t" });
+
+      expect(client.join).toHaveBeenCalledWith("room:r1");
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.PLAYER_JOINED,
+        expect.objectContaining({ roomId: "r1", code: "ABC" }),
+      );
+    });
+
+    it("emits snapshot when active match exists", async () => {
+      const snapshot = { matchId: "m1", status: "ROUND_ACTIVE" };
+      vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
+        {
+          room: {
+            id: "r1",
+            code: "ABC",
+            currentMatchId: "m1",
+            players: [{ userId: "u1", user: { username: "Alice" } }],
+          },
+        },
+      ] as any);
+      vi.mocked(matchService.getStateMachine).mockResolvedValue({
+        getSnapshot: vi.fn().mockReturnValue(snapshot),
+      } as any);
+
+      await handler.handleAuthenticate(client, { token: "t" });
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.SNAPSHOT, snapshot);
+    });
+
+    it("handles reconnection errors gracefully", async () => {
+      vi.mocked(roomService.getUserActiveRooms).mockRejectedValue(
+        new Error("db error"),
+      );
+
+      await expect(
+        handler.handleAuthenticate(client, { token: "t" }),
+      ).resolves.not.toThrow();
+      // Auth still succeeded
+      expect(client.data.userId).toBe("u1");
     });
   });
 });

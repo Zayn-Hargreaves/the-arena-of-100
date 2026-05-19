@@ -18,7 +18,14 @@
   "allowedTools": ["fs_read", "grep", "glob"],
   "toolsSettings": {
     "fs_write": {
-      "allowedPaths": ["apps/web/**", "packages/shared/**"]
+      "allowedPaths": ["apps/web/**", "packages/shared/**"],
+      "deniedPaths": [
+        "node_modules/**",
+        ".git/**",
+        "pnpm-lock.yaml",
+        "infrastructure/**",
+        ".kiro/**"
+      ]
     },
     "execute_bash": {
       "autoAllowReadonly": true

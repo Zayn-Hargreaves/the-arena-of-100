@@ -81,6 +81,15 @@ describe("MatchHandler", () => {
         expect.objectContaining({ code: ErrorCode.INTERNAL_ERROR }),
       );
     });
+
+    it("handles non-Error thrown values", async () => {
+      vi.mocked(roomService.getRoom).mockRejectedValue("string error");
+      await handler.handleStartMatch(client, server, { roomId: "r1" });
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: "string error",
+      });
+    });
   });
 
   describe("handleSubmitAnswer", () => {
@@ -169,6 +178,29 @@ describe("MatchHandler", () => {
         expect.objectContaining({ message: ErrorCode.ALREADY_ANSWERED }),
       );
     });
+
+    it("handles non-Error thrown values", async () => {
+      const mockMachine = {
+        submitAnswer: vi.fn().mockImplementation(() => {
+          throw 42;
+        }),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+
+      await handler.handleSubmitAnswer(client, {
+        matchId: "m1",
+        answer: "A",
+        roundNo: 1,
+        clientTimestamp: 1234567890,
+      });
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: "42",
+      });
+    });
   });
 
   describe("handleRequestSnapshot", () => {
@@ -212,6 +244,27 @@ describe("MatchHandler", () => {
         ServerEvent.ERROR,
         expect.objectContaining({ code: ErrorCode.UNAUTHORIZED }),
       );
+    });
+
+    it("handles non-Error thrown values", async () => {
+      const mockMachine = {
+        getSnapshot: vi.fn().mockImplementation(() => {
+          throw "snapshot failure";
+        }),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+
+      await handler.handleRequestSnapshot(client, {
+        matchId: "m1",
+        lastSeenSeqNo: 0,
+      });
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: "snapshot failure",
+      });
     });
   });
 });

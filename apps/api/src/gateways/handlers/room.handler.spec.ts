@@ -133,6 +133,18 @@ describe("RoomHandler", () => {
         expect.objectContaining({ code: ErrorCode.ROOM_NOT_FOUND }),
       );
     });
+
+    it("emits INTERNAL_ERROR for generic errors", async () => {
+      vi.mocked(roomService.joinRoom).mockRejectedValue(new Error("db down"));
+      await handler.handleJoinRoom(client, { roomCode: "ABC" });
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "Internal server error",
+        }),
+      );
+    });
   });
 
   describe("handleLeaveRoom", () => {

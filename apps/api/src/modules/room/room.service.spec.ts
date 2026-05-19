@@ -1,7 +1,7 @@
 import { RoomService } from "./room.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
-import { RoomStatus, RoomError } from "@arena/shared";
+import { RoomStatus, ErrorCode } from "@arena/shared";
 
 describe("RoomService", () => {
   let service: RoomService;
@@ -74,9 +74,9 @@ describe("RoomService", () => {
 
     it("throws ROOM_NOT_FOUND when room does not exist", async () => {
       vi.mocked(prisma.room.findUnique).mockResolvedValue(null);
-      await expect(service.joinRoom("INVALID", "u1")).rejects.toThrow(
-        RoomError,
-      );
+      await expect(service.joinRoom("INVALID", "u1")).rejects.toMatchObject({
+        code: ErrorCode.ROOM_NOT_FOUND,
+      });
     });
 
     it("throws ROOM_ALREADY_STARTED when room is in game", async () => {
@@ -85,7 +85,9 @@ describe("RoomService", () => {
         players: [],
         maxPlayers: 100,
       } as any);
-      await expect(service.joinRoom("ABC", "u1")).rejects.toThrow(RoomError);
+      await expect(service.joinRoom("ABC", "u1")).rejects.toMatchObject({
+        code: ErrorCode.ROOM_ALREADY_STARTED,
+      });
     });
 
     it("throws ROOM_FULL when at capacity", async () => {
@@ -94,7 +96,9 @@ describe("RoomService", () => {
         maxPlayers: 1,
         players: [{ userId: "u1" }],
       } as any);
-      await expect(service.joinRoom("ABC", "u2")).rejects.toThrow(RoomError);
+      await expect(service.joinRoom("ABC", "u2")).rejects.toMatchObject({
+        code: ErrorCode.ROOM_FULL,
+      });
     });
 
     it("skips creating roomPlayer if already in room", async () => {
@@ -142,14 +146,51 @@ describe("RoomService", () => {
 
     it("throws ROOM_NOT_FOUND when not found", async () => {
       vi.mocked(prisma.room.findUnique).mockResolvedValue(null);
-      await expect(service.getRoom("r1")).rejects.toThrow(RoomError);
+      await expect(service.getRoom("r1")).rejects.toMatchObject({
+        code: ErrorCode.ROOM_NOT_FOUND,
+      });
     });
   });
 
   describe("getRoomByCode", () => {
+    it("returns room when found", async () => {
+      vi.mocked(prisma.room.findUnique).mockResolvedValue({
+        id: "r1",
+        code: "ABC",
+      } as any);
+      const result = await service.getRoomByCode("ABC");
+      expect(result).toEqual({ id: "r1", code: "ABC" });
+    });
+
     it("throws ROOM_NOT_FOUND when not found", async () => {
       vi.mocked(prisma.room.findUnique).mockResolvedValue(null);
-      await expect(service.getRoomByCode("INVALID")).rejects.toThrow(RoomError);
+      await expect(service.getRoomByCode("INVALID")).rejects.toMatchObject({
+        code: ErrorCode.ROOM_NOT_FOUND,
+      });
+    });
+  });
+
+  describe("getUserActiveRooms", () => {
+    it("returns active rooms for user", async () => {
+      const mockRooms = [{ room: { id: "r1", status: "WAITING" } }];
+      vi.mocked(prisma.roomPlayer.findMany).mockResolvedValue(mockRooms as any);
+      const result = await service.getUserActiveRooms("u1");
+      expect(prisma.roomPlayer.findMany).toHaveBeenCalledWith({
+        where: {
+          userId: "u1",
+          room: { status: { not: RoomStatus.FINISHED } },
+        },
+        include: {
+          room: {
+            include: {
+              players: {
+                include: { user: { select: { id: true, username: true } } },
+              },
+            },
+          },
+        },
+      });
+      expect(result).toEqual(mockRooms);
     });
   });
 

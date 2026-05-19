@@ -67,6 +67,30 @@ describe("MatchService", () => {
       );
     });
 
+    it("succeeds even when Redis persist fails", async () => {
+      const room = {
+        id: "r1",
+        players: [
+          { user: { id: "u1", username: "Alice" } },
+          { user: { id: "u2", username: "Bob" } },
+        ],
+      };
+      vi.mocked(prisma.room.findUnique).mockResolvedValue(room as any);
+      vi.mocked(prisma.match.create).mockResolvedValue({
+        id: "m1",
+        roomId: "r1",
+      } as any);
+      vi.mocked(prisma.matchPlayer.createMany).mockResolvedValue({
+        count: 2,
+      } as any);
+      vi.mocked(prisma.room.update).mockResolvedValue({} as any);
+      vi.mocked(redis.set).mockRejectedValue(new Error("Redis down"));
+
+      const result = await service.createMatch("r1");
+
+      expect(result.id).toBe("m1");
+    });
+
     it("throws RoomError when less than 2 players", async () => {
       vi.mocked(prisma.room.findUnique).mockResolvedValue({
         id: "r1",

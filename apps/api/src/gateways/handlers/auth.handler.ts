@@ -2,6 +2,8 @@ import { Injectable, Logger } from "@nestjs/common";
 import { Socket } from "socket.io";
 import { ServerEvent, ErrorCode, ERROR_MESSAGES } from "@arena/shared";
 import { AuthService } from "../../modules/auth/auth.service";
+import { RoomService } from "../../modules/room/room.service";
+import { MatchService } from "../../modules/match/match.service";
 import { BaseHandler } from "./base.handler";
 
 @Injectable()
@@ -9,7 +11,11 @@ export class AuthHandler extends BaseHandler {
   private readonly logger = new Logger(AuthHandler.name);
   private readonly connectedPlayers = new Map<string, string>();
 
-  constructor(private readonly authService: AuthService) {
+  constructor(
+    private readonly authService: AuthService,
+    private readonly roomService: RoomService,
+    private readonly matchService: MatchService,
+  ) {
     super();
   }
 
@@ -44,6 +50,9 @@ export class AuthHandler extends BaseHandler {
       });
 
       this.logger.log(`Player authenticated: ${decoded.username}`);
+
+      // Reconnection sync: restore room/match state
+      await this.syncReconnection(client, decoded.userId);
     } catch (error: unknown) {
       if (error instanceof Error) {
         this.logger.error(
@@ -70,6 +79,39 @@ export class AuthHandler extends BaseHandler {
         this.connectedPlayers.delete(userId);
         this.logger.log(`Player disconnected: ${userId}`);
       }
+    }
+  }
+
+  private async syncReconnection(client: Socket, userId: string) {
+    try {
+      const userActiveRooms = await this.roomService.getUserActiveRooms(userId);
+
+      for (const roomPlayer of userActiveRooms) {
+        const room = roomPlayer.room;
+        client.join(`room:${room.id}`);
+
+        client.emit(ServerEvent.PLAYER_JOINED, {
+          roomId: room.id,
+          code: room.code,
+          players: room.players.map((p) => ({
+            id: p.userId,
+            name: p.user.username,
+          })),
+        });
+
+        if (room.currentMatchId) {
+          const stateMachine = await this.matchService.getStateMachine(
+            room.currentMatchId,
+          );
+          if (stateMachine) {
+            client.emit(ServerEvent.SNAPSHOT, stateMachine.getSnapshot(0));
+          }
+        }
+
+        this.logger.log(`Reconnected user ${userId} to room ${room.id}`);
+      }
+    } catch (error) {
+      this.logger.error("Error during reconnection sync:", error);
     }
   }
 }

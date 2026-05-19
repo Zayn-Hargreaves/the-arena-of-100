@@ -4,8 +4,6 @@ import { GameGateway } from "./game.gateway";
 import { AuthHandler } from "./handlers/auth.handler";
 import { RoomHandler } from "./handlers/room.handler";
 import { MatchHandler } from "./handlers/match.handler";
-import { RoomService } from "../modules/room/room.service";
-import { MatchService } from "../modules/match/match.service";
 import { AuthService } from "../modules/auth/auth.service";
 
 describe("GameGateway", () => {
@@ -13,8 +11,6 @@ describe("GameGateway", () => {
   let authHandler: AuthHandler;
   let roomHandler: RoomHandler;
   let matchHandler: MatchHandler;
-  let roomService: RoomService;
-  let matchService: MatchService;
   let authService: AuthService;
   let client: Socket;
 
@@ -33,12 +29,6 @@ describe("GameGateway", () => {
       handleSubmitAnswer: vi.fn(),
       handleRequestSnapshot: vi.fn(),
     } as unknown as MatchHandler;
-    roomService = {
-      getUserActiveRooms: vi.fn().mockResolvedValue([]),
-    } as unknown as RoomService;
-    matchService = {
-      getStateMachine: vi.fn(),
-    } as unknown as MatchService;
     authService = {
       verifyToken: vi.fn(),
     } as unknown as AuthService;
@@ -47,8 +37,6 @@ describe("GameGateway", () => {
       authHandler,
       roomHandler,
       matchHandler,
-      roomService,
-      matchService,
       authService,
     );
     // Set the private _server field
@@ -65,97 +53,9 @@ describe("GameGateway", () => {
   });
 
   describe("handleConnection", () => {
-    it("handles connection for unauthenticated client", async () => {
+    it("logs connection without error", async () => {
       await gateway.handleConnection(client);
-      expect(roomService.getUserActiveRooms).not.toHaveBeenCalled();
-    });
-
-    it("reconnects authenticated user to multiple active rooms", async () => {
-      client.data.userId = "u1";
-      const activeRoom1 = {
-        room: {
-          id: "r1",
-          code: "ABC",
-          currentMatchId: null,
-          players: [{ userId: "u1", user: { username: "Alice" } }],
-        },
-      };
-      const activeRoom2 = {
-        room: {
-          id: "r2",
-          code: "DEF",
-          currentMatchId: null,
-          players: [{ userId: "u1", user: { username: "Alice" } }],
-        },
-      };
-      vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
-        activeRoom1,
-        activeRoom2,
-      ] as any);
-
-      await gateway.handleConnection(client);
-
-      expect(client.join).toHaveBeenCalledWith("room:r1");
-      expect(client.join).toHaveBeenCalledWith("room:r2");
-      expect(client.emit).toHaveBeenCalledWith(
-        ServerEvent.PLAYER_JOINED,
-        expect.objectContaining({ roomId: "r1" }),
-      );
-      expect(client.emit).toHaveBeenCalledWith(
-        ServerEvent.PLAYER_JOINED,
-        expect.objectContaining({ roomId: "r2" }),
-      );
-    });
-
-    it("sends snapshot when active match exists in multiple rooms", async () => {
-      client.data.userId = "u1";
-      const snapshot1 = { matchId: "m1", status: "ROUND_ACTIVE" };
-      const snapshot2 = { matchId: "m2", status: "ROUND_ACTIVE" };
-      const activeRoom1 = {
-        room: {
-          id: "r1",
-          code: "ABC",
-          currentMatchId: "m1",
-          players: [{ userId: "u1", user: { username: "Alice" } }],
-        },
-      };
-      const activeRoom2 = {
-        room: {
-          id: "r2",
-          code: "DEF",
-          currentMatchId: "m2",
-          players: [{ userId: "u1", user: { username: "Alice" } }],
-        },
-      };
-      vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
-        activeRoom1,
-        activeRoom2,
-      ] as any);
-      vi.mocked(matchService.getStateMachine).mockImplementation(
-        async (matchId) => {
-          if (matchId === "m1") {
-            return { getSnapshot: vi.fn().mockReturnValue(snapshot1) } as any;
-          }
-          if (matchId === "m2") {
-            return { getSnapshot: vi.fn().mockReturnValue(snapshot2) } as any;
-          }
-          return null;
-        },
-      );
-
-      await gateway.handleConnection(client);
-
-      expect(client.emit).toHaveBeenCalledWith(ServerEvent.SNAPSHOT, snapshot1);
-      expect(client.emit).toHaveBeenCalledWith(ServerEvent.SNAPSHOT, snapshot2);
-    });
-
-    it("handles errors during reconnection gracefully", async () => {
-      client.data.userId = "u1";
-      vi.mocked(roomService.getUserActiveRooms).mockRejectedValue(
-        new Error("db error"),
-      );
-
-      await expect(gateway.handleConnection(client)).resolves.not.toThrow();
+      // handleConnection only logs now; no reconnection logic
     });
   });
 

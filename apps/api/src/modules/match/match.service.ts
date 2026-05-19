@@ -83,7 +83,14 @@ export class MatchService {
     });
 
     // Persist state machine to Redis for crash recovery
-    await this.persistStateMachine(match.id);
+    try {
+      await this.persistStateMachine(match.id);
+    } catch (error) {
+      this.logger.error(
+        `Failed to persist state machine to Redis for match ${match.id} — state exists in-memory only`,
+        error,
+      );
+    }
 
     this.logger.log(`Match created: ${match.id} for room ${roomId}`);
     return match;

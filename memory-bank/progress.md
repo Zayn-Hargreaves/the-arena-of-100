@@ -25,6 +25,7 @@
 - [x] Refactor GameGateway from God Object → split or handler delegation
 - [x] ~~Fix `MatchStartedPayload` missing interface in events.ts~~ [RESOLVED - already defined]
 - [x] Fix shallow copy issue in `getState()` (Map not deep cloned)
+- [x] Implement type-safe error handling pattern (`RoomError` class replaces string matching)
 
 ### 🚧 In Progress (Phase 1: Core Implementation)
 
@@ -90,7 +91,7 @@
 - Gateway does transport + application logic (missing Use Case layer)
 - `connectedPlayers` Map lookup inefficient (iterates to find by socketId)
 - Room playerCount update uses non-atomic read-modify-write
-- Error handling uses `throw new Error(ErrorCode.X)` instead of `WsException`
+- ~~Error handling uses `throw new Error(ErrorCode.X)` instead of `WsException`~~ [RESOLVED] — Implemented `RoomError` class with type-safe error codes (see [errorHandlingPattern.md](./errorHandlingPattern.md))
 - `correctAnswer` potentially leaks via state machine type casting
 - `SocketNamespace` missing SPECTATOR entry
 - `packages/config` directory exists but is empty

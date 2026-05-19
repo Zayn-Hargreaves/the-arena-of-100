@@ -219,7 +219,7 @@ export class RoomService {
         userId,
         room: {
           status: {
-            not: "FINISHED",
+            not: RoomStatus.FINISHED,
           },
         },
       },
