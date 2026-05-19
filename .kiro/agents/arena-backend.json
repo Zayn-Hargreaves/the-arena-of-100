@@ -13,7 +13,8 @@
         "infrastructure/**",
         "memory-bank/**",
         ".kiro/**"
-      ]
+      ],
+      "deniedPaths": ["node_modules/**", ".git/**", "pnpm-lock.yaml"]
     },
     "execute_bash": {
       "autoAllowReadonly": true
@@ -40,6 +41,7 @@
       "name": "Game Core Logic",
       "indexType": "fast",
       "include": ["**/*.ts"],
+      "exclude": ["**/*.spec.ts"],
       "autoUpdate": true
     },
     {

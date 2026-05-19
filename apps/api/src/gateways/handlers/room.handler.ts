@@ -5,6 +5,7 @@ import {
   ErrorCode,
   type CreateRoomPayload,
   type JoinRoomPayload,
+  type LeaveRoomPayload,
   RoomError,
 } from "@arena/shared";
 import { RoomService } from "../../modules/room/room.service";
@@ -56,7 +57,7 @@ export class RoomHandler extends BaseHandler {
         playerId: userId,
         playerName: client.data.username,
       });
-      client.emit(ServerEvent.PLAYER_JOINED, {
+      client.emit(ServerEvent.ROOM_JOINED, {
         roomId: room.id,
         code: room.code,
       });
@@ -73,7 +74,7 @@ export class RoomHandler extends BaseHandler {
   async handleLeaveRoom(
     client: Socket,
     server: Server,
-    payload: { roomId: string },
+    payload: LeaveRoomPayload,
   ) {
     try {
       const userId = this.requireAuth(client);

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Socket } from "socket.io";
-import { ServerEvent, ErrorCode } from "@arena/shared";
+import { ServerEvent, ErrorCode, ERROR_MESSAGES } from "@arena/shared";
 import { AuthService } from "../../modules/auth/auth.service";
 import { BaseHandler } from "./base.handler";
 
@@ -16,6 +16,23 @@ export class AuthHandler extends BaseHandler {
   async handleAuthenticate(client: Socket, payload: { token: string }) {
     try {
       const decoded = this.authService.verifyToken(payload.token);
+
+      // Kick existing connection of this user if exists (O(1) lookup)
+      const oldSocketId = this.connectedPlayers.get(decoded.userId);
+      if (oldSocketId && oldSocketId !== client.id) {
+        const oldSocket = client.nsp?.sockets.get(oldSocketId);
+        if (oldSocket) {
+          this.logger.log(
+            `Kicking old socket: ${oldSocketId} for user: ${decoded.userId}`,
+          );
+          oldSocket.emit(ServerEvent.ERROR, {
+            code: ErrorCode.UNAUTHORIZED,
+            message: ERROR_MESSAGES[ErrorCode.UNAUTHORIZED],
+          });
+          oldSocket.disconnect(true);
+        }
+      }
+
       this.connectedPlayers.set(decoded.userId, client.id);
 
       client.data.userId = decoded.userId;
@@ -36,23 +53,23 @@ export class AuthHandler extends BaseHandler {
       } else {
         this.logger.error(`Token verification failed: ${String(error)}`);
       }
-      this.emitError(client, ErrorCode.INVALID_TOKEN, "Token không hợp lệ");
+      this.emitError(
+        client,
+        ErrorCode.INVALID_TOKEN,
+        ERROR_MESSAGES[ErrorCode.INVALID_TOKEN],
+      );
     }
   }
 
   handleDisconnect(client: Socket) {
-    // Find userId by socketId since we now only store socketId in the value
-    let userIdToDelete: string | undefined;
-    for (const [userId, socketId] of this.connectedPlayers.entries()) {
-      if (socketId === client.id) {
-        userIdToDelete = userId;
-        break;
+    const userId = client.data?.userId;
+    if (userId) {
+      const currentSocketId = this.connectedPlayers.get(userId);
+      // Only delete from map if the disconnected socket is the active session
+      if (currentSocketId === client.id) {
+        this.connectedPlayers.delete(userId);
+        this.logger.log(`Player disconnected: ${userId}`);
       }
-    }
-
-    if (userIdToDelete) {
-      this.connectedPlayers.delete(userIdToDelete);
-      this.logger.log(`Player disconnected: ${userIdToDelete}`);
     }
   }
 }

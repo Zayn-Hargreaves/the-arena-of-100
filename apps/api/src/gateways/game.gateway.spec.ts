@@ -64,9 +64,9 @@ describe("GameGateway", () => {
       expect(roomService.getUserActiveRooms).not.toHaveBeenCalled();
     });
 
-    it("reconnects authenticated user to active room", async () => {
+    it("reconnects authenticated user to multiple active rooms", async () => {
       client.data.userId = "u1";
-      const activeRoom = {
+      const activeRoom1 = {
         room: {
           id: "r1",
           code: "ABC",
@@ -74,23 +74,38 @@ describe("GameGateway", () => {
           players: [{ userId: "u1", user: { username: "Alice" } }],
         },
       };
+      const activeRoom2 = {
+        room: {
+          id: "r2",
+          code: "DEF",
+          currentMatchId: null,
+          players: [{ userId: "u1", user: { username: "Alice" } }],
+        },
+      };
       vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
-        activeRoom,
+        activeRoom1,
+        activeRoom2,
       ] as any);
 
       await gateway.handleConnection(client);
 
       expect(client.join).toHaveBeenCalledWith("room:r1");
+      expect(client.join).toHaveBeenCalledWith("room:r2");
       expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.PLAYER_JOINED,
         expect.objectContaining({ roomId: "r1" }),
       );
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.PLAYER_JOINED,
+        expect.objectContaining({ roomId: "r2" }),
+      );
     });
 
-    it("sends snapshot when active match exists", async () => {
+    it("sends snapshot when active match exists in multiple rooms", async () => {
       client.data.userId = "u1";
-      const snapshot = { matchId: "m1", status: "ROUND_ACTIVE" };
-      const activeRoom = {
+      const snapshot1 = { matchId: "m1", status: "ROUND_ACTIVE" };
+      const snapshot2 = { matchId: "m2", status: "ROUND_ACTIVE" };
+      const activeRoom1 = {
         room: {
           id: "r1",
           code: "ABC",
@@ -98,16 +113,34 @@ describe("GameGateway", () => {
           players: [{ userId: "u1", user: { username: "Alice" } }],
         },
       };
+      const activeRoom2 = {
+        room: {
+          id: "r2",
+          code: "DEF",
+          currentMatchId: "m2",
+          players: [{ userId: "u1", user: { username: "Alice" } }],
+        },
+      };
       vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
-        activeRoom,
+        activeRoom1,
+        activeRoom2,
       ] as any);
-      vi.mocked(matchService.getStateMachine).mockResolvedValue({
-        getSnapshot: vi.fn().mockReturnValue(snapshot),
-      } as any);
+      vi.mocked(matchService.getStateMachine).mockImplementation(
+        async (matchId) => {
+          if (matchId === "m1") {
+            return { getSnapshot: vi.fn().mockReturnValue(snapshot1) } as any;
+          }
+          if (matchId === "m2") {
+            return { getSnapshot: vi.fn().mockReturnValue(snapshot2) } as any;
+          }
+          return null;
+        },
+      );
 
       await gateway.handleConnection(client);
 
-      expect(client.emit).toHaveBeenCalledWith(ServerEvent.SNAPSHOT, snapshot);
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.SNAPSHOT, snapshot1);
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.SNAPSHOT, snapshot2);
     });
 
     it("handles errors during reconnection gracefully", async () => {

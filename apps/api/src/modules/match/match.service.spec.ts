@@ -1,8 +1,13 @@
 import { MatchService } from "./match.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
-import { NotFoundException, BadRequestException } from "@nestjs/common";
-import { MatchStatus, RoomStatus, PlayerStatus } from "@arena/shared";
+import { NotFoundException } from "@nestjs/common";
+import {
+  MatchStatus,
+  RoomStatus,
+  PlayerStatus,
+  RoomError,
+} from "@arena/shared";
 
 describe("MatchService", () => {
   let service: MatchService;
@@ -62,14 +67,12 @@ describe("MatchService", () => {
       );
     });
 
-    it("throws BadRequestException when less than 2 players", async () => {
+    it("throws RoomError when less than 2 players", async () => {
       vi.mocked(prisma.room.findUnique).mockResolvedValue({
         id: "r1",
         players: [{ user: { id: "u1", username: "Alice" } }],
       } as any);
-      await expect(service.createMatch("r1")).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(service.createMatch("r1")).rejects.toThrow(RoomError);
     });
   });
 

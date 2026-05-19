@@ -120,6 +120,18 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       console.log("🏠 Room created:", data.code);
     });
 
+    newSocket.on(ServerEvent.ROOM_JOINED, (data) => {
+      set({
+        room: {
+          id: data.roomId,
+          code: data.code,
+          status: "WAITING",
+          players: [],
+        },
+      });
+      console.log("🏠 Room joined:", data.code);
+    });
+
     newSocket.on(ServerEvent.PLAYER_JOINED, (data) => {
       console.log("👤 Player joined:", data);
     });

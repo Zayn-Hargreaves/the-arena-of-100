@@ -60,6 +60,8 @@ Architecture review complete. Base scaffold is **structurally sound** — no res
 17. **Game Operations**: Administrative tools for emergency interventions
 18. **Testing Framework**: Vitest chosen for its performance and native ESM support
 19. ~~**Zod Validation Migration**~~: Custom `ZodValidationPipe` for request/body parsing, gradual module-by-module migration, and Zod schema-based response serialization. (Completed)
+20. **Distributed Session Management**: Redis-based session tracking (`@socket.io/redis-adapter` or custom Redis cache) selected for production scaling, while maintaining high-performance O(1) in-memory tracking (using client.data.userId lookup) for the current development phase.
+21. **Persistent Guest Identity via Device ID (Model C)**: Approved using client-generated device ID (`guestId`) stored in localStorage as the primary unique key for guest logins. This resolves the unique username hijacking security risk and supports duplicate nicknames safely.
 
 ## Pending Decisions (From Assessment)
 
@@ -67,6 +69,7 @@ Architecture review complete. Base scaffold is **structurally sound** — no res
 - [ ] Timer strategy: `setTimeout` in NestJS vs. Redis-based distributed timers
 - [x] Test framework: Vitest vs. Jest for game-core (Vitest selected)
 - [ ] Frontend routing structure: `/lobby/[code]`, `/game/[matchId]`
+- [x] Guest login hijacking security fix: Scheduled for a separate PR to migrate auth.service lookup from `username` to device-based `guestId` (Model C).
 
 ## Next Steps (Immediate — Priority Order)
 

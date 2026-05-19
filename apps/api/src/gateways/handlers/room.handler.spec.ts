@@ -101,6 +101,15 @@ describe("RoomHandler", () => {
       expect(roomService.joinRoom).toHaveBeenCalledWith("ABC123", "u1");
       expect(client.join).toHaveBeenCalledWith("room:r1");
       expect(client.to).toHaveBeenCalledWith("room:r1");
+      const roomEmit = (client.to as any).mock.results[0].value.emit;
+      expect(roomEmit).toHaveBeenCalledWith(ServerEvent.PLAYER_JOINED, {
+        playerId: "u1",
+        playerName: "Alice",
+      });
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ROOM_JOINED, {
+        roomId: "r1",
+        code: "ABC123",
+      });
     });
 
     it("emits error when roomCode is missing", async () => {
@@ -132,6 +141,11 @@ describe("RoomHandler", () => {
       expect(roomService.leaveRoom).toHaveBeenCalledWith("r1", "u1");
       expect(client.leave).toHaveBeenCalledWith("room:r1");
       expect(server.to).toHaveBeenCalledWith("room:r1");
+      const serverEmit = (server.to as any).mock.results[0].value.emit;
+      expect(serverEmit).toHaveBeenCalledWith(ServerEvent.PLAYER_LEFT, {
+        playerId: "u1",
+        reason: "LEFT",
+      });
     });
 
     it("emits error on failure", async () => {

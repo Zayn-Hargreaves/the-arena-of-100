@@ -64,6 +64,7 @@
       "name": "Frontend Source",
       "indexType": "fast",
       "include": ["**/*.ts", "**/*.tsx"],
+      "exclude": ["**/*.spec.ts", "**/*.e2e-spec.ts"],
       "autoUpdate": true
     }
   ],

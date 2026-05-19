@@ -2,12 +2,7 @@
 // Match Service - Match Management Logic
 // ============================================================
 
-import {
-  Injectable,
-  Logger,
-  NotFoundException,
-  BadRequestException,
-} from "@nestjs/common";
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { MatchStateMachine } from "@arena/game-core";
@@ -17,6 +12,7 @@ import {
   PlayerStatus,
   ErrorCode,
   type PlayerInfo,
+  RoomError,
 } from "@arena/shared";
 
 @Injectable()
@@ -46,7 +42,7 @@ export class MatchService {
     }
 
     if (room.players.length < 2) {
-      throw new BadRequestException("Cần ít nhất 2 người chơi");
+      throw new RoomError(ErrorCode.NOT_ENOUGH_PLAYERS);
     }
 
     // Create match in DB

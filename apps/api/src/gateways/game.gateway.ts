@@ -16,6 +16,7 @@ import {
   type CreateRoomPayload,
   type SubmitAnswerPayload,
   type RequestSnapshotPayload,
+  type LeaveRoomPayload,
 } from "@arena/shared";
 import { AuthHandler, RoomHandler, MatchHandler } from "./handlers";
 import { RoomService } from "../modules/room/room.service";
@@ -55,9 +56,8 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         const userActiveRooms =
           await this.roomService.getUserActiveRooms(userId);
 
-        // Process the first active room found (assuming a user is only in one active room)
-        if (userActiveRooms.length > 0) {
-          const roomPlayer = userActiveRooms[0];
+        // Process all active rooms found for the user
+        for (const roomPlayer of userActiveRooms) {
           const room = roomPlayer.room;
 
           // Rejoin the room channel
@@ -124,7 +124,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage(ClientEvent.LEAVE_ROOM)
   handleLeaveRoom(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { roomId: string },
+    @MessageBody() payload: LeaveRoomPayload,
   ) {
     return this.roomHandler.handleLeaveRoom(client, this._server, payload);
   }

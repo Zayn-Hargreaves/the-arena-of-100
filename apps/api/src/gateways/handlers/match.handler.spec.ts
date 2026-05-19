@@ -1,5 +1,10 @@
 import { Socket, Server } from "socket.io";
-import { ServerEvent, ErrorCode, GAME_CONFIG } from "@arena/shared";
+import {
+  ServerEvent,
+  ErrorCode,
+  GAME_CONFIG,
+  ERROR_MESSAGES,
+} from "@arena/shared";
 import { MatchHandler } from "./match.handler";
 import { RoomService } from "../../modules/room/room.service";
 import { MatchService } from "../../modules/match/match.service";
@@ -53,10 +58,10 @@ describe("MatchHandler", () => {
 
       await handler.handleStartMatch(client, server, { roomId: "r1" });
 
-      expect(client.emit).toHaveBeenCalledWith(
-        ServerEvent.ERROR,
-        expect.objectContaining({ code: ErrorCode.INTERNAL_ERROR }),
-      );
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.NOT_ROOM_HOST,
+        message: ERROR_MESSAGES[ErrorCode.NOT_ROOM_HOST],
+      });
     });
 
     it("emits error when not authenticated", async () => {
@@ -81,6 +86,7 @@ describe("MatchHandler", () => {
   describe("handleSubmitAnswer", () => {
     it("submits answer and emits ANSWER_RESULT", async () => {
       const mockMachine = {
+        getCurrentRound: vi.fn().mockReturnValue({ roundNo: 1 }),
         submitAnswer: vi
           .fn()
           .mockReturnValue({ isCorrect: true, responseTimeMs: 500 }),
@@ -94,6 +100,7 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        clientTimestamp: 1234567890,
       });
 
       expect(mockMachine.submitAnswer).toHaveBeenCalledWith(
@@ -117,12 +124,13 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        clientTimestamp: 1234567890,
       });
 
-      expect(client.emit).toHaveBeenCalledWith(
-        ServerEvent.ERROR,
-        expect.objectContaining({ code: ErrorCode.INTERNAL_ERROR }),
-      );
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.MATCH_NOT_FOUND,
+        message: ERROR_MESSAGES[ErrorCode.MATCH_NOT_FOUND],
+      });
     });
 
     it("emits error when not authenticated", async () => {
@@ -131,6 +139,7 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        clientTimestamp: 1234567890,
       });
       expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.ERROR,
@@ -152,6 +161,7 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        clientTimestamp: 1234567890,
       });
 
       expect(client.emit).toHaveBeenCalledWith(
@@ -186,10 +196,10 @@ describe("MatchHandler", () => {
         lastSeenSeqNo: 0,
       });
 
-      expect(client.emit).toHaveBeenCalledWith(
-        ServerEvent.ERROR,
-        expect.objectContaining({ code: ErrorCode.INTERNAL_ERROR }),
-      );
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.MATCH_NOT_FOUND,
+        message: ERROR_MESSAGES[ErrorCode.MATCH_NOT_FOUND],
+      });
     });
 
     it("emits error when not authenticated", async () => {

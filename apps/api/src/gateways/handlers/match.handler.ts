@@ -6,6 +6,8 @@ import {
   GAME_CONFIG,
   type SubmitAnswerPayload,
   type RequestSnapshotPayload,
+  RoomError,
+  ERROR_MESSAGES,
 } from "@arena/shared";
 import { RoomService } from "../../modules/room/room.service";
 import { MatchService } from "../../modules/match/match.service";
@@ -32,7 +34,7 @@ export class MatchHandler extends BaseHandler {
 
       const room = await this.roomService.getRoom(payload.roomId);
       if (room.hostId !== userId) {
-        throw new Error("Chỉ chủ phòng mới có thể bắt đầu");
+        throw new RoomError(ErrorCode.NOT_ROOM_HOST);
       }
 
       const match = await this.matchService.createMatch(payload.roomId);
@@ -44,11 +46,14 @@ export class MatchHandler extends BaseHandler {
 
       this.logger.log(`Match starting: ${match.id}`);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
       const code =
-        error instanceof Error && "code" in error
-          ? (error.code as string) || ErrorCode.INTERNAL_ERROR
-          : ErrorCode.INTERNAL_ERROR;
+        error instanceof RoomError ? error.code : ErrorCode.INTERNAL_ERROR;
+      const msg =
+        error instanceof RoomError
+          ? ERROR_MESSAGES[error.code]
+          : error instanceof Error
+            ? error.message
+            : String(error);
       this.emitError(client, code, msg);
     }
   }
@@ -60,7 +65,7 @@ export class MatchHandler extends BaseHandler {
       const stateMachine = await this.matchService.getStateMachine(
         payload.matchId,
       );
-      if (!stateMachine) throw new Error(ErrorCode.MATCH_NOT_FOUND);
+      if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
 
       const serverTimestamp = Date.now();
       const result = stateMachine.submitAnswer(
@@ -74,7 +79,7 @@ export class MatchHandler extends BaseHandler {
 
       client.emit(ServerEvent.ANSWER_RESULT, {
         matchId: payload.matchId,
-        roundNo: payload.roundNo,
+        roundNo: stateMachine.getCurrentRound()?.roundNo ?? payload.roundNo,
         isCorrect: result.isCorrect,
         responseTimeMs: result.responseTimeMs,
       });
@@ -83,11 +88,14 @@ export class MatchHandler extends BaseHandler {
         `Answer submitted: ${userId} - ${result.isCorrect ? "correct" : "wrong"}`,
       );
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
       const code =
-        error instanceof Error && "code" in error
-          ? (error.code as string) || ErrorCode.INTERNAL_ERROR
-          : ErrorCode.INTERNAL_ERROR;
+        error instanceof RoomError ? error.code : ErrorCode.INTERNAL_ERROR;
+      const msg =
+        error instanceof RoomError
+          ? ERROR_MESSAGES[error.code]
+          : error instanceof Error
+            ? error.message
+            : String(error);
       this.emitError(client, code, msg);
     }
   }
@@ -99,7 +107,7 @@ export class MatchHandler extends BaseHandler {
       const stateMachine = await this.matchService.getStateMachine(
         payload.matchId,
       );
-      if (!stateMachine) throw new Error(ErrorCode.MATCH_NOT_FOUND);
+      if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
 
       const snapshot = stateMachine.getSnapshot(payload.lastSeenSeqNo);
       client.emit(ServerEvent.SNAPSHOT, snapshot);
@@ -108,11 +116,14 @@ export class MatchHandler extends BaseHandler {
         `Snapshot sent to ${userId} for match ${payload.matchId}`,
       );
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
       const code =
-        error instanceof Error && "code" in error
-          ? (error.code as string) || ErrorCode.INTERNAL_ERROR
-          : ErrorCode.INTERNAL_ERROR;
+        error instanceof RoomError ? error.code : ErrorCode.INTERNAL_ERROR;
+      const msg =
+        error instanceof RoomError
+          ? ERROR_MESSAGES[error.code]
+          : error instanceof Error
+            ? error.message
+            : String(error);
       this.emitError(client, code, msg);
     }
   }

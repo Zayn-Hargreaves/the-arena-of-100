@@ -1,6 +1,6 @@
 // ============================================================
 // @arena/shared - Main Entry Point
-// Game Đ đấu Trường 100 - Shared Types & Constants
+// Game đấu Trường 100 - Shared Types & Constants
 // ============================================================
 
 // Events
@@ -52,6 +52,8 @@ export enum ErrorCode {
   ROUND_NOT_ACTIVE = "ROUND_NOT_ACTIVE",
   ALREADY_ANSWERED = "ALREADY_ANSWERED",
   ANSWER_SUBMISSION_CLOSED = "ANSWER_SUBMISSION_CLOSED",
+  NOT_ROOM_HOST = "NOT_ROOM_HOST",
+  NOT_ENOUGH_PLAYERS = "NOT_ENOUGH_PLAYERS",
   UNAUTHORIZED = "UNAUTHORIZED",
   INVALID_TOKEN = "INVALID_TOKEN",
   RATE_LIMITED = "RATE_LIMITED",
@@ -73,4 +75,6 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.INVALID_TOKEN]: "Token không hợp lệ",
   [ErrorCode.RATE_LIMITED]: "Quá nhiều yêu cầu, vui lòng thử lại sau",
   [ErrorCode.INTERNAL_ERROR]: "Lỗi hệ thống",
+  [ErrorCode.NOT_ROOM_HOST]: "Chỉ chủ phòng mới có thể bắt đầu",
+  [ErrorCode.NOT_ENOUGH_PLAYERS]: "Cần ít nhất 2 người chơi",
 };
