@@ -206,11 +206,13 @@ describe("GameGateway", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        clientTimestamp: 1234567890,
       });
       expect(matchHandler.handleSubmitAnswer).toHaveBeenCalledWith(client, {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        clientTimestamp: 1234567890,
       });
     });
 
