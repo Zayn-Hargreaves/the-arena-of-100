@@ -47,7 +47,7 @@ coverage/
 *.tsbuildinfo
 
 .agent
-memory-bank
+
 # Turborepo
 .turbo
 .eslintcache
