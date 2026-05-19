@@ -290,3 +290,164 @@ describe("MatchStateMachine immutability and serialization", () => {
     }
   });
 });
+
+describe("MatchStateMachine.deserialize error handling", () => {
+  it("throws on invalid JSON", () => {
+    expect(() => MatchStateMachine.deserialize("{invalid")).toThrow(
+      "Failed to parse MatchStateMachine JSON",
+    );
+  });
+
+  it("throws on non-object data", () => {
+    expect(() => MatchStateMachine.deserialize('"string"')).toThrow(
+      "Invalid deserialized data: expected object",
+    );
+  });
+
+  it("throws on missing state field", () => {
+    expect(() => MatchStateMachine.deserialize("{}")).toThrow(
+      "Missing required field: data.state",
+    );
+  });
+
+  it("throws on non-array players", () => {
+    expect(() =>
+      MatchStateMachine.deserialize(
+        JSON.stringify({ state: { players: "bad" } }),
+      ),
+    ).toThrow("Invalid players data: expected array");
+  });
+
+  it("throws on non-array eventLog", () => {
+    expect(() =>
+      MatchStateMachine.deserialize(
+        JSON.stringify({ state: { players: [] }, eventLog: "bad" }),
+      ),
+    ).toThrow("Invalid eventLog data: expected array or null/undefined");
+  });
+
+  it("throws on missing correctAnswer in currentRound", () => {
+    expect(() =>
+      MatchStateMachine.deserialize(
+        JSON.stringify({
+          state: { players: [] },
+          currentRound: { answers: [] },
+          eventLog: [],
+        }),
+      ),
+    ).toThrow("Missing required field in currentRound: correctAnswer");
+  });
+
+  it("throws on non-array answers in currentRound", () => {
+    expect(() =>
+      MatchStateMachine.deserialize(
+        JSON.stringify({
+          state: { players: [] },
+          currentRound: { correctAnswer: "A", answers: "bad" },
+          eventLog: [],
+        }),
+      ),
+    ).toThrow("Invalid answers data: expected array");
+  });
+});
+
+describe("MatchStateMachine gameplay methods", () => {
+  it("finishMatch sets winner and endedAt", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+
+    const round = machine.startRound({
+      id: "q1",
+      content: "Q?",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+    machine.submitAnswer("p1", "A", round.startedAt + 100);
+    // p2 doesn't answer
+
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound();
+    machine.transition(MatchStatus.FINISHED);
+    machine.finishMatch();
+
+    const state = machine.getState();
+    expect(state.winnerId).toBe("p1");
+    expect(state.players.get("p1")?.status).toBe(PlayerStatus.WINNER);
+    expect(state.endedAt).not.toBeNull();
+  });
+
+  it("determineWinner uses tieBreak when all eliminated", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+
+    machine.startRound({
+      id: "q1",
+      content: "Q?",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+    // No one answers
+
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound();
+    machine.transition(MatchStatus.FINISHED);
+    machine.finishMatch();
+
+    const state = machine.getState();
+    expect(state.winnerId).toBeDefined();
+    expect(["p1", "p2"]).toContain(state.winnerId);
+  });
+
+  it("getSnapshot returns correct structure", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+
+    machine.startRound({
+      id: "q1",
+      content: "Q?",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+
+    const snapshot = machine.getSnapshot(5);
+
+    expect(snapshot.matchId).toBe("m1");
+    expect(snapshot.status).toBe(MatchStatus.ROUND_ACTIVE);
+    expect(snapshot.currentRoundNo).toBe(1);
+    expect(snapshot.players).toHaveLength(2);
+    expect(snapshot.currentQuestion).not.toBeNull();
+    expect(snapshot.roundEndTime).not.toBeNull();
+    expect(snapshot.lastEventSeqNo).toBe(5);
+  });
+
+  it("shouldEndMatch returns true when 1 or fewer survivors", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+
+    const round = machine.startRound({
+      id: "q1",
+      content: "Q?",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+    machine.submitAnswer("p1", "A", round.startedAt + 100);
+
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound();
+
+    expect(machine.shouldEndMatch()).toBe(true);
+  });
+
+  it("getEventLog returns copy of event log", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+
+    const log = machine.getEventLog();
+    expect(log.length).toBeGreaterThan(0);
+    expect(log[0].type).toBe("STATE_TRANSITION");
+  });
+});
