@@ -48,6 +48,8 @@ module.exports = {
             `pnpm --dir ${pkgDir} exec eslint --fix ${files.map((f) => `"${f}"`).join(" ")}`,
           );
         }
+        // Type-check the affected package
+        commands.push(`pnpm --dir ${pkgDir} exec tsc --noEmit`);
         // Also run prettier from the root on all workspace files to ensure consistent formatting
         const relativeFromRoot = files
           .map((f) => `"${path.join(pkgDir, f)}"`)
