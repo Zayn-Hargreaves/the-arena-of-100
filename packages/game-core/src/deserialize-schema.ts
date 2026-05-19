@@ -52,7 +52,13 @@ export const deserializedMatchSchema = z.object({
     endedAt: z.number().nullable(),
   }),
   currentRound: roundStateSchema.nullable(),
-  eventLog: z.array(z.unknown()),
+  eventLog: z.array(
+    z.object({
+      type: z.string(),
+      payload: z.unknown(),
+      timestamp: z.number(),
+    }),
+  ),
 });
 
 export type DeserializedMatch = z.infer<typeof deserializedMatchSchema>;

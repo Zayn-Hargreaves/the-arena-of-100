@@ -44,7 +44,7 @@ export class MatchStateMachine {
   private currentRound: RoundState | null = null;
   private eventLog: Array<{
     type: string;
-    payload: unknown;
+    payload?: unknown;
     timestamp: number;
   }> = [];
 
@@ -377,7 +377,7 @@ export class MatchStateMachine {
 
   getEventLog(): ReadonlyArray<{
     type: string;
-    payload: unknown;
+    payload?: unknown;
     timestamp: number;
   }> {
     return [...this.eventLog];
