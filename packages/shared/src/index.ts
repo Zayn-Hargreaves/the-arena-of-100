@@ -1,6 +1,6 @@
 // ============================================================
 // @arena/shared - Main Entry Point
-// Game đấu Trường 100 - Shared Types & Constants
+// Game Đấu Trường 100 - Shared Types & Constants
 // ============================================================
 
 // Events
