@@ -349,6 +349,137 @@ describe("MatchStateMachine.deserialize error handling", () => {
       ),
     ).toThrow("Invalid MatchStateMachine data");
   });
+
+  it("throws on missing/malformed question in currentRound", () => {
+    expect(() =>
+      MatchStateMachine.deserialize(
+        JSON.stringify({
+          state: { players: [] },
+          currentRound: {
+            correctAnswer: "A",
+            answers: [],
+            startedAt: 100,
+            endsAt: 200,
+            roundNo: 1,
+            status: "ACTIVE",
+          },
+          eventLog: [],
+        }),
+      ),
+    ).toThrow("Invalid MatchStateMachine data");
+
+    expect(() =>
+      MatchStateMachine.deserialize(
+        JSON.stringify({
+          state: { players: [] },
+          currentRound: {
+            correctAnswer: "A",
+            answers: [],
+            question: "not-an-object",
+            startedAt: 100,
+            endsAt: 200,
+            roundNo: 1,
+            status: "ACTIVE",
+          },
+          eventLog: [],
+        }),
+      ),
+    ).toThrow("Invalid MatchStateMachine data");
+
+    expect(() =>
+      MatchStateMachine.deserialize(
+        JSON.stringify({
+          state: { players: [] },
+          currentRound: {
+            correctAnswer: "A",
+            answers: [],
+            question: { id: 1, content: "Q", options: [] },
+            startedAt: 100,
+            endsAt: 200,
+            roundNo: 1,
+            status: "ACTIVE",
+          },
+          eventLog: [],
+        }),
+      ),
+    ).toThrow("Invalid MatchStateMachine data");
+  });
+
+  it("throws on missing/malformed startedAt or endsAt in currentRound", () => {
+    expect(() =>
+      MatchStateMachine.deserialize(
+        JSON.stringify({
+          state: { players: [] },
+          currentRound: {
+            correctAnswer: "A",
+            answers: [],
+            question: { id: "q1", content: "Q", options: ["A"] },
+            endsAt: 200,
+            roundNo: 1,
+            status: "ACTIVE",
+          },
+          eventLog: [],
+        }),
+      ),
+    ).toThrow("Invalid MatchStateMachine data");
+
+    expect(() =>
+      MatchStateMachine.deserialize(
+        JSON.stringify({
+          state: { players: [] },
+          currentRound: {
+            correctAnswer: "A",
+            answers: [],
+            question: { id: "q1", content: "Q", options: ["A"] },
+            startedAt: "not-a-number",
+            endsAt: 200,
+            roundNo: 1,
+            status: "ACTIVE",
+          },
+          eventLog: [],
+        }),
+      ),
+    ).toThrow("Invalid MatchStateMachine data");
+  });
+
+  it("throws on missing/malformed roundNo in currentRound", () => {
+    expect(() =>
+      MatchStateMachine.deserialize(
+        JSON.stringify({
+          state: { players: [] },
+          currentRound: {
+            correctAnswer: "A",
+            answers: [],
+            question: { id: "q1", content: "Q", options: ["A"] },
+            startedAt: 100,
+            endsAt: 200,
+            status: "ACTIVE",
+          },
+          eventLog: [],
+        }),
+      ),
+    ).toThrow("Invalid MatchStateMachine data");
+  });
+
+  it("throws on missing/malformed status in currentRound", () => {
+    expect(() =>
+      MatchStateMachine.deserialize(
+        JSON.stringify({
+          state: { players: [] },
+          currentRound: {
+            correctAnswer: "A",
+            answers: [],
+            question: { id: "q1", content: "Q", options: ["A"] },
+            startedAt: 100,
+            endsAt: 200,
+            roundNo: 1,
+            status: "INVALID_STATUS",
+          },
+          eventLog: [],
+        }),
+      ),
+    ).toThrow("Invalid MatchStateMachine data");
+  });
 });
 
 describe("MatchStateMachine gameplay methods", () => {

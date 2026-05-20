@@ -446,14 +446,32 @@ export class MatchStateMachine {
         `Invalid MatchStateMachine data (payload omitted; length=${json.length})`,
       );
     }
-    if (
-      parsed.currentRound &&
-      (typeof parsed.currentRound.correctAnswer !== "string" ||
-        !Array.isArray(parsed.currentRound.answers))
-    ) {
-      throw new Error(
-        `Invalid MatchStateMachine data (payload omitted; length=${json.length})`,
-      );
+    if (parsed.currentRound) {
+      const cr = parsed.currentRound;
+      const isValidQuestion =
+        cr.question &&
+        typeof cr.question === "object" &&
+        typeof cr.question.id === "string" &&
+        typeof cr.question.content === "string" &&
+        Array.isArray(cr.question.options);
+
+      const isValidStatus =
+        typeof cr.status === "string" &&
+        ["PENDING", "ACTIVE", "EVALUATING", "COMPLETED"].includes(cr.status);
+
+      if (
+        typeof cr.correctAnswer !== "string" ||
+        !Array.isArray(cr.answers) ||
+        !isValidQuestion ||
+        typeof cr.startedAt !== "number" ||
+        typeof cr.endsAt !== "number" ||
+        typeof cr.roundNo !== "number" ||
+        !isValidStatus
+      ) {
+        throw new Error(
+          `Invalid MatchStateMachine data (payload omitted; length=${json.length})`,
+        );
+      }
     }
     const instance = new MatchStateMachine("", "", []);
 
