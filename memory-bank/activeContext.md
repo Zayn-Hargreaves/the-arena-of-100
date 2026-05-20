@@ -116,7 +116,7 @@ apps/api/src/
 ├── main.ts        # Entry point
 ├── app.module.ts  # Root module
 ├── gateways/      # WebSocket gateway (refactored into handler classes)
-└── modules/       # Feature modules (NEEDS: question module)
+└── modules/       # Feature modules (QuestionModule completed)
     └── match/match.service.ts  # Match orchestration (Redis persistence for crash recovery)
 
 apps/web/src/
