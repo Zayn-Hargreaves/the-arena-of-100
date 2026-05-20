@@ -13,7 +13,25 @@ import {
   GAME_CONFIG,
   ErrorCode,
 } from "@arena/shared";
-import { deserializedMatchSchema } from "./deserialize-schema";
+interface DeserializedMatch {
+  state: {
+    id: string;
+    roomId: string;
+    status: MatchStatus;
+    currentRoundNo: number;
+    totalRounds: number;
+    players: [string, PlayerInfo][];
+    survivingPlayerIds: string[];
+    eliminatedPlayerIds: string[];
+    winnerId: string | null;
+    startedAt: number;
+    endedAt: number | null;
+  };
+  currentRound:
+    | (RoundState & { correctAnswer: string; answers: [string, AnswerState][] })
+    | null;
+  eventLog: { type: string; payload?: unknown; timestamp: number }[];
+}
 
 // State Transition Handler (Strategy Pattern)
 export interface StateTransitionHandler {
@@ -380,7 +398,7 @@ export class MatchStateMachine {
     payload?: unknown;
     timestamp: number;
   }> {
-    return [...this.eventLog];
+    return this.eventLog.map((e) => structuredClone(e));
   }
 
   // Serialize state to JSON string for Redis persistence
@@ -417,14 +435,26 @@ export class MatchStateMachine {
       );
     }
 
-    const result = deserializedMatchSchema.safeParse(data);
-    if (!result.success) {
+    const parsed = data as DeserializedMatch;
+    if (
+      !parsed ||
+      !parsed.state ||
+      !Array.isArray(parsed.state.players) ||
+      !Array.isArray(parsed.eventLog)
+    ) {
       throw new Error(
-        `Invalid MatchStateMachine data: ${result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")} (payload omitted; length=${json.length})`,
+        `Invalid MatchStateMachine data (payload omitted; length=${json.length})`,
       );
     }
-
-    const parsed = result.data;
+    if (
+      parsed.currentRound &&
+      (typeof parsed.currentRound.correctAnswer !== "string" ||
+        !Array.isArray(parsed.currentRound.answers))
+    ) {
+      throw new Error(
+        `Invalid MatchStateMachine data (payload omitted; length=${json.length})`,
+      );
+    }
     const instance = new MatchStateMachine("", "", []);
 
     instance.state = {

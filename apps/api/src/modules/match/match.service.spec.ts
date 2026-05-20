@@ -6,7 +6,7 @@ import {
   MatchStatus,
   RoomStatus,
   PlayerStatus,
-  RoomError,
+  ErrorCode,
 } from "@arena/shared";
 
 describe("MatchService", () => {
@@ -96,7 +96,9 @@ describe("MatchService", () => {
         id: "r1",
         players: [{ user: { id: "u1", username: "Alice" } }],
       } as any);
-      await expect(service.createMatch("r1")).rejects.toThrow(RoomError);
+      await expect(service.createMatch("r1")).rejects.toMatchObject({
+        code: ErrorCode.NOT_ENOUGH_PLAYERS,
+      });
     });
   });
 

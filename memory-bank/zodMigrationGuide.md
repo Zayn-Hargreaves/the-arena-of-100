@@ -165,7 +165,7 @@ async findOne(@Param("id") id: string) {
 
 ## 💡 Best Practices
 
-1. **Keep Schemas and DTOs Synced**: Always make sure the properties defined on the Swagger DTO class perfectly implement the Zod schema type (`implements ZodType`). This guarantees compile-time safety and prevents Swagger from going stale.
+1. **Keep Schemas and DTOs Synced**: Define the Zod schema as the source of truth, derive a TypeScript type via `z.infer<typeof schema>`, and have the Swagger DTO class `implements` that inferred type (e.g., `class CreateQuestionDto implements z.infer<typeof createQuestionSchema>`). This guarantees compile-time safety and prevents Swagger from going stale. Note: `ZodType` is the runtime schema object used for validation (passed to pipes), not the shape your DTO should implement.
 2. **Replace Class-Validator Decorators**:
    - `@IsString()` ➡️ `z.string()`
    - `@MinLength(N)` ➡️ `z.string().min(N)`

@@ -81,7 +81,7 @@ describe("RoomService", () => {
 
     it("throws ROOM_ALREADY_STARTED when room is in game", async () => {
       vi.mocked(prisma.room.findUnique).mockResolvedValue({
-        status: "IN_GAME",
+        status: RoomStatus.IN_GAME,
         players: [],
         maxPlayers: 100,
       } as any);

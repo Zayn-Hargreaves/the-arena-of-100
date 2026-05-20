@@ -107,6 +107,11 @@ pnpm db:studio
 - Integration tests for API endpoints
 - WebSocket event testing for real-time features
 
+## MCP Servers
+
+- **CodeGraphContext**: Code graph indexing for semantic code navigation and understanding. Use `cgc` CLI to re-index when major structural changes are made.
+- **shadcn**: UI component generation (frontend agent).
+
 ## Common Gotchas
 
 - Database must be running before `pnpm db:push`

@@ -243,9 +243,13 @@ describe("AuthHandler", () => {
 
       expect(client.join).toHaveBeenCalledWith("room:r1");
       expect(client.emit).toHaveBeenCalledWith(
-        ServerEvent.PLAYER_JOINED,
+        ServerEvent.ROOM_JOINED,
         expect.objectContaining({ roomId: "r1", code: "ABC" }),
       );
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.PLAYER_JOINED, {
+        playerId: "u1",
+        playerName: "Alice",
+      });
     });
 
     it("emits snapshot when active match exists", async () => {

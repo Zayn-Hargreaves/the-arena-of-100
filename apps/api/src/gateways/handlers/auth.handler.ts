@@ -1,6 +1,12 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Socket } from "socket.io";
-import { ServerEvent, ErrorCode, ERROR_MESSAGES } from "@arena/shared";
+import {
+  ServerEvent,
+  ErrorCode,
+  ERROR_MESSAGES,
+  RoomJoinedPayload,
+  RoomPlayerJoinedPayload,
+} from "@arena/shared";
 import { AuthService } from "../../modules/auth/auth.service";
 import { RoomService } from "../../modules/room/room.service";
 import { MatchService } from "../../modules/match/match.service";
@@ -90,14 +96,17 @@ export class AuthHandler extends BaseHandler {
         const room = roomPlayer.room;
         client.join(`room:${room.id}`);
 
-        client.emit(ServerEvent.PLAYER_JOINED, {
+        client.emit(ServerEvent.ROOM_JOINED, {
           roomId: room.id,
           code: room.code,
-          players: room.players.map((p) => ({
-            id: p.userId,
-            name: p.user.username,
-          })),
-        });
+        } satisfies RoomJoinedPayload);
+
+        for (const p of room.players) {
+          client.emit(ServerEvent.PLAYER_JOINED, {
+            playerId: p.userId,
+            playerName: p.user.username,
+          } satisfies RoomPlayerJoinedPayload);
+        }
 
         if (room.currentMatchId) {
           const stateMachine = await this.matchService.getStateMachine(

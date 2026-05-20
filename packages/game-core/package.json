@@ -13,8 +13,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@arena/shared": "workspace:*",
-    "zod": "^3.24.1"
+    "@arena/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

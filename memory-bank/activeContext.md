@@ -110,13 +110,14 @@ packages/shared/src/
 └── index.ts       # Constants and utilities
 
 packages/game-core/src/
-└── match-state-machine.ts  # Core game logic (Redis persistence added)
+└── match-state-machine.ts  # Core game logic (state transitions, domain serialization)
 
 apps/api/src/
 ├── main.ts        # Entry point
 ├── app.module.ts  # Root module
 ├── gateways/      # WebSocket gateway (refactored into handler classes)
 └── modules/       # Feature modules (NEEDS: question module)
+    └── match/match.service.ts  # Match orchestration (Redis persistence for crash recovery)
 
 apps/web/src/
 ├── app/           # Next.js pages (NEEDS: lobby/game/spectator routes)

@@ -173,7 +173,13 @@ export class MatchService {
 
     // Clean up state machine
     this.stateMachines.delete(matchId);
-    await this.redis.del(`match:state:${matchId}`);
+    try {
+      await this.redis.del(`match:state:${matchId}`);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to delete Redis state for match ${matchId}: ${error.message}`,
+      );
+    }
 
     this.logger.log(`Match finished: ${matchId}, winner: ${winnerId}`);
     return match;

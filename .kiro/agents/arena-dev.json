@@ -3,7 +3,7 @@
   "description": "Arena of 100 - Real-time multiplayer quiz battle royale. Full-stack dev agent.",
   "prompt": "You are an expert developer on Arena of 100 — a real-time multiplayer quiz battle royale (100 players, wrong answer = eliminated, last standing wins).\n\nCritical rules:\n- Server-authoritative: all timing/validation on server (anti-cheat)\n- NEVER expose correctAnswer to client\n- State machines MUST persist to Redis after each transition\n- Gateway handlers delegate to Use Case/Service layer\n- Dependencies flow inward: transport → application → domain\n- packages/shared: ZERO imports from other packages\n- packages/game-core: only imports from @arena/shared\n- apps/web: only imports from @arena/shared (NOT game-core)\n- Events are immutable (append-only)\n- Use Zod for validation (not class-validator)\n- Vitest for testing\n- Follow NestJS module patterns for backend\n- Zustand for frontend state\n- Socket.io for real-time communication",
   "tools": ["fs_read", "fs_write", "execute_bash", "grep", "glob"],
-  "allowedTools": ["fs_read", "grep", "glob"],
+  "allowedTools": ["fs_read", "fs_write", "execute_bash", "grep", "glob"],
   "toolsSettings": {
     "fs_write": {
       "allowedPaths": [
@@ -98,6 +98,36 @@
     "shadcn": {
       "command": "npx",
       "args": ["shadcn@latest", "mcp"]
+    },
+    "CodeGraphContext": {
+      "disabled": false,
+      "command": "/home/vu-anh-quan/Documents/.venv/bin/cgc",
+      "args": ["mcp", "start"],
+      "env": {
+        "DEFAULT_DATABASE": "falkordb",
+        "FALKORDB_PATH": "/home/vu-anh-quan/.codegraphcontext/global/db/falkordb",
+        "FALKORDB_SOCKET_PATH": "/home/vu-anh-quan/.codegraphcontext/global/db/falkordb.sock",
+        "INDEX_VARIABLES": "true",
+        "ALLOW_DB_DELETION": "false",
+        "DEBUG_LOGS": "false",
+        "DEBUG_LOG_PATH": "/home/vu-anh-quan/mcp_debug.log",
+        "ENABLE_APP_LOGS": "CRITICAL",
+        "LIBRARY_LOG_LEVEL": "WARNING",
+        "LOG_FILE_PATH": "/home/vu-anh-quan/.codegraphcontext/logs/cgc.log",
+        "MAX_FILE_SIZE_MB": "10",
+        "IGNORE_TEST_FILES": "false",
+        "IGNORE_HIDDEN_FILES": "true",
+        "ENABLE_AUTO_WATCH": "false",
+        "COMPLEXITY_THRESHOLD": "10",
+        "MAX_DEPTH": "unlimited",
+        "PARALLEL_WORKERS": "4",
+        "CACHE_ENABLED": "true",
+        "IGNORE_DIRS": "node_modules,venv,.venv,env,.env,dist,build,target,out,.git,.idea,.vscode,__pycache__",
+        "INDEX_SOURCE": "true",
+        "SCIP_INDEXER": "false",
+        "SCIP_LANGUAGES": "python,typescript,go,rust,java",
+        "SKIP_EXTERNAL_RESOLUTION": "false"
+      }
     }
   },
   "keyboardShortcut": "ctrl+shift+a",
