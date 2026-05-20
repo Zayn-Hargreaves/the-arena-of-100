@@ -176,8 +176,9 @@ export class MatchService {
     try {
       await this.redis.del(`match:state:${matchId}`);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(
-        `Failed to delete Redis state for match ${matchId}: ${error.message}`,
+        `Failed to delete Redis state for match ${matchId}: ${message}`,
       );
     }
 

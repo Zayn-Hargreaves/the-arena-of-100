@@ -214,9 +214,6 @@ importers:
       '@arena/shared':
         specifier: workspace:*
         version: link:../shared
-      zod:
-        specifier: ^3.24.1
-        version: 3.25.76
     devDependencies:
       '@types/node':
         specifier: ^22.10.5
