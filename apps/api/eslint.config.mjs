@@ -28,6 +28,12 @@ export default tseslint.config(
     },
   },
   {
+    files: ['**/*.spec.ts', '**/*.spec.tsx'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+    },
+  },
+  {
     ignores: ['dist/**', 'node_modules/**', 'prisma/**', 'prisma.config.ts', 'vitest.config.ts'],
   }
 );

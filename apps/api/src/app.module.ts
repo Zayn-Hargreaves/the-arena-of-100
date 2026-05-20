@@ -14,6 +14,7 @@ import { RoomModule } from "./modules/room/room.module";
 import { MatchModule } from "./modules/match/match.module";
 import { QuestionModule } from "./modules/question/question.module";
 import { GameGateway } from "./gateways/game.gateway";
+import { AuthHandler, RoomHandler, MatchHandler } from "./gateways/handlers";
 import { TransformInterceptor } from "./common/interceptors/transform.interceptor";
 import { HttpExceptionFilter } from "./common/filters/http-exception.filter";
 import { JwtAuthGuard } from "./modules/auth/guards/jwt-auth.guard";
@@ -40,6 +41,9 @@ import { RolesGuard } from "./modules/auth/guards/roles.guard";
   ],
   providers: [
     GameGateway,
+    AuthHandler,
+    RoomHandler,
+    MatchHandler,
     {
       provide: APP_INTERCEPTOR,
       useClass: TransformInterceptor,

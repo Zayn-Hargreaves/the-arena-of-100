@@ -13,6 +13,25 @@ import {
   GAME_CONFIG,
   ErrorCode,
 } from "@arena/shared";
+interface DeserializedMatch {
+  state: {
+    id: string;
+    roomId: string;
+    status: MatchStatus;
+    currentRoundNo: number;
+    totalRounds: number;
+    players: [string, PlayerInfo][];
+    survivingPlayerIds: string[];
+    eliminatedPlayerIds: string[];
+    winnerId: string | null;
+    startedAt: number;
+    endedAt: number | null;
+  };
+  currentRound:
+    | (RoundState & { correctAnswer: string; answers: [string, AnswerState][] })
+    | null;
+  eventLog: { type: string; payload?: unknown; timestamp: number }[];
+}
 
 // State Transition Handler (Strategy Pattern)
 export interface StateTransitionHandler {
@@ -43,7 +62,7 @@ export class MatchStateMachine {
   private currentRound: RoundState | null = null;
   private eventLog: Array<{
     type: string;
-    payload: unknown;
+    payload?: unknown;
     timestamp: number;
   }> = [];
 
@@ -64,13 +83,35 @@ export class MatchStateMachine {
     };
   }
 
-  // State Accessor
+  // State Accessor (deep clone Maps to prevent external mutation)
   getState(): Readonly<MatchState> {
-    return { ...this.state };
+    return {
+      ...this.state,
+      players: new Map(
+        Array.from(this.state.players.entries()).map(([id, p]) => [
+          id,
+          { ...p },
+        ]),
+      ),
+      survivingPlayerIds: [...this.state.survivingPlayerIds],
+      eliminatedPlayerIds: [...this.state.eliminatedPlayerIds],
+    };
   }
 
   getCurrentRound(): Readonly<RoundState> | null {
-    return this.currentRound ? { ...this.currentRound } : null;
+    if (!this.currentRound) return null;
+    return {
+      ...this.currentRound,
+      question: {
+        ...this.currentRound.question,
+        options: [...this.currentRound.question.options],
+      },
+      answers: new Map(
+        Array.from(this.currentRound.answers.entries()).map(
+          ([playerId, answer]) => [playerId, { ...answer }],
+        ),
+      ),
+    };
   }
 
   // Validate Transition (Guard)
@@ -354,9 +395,103 @@ export class MatchStateMachine {
 
   getEventLog(): ReadonlyArray<{
     type: string;
-    payload: unknown;
+    payload?: unknown;
     timestamp: number;
   }> {
-    return [...this.eventLog];
+    return this.eventLog.map((e) => structuredClone(e));
+  }
+
+  // Serialize state to JSON string for Redis persistence
+  serialize(): string {
+    const roundData = this.currentRound
+      ? {
+          ...this.currentRound,
+          answers: Array.from(this.currentRound.answers.entries()),
+          correctAnswer: (
+            this.currentRound as RoundState & { correctAnswer: string }
+          ).correctAnswer,
+        }
+      : null;
+
+    return JSON.stringify({
+      state: {
+        ...this.state,
+        players: Array.from(this.state.players.entries()),
+      },
+      currentRound: roundData,
+      eventLog: this.eventLog,
+    });
+  }
+
+  // Restore MatchStateMachine from serialized JSON string
+  static deserialize(json: string): MatchStateMachine {
+    let data: unknown;
+
+    try {
+      data = JSON.parse(json);
+    } catch (error) {
+      throw new Error(
+        `Failed to parse MatchStateMachine JSON: ${error instanceof Error ? error.message : String(error)} (payload omitted; length=${json.length})`,
+      );
+    }
+
+    const parsed = data as DeserializedMatch;
+    if (
+      !parsed ||
+      !parsed.state ||
+      !Array.isArray(parsed.state.players) ||
+      !Array.isArray(parsed.eventLog)
+    ) {
+      throw new Error(
+        `Invalid MatchStateMachine data (payload omitted; length=${json.length})`,
+      );
+    }
+    if (parsed.currentRound) {
+      const cr = parsed.currentRound;
+      const isValidQuestion =
+        cr.question &&
+        typeof cr.question === "object" &&
+        typeof cr.question.id === "string" &&
+        typeof cr.question.content === "string" &&
+        Array.isArray(cr.question.options);
+
+      const isValidStatus =
+        typeof cr.status === "string" &&
+        ["PENDING", "ACTIVE", "EVALUATING", "COMPLETED"].includes(cr.status);
+
+      if (
+        typeof cr.correctAnswer !== "string" ||
+        !Array.isArray(cr.answers) ||
+        !isValidQuestion ||
+        typeof cr.startedAt !== "number" ||
+        typeof cr.endsAt !== "number" ||
+        typeof cr.roundNo !== "number" ||
+        !isValidStatus
+      ) {
+        throw new Error(
+          `Invalid MatchStateMachine data (payload omitted; length=${json.length})`,
+        );
+      }
+    }
+    const instance = new MatchStateMachine("", "", []);
+
+    instance.state = {
+      ...parsed.state,
+      players: new Map(parsed.state.players),
+    } as MatchState;
+
+    if (parsed.currentRound) {
+      const { answers, ...rest } = parsed.currentRound;
+      instance.currentRound = {
+        ...rest,
+        answers: new Map(answers),
+      } as RoundState & { correctAnswer: string };
+    } else {
+      instance.currentRound = null;
+    }
+
+    instance.eventLog = parsed.eventLog;
+
+    return instance;
   }
 }

@@ -12,6 +12,9 @@ export * from "./state";
 // Socket Protocol
 export * from "./socket";
 
+// Errors
+export * from "./errors";
+
 // Game Constants
 export const GAME_CONFIG = {
   MAX_PLAYERS: 100,
@@ -39,21 +42,8 @@ export function generateRoomCode(
 }
 
 // Error Codes
-export enum ErrorCode {
-  ROOM_NOT_FOUND = "ROOM_NOT_FOUND",
-  ROOM_FULL = "ROOM_FULL",
-  ROOM_ALREADY_STARTED = "ROOM_ALREADY_STARTED",
-  PLAYER_NOT_IN_ROOM = "PLAYER_NOT_IN_ROOM",
-  MATCH_NOT_FOUND = "MATCH_NOT_FOUND",
-  MATCH_ALREADY_STARTED = "MATCH_ALREADY_STARTED",
-  ROUND_NOT_ACTIVE = "ROUND_NOT_ACTIVE",
-  ALREADY_ANSWERED = "ALREADY_ANSWERED",
-  ANSWER_SUBMISSION_CLOSED = "ANSWER_SUBMISSION_CLOSED",
-  UNAUTHORIZED = "UNAUTHORIZED",
-  INVALID_TOKEN = "INVALID_TOKEN",
-  RATE_LIMITED = "RATE_LIMITED",
-  INTERNAL_ERROR = "INTERNAL_ERROR",
-}
+export { ErrorCode } from "./error-codes";
+import { ErrorCode } from "./error-codes";
 
 // Error Messages (Vietnamese)
 export const ERROR_MESSAGES: Record<ErrorCode, string> = {
@@ -70,4 +60,6 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.INVALID_TOKEN]: "Token không hợp lệ",
   [ErrorCode.RATE_LIMITED]: "Quá nhiều yêu cầu, vui lòng thử lại sau",
   [ErrorCode.INTERNAL_ERROR]: "Lỗi hệ thống",
+  [ErrorCode.NOT_ROOM_HOST]: "Chỉ chủ phòng mới có thể bắt đầu",
+  [ErrorCode.NOT_ENOUGH_PLAYERS]: "Cần ít nhất 2 người chơi",
 };

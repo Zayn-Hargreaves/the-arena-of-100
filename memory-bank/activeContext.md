@@ -2,7 +2,7 @@
 
 ## Current Focus
 
-Architecture review complete. Base scaffold is **structurally sound** — no restructuring needed. Now transitioning to Phase 1 implementation with 3 critical fixes that must be resolved first.
+All critical fixes complete. Currently on branch `refactor/split-game-gateway` — gateway refactored, error handling pattern implemented, ready to transition to Phase 1 core game loop implementation.
 
 ## Recent Changes
 
@@ -17,13 +17,16 @@ Architecture review complete. Base scaffold is **structurally sound** — no res
 - **Completed architecture assessment (2026-05-09)**
 - **Identified 3 critical issues + 5 significant gaps**
 - **Set up CI/CD Pipeline & Vitest Infrastructure (2026-05-12)**
+- **Implemented type-safe error handling pattern** — `RoomError` class with error codes, replacing fragile string matching (see [errorHandlingPattern.md](./errorHandlingPattern.md))
+- **Refactored GameGateway** — split into handler classes (AuthHandler, RoomHandler, MatchHandler)
+- **Fixed getState() shallow copy** — deep cloning players Map
 
 ## Architecture Assessment Summary
 
 ### 🔴 Critical Issues (Fix Before Phase 1)
 
-1. **GameGateway God Object**: 319 LOC handling auth, room, match, answer, reconnect. Will balloon to 1000+ with spectator/emotes/admin. Must split or delegate.
-2. **In-Memory State Machines**: `Map<string, MatchStateMachine>` in RAM. Server restart = ALL matches lost. Need Redis persistence.
+1. ~~**GameGateway God Object**~~ [RESOLVED]: Refactored GameGateway into separate event handler classes (AuthHandler, RoomHandler, MatchHandler), making the main gateway a lean router.
+2. ~~**In-Memory State Machines**~~ [RESOLVED]: Implemented Redis serialization & persistence for MatchStateMachine crash recovery.
 3. ~~**Missing QuestionModule**~~ [RESOLVED]: QuestionModule fully implemented with REST endpoints for CRUD and bulk import, along with database seeding.
 
 ### 🟡 Significant Gaps
@@ -60,13 +63,16 @@ Architecture review complete. Base scaffold is **structurally sound** — no res
 17. **Game Operations**: Administrative tools for emergency interventions
 18. **Testing Framework**: Vitest chosen for its performance and native ESM support
 19. ~~**Zod Validation Migration**~~: Custom `ZodValidationPipe` for request/body parsing, gradual module-by-module migration, and Zod schema-based response serialization. (Completed)
+20. **Distributed Session Management**: Redis-based session tracking (`@socket.io/redis-adapter` or custom Redis cache) selected for production scaling, while maintaining high-performance O(1) in-memory tracking (using client.data.userId lookup) for the current development phase.
+21. **Persistent Guest Identity via Device ID (Model C)**: Approved using client-generated device ID (`guestId`) stored in localStorage as the primary unique key for guest logins. This resolves the unique username hijacking security risk and supports duplicate nicknames safely.
 
 ## Pending Decisions (From Assessment)
 
-- [ ] Gateway refactor strategy: split into multiple gateways vs. 1 gateway + handler classes
+- [x] Gateway refactor strategy: Split 1 gateway into multiple handler classes (Command Pattern selected & implemented)
 - [ ] Timer strategy: `setTimeout` in NestJS vs. Redis-based distributed timers
 - [x] Test framework: Vitest vs. Jest for game-core (Vitest selected)
 - [ ] Frontend routing structure: `/lobby/[code]`, `/game/[matchId]`
+- [x] Guest login hijacking security fix: Scheduled for a separate PR to migrate auth.service lookup from `username` to device-based `guestId` (Model C).
 
 ## Next Steps (Immediate — Priority Order)
 
@@ -78,8 +84,8 @@ Architecture review complete. Base scaffold is **structurally sound** — no res
 ### Critical Fixes (Before Features)
 
 1. ~~Add `QuestionModule` + seed data~~ (Completed)
-2. Add `MatchStateMachine.serialize()/deserialize()` + Redis persistence
-3. Refactor `GameGateway` → split or delegate to handler classes
+2. ~~Add `MatchStateMachine.serialize()/deserialize()` + Redis persistence~~ (Completed)
+3. ~~Refactor `GameGateway` → split or delegate to handler classes~~ (Completed)
 4. ~~Migrate validation/serialization from class-validator/transformer to Zod~~ (Completed - see [processTechDebt.md](./processTechDebt.md))
 
 ### Core Game Loop (MVP Minimum)
@@ -104,13 +110,14 @@ packages/shared/src/
 └── index.ts       # Constants and utilities
 
 packages/game-core/src/
-└── match-state-machine.ts  # Core game logic (NEEDS: serialize/deserialize)
+└── match-state-machine.ts  # Core game logic (state transitions, domain serialization)
 
 apps/api/src/
 ├── main.ts        # Entry point
 ├── app.module.ts  # Root module
-├── gateways/      # WebSocket gateway (NEEDS: refactor from god object)
-└── modules/       # Feature modules (NEEDS: question module)
+├── gateways/      # WebSocket gateway (refactored into handler classes)
+└── modules/       # Feature modules (QuestionModule completed)
+    └── match/match.service.ts  # Match orchestration (Redis persistence for crash recovery)
 
 apps/web/src/
 ├── app/           # Next.js pages (NEEDS: lobby/game/spectator routes)
@@ -141,8 +148,8 @@ apps/web/src/
 
 ## Current Blockers
 
-- **🔴 In-Memory state machines** — no crash recovery
-- **🔴 GameGateway monolith** — blocks clean feature development
+- ~~**🔴 In-Memory state machines**~~ [RESOLVED]: Redis persistence implemented
+- ~~**🔴 GameGateway monolith**~~ [RESOLVED]: Refactored into handler classes
 - Missing frictionless onboarding functionality with content moderation
 - No lobby lifecycle management with heartbeat validation
 - No graceful exit mechanism

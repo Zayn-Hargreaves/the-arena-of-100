@@ -2,12 +2,7 @@
 // Match Service - Match Management Logic
 // ============================================================
 
-import {
-  Injectable,
-  Logger,
-  NotFoundException,
-  BadRequestException,
-} from "@nestjs/common";
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { MatchStateMachine } from "@arena/game-core";
@@ -17,6 +12,7 @@ import {
   PlayerStatus,
   ErrorCode,
   type PlayerInfo,
+  RoomError,
 } from "@arena/shared";
 
 @Injectable()
@@ -46,7 +42,7 @@ export class MatchService {
     }
 
     if (room.players.length < 2) {
-      throw new BadRequestException("Cần ít nhất 2 người chơi");
+      throw new RoomError(ErrorCode.NOT_ENOUGH_PLAYERS);
     }
 
     // Create match in DB
@@ -86,20 +82,57 @@ export class MatchService {
       data: { status: RoomStatus.IN_GAME, currentMatchId: match.id },
     });
 
-    // Cache match state in Redis
-    await this.redis.setJSON(
-      `match:${match.id}`,
-      stateMachine.getSnapshot(0),
-      7200,
-    );
+    // Persist state machine to Redis for crash recovery
+    try {
+      await this.persistStateMachine(match.id);
+    } catch (error) {
+      this.logger.error(
+        `Failed to persist state machine to Redis for match ${match.id} — state exists in-memory only`,
+        error,
+      );
+    }
 
     this.logger.log(`Match created: ${match.id} for room ${roomId}`);
     return match;
   }
 
-  // Get state machine for match
-  getStateMachine(matchId: string): MatchStateMachine | undefined {
-    return this.stateMachines.get(matchId);
+  // Get state machine for match (restores from Redis if not in memory)
+  async getStateMachine(
+    matchId: string,
+  ): Promise<MatchStateMachine | undefined> {
+    const cached = this.stateMachines.get(matchId);
+    if (cached) return cached;
+
+    // Try restore from Redis
+    const json = await this.redis.get(`match:state:${matchId}`);
+    if (!json) return undefined;
+
+    try {
+      const restored = MatchStateMachine.deserialize(json);
+      this.stateMachines.set(matchId, restored);
+      this.logger.log(`Match state restored from Redis: ${matchId}`);
+      return restored;
+    } catch (error) {
+      this.logger.error(
+        `Failed to deserialize match state for ${matchId}`,
+        error,
+      );
+      // Optionally remove corrupted key
+      await this.redis.del(`match:state:${matchId}`);
+      return undefined;
+    }
+  }
+
+  // Persist current state machine to Redis
+  async persistStateMachine(matchId: string): Promise<void> {
+    const machine = this.stateMachines.get(matchId);
+    if (!machine) return;
+
+    await this.redis.set(
+      `match:state:${matchId}`,
+      machine.serialize(),
+      7200, // 2 hour TTL
+    );
   }
 
   // Get match by ID
@@ -140,7 +173,14 @@ export class MatchService {
 
     // Clean up state machine
     this.stateMachines.delete(matchId);
-    await this.redis.del(`match:${matchId}`);
+    try {
+      await this.redis.del(`match:state:${matchId}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Failed to delete Redis state for match ${matchId}: ${message}`,
+      );
+    }
 
     this.logger.log(`Match finished: ${matchId}, winner: ${winnerId}`);
     return match;

@@ -30,6 +30,7 @@ export enum ClientEvent {
 export enum ServerEvent {
   // Room Events
   ROOM_CREATED = "room_created",
+  ROOM_JOINED = "room_joined",
   PLAYER_JOINED = "player_joined",
   PLAYER_LEFT = "player_left",
   MATCH_STARTING = "match_starting",
@@ -129,6 +130,16 @@ export interface AnswerResultPayload {
   isCorrect: boolean;
   responseTimeMs: number;
   correctAnswer?: string;
+}
+
+export interface RoomJoinedPayload {
+  roomId: string;
+  code: string;
+}
+
+export interface RoomPlayerJoinedPayload {
+  playerId: string;
+  playerName: string;
 }
 
 // Socket Channel Helpers

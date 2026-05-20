@@ -2,12 +2,7 @@
 // Room Service - Room Management Logic
 // ============================================================
 
-import {
-  Injectable,
-  Logger,
-  BadRequestException,
-  NotFoundException,
-} from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import {
@@ -15,6 +10,7 @@ import {
   generateRoomCode,
   GAME_CONFIG,
   ErrorCode,
+  RoomError,
 } from "@arena/shared";
 
 @Injectable()
@@ -79,15 +75,15 @@ export class RoomService {
     });
 
     if (!room) {
-      throw new NotFoundException(ErrorCode.ROOM_NOT_FOUND);
+      throw new RoomError(ErrorCode.ROOM_NOT_FOUND);
     }
 
     if (room.status !== RoomStatus.WAITING) {
-      throw new BadRequestException(ErrorCode.ROOM_ALREADY_STARTED);
+      throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
     }
 
     if (room.players.length >= room.maxPlayers) {
-      throw new BadRequestException(ErrorCode.ROOM_FULL);
+      throw new RoomError(ErrorCode.ROOM_FULL);
     }
 
     // Check if already in room
@@ -149,7 +145,7 @@ export class RoomService {
     });
 
     if (!room) {
-      throw new NotFoundException(ErrorCode.ROOM_NOT_FOUND);
+      throw new RoomError(ErrorCode.ROOM_NOT_FOUND);
     }
 
     return room;
@@ -167,7 +163,7 @@ export class RoomService {
     });
 
     if (!room) {
-      throw new NotFoundException(ErrorCode.ROOM_NOT_FOUND);
+      throw new RoomError(ErrorCode.ROOM_NOT_FOUND);
     }
 
     return room;
@@ -214,5 +210,35 @@ export class RoomService {
   // Get room players from Redis
   async getRoomPlayerIds(roomId: string): Promise<string[]> {
     return this.redis.smembers(`room:${roomId}:players`);
+  }
+
+  // Find active rooms for a user
+  async getUserActiveRooms(userId: string) {
+    return this.prisma.roomPlayer.findMany({
+      where: {
+        userId,
+        room: {
+          status: {
+            not: RoomStatus.FINISHED,
+          },
+        },
+      },
+      include: {
+        room: {
+          include: {
+            players: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    username: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
   }
 }

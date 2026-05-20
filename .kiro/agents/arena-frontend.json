@@ -1,0 +1,97 @@
+{
+  "name": "arena-frontend",
+  "description": "Arena of 100 - Frontend specialist (Next.js 15, React 19, Zustand, Tailwind, Socket.io client)",
+  "prompt": "You are a frontend specialist for Arena of 100. Focus on building and optimizing the React-based real-time multiplayer web client.",
+  "rules": [
+    "Framework constraints: Next.js 15 App Router, React 19, Zustand useStore hooks, Tailwind CSS, and Socket.io client integration.",
+    "Policy rules: apps/web imports only from @arena/shared (NEVER from game-core).",
+    "Testing requirements: All frontend code must include Vitest-based unit tests for components and hooks, plus integration tests for critical flows (including Socket.io interactions and optimistic UI rollback).",
+    "Test file naming: Enforce test files alongside implementation (e.g., ComponentName.test.tsx for components, useHookName.test.ts for hooks) and reference component names/hooks in test suites.",
+    "Client state: Use Zustand for client state.",
+    "Real-time communication: Use Socket.io client for real-time events.",
+    "User experience: Implement optimistic UI with rollback.",
+    "Accessibility: WCAG accessibility compliance.",
+    "Fairness: Asset preloading for fairness.",
+    "Security: Never trust client timestamps."
+  ],
+  "tools": ["fs_read", "fs_write", "execute_bash", "grep", "glob"],
+  "allowedTools": ["fs_read", "fs_write", "execute_bash", "grep", "glob"],
+  "toolsSettings": {
+    "fs_write": {
+      "allowedPaths": ["apps/web/**", "packages/shared/**"],
+      "deniedPaths": [
+        "node_modules/**",
+        ".git/**",
+        "pnpm-lock.yaml",
+        "infrastructure/**",
+        ".kiro/**"
+      ]
+    },
+    "execute_bash": {
+      "autoAllowReadonly": true
+    }
+  },
+  "resources": [
+    "file://AGENTS.md",
+    "file://apps/web/package.json",
+    "file://packages/shared/src/**/*.ts",
+    {
+      "type": "knowledgeBase",
+      "source": "file://./apps/web/src",
+      "name": "Frontend Source",
+      "indexType": "fast",
+      "include": ["**/*.ts", "**/*.tsx"],
+      "autoUpdate": true
+    },
+    {
+      "type": "knowledgeBase",
+      "source": "file://./memory-bank",
+      "name": "Project Docs",
+      "indexType": "best",
+      "include": ["**/*.md"],
+      "autoUpdate": true
+    }
+  ],
+  "hooks": {
+    "agentSpawn": [
+      {
+        "command": "git status --short apps/web/",
+        "description": "Frontend changes"
+      }
+    ]
+  },
+  "mcpServers": {
+    "CodeGraphContext": {
+      "disabled": false,
+      "command": "cgc",
+      "args": ["mcp", "start"],
+      "env": {
+        "DEFAULT_DATABASE": "falkordb",
+        "FALKORDB_PATH": "${FALKORDB_PATH}",
+        "FALKORDB_SOCKET_PATH": "${FALKORDB_SOCKET_PATH}",
+        "INDEX_VARIABLES": "true",
+        "ALLOW_DB_DELETION": "false",
+        "DEBUG_LOGS": "false",
+        "DEBUG_LOG_PATH": "${DEBUG_LOG_PATH}",
+        "ENABLE_APP_LOGS": "CRITICAL",
+        "LIBRARY_LOG_LEVEL": "WARNING",
+        "LOG_FILE_PATH": "${LOG_FILE_PATH}",
+        "MAX_FILE_SIZE_MB": "10",
+        "IGNORE_TEST_FILES": "false",
+        "IGNORE_HIDDEN_FILES": "true",
+        "ENABLE_AUTO_WATCH": "false",
+        "COMPLEXITY_THRESHOLD": "10",
+        "MAX_DEPTH": "unlimited",
+        "PARALLEL_WORKERS": "4",
+        "CACHE_ENABLED": "true",
+        "IGNORE_DIRS": "node_modules,venv,.venv,env,.env,dist,build,target,out,.git,.idea,.vscode,__pycache__",
+        "INDEX_SOURCE": "true",
+        "SCIP_INDEXER": "false",
+        "SCIP_LANGUAGES": "python,typescript,go,rust,java",
+        "SKIP_EXTERNAL_RESOLUTION": "false"
+      }
+    }
+  },
+  "keyboardShortcut": "ctrl+shift+f",
+  "welcomeMessage": "🎨 Frontend agent ready. Working on apps/web/."
+}
