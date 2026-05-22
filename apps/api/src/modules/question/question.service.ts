@@ -35,12 +35,37 @@ export class QuestionService {
   private mapPrismaQuestionToQuestion(
     prismaQuestion: PrismaQuestion,
   ): Question {
+    // Ensure options is always an array of strings
+    let options: string[] = [];
+    if (Array.isArray(prismaQuestion.options)) {
+      // Convert all elements to strings
+      options = prismaQuestion.options.map(String);
+    } else if (typeof prismaQuestion.options === "string") {
+      // If it's a string, try to parse it as JSON array
+      try {
+        const parsed = JSON.parse(prismaQuestion.options);
+        if (Array.isArray(parsed)) {
+          options = parsed.map(String);
+        } else {
+          // If parsing succeeds but it's not an array, treat as a single option
+          options = [String(parsed)];
+        }
+      } catch {
+        // If parsing fails, treat as a single option
+        options = [prismaQuestion.options];
+      }
+    } else if (
+      prismaQuestion.options !== null &&
+      prismaQuestion.options !== undefined
+    ) {
+      // For any other type, convert to string and treat as single option
+      options = [String(prismaQuestion.options)];
+    }
+
     return {
       id: prismaQuestion.id,
       content: prismaQuestion.content,
-      options: Array.isArray(prismaQuestion.options)
-        ? prismaQuestion.options
-        : JSON.parse(JSON.stringify(prismaQuestion.options)),
+      options,
       correctAnswer: prismaQuestion.correctAnswer,
       difficulty: prismaQuestion.difficulty as QuestionDifficulty,
       category: prismaQuestion.category as QuestionCategory,

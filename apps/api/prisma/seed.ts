@@ -138,8 +138,7 @@ async function main() {
     targetTags.forEach((tagName) => allTagNames.add(tagName));
   }
 
-  const allTagNamesArray: string[] = [];
-  allTagNames.forEach((name) => allTagNamesArray.push(name));
+  const allTagNamesArray = Array.from(allTagNames);
 
   // Batch fetch existing tags
   const existingTags = await prisma.tag.findMany({
@@ -235,6 +234,10 @@ async function main() {
       const tag = tagMap.get(tagName);
       if (tag) {
         resolvedTags.push(tag);
+      } else {
+        console.warn(
+          `⚠️ Tag "${tagName}" not found in tagMap for question "${question.content}"`,
+        );
       }
     }
 
@@ -248,12 +251,15 @@ async function main() {
       const targetTagIds = resolvedTags.map((t) => t.id);
       const existingTagIds = existingQuestionTags.map((qt) => qt.tagId);
 
+      const targetTagIdSet = new Set(targetTagIds);
+      const existingTagIdSet = new Set(existingTagIds);
+
       // Compute which tag relations need deletion and which need creation
       const tagIdsToDelete = existingTagIds.filter(
-        (id) => !targetTagIds.includes(id),
+        (id) => !targetTagIdSet.has(id),
       );
       const tagIdsToCreate = targetTagIds.filter(
-        (id) => !existingTagIds.includes(id),
+        (id) => !existingTagIdSet.has(id),
       );
 
       // Perform deletions with tx.questionTag.deleteMany for stale tagIds
