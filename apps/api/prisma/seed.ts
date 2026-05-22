@@ -5,8 +5,8 @@ import * as path from "path";
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
 import { PrismaClient } from "@prisma/client";
-import { questionSeeds } from "./seeds/questions";
-import { testQuestionSeeds } from "./seeds/questions.test";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { Pool } from "pg";
 import { z } from "zod";
 
 // Define environment schema
@@ -27,17 +27,33 @@ const envSchema = z.object({
 // Parse environment variables
 const parsedEnv = envSchema.parse(process.env);
 
-const prisma = new PrismaClient();
+const connectionString = parsedEnv.DATABASE_URL;
+const pool = new Pool({ connectionString });
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
   console.log("🌱 Starting database seeding...");
 
   // Determine which dataset to use based on SEED_ENV
-  const selectedQuestions =
-    parsedEnv.SEED_ENV === "test" ? testQuestionSeeds : questionSeeds;
-  console.log(`🌱 Seeding questions using ${parsedEnv.SEED_ENV} dataset...`);
+  const seedEnv = parsedEnv.SEED_ENV;
 
-  // Validate questionSeeds before proceeding
+  let selectedQuestions;
+  if (seedEnv === "test") {
+    console.log(`🌱 Seeding questions using ${seedEnv} dataset...`);
+    const { testQuestionSeeds } = await import("./seeds/questions.seeds");
+    selectedQuestions = testQuestionSeeds;
+  } else if (seedEnv === "dev") {
+    console.log(`🌱 Seeding questions using ${seedEnv} dataset...`);
+    const { questionSeeds } = await import("./seeds/questions");
+    selectedQuestions = questionSeeds;
+  } else {
+    throw new Error(
+      `❌ Invalid SEED_ENV value: "${seedEnv}". Only "dev" and "test" are supported. Please check your parsedEnv.SEED_ENV configuration.`,
+    );
+  }
+
+  // Validate selectedQuestions before proceeding
   if (!Array.isArray(selectedQuestions) || selectedQuestions.length === 0) {
     throw new Error(
       "❌ Selected questionSeeds is undefined, not an array, or empty. Seeding aborted.",
@@ -148,48 +164,102 @@ async function main() {
     }
     seededQuestions++;
 
-    // Handle tags if they exist
-    if (question.tags && question.tags.length > 0) {
-      for (const tagName of question.tags) {
-        // Normalize tag name
-        const normalizedTagName = tagName.trim().toLowerCase();
+    // Handle tags synchronization
+    const targetTags = question.tags
+      ? question.tags.map((t) => t.trim().toLowerCase())
+      : [];
 
-        // Check if tag already exists
-        const existingTag = await prisma.tag.findUnique({
-          where: { name: normalizedTagName },
-        });
+    const resolvedTags = [];
+    for (const tagName of targetTags) {
+      let tag = await prisma.tag.findUnique({
+        where: { name: tagName },
+      });
 
-        let createdTag;
-        if (!existingTag) {
-          // Create new tag only if it doesn't exist
-          createdTag = await prisma.tag.create({
-            data: { name: normalizedTagName },
+      if (!tag) {
+        try {
+          tag = await prisma.tag.create({
+            data: { name: tagName },
           });
           seededTags++;
-        } else {
-          // Use existing tag
-          createdTag = existingTag;
-        }
-
-        // Create the question-tag relationship
-        try {
-          await prisma.questionTag.create({
-            data: {
-              questionId: createdQuestion.id,
-              tagId: createdTag.id,
-            },
-          });
-          seededQuestionTags++;
         } catch (e) {
-          // Ignore duplicate relationships
-          if (
-            e instanceof Error &&
-            e.message.includes("Unique constraint failed")
-          ) {
-            // Ignore duplicate relationships
-          } else {
-            throw e;
+          // Gracefully handle race condition if tag was created in parallel
+          tag = await prisma.tag.findUnique({
+            where: { name: tagName },
+          });
+          if (!tag) throw e;
+        }
+      }
+      resolvedTags.push(tag);
+    }
+
+    // Fetch existing questionTag entries for createdQuestion.id
+    const existingQuestionTags = await prisma.questionTag.findMany({
+      where: { questionId: createdQuestion.id },
+    });
+
+    const targetTagIds = resolvedTags.map((t) => t.id);
+    const existingTagIds = existingQuestionTags.map((qt) => qt.tagId);
+
+    // Compute which tag relations need deletion and which need creation
+    const tagIdsToDelete = existingTagIds.filter(
+      (id) => !targetTagIds.includes(id),
+    );
+    const tagIdsToCreate = targetTagIds.filter(
+      (id) => !existingTagIds.includes(id),
+    );
+
+    // Perform deletions with prisma.questionTag.deleteMany for stale tagIds
+    if (tagIdsToDelete.length > 0) {
+      await prisma.questionTag.deleteMany({
+        where: {
+          questionId: createdQuestion.id,
+          tagId: { in: tagIdsToDelete },
+        },
+      });
+    }
+
+    // Create missing relations and update seededQuestionTags
+    if (tagIdsToCreate.length > 0) {
+      try {
+        await prisma.$transaction(
+          tagIdsToCreate.map((tagId) =>
+            prisma.questionTag.create({
+              data: {
+                questionId: createdQuestion.id,
+                tagId,
+              },
+            }),
+          ),
+        );
+        seededQuestionTags += tagIdsToCreate.length;
+      } catch (e) {
+        // If batch fails due to unique constraint, try creating sequentially to handle gracefully
+        if (
+          e instanceof Error &&
+          e.message.includes("Unique constraint failed")
+        ) {
+          for (const tagId of tagIdsToCreate) {
+            try {
+              await prisma.questionTag.create({
+                data: {
+                  questionId: createdQuestion.id,
+                  tagId,
+                },
+              });
+              seededQuestionTags++;
+            } catch (innerErr) {
+              if (
+                innerErr instanceof Error &&
+                innerErr.message.includes("Unique constraint failed")
+              ) {
+                // Ignore duplicate relationships
+              } else {
+                throw innerErr;
+              }
+            }
           }
+        } else {
+          throw e;
         }
       }
     }
@@ -221,4 +291,5 @@ main()
   })
   .finally(async () => {
     await prisma.$disconnect();
+    await pool.end();
   });

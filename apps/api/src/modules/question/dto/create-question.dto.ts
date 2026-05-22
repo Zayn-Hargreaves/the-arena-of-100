@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ApiProperty } from "@nestjs/swagger";
-import { QuestionDifficulty } from "./get-questions.dto";
+import { QuestionDifficulty, QuestionCategory } from "./get-questions.dto";
 
 // Define the base object schema separately so it can be partial()ed without effect/refinement issues in PATCH
 export const createQuestionObjectSchema = z.object({
@@ -14,6 +14,7 @@ export const createQuestionObjectSchema = z.object({
     }),
   correctAnswer: z.string().min(1),
   difficulty: z.nativeEnum(QuestionDifficulty),
+  category: z.nativeEnum(QuestionCategory),
   active: z.boolean().optional(),
 });
 
@@ -49,6 +50,13 @@ export class CreateQuestionDto implements CreateQuestionInput {
     enum: QuestionDifficulty,
   })
   difficulty!: QuestionDifficulty;
+
+  @ApiProperty({
+    example: "GEOGRAPHY",
+    description: "The category of the question",
+    enum: QuestionCategory,
+  })
+  category!: QuestionCategory;
 
   @ApiProperty({
     example: true,

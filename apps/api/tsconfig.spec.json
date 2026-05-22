@@ -3,6 +3,6 @@
   "compilerOptions": {
     "types": ["vitest/globals", "node"]
   },
-  "include": ["src/**/*.spec.ts", "src/**/*.test.ts"],
+  "include": ["src/**/*.spec.ts", "src/**/*.test.ts", "prisma/**/*.test.ts"],
   "exclude": ["node_modules", "dist"]
 }

@@ -1,5 +1,5 @@
 import { createQuestionSchema } from "./create-question.dto";
-import { QuestionDifficulty } from "./get-questions.dto";
+import { QuestionDifficulty, QuestionCategory } from "./get-questions.dto";
 
 describe("CreateQuestionDto", () => {
   it("should validate correctAnswer when it is in options", () => {
@@ -8,6 +8,7 @@ describe("CreateQuestionDto", () => {
       options: ["Paris", "London", "Berlin", "Madrid"],
       correctAnswer: "Paris",
       difficulty: QuestionDifficulty.EASY,
+      category: QuestionCategory.GEOGRAPHY,
     };
 
     const result = createQuestionSchema.safeParse(dto);
@@ -20,6 +21,7 @@ describe("CreateQuestionDto", () => {
       options: ["Paris", "London", "Berlin", "Madrid"],
       correctAnswer: "Rome",
       difficulty: QuestionDifficulty.EASY,
+      category: QuestionCategory.GEOGRAPHY,
     };
 
     const result = createQuestionSchema.safeParse(dto);
@@ -36,6 +38,7 @@ describe("CreateQuestionDto", () => {
       options: "Paris" as unknown as string[],
       correctAnswer: "Paris",
       difficulty: QuestionDifficulty.EASY,
+      category: QuestionCategory.GEOGRAPHY,
     };
 
     const result = createQuestionSchema.safeParse(dto);
@@ -51,6 +54,7 @@ describe("CreateQuestionDto", () => {
       options: ["Paris", "London", "Berlin", "Madrid"],
       correctAnswer: "Paris",
       difficulty: QuestionDifficulty.EASY,
+      category: QuestionCategory.GEOGRAPHY,
     };
 
     const result = createQuestionSchema.safeParse(dto);
@@ -66,6 +70,7 @@ describe("CreateQuestionDto", () => {
       content: "What is the capital of France?",
       correctAnswer: "Paris",
       difficulty: QuestionDifficulty.EASY,
+      category: QuestionCategory.GEOGRAPHY,
     };
 
     const result = createQuestionSchema.safeParse(dto);
@@ -81,6 +86,7 @@ describe("CreateQuestionDto", () => {
       content: "What is the capital of France?",
       options: ["Paris", "London", "Berlin", "Madrid"],
       difficulty: QuestionDifficulty.EASY,
+      category: QuestionCategory.GEOGRAPHY,
     };
 
     const result = createQuestionSchema.safeParse(dto);
@@ -96,6 +102,7 @@ describe("CreateQuestionDto", () => {
       content: "What is the capital of France?",
       options: ["Paris", "London", "Berlin", "Madrid"],
       correctAnswer: "Paris",
+      category: QuestionCategory.GEOGRAPHY,
     };
 
     const result = createQuestionSchema.safeParse(dto);
@@ -112,6 +119,7 @@ describe("CreateQuestionDto", () => {
       options: [],
       correctAnswer: "Paris",
       difficulty: QuestionDifficulty.EASY,
+      category: QuestionCategory.GEOGRAPHY,
     };
 
     const result = createQuestionSchema.safeParse(dto);
@@ -128,6 +136,7 @@ describe("CreateQuestionDto", () => {
       options: ["Paris", "London", "Berlin", "Madrid"],
       correctAnswer: "",
       difficulty: QuestionDifficulty.EASY,
+      category: QuestionCategory.GEOGRAPHY,
     };
 
     const result = createQuestionSchema.safeParse(dto);
@@ -144,6 +153,7 @@ describe("CreateQuestionDto", () => {
       options: ["Paris", "London", "Paris", "Madrid"],
       correctAnswer: "Paris",
       difficulty: QuestionDifficulty.EASY,
+      category: QuestionCategory.GEOGRAPHY,
     };
 
     const result = createQuestionSchema.safeParse(dto);
@@ -160,6 +170,7 @@ describe("CreateQuestionDto", () => {
       options: ["Paris", "London", "Berlin", "Madrid"],
       correctAnswer: "Paris",
       difficulty: QuestionDifficulty.EASY,
+      category: QuestionCategory.GEOGRAPHY,
     };
 
     const result = createQuestionSchema.safeParse(dto);
@@ -167,6 +178,22 @@ describe("CreateQuestionDto", () => {
     if (!result.success) {
       const issue = result.error.issues[0];
       expect(issue.path).toContain("content");
+    }
+  });
+
+  it("should not validate when category is missing", () => {
+    const dto = {
+      content: "What is the capital of France?",
+      options: ["Paris", "London", "Berlin", "Madrid"],
+      correctAnswer: "Paris",
+      difficulty: QuestionDifficulty.EASY,
+    };
+
+    const result = createQuestionSchema.safeParse(dto);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues[0];
+      expect(issue.path).toContain("category");
     }
   });
 });

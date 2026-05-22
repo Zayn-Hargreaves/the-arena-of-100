@@ -281,6 +281,40 @@ function validateQuestion(question: Question): void {
       `Invalid question: Missing category for question "${question.content}"`,
     );
   }
+
+  // Check tags after normalization if they exist
+  if (question.tags) {
+    const normalizedTags = question.tags.map(normalizeString);
+
+    // Ensure no normalized tag is empty
+    const emptyTagIndex = normalizedTags.findIndex((tag) => tag === "");
+    if (emptyTagIndex !== -1) {
+      throw new Error(
+        `Invalid question: Empty tag found in question "${question.content}". Offending tag: "${question.tags[emptyTagIndex]}"`,
+      );
+    }
+
+    // Ensure no duplicates in normalized tags
+    const uniqueTags = new Set(normalizedTags);
+    if (uniqueTags.size !== question.tags.length) {
+      // Find duplicates to list them in the error
+      const seen = new Set<string>();
+      const duplicates = new Set<string>();
+      for (const tag of normalizedTags) {
+        if (seen.has(tag)) {
+          duplicates.add(tag);
+        }
+        seen.add(tag);
+      }
+      throw new Error(
+        `Invalid question: Duplicate tags [${Array.from(duplicates)
+          .map((d) => `"${d}"`)
+          .join(
+            ", ",
+          )}] found in question "${question.content}". Original tags: [${question.tags.map((t) => `"${t}"`).join(", ")}]`,
+      );
+    }
+  }
 }
 
 /**

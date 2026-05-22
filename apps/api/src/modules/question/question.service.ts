@@ -10,7 +10,11 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateQuestionDto } from "./dto/create-question.dto";
 import { UpdateQuestionDto } from "./dto/update-question.dto";
-import { GetQuestionsDto, QuestionDifficulty } from "./dto/get-questions.dto";
+import {
+  GetQuestionsDto,
+  QuestionDifficulty,
+  QuestionCategory,
+} from "./dto/get-questions.dto";
 import { Prisma, Question as PrismaQuestion } from "@prisma/client";
 import { Question } from "./entities/question.entity";
 import { QuestionResponseDto } from "./dto/question-response.dto";
@@ -39,6 +43,7 @@ export class QuestionService {
         : JSON.parse(JSON.stringify(prismaQuestion.options)),
       correctAnswer: prismaQuestion.correctAnswer,
       difficulty: prismaQuestion.difficulty as QuestionDifficulty,
+      category: prismaQuestion.category as QuestionCategory,
       active: prismaQuestion.active,
       createdAt: prismaQuestion.createdAt,
       updatedAt: prismaQuestion.updatedAt,
@@ -52,6 +57,7 @@ export class QuestionService {
         options: createQuestionDto.options,
         correctAnswer: createQuestionDto.correctAnswer,
         difficulty: createQuestionDto.difficulty,
+        category: createQuestionDto.category,
         active: createQuestionDto.active ?? true,
       },
     });
@@ -60,7 +66,14 @@ export class QuestionService {
   }
 
   async findAll(query: GetQuestionsDto): Promise<QuestionResponseDto> {
-    const { page = 1, limit = 20, difficulty, search, active } = query;
+    const {
+      page = 1,
+      limit = 20,
+      difficulty,
+      category,
+      search,
+      active,
+    } = query;
     const cappedLimit = Math.min(limit, this.MAX_LIMIT);
     const skip = (page - 1) * cappedLimit;
 
@@ -68,6 +81,10 @@ export class QuestionService {
 
     if (difficulty) {
       where.difficulty = difficulty;
+    }
+
+    if (category) {
+      where.category = category;
     }
 
     if (active !== undefined) {
@@ -212,6 +229,7 @@ export class QuestionService {
       options: q.options,
       correctAnswer: q.correctAnswer,
       difficulty: q.difficulty,
+      category: q.category,
       active: q.active ?? true,
     }));
 

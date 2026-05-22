@@ -132,10 +132,10 @@ CREATE UNIQUE INDEX "match_players_matchId_userId_key" ON "match_players"("match
 CREATE UNIQUE INDEX "match_rounds_matchId_roundNo_key" ON "match_rounds"("matchId", "roundNo");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "answers_roundId_userId_key" ON "answers"("roundId", "userId");
+CREATE UNIQUE INDEX "match_rounds_matchId_id_key" ON "match_rounds"("matchId", "id");
 
 -- CreateIndex
-CREATE INDEX "event_logs_matchId_seqNo_idx" ON "event_logs"("matchId", "seqNo");
+CREATE UNIQUE INDEX "answers_roundId_userId_key" ON "answers"("roundId", "userId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "event_logs_matchId_seqNo_key" ON "event_logs"("matchId", "seqNo");
@@ -168,10 +168,10 @@ ALTER TABLE "match_rounds" ADD CONSTRAINT "match_rounds_matchId_fkey" FOREIGN KE
 ALTER TABLE "match_rounds" ADD CONSTRAINT "match_rounds_questionId_fkey" FOREIGN KEY ("questionId") REFERENCES "questions"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "answers" ADD CONSTRAINT "answers_matchId_fkey" FOREIGN KEY ("matchId") REFERENCES "matches"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "answers" ADD CONSTRAINT "answers_roundId_fkey" FOREIGN KEY ("roundId") REFERENCES "match_rounds"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "answers" ADD CONSTRAINT "answers_matchId_roundId_fkey" FOREIGN KEY ("matchId", "roundId") REFERENCES "match_rounds"("matchId", "id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "answers" ADD CONSTRAINT "answers_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "event_logs" ADD CONSTRAINT "event_logs_matchId_fkey" FOREIGN KEY ("matchId") REFERENCES "matches"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

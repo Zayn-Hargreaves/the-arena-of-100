@@ -11,10 +11,20 @@ CREATE TYPE "Difficulty" AS ENUM ('EASY', 'MEDIUM', 'HARD');
 -- CreateEnum
 CREATE TYPE "QuestionCategory" AS ENUM ('GENERAL', 'SCIENCE', 'HISTORY', 'GEOGRAPHY', 'TECHNOLOGY', 'SPORTS', 'CULTURE', 'LOGIC');
 
+-- Backfill / Normalize difficulty in questions table
+UPDATE "questions"
+SET "difficulty" = CASE 
+    WHEN TRIM(UPPER("difficulty")) = 'EASY' THEN 'EASY'
+    WHEN TRIM(UPPER("difficulty")) = 'MEDIUM' THEN 'MEDIUM'
+    WHEN TRIM(UPPER("difficulty")) = 'HARD' THEN 'HARD'
+    ELSE 'EASY'
+END;
+
 -- AlterTable
 ALTER TABLE "questions" ADD COLUMN     "category" "QuestionCategory" NOT NULL DEFAULT 'GENERAL',
 ADD COLUMN     "explanation" TEXT,
 ALTER COLUMN "difficulty" TYPE "Difficulty" USING "difficulty"::"Difficulty";
+
 
 -- CreateTable
 CREATE TABLE "tags" (
