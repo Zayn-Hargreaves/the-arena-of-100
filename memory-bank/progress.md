@@ -30,7 +30,7 @@
 ### 🚧 In Progress (Phase 1: Core Implementation)
 
 - [x] Install dependencies (`pnpm install`)
-- [ ] Database migration and seeding
+- [x] Database migration and seeding
 - [ ] Implement GameLoopService (countdown → round → evaluate → repeat)
 - [ ] Implement round timer management (auto-end on timeout)
 - [x] Unit tests for game-core state machine
