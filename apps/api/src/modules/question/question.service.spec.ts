@@ -208,6 +208,7 @@ describe("QuestionService", () => {
       options: ["3", "4", "5", "6"],
       correctAnswer: "4",
       difficulty: QuestionDifficulty.EASY,
+      category: QuestionCategory.GENERAL,
     };
 
     it("should create and return question", async () => {
@@ -558,6 +559,7 @@ describe("QuestionService", () => {
           options: ["3", "4", "5", "6"],
           correctAnswer: "4",
           difficulty: QuestionDifficulty.EASY,
+          category: QuestionCategory.GENERAL,
           active: true,
         },
         {
@@ -565,6 +567,7 @@ describe("QuestionService", () => {
           options: ["Madrid", "Barcelona", "Seville", "Valencia"],
           correctAnswer: "Madrid",
           difficulty: QuestionDifficulty.MEDIUM,
+          category: QuestionCategory.GENERAL,
         },
       ],
     };
@@ -581,6 +584,7 @@ describe("QuestionService", () => {
             options: ["3", "4", "5", "6"],
             correctAnswer: "4",
             difficulty: QuestionDifficulty.EASY,
+            category: QuestionCategory.GENERAL,
             active: true,
           },
           {
@@ -588,6 +592,7 @@ describe("QuestionService", () => {
             options: ["Madrid", "Barcelona", "Seville", "Valencia"],
             correctAnswer: "Madrid",
             difficulty: QuestionDifficulty.MEDIUM,
+            category: QuestionCategory.GENERAL,
             active: true,
           },
         ],

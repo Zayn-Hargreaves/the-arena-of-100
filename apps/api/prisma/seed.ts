@@ -137,11 +137,14 @@ async function main() {
     targetTags.forEach((tagName) => allTagNames.add(tagName));
   }
 
+  const allTagNamesArray: string[] = [];
+  allTagNames.forEach((name) => allTagNamesArray.push(name));
+
   // Batch fetch existing tags
   const existingTags = await prisma.tag.findMany({
     where: {
       name: {
-        in: [...allTagNames],
+        in: allTagNamesArray,
       },
     },
   });
@@ -151,7 +154,7 @@ async function main() {
 
   // Identify and create missing tags in bulk
   const existingTagNames = new Set(existingTags.map((tag) => tag.name));
-  const missingTagNames = [...allTagNames].filter(
+  const missingTagNames = allTagNamesArray.filter(
     (name) => !existingTagNames.has(name),
   );
 
