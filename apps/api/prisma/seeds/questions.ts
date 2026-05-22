@@ -237,7 +237,7 @@ export const questionSeeds: Question[] = [
  * @param str The string to normalize
  * @returns The normalized string
  */
-function normalizeString(str: string): string {
+export function normalizeString(str: string): string {
   return str.trim().toLowerCase().replace(/\s+/g, " ");
 }
 

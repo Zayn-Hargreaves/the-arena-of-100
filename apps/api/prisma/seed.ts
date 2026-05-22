@@ -8,6 +8,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { z } from "zod";
+import { normalizeString } from "./seeds/questions";
 
 // Define environment schema
 const envSchema = z.object({
@@ -132,7 +133,7 @@ async function main() {
   const allTagNames = new Set<string>();
   for (const question of selectedQuestions) {
     const targetTags = question.tags
-      ? question.tags.map((t) => t.trim().toLowerCase())
+      ? question.tags.map((t) => normalizeString(t))
       : [];
     targetTags.forEach((tagName) => allTagNames.add(tagName));
   }
@@ -226,7 +227,7 @@ async function main() {
 
     // Handle tags synchronization using the tagMap for lookups
     const targetTags = question.tags
-      ? question.tags.map((t) => t.trim().toLowerCase())
+      ? question.tags.map((t) => normalizeString(t))
       : [];
 
     const resolvedTags = [];
@@ -267,48 +268,14 @@ async function main() {
 
       // Create missing relations
       if (tagIdsToCreate.length > 0) {
-        try {
-          await tx.$transaction(
-            tagIdsToCreate.map((tagId) =>
-              tx.questionTag.create({
-                data: {
-                  questionId: createdQuestion.id,
-                  tagId,
-                },
-              }),
-            ),
-          );
-          seededQuestionTags += tagIdsToCreate.length;
-        } catch (e) {
-          // If batch fails due to unique constraint, try creating sequentially to handle gracefully
-          if (
-            e instanceof Error &&
-            e.message.includes("Unique constraint failed")
-          ) {
-            for (const tagId of tagIdsToCreate) {
-              try {
-                await tx.questionTag.create({
-                  data: {
-                    questionId: createdQuestion.id,
-                    tagId,
-                  },
-                });
-                seededQuestionTags++;
-              } catch (innerErr) {
-                if (
-                  innerErr instanceof Error &&
-                  innerErr.message.includes("Unique constraint failed")
-                ) {
-                  // Ignore duplicate relationships
-                } else {
-                  throw innerErr;
-                }
-              }
-            }
-          } else {
-            throw e;
-          }
-        }
+        const result = await tx.questionTag.createMany({
+          data: tagIdsToCreate.map((tagId) => ({
+            questionId: createdQuestion.id,
+            tagId,
+          })),
+          skipDuplicates: true,
+        });
+        seededQuestionTags += result.count;
       }
     });
   }
@@ -316,6 +283,18 @@ async function main() {
   console.log(`✅ Seeded ${seededQuestions} questions`);
   console.log(`✅ Seeded ${seededTags} tags`);
   console.log(`✅ Seeded ${seededQuestionTags} question-tag relationships`);
+
+  // Clean up orphaned tags (tags not associated with any questions)
+  const orphanedTags = await prisma.tag.deleteMany({
+    where: {
+      questions: {
+        none: {},
+      },
+    },
+  });
+  if (orphanedTags.count > 0) {
+    console.log(`🗑️ Pruned ${orphanedTags.count} orphaned tags`);
+  }
 
   // Add other seeds here as needed...
   console.log("🌱 Seeding admin user...");

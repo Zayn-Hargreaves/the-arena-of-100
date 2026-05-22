@@ -12,13 +12,20 @@ CREATE TYPE "Difficulty" AS ENUM ('EASY', 'MEDIUM', 'HARD');
 CREATE TYPE "QuestionCategory" AS ENUM ('GENERAL', 'SCIENCE', 'HISTORY', 'GEOGRAPHY', 'TECHNOLOGY', 'SPORTS', 'CULTURE', 'LOGIC');
 
 -- Backfill / Normalize difficulty in questions table
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM "questions"
+    WHERE TRIM(UPPER("difficulty")) NOT IN ('EASY', 'MEDIUM', 'HARD')
+  ) THEN
+    RAISE EXCEPTION 'Unsupported questions.difficulty values exist';
+  END IF;
+END $$;
+
 UPDATE "questions"
-SET "difficulty" = CASE 
-    WHEN TRIM(UPPER("difficulty")) = 'EASY' THEN 'EASY'
-    WHEN TRIM(UPPER("difficulty")) = 'MEDIUM' THEN 'MEDIUM'
-    WHEN TRIM(UPPER("difficulty")) = 'HARD' THEN 'HARD'
-    ELSE 'EASY'
-END;
+SET "difficulty" = TRIM(UPPER("difficulty"));
+
 
 -- AlterTable
 ALTER TABLE "questions" ADD COLUMN     "category" "QuestionCategory" NOT NULL DEFAULT 'GENERAL',
