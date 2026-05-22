@@ -2,7 +2,11 @@ import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { QuestionService } from "./question.service";
 import { PrismaService } from "../prisma/prisma.service";
-import { GetQuestionsDto, QuestionDifficulty } from "./dto/get-questions.dto";
+import {
+  GetQuestionsDto,
+  QuestionDifficulty,
+  QuestionCategory,
+} from "./dto/get-questions.dto";
 import { BulkImportDto } from "./dto/bulk-import.dto";
 
 describe("QuestionService", () => {
@@ -163,6 +167,24 @@ describe("QuestionService", () => {
       );
     });
 
+    it("should apply category filter correctly", async () => {
+      const query: GetQuestionsDto = {
+        page: 1,
+        limit: 10,
+        category: QuestionCategory.SCIENCE,
+      };
+
+      await service.findAll(query);
+
+      expect(mockPrismaService.question.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            category: QuestionCategory.SCIENCE,
+          },
+        }),
+      );
+    });
+
     it("should throw when dependency fails", async () => {
       const query: GetQuestionsDto = { page: 1, limit: 20 };
       const dbError = new Error("DB failed");
@@ -246,6 +268,26 @@ describe("QuestionService", () => {
         where: { id },
       });
       expect(result).toEqual(question);
+    });
+
+    it("should handle non-array options mapping correctly via fallback serialization", async () => {
+      const id = "q-1";
+      const question = {
+        id,
+        content: "Question",
+        options: { value1: "A", value2: "B" },
+        correctAnswer: "0",
+        difficulty: QuestionDifficulty.EASY,
+        active: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockPrismaService.question.findUnique.mockResolvedValueOnce(question);
+
+      const result = await service.findOne(id);
+
+      expect(result.options).toEqual({ value1: "A", value2: "B" });
     });
 
     it("should throw NotFoundException when not found", async () => {
