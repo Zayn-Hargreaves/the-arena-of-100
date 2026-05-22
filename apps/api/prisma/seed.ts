@@ -28,7 +28,12 @@ const envSchema = z.object({
 const parsedEnv = envSchema.parse(process.env);
 
 const connectionString = parsedEnv.DATABASE_URL;
-const pool = new Pool({ connectionString });
+const pool = new Pool({
+  connectionString,
+  max: 10, // Maximum number of clients in the pool
+  idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
+  connectionTimeoutMillis: 2000, // Return an error after 2 seconds if connection could not be established
+});
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
@@ -123,6 +128,58 @@ async function main() {
   let seededTags = 0;
   let seededQuestionTags = 0;
 
+  // Collect all unique tag names for batch processing
+  const allTagNames = new Set<string>();
+  for (const question of selectedQuestions) {
+    const targetTags = question.tags
+      ? question.tags.map((t) => t.trim().toLowerCase())
+      : [];
+    targetTags.forEach((tagName) => allTagNames.add(tagName));
+  }
+
+  // Batch fetch existing tags
+  const existingTags = await prisma.tag.findMany({
+    where: {
+      name: {
+        in: [...allTagNames],
+      },
+    },
+  });
+
+  // Build tag map for quick lookups
+  const tagMap = new Map(existingTags.map((tag) => [tag.name, tag]));
+
+  // Identify and create missing tags in bulk
+  const existingTagNames = new Set(existingTags.map((tag) => tag.name));
+  const missingTagNames = [...allTagNames].filter(
+    (name) => !existingTagNames.has(name),
+  );
+
+  if (missingTagNames.length > 0) {
+    try {
+      await prisma.tag.createMany({
+        data: missingTagNames.map((name) => ({ name })),
+        skipDuplicates: true,
+      });
+
+      // Refresh cache by re-querying newly created tags
+      const newlyCreatedTags = await prisma.tag.findMany({
+        where: {
+          name: {
+            in: missingTagNames,
+          },
+        },
+      });
+
+      // Populate tagMap with newly created tags
+      newlyCreatedTags.forEach((tag) => tagMap.set(tag.name, tag));
+      seededTags += newlyCreatedTags.length;
+    } catch (e) {
+      console.error("Error creating tags in batch:", e);
+      throw e;
+    }
+  }
+
   for (const question of selectedQuestions) {
     // Normalize the content for consistent comparison
     const normalizedContent = question.content.trim();
@@ -164,105 +221,93 @@ async function main() {
     }
     seededQuestions++;
 
-    // Handle tags synchronization
+    // Handle tags synchronization using the tagMap for lookups
     const targetTags = question.tags
       ? question.tags.map((t) => t.trim().toLowerCase())
       : [];
 
     const resolvedTags = [];
     for (const tagName of targetTags) {
-      let tag = await prisma.tag.findUnique({
-        where: { name: tagName },
-      });
-
-      if (!tag) {
-        try {
-          tag = await prisma.tag.create({
-            data: { name: tagName },
-          });
-          seededTags++;
-        } catch (e) {
-          // Gracefully handle race condition if tag was created in parallel
-          tag = await prisma.tag.findUnique({
-            where: { name: tagName },
-          });
-          if (!tag) throw e;
-        }
+      const tag = tagMap.get(tagName);
+      if (tag) {
+        resolvedTags.push(tag);
       }
-      resolvedTags.push(tag);
     }
 
-    // Fetch existing questionTag entries for createdQuestion.id
-    const existingQuestionTags = await prisma.questionTag.findMany({
-      where: { questionId: createdQuestion.id },
-    });
-
-    const targetTagIds = resolvedTags.map((t) => t.id);
-    const existingTagIds = existingQuestionTags.map((qt) => qt.tagId);
-
-    // Compute which tag relations need deletion and which need creation
-    const tagIdsToDelete = existingTagIds.filter(
-      (id) => !targetTagIds.includes(id),
-    );
-    const tagIdsToCreate = targetTagIds.filter(
-      (id) => !existingTagIds.includes(id),
-    );
-
-    // Perform deletions with prisma.questionTag.deleteMany for stale tagIds
-    if (tagIdsToDelete.length > 0) {
-      await prisma.questionTag.deleteMany({
-        where: {
-          questionId: createdQuestion.id,
-          tagId: { in: tagIdsToDelete },
-        },
+    // Perform all tag operations in a single transaction to ensure atomicity
+    await prisma.$transaction(async (tx) => {
+      // Fetch existing questionTag entries for createdQuestion.id
+      const existingQuestionTags = await tx.questionTag.findMany({
+        where: { questionId: createdQuestion.id },
       });
-    }
 
-    // Create missing relations and update seededQuestionTags
-    if (tagIdsToCreate.length > 0) {
-      try {
-        await prisma.$transaction(
-          tagIdsToCreate.map((tagId) =>
-            prisma.questionTag.create({
-              data: {
-                questionId: createdQuestion.id,
-                tagId,
-              },
-            }),
-          ),
-        );
-        seededQuestionTags += tagIdsToCreate.length;
-      } catch (e) {
-        // If batch fails due to unique constraint, try creating sequentially to handle gracefully
-        if (
-          e instanceof Error &&
-          e.message.includes("Unique constraint failed")
-        ) {
-          for (const tagId of tagIdsToCreate) {
-            try {
-              await prisma.questionTag.create({
+      const targetTagIds = resolvedTags.map((t) => t.id);
+      const existingTagIds = existingQuestionTags.map((qt) => qt.tagId);
+
+      // Compute which tag relations need deletion and which need creation
+      const tagIdsToDelete = existingTagIds.filter(
+        (id) => !targetTagIds.includes(id),
+      );
+      const tagIdsToCreate = targetTagIds.filter(
+        (id) => !existingTagIds.includes(id),
+      );
+
+      // Perform deletions with tx.questionTag.deleteMany for stale tagIds
+      if (tagIdsToDelete.length > 0) {
+        await tx.questionTag.deleteMany({
+          where: {
+            questionId: createdQuestion.id,
+            tagId: { in: tagIdsToDelete },
+          },
+        });
+      }
+
+      // Create missing relations
+      if (tagIdsToCreate.length > 0) {
+        try {
+          await tx.$transaction(
+            tagIdsToCreate.map((tagId) =>
+              tx.questionTag.create({
                 data: {
                   questionId: createdQuestion.id,
                   tagId,
                 },
-              });
-              seededQuestionTags++;
-            } catch (innerErr) {
-              if (
-                innerErr instanceof Error &&
-                innerErr.message.includes("Unique constraint failed")
-              ) {
-                // Ignore duplicate relationships
-              } else {
-                throw innerErr;
+              }),
+            ),
+          );
+          seededQuestionTags += tagIdsToCreate.length;
+        } catch (e) {
+          // If batch fails due to unique constraint, try creating sequentially to handle gracefully
+          if (
+            e instanceof Error &&
+            e.message.includes("Unique constraint failed")
+          ) {
+            for (const tagId of tagIdsToCreate) {
+              try {
+                await tx.questionTag.create({
+                  data: {
+                    questionId: createdQuestion.id,
+                    tagId,
+                  },
+                });
+                seededQuestionTags++;
+              } catch (innerErr) {
+                if (
+                  innerErr instanceof Error &&
+                  innerErr.message.includes("Unique constraint failed")
+                ) {
+                  // Ignore duplicate relationships
+                } else {
+                  throw innerErr;
+                }
               }
             }
+          } else {
+            throw e;
           }
-        } else {
-          throw e;
         }
       }
-    }
+    });
   }
 
   console.log(`✅ Seeded ${seededQuestions} questions`);

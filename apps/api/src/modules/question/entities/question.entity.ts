@@ -22,6 +22,11 @@ export class Question {
 
   correctAnswer!: string;
 
+  @ApiProperty({
+    example: "EASY",
+    description: "The difficulty level",
+    enum: QuestionDifficulty,
+  })
   difficulty!: QuestionDifficulty;
 
   @ApiProperty({

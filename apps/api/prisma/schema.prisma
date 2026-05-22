@@ -138,6 +138,7 @@ model MatchRound {
   answers Answer[]
 
   @@unique([matchId, roundNo])
+  // Required for composite FK reference from Answer(matchId, roundId) -> (matchId, id)
   @@unique([matchId, id])
   @@map("match_rounds")
 }

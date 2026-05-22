@@ -68,16 +68,3 @@ export const testQuestionSeeds: Question[] = [
 
 // Validate test questions on module load
 validateQuestions(testQuestionSeeds);
-
-if (
-  typeof describe === "function" &&
-  typeof it === "function" &&
-  typeof expect === "function"
-) {
-  describe("testQuestionSeeds", () => {
-    it("should have valid test questions", () => {
-      expect(testQuestionSeeds.length).toBeGreaterThan(0);
-      expect(true).toBe(true);
-    });
-  });
-}
