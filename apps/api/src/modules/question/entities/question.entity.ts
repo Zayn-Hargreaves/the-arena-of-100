@@ -1,5 +1,5 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { QuestionDifficulty } from "../dto/get-questions.dto";
+import { QuestionDifficulty, QuestionCategory } from "../dto/get-questions.dto";
 
 export class Question {
   @ApiProperty({
@@ -28,6 +28,13 @@ export class Question {
     enum: QuestionDifficulty,
   })
   difficulty!: QuestionDifficulty;
+
+  @ApiProperty({
+    example: "GEOGRAPHY",
+    description: "The category of the question",
+    enum: QuestionCategory,
+  })
+  category!: QuestionCategory;
 
   @ApiProperty({ example: true, description: "Whether the question is active" })
   active!: boolean;

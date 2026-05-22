@@ -2,7 +2,11 @@ import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { QuestionService } from "./question.service";
 import { PrismaService } from "../prisma/prisma.service";
-import { GetQuestionsDto, QuestionDifficulty } from "./dto/get-questions.dto";
+import {
+  GetQuestionsDto,
+  QuestionDifficulty,
+  QuestionCategory,
+} from "./dto/get-questions.dto";
 import { BulkImportDto } from "./dto/bulk-import.dto";
 
 describe("QuestionService", () => {
@@ -163,6 +167,24 @@ describe("QuestionService", () => {
       );
     });
 
+    it("should apply category filter correctly", async () => {
+      const query: GetQuestionsDto = {
+        page: 1,
+        limit: 10,
+        category: QuestionCategory.SCIENCE,
+      };
+
+      await service.findAll(query);
+
+      expect(mockPrismaService.question.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            category: QuestionCategory.SCIENCE,
+          },
+        }),
+      );
+    });
+
     it("should throw when dependency fails", async () => {
       const query: GetQuestionsDto = { page: 1, limit: 20 };
       const dbError = new Error("DB failed");
@@ -186,6 +208,7 @@ describe("QuestionService", () => {
       options: ["3", "4", "5", "6"],
       correctAnswer: "4",
       difficulty: QuestionDifficulty.EASY,
+      category: QuestionCategory.GENERAL,
     };
 
     it("should create and return question", async () => {
@@ -246,6 +269,72 @@ describe("QuestionService", () => {
         where: { id },
       });
       expect(result).toEqual(question);
+    });
+
+    it("should handle non-array options by converting them to string array", async () => {
+      const id = "q-1";
+      const question = {
+        id,
+        content: "Question",
+        options: { value1: "A", value2: "B" },
+        correctAnswer: "0",
+        difficulty: QuestionDifficulty.EASY,
+        active: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockPrismaService.question.findUnique.mockResolvedValueOnce(question);
+
+      const result = await service.findOne(id);
+
+      // Options should be converted to string array
+      expect(Array.isArray(result.options)).toBe(true);
+      expect(result.options).toEqual(["[object Object]"]);
+    });
+
+    it("should parse JSON string options correctly", async () => {
+      const id = "q-1";
+      const question = {
+        id,
+        content: "Question",
+        options: '["A", "B", "C"]',
+        correctAnswer: "0",
+        difficulty: QuestionDifficulty.EASY,
+        active: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockPrismaService.question.findUnique.mockResolvedValueOnce(question);
+
+      const result = await service.findOne(id);
+
+      // Options should be parsed as array
+      expect(Array.isArray(result.options)).toBe(true);
+      expect(result.options).toEqual(["A", "B", "C"]);
+    });
+
+    it("should convert non-string array elements to strings", async () => {
+      const id = "q-1";
+      const question = {
+        id,
+        content: "Question",
+        options: [1, 2, 3],
+        correctAnswer: "0",
+        difficulty: QuestionDifficulty.EASY,
+        active: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockPrismaService.question.findUnique.mockResolvedValueOnce(question);
+
+      const result = await service.findOne(id);
+
+      // Non-string elements should be converted to strings
+      expect(Array.isArray(result.options)).toBe(true);
+      expect(result.options).toEqual(["1", "2", "3"]);
     });
 
     it("should throw NotFoundException when not found", async () => {
@@ -516,6 +605,7 @@ describe("QuestionService", () => {
           options: ["3", "4", "5", "6"],
           correctAnswer: "4",
           difficulty: QuestionDifficulty.EASY,
+          category: QuestionCategory.GENERAL,
           active: true,
         },
         {
@@ -523,6 +613,7 @@ describe("QuestionService", () => {
           options: ["Madrid", "Barcelona", "Seville", "Valencia"],
           correctAnswer: "Madrid",
           difficulty: QuestionDifficulty.MEDIUM,
+          category: QuestionCategory.GENERAL,
         },
       ],
     };
@@ -539,6 +630,7 @@ describe("QuestionService", () => {
             options: ["3", "4", "5", "6"],
             correctAnswer: "4",
             difficulty: QuestionDifficulty.EASY,
+            category: QuestionCategory.GENERAL,
             active: true,
           },
           {
@@ -546,6 +638,7 @@ describe("QuestionService", () => {
             options: ["Madrid", "Barcelona", "Seville", "Valencia"],
             correctAnswer: "Madrid",
             difficulty: QuestionDifficulty.MEDIUM,
+            category: QuestionCategory.GENERAL,
             active: true,
           },
         ],

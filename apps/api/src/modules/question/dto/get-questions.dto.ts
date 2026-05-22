@@ -7,6 +7,17 @@ export enum QuestionDifficulty {
   HARD = "HARD",
 }
 
+export enum QuestionCategory {
+  GENERAL = "GENERAL",
+  SCIENCE = "SCIENCE",
+  HISTORY = "HISTORY",
+  GEOGRAPHY = "GEOGRAPHY",
+  TECHNOLOGY = "TECHNOLOGY",
+  SPORTS = "SPORTS",
+  CULTURE = "CULTURE",
+  LOGIC = "LOGIC",
+}
+
 export const getQuestionsSchema = z.object({
   page: z.preprocess(
     (val) => (val !== undefined ? Number(val) : undefined),
@@ -17,6 +28,7 @@ export const getQuestionsSchema = z.object({
     z.number().int().min(1).max(100).default(20),
   ),
   difficulty: z.nativeEnum(QuestionDifficulty).optional(),
+  category: z.nativeEnum(QuestionCategory).optional(),
   search: z.string().max(256).optional(),
   active: z.preprocess(
     (val) => {
@@ -46,6 +58,13 @@ export class GetQuestionsDto implements GetQuestionsInput {
     enum: QuestionDifficulty,
   })
   difficulty?: QuestionDifficulty;
+
+  @ApiPropertyOptional({
+    example: "GEOGRAPHY",
+    description: "Filter by category",
+    enum: QuestionCategory,
+  })
+  category?: QuestionCategory;
 
   @ApiPropertyOptional({
     example: "capital",

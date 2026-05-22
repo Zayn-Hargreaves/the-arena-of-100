@@ -16,6 +16,23 @@ enum Role {
   ADMIN
 }
 
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum QuestionCategory {
+  GENERAL
+  SCIENCE
+  HISTORY
+  GEOGRAPHY
+  TECHNOLOGY
+  SPORTS
+  CULTURE
+  LOGIC
+}
+
 // Users
 model User {
   id        String   @id @default(cuid())
@@ -81,11 +98,12 @@ model Match {
   createdAt DateTime  @default(now())
 
   // Relations
-  room    Room          @relation(fields: [roomId], references: [id])
-  winner  User?         @relation("MatchWinner", fields: [winnerId], references: [id])
-  players MatchPlayer[]
-  rounds  MatchRound[]
-  answers Answer[]
+  room      Room          @relation(fields: [roomId], references: [id])
+  winner    User?         @relation("MatchWinner", fields: [winnerId], references: [id])
+  players   MatchPlayer[]
+  rounds    MatchRound[]
+  answers   Answer[]
+  eventLogs EventLog[]
 
   @@map("matches")
 }
@@ -120,6 +138,8 @@ model MatchRound {
   answers Answer[]
 
   @@unique([matchId, roundNo])
+  // Required for composite FK reference from Answer(matchId, roundId) -> (matchId, id)
+  @@unique([matchId, id])
   @@map("match_rounds")
 }
 
@@ -129,13 +149,16 @@ model Question {
   content       String
   options       Json     // ["A", "B", "C", "D"]
   correctAnswer String
-  difficulty    String   // EASY | MEDIUM | HARD
+  difficulty    Difficulty
+  category      QuestionCategory
+  explanation   String?
   active        Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   // Relations
   rounds MatchRound[]
+  tags   QuestionTag[]
 
   @@map("questions")
 }
@@ -153,7 +176,7 @@ model Answer {
 
   // Relations
   match Match      @relation(fields: [matchId], references: [id], onDelete: Cascade)
-  round MatchRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  round MatchRound @relation(fields: [matchId, roundId], references: [matchId, id], onDelete: Cascade)
   user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([roundId, userId])
@@ -169,7 +192,36 @@ model EventLog {
   payload    Json
   createdAt  DateTime @default(now())
 
+  // Relations
+  match      Match    @relation(fields: [matchId], references: [id], onDelete: Restrict)
+
   @@unique([matchId, seqNo])
-  @@index([matchId, seqNo])
   @@map("event_logs")
+}
+
+// Tags
+model Tag {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  questions QuestionTag[]
+
+  @@map("tags")
+}
+
+// Question Tags (Many-to-Many relation)
+model QuestionTag {
+  questionId String
+  tagId      String
+  assignedAt DateTime @default(now())
+
+  // Relations
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  tag      Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, tagId])
+  @@map("question_tags")
 }

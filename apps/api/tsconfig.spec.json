@@ -1,8 +1,9 @@
 {
   "extends": "./tsconfig.app.json",
   "compilerOptions": {
-    "types": ["vitest/globals", "node"]
+    "types": ["vitest/globals", "node"],
+    "rootDir": "."
   },
-  "include": ["src/**/*.spec.ts", "src/**/*.test.ts"],
+  "include": ["src/**/*.spec.ts", "src/**/*.test.ts", "prisma/**/*.test.ts"],
   "exclude": ["node_modules", "dist"]
 }
