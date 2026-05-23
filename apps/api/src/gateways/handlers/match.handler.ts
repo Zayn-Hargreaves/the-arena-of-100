@@ -11,6 +11,7 @@ import {
 } from "@arena/shared";
 import { RoomService } from "../../modules/room/room.service";
 import { MatchService } from "../../modules/match/match.service";
+import { GameLoopService } from "../../modules/match/game-loop.service";
 import { BaseHandler } from "./base.handler";
 
 @Injectable()
@@ -20,6 +21,7 @@ export class MatchHandler extends BaseHandler {
   constructor(
     private readonly roomService: RoomService,
     private readonly matchService: MatchService,
+    private readonly gameLoopService: GameLoopService,
   ) {
     super();
   }
@@ -45,6 +47,16 @@ export class MatchHandler extends BaseHandler {
       });
 
       this.logger.log(`Match starting: ${match.id}`);
+
+      // Start the match loop in background to not block the socket handler
+      this.gameLoopService
+        .startMatchLoop(match.id, payload.roomId, server)
+        .catch((err) => {
+          this.logger.error(
+            `Failed to start match loop for match ${match.id}:`,
+            err,
+          );
+        });
     } catch (error) {
       const code =
         error instanceof RoomError ? error.code : ErrorCode.INTERNAL_ERROR;
@@ -77,6 +89,9 @@ export class MatchHandler extends BaseHandler {
       // Persist state after mutation
       await this.matchService.persistStateMachine(payload.matchId);
 
+      // Get roomId from state for early termination check
+      const roomId = stateMachine.getState().roomId;
+
       client.emit(ServerEvent.ANSWER_RESULT, {
         matchId: payload.matchId,
         roundNo: stateMachine.getCurrentRound()?.roundNo ?? payload.roundNo,
@@ -86,6 +101,14 @@ export class MatchHandler extends BaseHandler {
 
       this.logger.log(
         `Answer submitted: ${userId} - ${result.isCorrect ? "correct" : "wrong"}`,
+      );
+
+      // Check for early termination - all players answered
+      // Pass the server instance from the client's namespace
+      await this.gameLoopService.checkEarlyTermination(
+        payload.matchId,
+        roomId,
+        client.nsp.server,
       );
     } catch (error) {
       const code =

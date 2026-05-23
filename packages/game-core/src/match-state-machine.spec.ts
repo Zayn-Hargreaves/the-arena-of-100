@@ -581,6 +581,135 @@ describe("MatchStateMachine gameplay methods", () => {
     expect(log.length).toBeGreaterThan(0);
     expect(log[0].type).toBe("STATE_TRANSITION");
   });
+
+  it("disconnectPlayer marks player disconnected and offline, logging the event", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+
+    // Call disconnectPlayer
+    machine.disconnectPlayer("p1");
+
+    // Check state update
+    const state = machine.getState();
+    expect(state.players.get("p1")?.status).toBe(PlayerStatus.DISCONNECTED);
+    expect(state.players.get("p1")?.isOnline).toBe(false);
+
+    // Verify it didn't mutate other players
+    expect(state.players.get("p2")?.status).toBe(PlayerStatus.ACTIVE);
+    expect(state.players.get("p2")?.isOnline).toBe(true);
+
+    // Verify event is logged
+    const eventLog = machine.getEventLog();
+    const disconnectEvent = eventLog.find(
+      (e) => e.type === "PLAYER_DISCONNECTED",
+    );
+    expect(disconnectEvent).toBeDefined();
+    expect(disconnectEvent?.payload).toEqual({ playerId: "p1" });
+  });
+
+  it("reconnectPlayer transitions DISCONNECTED player back to ACTIVE and sets isOnline to true", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+
+    // 1. Disconnect first
+    machine.disconnectPlayer("p1");
+    expect(machine.getState().players.get("p1")?.status).toBe(
+      PlayerStatus.DISCONNECTED,
+    );
+    expect(machine.getState().players.get("p1")?.isOnline).toBe(false);
+
+    // 2. Reconnect
+    machine.reconnectPlayer("p1");
+
+    // 3. Verify status restored to ACTIVE and isOnline to true
+    const state = machine.getState();
+    expect(state.players.get("p1")?.status).toBe(PlayerStatus.ACTIVE);
+    expect(state.players.get("p1")?.isOnline).toBe(true);
+
+    // Verify event is logged
+    const eventLog = machine.getEventLog();
+    const reconnectEvent = eventLog.find(
+      (e) => e.type === "PLAYER_RECONNECTED",
+    );
+    expect(reconnectEvent).toBeDefined();
+    expect(reconnectEvent?.payload).toEqual({ playerId: "p1" });
+  });
+
+  it("reconnectPlayer leaves ELIMINATED player status unchanged but sets isOnline to true", () => {
+    const players = makePlayers();
+    players[0].status = PlayerStatus.ELIMINATED;
+    players[0].isOnline = false; // set offline first to trigger transition
+    const machine = new MatchStateMachine("m1", "r1", players);
+
+    // Reconnect the eliminated player
+    machine.reconnectPlayer("p1");
+
+    // Status must remain ELIMINATED, but isOnline must become true
+    const state = machine.getState();
+    expect(state.players.get("p1")?.status).toBe(PlayerStatus.ELIMINATED);
+    expect(state.players.get("p1")?.isOnline).toBe(true);
+
+    // Should log PLAYER_RECONNECTED since isOnline toggled
+    const eventLog = machine.getEventLog();
+    const reconnectEvent = eventLog.find(
+      (e) =>
+        e.type === "PLAYER_RECONNECTED" &&
+        (e.payload as { playerId: string }).playerId === "p1",
+    );
+    expect(reconnectEvent).toBeDefined();
+  });
+
+  it("disconnectPlayer does not mutate terminal statuses and avoids redundant logging", () => {
+    const players = makePlayers();
+    players[0].status = PlayerStatus.ELIMINATED;
+    players[0].isOnline = true;
+    const machine = new MatchStateMachine("m1", "r1", players);
+
+    // Disconnect the eliminated player
+    machine.disconnectPlayer("p1");
+
+    const state = machine.getState();
+    expect(state.players.get("p1")?.status).toBe(PlayerStatus.ELIMINATED);
+    expect(state.players.get("p1")?.isOnline).toBe(false);
+
+    // Should NOT log PLAYER_DISCONNECTED because status did not change to DISCONNECTED
+    const eventLog = machine.getEventLog();
+    const disconnectEvent = eventLog.find(
+      (e) => e.type === "PLAYER_DISCONNECTED",
+    );
+    expect(disconnectEvent).toBeUndefined();
+
+    // Call it again to test duplicate prevention on normal player
+    machine.disconnectPlayer("p2"); // p2 is ACTIVE -> DISCONNECTED
+    expect(
+      machine.getEventLog().filter((e) => e.type === "PLAYER_DISCONNECTED"),
+    ).toHaveLength(1);
+
+    // Calling it again on p2 should NOT log another event
+    machine.disconnectPlayer("p2");
+    expect(
+      machine.getEventLog().filter((e) => e.type === "PLAYER_DISCONNECTED"),
+    ).toHaveLength(1);
+  });
+
+  it("reconnectPlayer avoids logging and changes when nothing changed", () => {
+    const players = makePlayers();
+    players[0].status = PlayerStatus.ACTIVE;
+    players[0].isOnline = true;
+    const machine = new MatchStateMachine("m1", "r1", players);
+
+    // Reconnect an already active and online player
+    machine.reconnectPlayer("p1");
+
+    const state = machine.getState();
+    expect(state.players.get("p1")?.status).toBe(PlayerStatus.ACTIVE);
+    expect(state.players.get("p1")?.isOnline).toBe(true);
+
+    // Should NOT log PLAYER_RECONNECTED
+    const eventLog = machine.getEventLog();
+    const reconnectEvent = eventLog.find(
+      (e) => e.type === "PLAYER_RECONNECTED",
+    );
+    expect(reconnectEvent).toBeUndefined();
+  });
 });
 
 describe("MatchStateMachine guard branches", () => {

@@ -47,6 +47,8 @@ coverage/
 *.tsbuildinfo
 
 .agent
+opencode.json
+.opencode/
 
 # Turborepo
 .turbo

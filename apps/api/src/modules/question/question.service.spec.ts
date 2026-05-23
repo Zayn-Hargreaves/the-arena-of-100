@@ -50,6 +50,7 @@ describe("QuestionService", () => {
         options: [],
         correctAnswer: "0",
         difficulty: QuestionDifficulty.EASY,
+        category: QuestionCategory.GENERAL,
         active: true,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -60,6 +61,7 @@ describe("QuestionService", () => {
         options: [],
         correctAnswer: "0",
         difficulty: QuestionDifficulty.MEDIUM,
+        category: QuestionCategory.GENERAL,
         active: true,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -256,6 +258,7 @@ describe("QuestionService", () => {
         options: [],
         correctAnswer: "0",
         difficulty: QuestionDifficulty.EASY,
+        category: QuestionCategory.GENERAL,
         active: true,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -279,6 +282,7 @@ describe("QuestionService", () => {
         options: { value1: "A", value2: "B" },
         correctAnswer: "0",
         difficulty: QuestionDifficulty.EASY,
+        category: QuestionCategory.GENERAL,
         active: true,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -301,6 +305,7 @@ describe("QuestionService", () => {
         options: '["A", "B", "C"]',
         correctAnswer: "0",
         difficulty: QuestionDifficulty.EASY,
+        category: QuestionCategory.GENERAL,
         active: true,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -323,6 +328,7 @@ describe("QuestionService", () => {
         options: [1, 2, 3],
         correctAnswer: "0",
         difficulty: QuestionDifficulty.EASY,
+        category: QuestionCategory.GENERAL,
         active: true,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -335,6 +341,27 @@ describe("QuestionService", () => {
       // Non-string elements should be converted to strings
       expect(Array.isArray(result.options)).toBe(true);
       expect(result.options).toEqual(["1", "2", "3"]);
+    });
+
+    it("should map the category field correctly from prismaQuestion", async () => {
+      const id = "q-1";
+      const question = {
+        id,
+        content: "Question",
+        options: ["A", "B"],
+        correctAnswer: "A",
+        difficulty: QuestionDifficulty.EASY,
+        category: QuestionCategory.SCIENCE,
+        active: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockPrismaService.question.findUnique.mockResolvedValueOnce(question);
+
+      const result = await service.findOne(id);
+
+      expect(result.category).toBe(QuestionCategory.SCIENCE);
     });
 
     it("should throw NotFoundException when not found", async () => {
@@ -362,6 +389,7 @@ describe("QuestionService", () => {
         options: [],
         correctAnswer: "0",
         difficulty: QuestionDifficulty.EASY,
+        category: QuestionCategory.GENERAL,
         active: false,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -407,6 +435,7 @@ describe("QuestionService", () => {
         options: ["A", "B", "C", "D"],
         correctAnswer: "A",
         difficulty: QuestionDifficulty.EASY,
+        category: QuestionCategory.GENERAL,
         active: true,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -704,8 +733,10 @@ describe("QuestionService", () => {
       options: ["A", "B", "C", "D"],
       correctAnswer: "A",
       difficulty: QuestionDifficulty.EASY,
+      category: QuestionCategory.GENERAL,
       active: true,
       createdAt: new Date(),
+      updatedAt: new Date(),
     };
 
     it("should return a random active question successfully", async () => {

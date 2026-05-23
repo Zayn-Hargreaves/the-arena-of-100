@@ -8,11 +8,16 @@ import {
 import { MatchHandler } from "./match.handler";
 import { RoomService } from "../../modules/room/room.service";
 import { MatchService } from "../../modules/match/match.service";
+import { GameLoopService } from "../../modules/match/game-loop.service";
 
 describe("MatchHandler", () => {
   let handler: MatchHandler;
   let roomService: RoomService;
   let matchService: MatchService;
+  let gameLoopService: {
+    checkEarlyTermination: ReturnType<typeof vi.fn>;
+    startMatchLoop: ReturnType<typeof vi.fn>;
+  };
   let client: Socket;
   let server: Server;
 
@@ -23,14 +28,25 @@ describe("MatchHandler", () => {
       getStateMachine: vi.fn(),
       persistStateMachine: vi.fn(),
     } as unknown as MatchService;
-    handler = new MatchHandler(roomService, matchService);
-    client = {
-      emit: vi.fn(),
-      data: { userId: "u1", username: "Alice" },
-    } as unknown as Socket;
+    gameLoopService = {
+      checkEarlyTermination: vi.fn().mockResolvedValue(undefined),
+      startMatchLoop: vi.fn().mockResolvedValue(undefined),
+    };
+    handler = new MatchHandler(
+      roomService,
+      matchService,
+      gameLoopService as unknown as GameLoopService,
+    );
     server = {
       to: vi.fn().mockReturnValue({ emit: vi.fn() }),
     } as unknown as Server;
+    client = {
+      emit: vi.fn(),
+      data: { userId: "u1", username: "Alice" },
+      nsp: {
+        server: server,
+      },
+    } as unknown as Socket;
   });
 
   describe("handleStartMatch", () => {
@@ -49,6 +65,11 @@ describe("MatchHandler", () => {
         matchId: "m1",
         countdown: GAME_CONFIG.COUNTDOWN_DURATION_MS / 1000,
       });
+      expect(gameLoopService.startMatchLoop).toHaveBeenCalledWith(
+        "m1",
+        "r1",
+        server,
+      );
     });
 
     it("emits error when user is not host", async () => {
@@ -90,12 +111,35 @@ describe("MatchHandler", () => {
         message: "string error",
       });
     });
+
+    it("handles startMatchLoop rejection gracefully and logs error", async () => {
+      vi.mocked(roomService.getRoom).mockResolvedValue({ hostId: "u1" } as any);
+      vi.mocked(matchService.createMatch).mockResolvedValue({
+        id: "m1",
+      } as any);
+
+      const loopError = new Error("start loop failed");
+      gameLoopService.startMatchLoop.mockRejectedValue(loopError);
+
+      const loggerErrorSpy = vi.spyOn(handler["logger"], "error");
+
+      await handler.handleStartMatch(client, server, { roomId: "r1" });
+
+      // Wait for promise resolution since it's fire-and-forget
+      await new Promise((resolve) => process.nextTick(resolve));
+
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        "Failed to start match loop for match m1:",
+        loopError,
+      );
+    });
   });
 
   describe("handleSubmitAnswer", () => {
     it("submits answer and emits ANSWER_RESULT", async () => {
       const mockMachine = {
         getCurrentRound: vi.fn().mockReturnValue({ roundNo: 1 }),
+        getState: vi.fn().mockReturnValue({ roomId: "r1" }),
         submitAnswer: vi
           .fn()
           .mockReturnValue({ isCorrect: true, responseTimeMs: 500 }),
@@ -201,6 +245,36 @@ describe("MatchHandler", () => {
         message: "42",
       });
     });
+
+    it("calls checkEarlyTermination after submitting answer", async () => {
+      const matchId = "m1";
+      const roomId = "r1";
+      const mockMachine = {
+        getCurrentRound: vi.fn().mockReturnValue({ roundNo: 1 }),
+        getState: vi.fn().mockReturnValue({ roomId }),
+        submitAnswer: vi
+          .fn()
+          .mockReturnValue({ isCorrect: true, responseTimeMs: 500 }),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+      vi.mocked(matchService.persistStateMachine).mockResolvedValue(undefined);
+
+      await handler.handleSubmitAnswer(client, {
+        matchId,
+        answer: "A",
+        roundNo: 1,
+        clientTimestamp: 1234567890,
+      });
+
+      // Verify that checkEarlyTermination was called with exact parameters
+      expect(gameLoopService.checkEarlyTermination).toHaveBeenCalledWith(
+        matchId,
+        roomId,
+        server,
+      );
+    });
   });
 
   describe("handleRequestSnapshot", () => {
@@ -264,6 +338,27 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
         message: "snapshot failure",
+      });
+    });
+
+    it("handles standard Error thrown values", async () => {
+      const mockMachine = {
+        getSnapshot: vi.fn().mockImplementation(() => {
+          throw new Error("some standard error");
+        }),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+
+      await handler.handleRequestSnapshot(client, {
+        matchId: "m1",
+        lastSeenSeqNo: 0,
+      });
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: "some standard error",
       });
     });
   });

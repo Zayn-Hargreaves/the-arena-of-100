@@ -363,6 +363,46 @@ export class MatchStateMachine {
     });
   }
 
+  // Mark player as disconnected inside the state machine
+  disconnectPlayer(playerId: string): void {
+    const player = this.state.players.get(playerId);
+    if (player) {
+      player.isOnline = false;
+
+      const currentStatus = player.status;
+      if (
+        currentStatus !== PlayerStatus.ELIMINATED &&
+        currentStatus !== PlayerStatus.WINNER
+      ) {
+        if (currentStatus !== PlayerStatus.DISCONNECTED) {
+          player.status = PlayerStatus.DISCONNECTED;
+          this.logEvent("PLAYER_DISCONNECTED", { playerId });
+        }
+      }
+    }
+  }
+
+  // Mark player as active/reconnected inside the state machine
+  reconnectPlayer(playerId: string): void {
+    const player = this.state.players.get(playerId);
+    if (player) {
+      const priorStatus = player.status;
+      const priorIsOnline = player.isOnline;
+
+      const isOnlineToggled = !priorIsOnline;
+      const statusTransitionsToActive =
+        priorStatus === PlayerStatus.DISCONNECTED;
+
+      if (statusTransitionsToActive || isOnlineToggled) {
+        player.isOnline = true;
+        if (statusTransitionsToActive) {
+          player.status = PlayerStatus.ACTIVE;
+        }
+        this.logEvent("PLAYER_RECONNECTED", { playerId });
+      }
+    }
+  }
+
   // Get Match Snapshot (for reconnect)
   getSnapshot(lastEventSeqNo: number): {
     matchId: string;
