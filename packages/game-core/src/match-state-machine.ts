@@ -367,9 +367,18 @@ export class MatchStateMachine {
   disconnectPlayer(playerId: string): void {
     const player = this.state.players.get(playerId);
     if (player) {
-      player.status = PlayerStatus.DISCONNECTED;
       player.isOnline = false;
-      this.logEvent("PLAYER_DISCONNECTED", { playerId });
+
+      const currentStatus = player.status;
+      if (
+        currentStatus !== PlayerStatus.ELIMINATED &&
+        currentStatus !== PlayerStatus.WINNER
+      ) {
+        if (currentStatus !== PlayerStatus.DISCONNECTED) {
+          player.status = PlayerStatus.DISCONNECTED;
+          this.logEvent("PLAYER_DISCONNECTED", { playerId });
+        }
+      }
     }
   }
 
@@ -377,11 +386,20 @@ export class MatchStateMachine {
   reconnectPlayer(playerId: string): void {
     const player = this.state.players.get(playerId);
     if (player) {
-      if (player.status === PlayerStatus.DISCONNECTED) {
-        player.status = PlayerStatus.ACTIVE;
+      const priorStatus = player.status;
+      const priorIsOnline = player.isOnline;
+
+      const isOnlineToggled = !priorIsOnline;
+      const statusTransitionsToActive =
+        priorStatus === PlayerStatus.DISCONNECTED;
+
+      if (statusTransitionsToActive || isOnlineToggled) {
+        player.isOnline = true;
+        if (statusTransitionsToActive) {
+          player.status = PlayerStatus.ACTIVE;
+        }
+        this.logEvent("PLAYER_RECONNECTED", { playerId });
       }
-      player.isOnline = true;
-      this.logEvent("PLAYER_RECONNECTED", { playerId });
     }
   }
 

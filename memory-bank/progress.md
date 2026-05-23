@@ -31,8 +31,8 @@
 
 - [x] Install dependencies (`pnpm install`)
 - [x] Database migration and seeding
-- [ ] Implement GameLoopService (countdown → round → evaluate → repeat)
-- [ ] Implement round timer management (auto-end on timeout)
+- [x] Implement GameLoopService (countdown → round → evaluate → repeat)
+- [x] Implement round timer management (auto-end on timeout)
 - [x] Unit tests for game-core state machine
 - [ ] End-to-end room creation → join → match flow
 - [ ] Frontend lobby and game UI components with routing

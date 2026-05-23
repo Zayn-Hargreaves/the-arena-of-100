@@ -32,7 +32,7 @@ All critical fixes complete. Currently on branch `refactor/split-game-gateway` �
 ### 🟡 Significant Gaps
 
 1. **Missing Test Coverage**: Vitest + coverage infrastructure set up, but no tests implemented yet
-2. **No Round Timer Management**: `ROUND_DURATION_MS = 15s` defined but no scheduler enforces it
+2. ~~**No Round Timer Management**: `ROUND_DURATION_MS = 15s` defined but no scheduler enforces it~~ [RESOLVED]
 3. **Gateway ↔ Service Coupling**: Gateway does transport + application logic, needs Use Case layer
 4. **Frontend Only Has Landing Page**: No lobby/game/spectator routes or components
 5. **No Lobby Lifecycle Management**: Missing heartbeat validation and auto-start mechanisms for rooms
@@ -90,9 +90,9 @@ All critical fixes complete. Currently on branch `refactor/split-game-gateway` �
 
 ### Core Game Loop (MVP Minimum)
 
-1. Implement `GameLoopService` (countdown → round → evaluate → repeat)
-2. Implement round timer (auto-end round when time expires)
-3. Unit tests for `game-core` state machine
+1. ~~Implement `GameLoopService` (countdown → round → evaluate → repeat)~~ (Completed)
+2. ~~Implement round timer (auto-end round when time expires)~~ (Completed)
+3. ~~Unit tests for `game-core` state machine~~ (Completed)
 
 ### Frontend + Integration
 

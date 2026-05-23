@@ -796,5 +796,153 @@ describe("GameLoopService", () => {
       vi.useRealTimers();
       checkMatchEndSpy.mockRestore();
     });
+
+    it("should catch and log error if executeRound throws in executeCountdown timer callback", async () => {
+      vi.useFakeTimers();
+
+      const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
+
+      // Mock executeRound to throw/reject
+      vi.spyOn(service as any, "executeRound").mockRejectedValue(
+        new Error("countdown round failure"),
+      );
+
+      // Call executeCountdown directly
+      (service as any).executeCountdown("match-1", "room-1", mockServer);
+
+      // Fast-forward timers
+      await vi.advanceTimersByTimeAsync(GAME_CONFIG.COUNTDOWN_DURATION_MS);
+
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        "Failed to execute round for match match-1:",
+        expect.any(Error),
+      );
+
+      vi.useRealTimers();
+    });
+  });
+
+  describe("Missing Coverage (Null Guards & Optional Params)", () => {
+    it("should return early in startMatchLoop if stateMachine is not found", async () => {
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(null);
+      const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
+
+      await service.startMatchLoop("match-nonexistent", "room-1", mockServer);
+
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        "State machine not found for match match-nonexistent",
+      );
+    });
+
+    it("should return early in executeRound if stateMachine is not found", async () => {
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(null);
+      const startRoundSpy = vi.spyOn(stateMachine, "startRound");
+
+      await (service as any).executeRound(
+        "match-nonexistent",
+        "room-1",
+        mockServer,
+      );
+
+      expect(startRoundSpy).not.toHaveBeenCalled();
+    });
+
+    it("should return early in endRound if stateMachine is not found", async () => {
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(null);
+      const evaluateSpy = vi.spyOn(stateMachine, "evaluateRound");
+
+      await (service as any).endRound(
+        "match-nonexistent",
+        "room-1",
+        mockServer,
+      );
+
+      expect(evaluateSpy).not.toHaveBeenCalled();
+    });
+
+    it("should return early in checkMatchEnd if stateMachine is not found", async () => {
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(null);
+      const shouldEndSpy = vi.spyOn(stateMachine, "shouldEndMatch");
+
+      await (service as any).checkMatchEnd(
+        "match-nonexistent",
+        "room-1",
+        mockServer,
+      );
+
+      expect(shouldEndSpy).not.toHaveBeenCalled();
+    });
+
+    it("should return early in finishMatchLoop if stateMachine is not found", async () => {
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(null);
+      const transitionSpy = vi.spyOn(stateMachine, "transition");
+
+      await (service as any).finishMatchLoop(
+        "match-nonexistent",
+        "room-1",
+        mockServer,
+      );
+
+      expect(transitionSpy).not.toHaveBeenCalled();
+    });
+
+    it("should return early in handlePlayerDisconnect if stateMachine is not found", async () => {
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(null);
+      const loggerWarnSpy = vi.spyOn((service as any).logger, "warn");
+
+      await service.handlePlayerDisconnect(
+        "match-nonexistent",
+        "p1",
+        mockServer,
+      );
+
+      expect(loggerWarnSpy).not.toHaveBeenCalled();
+    });
+
+    it("should return early in checkEarlyTermination if stateMachine is not found", async () => {
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(null);
+      const getRoundSpy = vi.spyOn(stateMachine, "getCurrentRound");
+
+      await service.checkEarlyTermination(
+        "match-nonexistent",
+        "room-1",
+        mockServer,
+      );
+
+      expect(getRoundSpy).not.toHaveBeenCalled();
+    });
+
+    it("should handle optional serverOrContext parameter in finishMatchLoop", async () => {
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(stateMachine);
+      const loggerDebugSpy = vi.spyOn((service as any).logger, "debug");
+
+      // Setup state machine so finishMatch succeeds
+      stateMachine.transition(MatchStatus.COUNTDOWN);
+      stateMachine.transition(MatchStatus.ROUND_ACTIVE);
+      stateMachine.startRound({
+        id: "q1",
+        content: "Q",
+        options: ["A", "B"],
+        correctAnswer: "A",
+        difficulty: "MEDIUM",
+      });
+      stateMachine.submitAnswer("p1", "A", Date.now());
+      stateMachine.submitAnswer("p2", "B", Date.now());
+      stateMachine.evaluateRound();
+
+      const contextObj = { customKey: "customValue" };
+      await (service as any).finishMatchLoop(
+        "match-1",
+        "room-1",
+        mockServer,
+        contextObj,
+      );
+
+      expect(loggerDebugSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'finishMatchLoop called with context: {"customKey":"customValue"}',
+        ),
+      );
+    });
   });
 });

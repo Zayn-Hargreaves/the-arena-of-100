@@ -111,6 +111,28 @@ describe("MatchHandler", () => {
         message: "string error",
       });
     });
+
+    it("handles startMatchLoop rejection gracefully and logs error", async () => {
+      vi.mocked(roomService.getRoom).mockResolvedValue({ hostId: "u1" } as any);
+      vi.mocked(matchService.createMatch).mockResolvedValue({
+        id: "m1",
+      } as any);
+
+      const loopError = new Error("start loop failed");
+      gameLoopService.startMatchLoop.mockRejectedValue(loopError);
+
+      const loggerErrorSpy = vi.spyOn(handler["logger"], "error");
+
+      await handler.handleStartMatch(client, server, { roomId: "r1" });
+
+      // Wait for promise resolution since it's fire-and-forget
+      await new Promise((resolve) => process.nextTick(resolve));
+
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        "Failed to start match loop for match m1:",
+        loopError,
+      );
+    });
   });
 
   describe("handleSubmitAnswer", () => {
@@ -316,6 +338,27 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
         message: "snapshot failure",
+      });
+    });
+
+    it("handles standard Error thrown values", async () => {
+      const mockMachine = {
+        getSnapshot: vi.fn().mockImplementation(() => {
+          throw new Error("some standard error");
+        }),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+
+      await handler.handleRequestSnapshot(client, {
+        matchId: "m1",
+        lastSeenSeqNo: 0,
+      });
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: "some standard error",
       });
     });
   });

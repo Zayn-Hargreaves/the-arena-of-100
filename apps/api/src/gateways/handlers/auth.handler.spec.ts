@@ -227,6 +227,58 @@ describe("AuthHandler", () => {
       // newSocket should have been kicked because it was still in the map
       expect(newSocket.disconnect).toHaveBeenCalledWith(true);
     });
+
+    it("notifies active matches of player disconnect", async () => {
+      vi.mocked(authService.verifyToken).mockReturnValue({
+        userId: "u1",
+        username: "Alice",
+        role: "GUEST" as any,
+      });
+      await handler.handleAuthenticate(client, { token: "t" });
+
+      client.nsp.server = { to: vi.fn() } as any;
+
+      vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
+        {
+          joinedAt: new Date(),
+          room: {
+            id: "r1",
+            currentMatchId: "m1",
+          },
+        },
+      ] as any);
+
+      await handler.handleDisconnect(client);
+
+      expect(roomService.getUserActiveRooms).toHaveBeenCalledWith("u1");
+      expect(gameLoopService.handlePlayerDisconnect).toHaveBeenCalledWith(
+        "m1",
+        "u1",
+        client.nsp.server,
+      );
+    });
+
+    it("handles getUserActiveRooms error on disconnect gracefully", async () => {
+      vi.mocked(authService.verifyToken).mockReturnValue({
+        userId: "u1",
+        username: "Alice",
+        role: "GUEST" as any,
+      });
+      await handler.handleAuthenticate(client, { token: "t" });
+
+      vi.mocked(roomService.getUserActiveRooms).mockRejectedValue(
+        new Error("db failure"),
+      );
+
+      const warnSpy = vi.spyOn(handler["logger"], "warn");
+
+      await expect(handler.handleDisconnect(client)).resolves.not.toThrow();
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Failed to notify match of disconnect for u1"),
+        expect.any(Error),
+      );
+    });
   });
 
   describe("reconnection sync", () => {

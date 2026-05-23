@@ -42,7 +42,6 @@ describe("GameLoopService Persistence", () => {
       persistStateMachine: vi.fn().mockResolvedValue(undefined),
       finishMatch: vi.fn().mockResolvedValue({}),
       saveRound: vi.fn().mockResolvedValue({ id: "round-record-123" }),
-      saveAnswer: vi.fn().mockResolvedValue({}),
       saveAnswers: vi.fn().mockResolvedValue({ count: 2 }),
     } as unknown as MatchService;
 
