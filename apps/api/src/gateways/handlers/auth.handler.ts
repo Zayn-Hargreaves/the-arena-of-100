@@ -139,6 +139,8 @@ export class AuthHandler extends BaseHandler {
           room.currentMatchId,
         );
         if (stateMachine) {
+          stateMachine.reconnectPlayer(userId);
+          await this.matchService.persistStateMachine(room.currentMatchId);
           client.emit(ServerEvent.SNAPSHOT, stateMachine.getSnapshot(0));
         }
       }

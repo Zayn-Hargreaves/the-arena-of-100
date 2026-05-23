@@ -26,7 +26,7 @@
 
 ## Tổng quan kiến trúc
 
-```
+```text
 MatchHandler.handleStartMatch
   └─> MatchService.createMatch()            // tạo match + state machine
   └─> GameLoopService.startMatchLoop()      // NEW: điều phối toàn bộ game loop
@@ -40,7 +40,7 @@ MatchHandler.handleStartMatch
 
 **Các state transition (đã có trong MatchStateMachine):**
 
-```
+```text
 CREATED → COUNTDOWN → ROUND_ACTIVE → ROUND_EVALUATING → ROUND_RESULT → ROUND_ACTIVE (loop)
      ↓                   ↓              ↓                  ↓               ↓
      └───────────────────┴──────────────┴──────────────────┴───────────────→ FINISHED
@@ -921,7 +921,7 @@ const roomId = stateMachine.getState().roomId;
 ### Kiểm tra
 
 ```bash
-pnpm --filter @arena api typecheck
+pnpm --filter @arena/api typecheck
 ```
 
 ---
@@ -1164,7 +1164,7 @@ pnpm --filter @arena/api test -- game-loop.service
 
 ## 📋 Thứ tự thực hiện
 
-```
+```text
 Task 0 (MatchModule update + verify globals)
   └─> Task 1 (GameLoopService - countdown)
         └─> ✅ Task 2 (GameLoopService - round/evaluate/result/finish)

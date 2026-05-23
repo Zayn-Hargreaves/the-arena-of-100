@@ -18,6 +18,7 @@ export class GameLoopService {
   private usedQuestionIds = new Map<string, Set<string>>();
   // Add property for early termination (used by Task 7)
   private expectedAnswers = new Map<string, number>();
+  private endingRounds = new Set<string>();
 
   constructor(
     private readonly matchService: MatchService,
@@ -59,27 +60,31 @@ export class GameLoopService {
     });
 
     // 4. Start countdown timer
-    await this.executeCountdown(matchId, roomId, server);
+    this.executeCountdown(matchId, roomId, server);
   }
 
   // ============================================================
   // PHASE 1: COUNTDOWN (5 seconds)
   // ============================================================
 
-  private async executeCountdown(
+  private executeCountdown(
     matchId: string,
     roomId: string,
     server: Server,
-  ): Promise<void> {
-    return new Promise<void>((resolve) => {
-      const timer = setTimeout(async () => {
+  ): void {
+    const timer = setTimeout(async () => {
+      try {
         this.logger.log(`Countdown ended for match ${matchId}`);
         await this.executeRound(matchId, roomId, server);
-        resolve();
-      }, GAME_CONFIG.COUNTDOWN_DURATION_MS);
+      } catch (error) {
+        this.logger.error(
+          `Failed to execute round for match ${matchId}:`,
+          error,
+        );
+      }
+    }, GAME_CONFIG.COUNTDOWN_DURATION_MS);
 
-      this.addTimer(matchId, timer);
-    });
+    this.addTimer(matchId, timer);
   }
 
   // ============================================================
@@ -110,6 +115,7 @@ export class GameLoopService {
   cancelMatchLoop(matchId: string): void {
     this.clearTimers(matchId);
     this.usedQuestionIds.delete(matchId);
+    this.expectedAnswers.delete(matchId);
     this.logger.warn(`Match loop cancelled: ${matchId}`);
   }
 
@@ -186,7 +192,14 @@ export class GameLoopService {
 
     // 6. Set 15s timer → endRound
     const timer = setTimeout(async () => {
-      await this.endRound(matchId, roomId, server);
+      try {
+        await this.endRound(matchId, roomId, server);
+      } catch (error) {
+        this.logger.error(
+          `Error in endRound timeout callback for match ${matchId}:`,
+          error,
+        );
+      }
     }, GAME_CONFIG.ROUND_DURATION_MS);
     this.addTimer(matchId, timer);
   }
@@ -200,74 +213,109 @@ export class GameLoopService {
     roomId: string,
     server: Server,
   ): Promise<void> {
-    // 1. Get state machine
-    const stateMachine = await this.matchService.getStateMachine(matchId);
-    if (!stateMachine) return;
-
-    // 2. Transition to ROUND_EVALUATING
-    stateMachine.transition(MatchStatus.ROUND_EVALUATING);
-
-    // 3. Evaluate round
-    const { survivingIds, eliminatedIds, correctAnswer } =
-      stateMachine.evaluateRound();
-
-    // 4. Transition to ROUND_RESULT
-    stateMachine.transition(MatchStatus.ROUND_RESULT);
-
-    // F6: Persist after mutation
-    await this.matchService.persistStateMachine(matchId);
-
-    // 5. Save round + answers to DB (Task 5)
-    const state = stateMachine.getState();
-    const currentRound = stateMachine.getCurrentRound()!;
-    const roundRecord = await this.matchService.saveRound(
-      matchId,
-      state.currentRoundNo,
-      currentRound.question.id,
-    );
-    // F5: roundRecord.id is available from Prisma create return
-    for (const [playerId, answer] of currentRound.answers) {
-      await this.matchService.saveAnswer(
-        matchId,
-        roundRecord.id,
-        playerId,
-        answer.answer,
-        answer.isCorrect,
-        answer.responseTimeMs,
+    if (this.endingRounds.has(matchId)) {
+      this.logger.warn(
+        `endRound already in progress or completed for match ${matchId}`,
       );
+      return;
     }
+    this.endingRounds.add(matchId);
 
-    // 6. Convert Maps to arrays for Socket.io serialization
-    const playerInfos = Array.from(state.players.values());
+    try {
+      // 1. Get state machine
+      const stateMachine = await this.matchService.getStateMachine(matchId);
+      if (!stateMachine) return;
 
-    // 7. Broadcast ROUND_ENDED (KHÔNG gửi correctAnswer trong question object)
-    const channel = getRoomChannel(roomId);
-    server.to(channel).emit(ServerEvent.ROUND_ENDED, {
-      matchId,
-      roundNo: state.currentRoundNo,
-      correctAnswer, // standalone field, NOT inside question
-      survivingPlayerIds: survivingIds,
-      eliminatedPlayerIds: eliminatedIds,
-      playerResults: playerInfos,
-    });
+      // Guard: only execute if match is ROUND_ACTIVE and round status is ACTIVE
+      const state = stateMachine.getState();
+      const round = stateMachine.getCurrentRound();
+      if (
+        state.status !== MatchStatus.ROUND_ACTIVE ||
+        !round ||
+        round.status !== "ACTIVE"
+      ) {
+        this.logger.warn(
+          `endRound bypassed for match ${matchId}: state.status is ${state.status}, round status is ${round?.status ?? "none"}`,
+        );
+        return;
+      }
 
-    // 8. Per-player eliminated notification
-    for (const playerId of eliminatedIds) {
-      const player = state.players.get(playerId);
-      if (!player) continue;
-      server.to(channel).emit(ServerEvent.PLAYER_ELIMINATED, {
+      // 2. Transition to ROUND_EVALUATING
+      stateMachine.transition(MatchStatus.ROUND_EVALUATING);
+
+      // 3. Evaluate round
+      const { survivingIds, eliminatedIds, correctAnswer } =
+        stateMachine.evaluateRound();
+
+      // 4. Transition to ROUND_RESULT
+      stateMachine.transition(MatchStatus.ROUND_RESULT);
+
+      // F6: Persist after mutation
+      await this.matchService.persistStateMachine(matchId);
+
+      // 5. Save round + answers to DB (Task 5)
+      const currentRound = stateMachine.getCurrentRound()!;
+      const roundRecord = await this.matchService.saveRound(
         matchId,
-        playerId,
-        playerName: player.name,
-        reason: currentRound.answers.has(playerId) ? "WRONG_ANSWER" : "TIMEOUT",
-      });
-    }
+        state.currentRoundNo,
+        currentRound.question.id,
+      );
+      // F5: roundRecord.id is available from Prisma create return
+      const answersToSave = Array.from(currentRound.answers.entries()).map(
+        ([playerId, answer]) => ({
+          matchId,
+          roundId: roundRecord.id,
+          userId: playerId,
+          answer: answer.answer,
+          isCorrect: answer.isCorrect,
+          responseTimeMs: answer.responseTimeMs,
+        }),
+      );
+      await this.matchService.saveAnswers(answersToSave);
 
-    // 9. Set 3s timer → checkMatchEnd
-    const timer = setTimeout(async () => {
-      await this.checkMatchEnd(matchId, roomId, server);
-    }, GAME_CONFIG.RESULT_DISPLAY_MS);
-    this.addTimer(matchId, timer);
+      // 6. Convert Maps to arrays for Socket.io serialization
+      const playerInfos = Array.from(state.players.values());
+
+      // 7. Broadcast ROUND_ENDED (KHÔNG gửi correctAnswer trong question object)
+      const channel = getRoomChannel(roomId);
+      server.to(channel).emit(ServerEvent.ROUND_ENDED, {
+        matchId,
+        roundNo: state.currentRoundNo,
+        correctAnswer, // standalone field, NOT inside question
+        survivingPlayerIds: survivingIds,
+        eliminatedPlayerIds: eliminatedIds,
+        playerResults: playerInfos,
+      });
+
+      // 8. Per-player eliminated notification
+      for (const playerId of eliminatedIds) {
+        const player = state.players.get(playerId);
+        if (!player) continue;
+        server.to(channel).emit(ServerEvent.PLAYER_ELIMINATED, {
+          matchId,
+          playerId,
+          playerName: player.name,
+          reason: currentRound.answers.has(playerId)
+            ? "WRONG_ANSWER"
+            : "TIMEOUT",
+        });
+      }
+
+      // 9. Set 3s timer → checkMatchEnd
+      const timer = setTimeout(async () => {
+        try {
+          await this.checkMatchEnd(matchId, roomId, server);
+        } catch (error) {
+          this.logger.error(
+            `Error in checkMatchEnd timeout callback for match ${matchId}:`,
+            error,
+          );
+        }
+      }, GAME_CONFIG.RESULT_DISPLAY_MS);
+      this.addTimer(matchId, timer);
+    } finally {
+      this.endingRounds.delete(matchId);
+    }
   }
 
   // ============================================================
@@ -298,10 +346,17 @@ export class GameLoopService {
     matchId: string,
     roomId: string,
     server: Server,
+    serverOrContext: unknown = null,
   ): Promise<void> {
     // 1. Get state machine
     const stateMachine = await this.matchService.getStateMachine(matchId);
     if (!stateMachine) return;
+
+    if (serverOrContext) {
+      this.logger.debug(
+        `finishMatchLoop called with context: ${JSON.stringify(serverOrContext)}`,
+      );
+    }
 
     // 2. Transition to FINISHED
     stateMachine.transition(MatchStatus.FINISHED);
@@ -330,6 +385,7 @@ export class GameLoopService {
     // 5. Cleanup
     this.clearTimers(matchId);
     this.usedQuestionIds.delete(matchId);
+    this.expectedAnswers.delete(matchId);
 
     this.logger.log(
       `Match ${matchId} finished. Winner: ${winnerId}. Rounds: ${state.currentRoundNo}`,
@@ -358,25 +414,26 @@ export class GameLoopService {
     // 2. Get current state
     const state = stateMachine.getState();
 
-    // 3. Get roomId from state.roomId
-    const roomId = state.roomId;
-
-    // 4. Mark player as DISCONNECTED in state machine (update player.status and player.isOnline)
+    // 3. Check if player exists
     const player = state.players.get(userId);
-    if (player) {
-      player.status = PlayerStatus.DISCONNECTED;
-      player.isOnline = false;
+    if (!player) {
+      this.logger.warn(`Player ${userId} not found in match ${matchId}`);
+      return;
     }
+
+    // 4. Mark player as DISCONNECTED in state machine
+    stateMachine.disconnectPlayer(userId);
 
     // 5. Persist state machine
     await this.matchService.persistStateMachine(matchId);
 
     // 6. Broadcast PLAYER_LEFT with reason field
+    const roomId = state.roomId;
     const channel = getRoomChannel(roomId);
     server.to(channel).emit(ServerEvent.PLAYER_LEFT, {
       matchId,
       playerId: userId,
-      playerName: player?.name || "Unknown Player",
+      playerName: player.name,
       reason: PlayerStatus.DISCONNECTED,
     });
 

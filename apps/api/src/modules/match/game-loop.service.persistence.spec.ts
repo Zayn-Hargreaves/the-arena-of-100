@@ -43,6 +43,7 @@ describe("GameLoopService Persistence", () => {
       finishMatch: vi.fn().mockResolvedValue({}),
       saveRound: vi.fn().mockResolvedValue({ id: "round-record-123" }),
       saveAnswer: vi.fn().mockResolvedValue({}),
+      saveAnswers: vi.fn().mockResolvedValue({ count: 2 }),
     } as unknown as MatchService;
 
     questionService = {
@@ -94,29 +95,26 @@ describe("GameLoopService Persistence", () => {
         "q1", // questionId
       );
 
-      // Verify saveAnswer was called for each player with correct parameters
-      expect(matchService.saveAnswer).toHaveBeenCalledTimes(2);
-
-      // Check first call (Player 1 - correct answer)
-      expect(matchService.saveAnswer).toHaveBeenNthCalledWith(
-        1,
-        "match-1", // matchId
-        "round-record-xyz", // roundId (from saveRound result)
-        "p1", // playerId
-        "A", // answer
-        true, // isCorrect
-        expect.any(Number), // responseTimeMs (should be a number)
-      );
-
-      // Check second call (Player 2 - incorrect answer)
-      expect(matchService.saveAnswer).toHaveBeenNthCalledWith(
-        2,
-        "match-1", // matchId
-        "round-record-xyz", // roundId (from saveRound result)
-        "p2", // playerId
-        "B", // answer
-        false, // isCorrect
-        expect.any(Number), // responseTimeMs (should be a number)
+      // Verify saveAnswers was called with correct parameters
+      expect(matchService.saveAnswers).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({
+            matchId: "match-1",
+            roundId: "round-record-xyz",
+            userId: "p1",
+            answer: "A",
+            isCorrect: true,
+            responseTimeMs: expect.any(Number),
+          }),
+          expect.objectContaining({
+            matchId: "match-1",
+            roundId: "round-record-xyz",
+            userId: "p2",
+            answer: "B",
+            isCorrect: false,
+            responseTimeMs: expect.any(Number),
+          }),
+        ]),
       );
     });
 
@@ -143,14 +141,18 @@ describe("GameLoopService Persistence", () => {
       // Execute endRound
       await (service as any).endRound("match-1", "room-1", mockServer);
 
-      // Verify that saveAnswer was called with the exact round ID returned from saveRound
-      expect(matchService.saveAnswer).toHaveBeenCalledWith(
-        "match-1",
-        uniqueRoundId, // This should be the exact ID returned from saveRound
-        "p1",
-        "Y",
-        true,
-        expect.any(Number),
+      // Verify that saveAnswers was called with the exact round ID returned from saveRound
+      expect(matchService.saveAnswers).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({
+            matchId: "match-1",
+            roundId: uniqueRoundId, // This should be the exact ID returned from saveRound
+            userId: "p1",
+            answer: "Y",
+            isCorrect: true,
+            responseTimeMs: expect.any(Number),
+          }),
+        ]),
       );
     });
   });

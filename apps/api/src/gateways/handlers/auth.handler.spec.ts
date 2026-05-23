@@ -23,6 +23,7 @@ describe("AuthHandler", () => {
     } as unknown as RoomService;
     matchService = {
       getStateMachine: vi.fn(),
+      persistStateMachine: vi.fn(),
     } as unknown as MatchService;
     gameLoopService = {
       handlePlayerDisconnect: vi.fn(),
@@ -263,7 +264,7 @@ describe("AuthHandler", () => {
       );
     });
 
-    it("emits snapshot when active match exists", async () => {
+    it("emits snapshot, restores player status to active, and persists state machine when active match exists", async () => {
       const snapshot = { matchId: "m1", status: "ROUND_ACTIVE" };
       vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
         {
@@ -276,12 +277,20 @@ describe("AuthHandler", () => {
           },
         },
       ] as any);
-      vi.mocked(matchService.getStateMachine).mockResolvedValue({
+
+      const mockStateMachine = {
+        reconnectPlayer: vi.fn(),
         getSnapshot: vi.fn().mockReturnValue(snapshot),
-      } as any);
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockStateMachine as any,
+      );
+      vi.mocked(matchService.persistStateMachine).mockResolvedValue();
 
       await handler.handleAuthenticate(client, { token: "t" });
 
+      expect(mockStateMachine.reconnectPlayer).toHaveBeenCalledWith("u1");
+      expect(matchService.persistStateMachine).toHaveBeenCalledWith("m1");
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.SNAPSHOT, snapshot);
     });
 

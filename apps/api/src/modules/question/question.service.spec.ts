@@ -343,6 +343,27 @@ describe("QuestionService", () => {
       expect(result.options).toEqual(["1", "2", "3"]);
     });
 
+    it("should map the category field correctly from prismaQuestion", async () => {
+      const id = "q-1";
+      const question = {
+        id,
+        content: "Question",
+        options: ["A", "B"],
+        correctAnswer: "A",
+        difficulty: QuestionDifficulty.EASY,
+        category: QuestionCategory.SCIENCE,
+        active: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockPrismaService.question.findUnique.mockResolvedValueOnce(question);
+
+      const result = await service.findOne(id);
+
+      expect(result.category).toBe(QuestionCategory.SCIENCE);
+    });
+
     it("should throw NotFoundException when not found", async () => {
       const id = "q-404";
       mockPrismaService.question.findUnique.mockResolvedValueOnce(null);

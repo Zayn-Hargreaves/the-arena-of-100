@@ -20,7 +20,7 @@ describe("MatchService", () => {
       match: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
       matchPlayer: { createMany: vi.fn() },
       matchRound: { create: vi.fn() },
-      answer: { create: vi.fn() },
+      answer: { create: vi.fn(), createMany: vi.fn() },
     } as unknown as PrismaService;
     redis = {
       set: vi.fn(),
@@ -279,6 +279,43 @@ describe("MatchService", () => {
           responseTimeMs: 500,
         },
       });
+    });
+  });
+
+  describe("saveAnswers", () => {
+    it("creates multiple answer records in a batch", async () => {
+      vi.mocked(prisma.answer.createMany).mockResolvedValue({
+        count: 2,
+      } as any);
+      const answers = [
+        {
+          matchId: "m1",
+          roundId: "round1",
+          userId: "u1",
+          answer: "A",
+          isCorrect: true,
+          responseTimeMs: 500,
+        },
+        {
+          matchId: "m1",
+          roundId: "round1",
+          userId: "u2",
+          answer: "B",
+          isCorrect: false,
+          responseTimeMs: 800,
+        },
+      ];
+      const result = await service.saveAnswers(answers);
+      expect(result.count).toBe(2);
+      expect(prisma.answer.createMany).toHaveBeenCalledWith({
+        data: answers,
+      });
+    });
+
+    it("returns count 0 and does not call prisma when answers is empty", async () => {
+      const result = await service.saveAnswers([]);
+      expect(result.count).toBe(0);
+      expect(prisma.answer.createMany).not.toHaveBeenCalled();
     });
   });
 });

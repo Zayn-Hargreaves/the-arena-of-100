@@ -48,6 +48,7 @@ describe("GameLoopService", () => {
       finishMatch: vi.fn().mockResolvedValue({}),
       saveRound: vi.fn().mockResolvedValue({ id: "round-1" }),
       saveAnswer: vi.fn().mockResolvedValue({}),
+      saveAnswers: vi.fn().mockResolvedValue({ count: 2 }),
     } as unknown as MatchService;
 
     questionService = {
@@ -77,7 +78,7 @@ describe("GameLoopService", () => {
     // Mock executeCountdown to avoid timeout issues
     const executeCountdownSpy = vi
       .spyOn(service as any, "executeCountdown")
-      .mockResolvedValue(undefined);
+      .mockImplementation(() => {});
 
     await service.startMatchLoop(
       "match-1",
@@ -115,17 +116,11 @@ describe("GameLoopService", () => {
       .spyOn(service as any, "executeRound")
       .mockResolvedValue(undefined);
 
-    // Call executeCountdown directly
-    const promise = (service as any).executeCountdown(
-      "match-1",
-      "room-1",
-      mockServer,
-    );
+    // Call executeCountdown directly (now synchronous void)
+    (service as any).executeCountdown("match-1", "room-1", mockServer);
 
     // Fast-forward timers
-    vi.advanceTimersByTime(GAME_CONFIG.COUNTDOWN_DURATION_MS);
-
-    await promise;
+    await vi.advanceTimersByTimeAsync(GAME_CONFIG.COUNTDOWN_DURATION_MS);
 
     expect(executeRoundSpy).toHaveBeenCalledWith(
       "match-1",
@@ -217,7 +212,24 @@ describe("GameLoopService", () => {
 
     // Check that round was evaluated
     expect(matchService.saveRound).toHaveBeenCalledWith("match-1", 1, "q1");
-    expect(matchService.saveAnswer).toHaveBeenCalledTimes(2);
+    expect(matchService.saveAnswers).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          matchId: "match-1",
+          roundId: "round-1",
+          userId: "p1",
+          answer: "A",
+          isCorrect: true,
+        }),
+        expect.objectContaining({
+          matchId: "match-1",
+          roundId: "round-1",
+          userId: "p2",
+          answer: "B",
+          isCorrect: false,
+        }),
+      ]),
+    );
 
     // Check that state was persisted
     expect(matchService.persistStateMachine).toHaveBeenCalledWith("match-1");
@@ -426,17 +438,15 @@ describe("GameLoopService", () => {
     // Initialize usedQuestionIds for this match
     (service as any).usedQuestionIds.set("match-1", new Set());
 
-    // Start the match loop which should trigger the error
-    const promise = service.startMatchLoop(
+    // Start the match loop which triggers countdown and resolves immediately
+    await service.startMatchLoop(
       "match-1",
       "room-1",
       mockServer as unknown as Server,
     );
 
-    // Advance timers to trigger the error handling
+    // Advance timers to trigger the error handling inside executeCountdown callback
     await vi.advanceTimersByTimeAsync(GAME_CONFIG.COUNTDOWN_DURATION_MS + 100);
-
-    await promise;
 
     // Match should be finished due to error
     expect(stateMachine.getState().status).toBe(MatchStatus.FINISHED);
@@ -568,7 +578,7 @@ describe("GameLoopService", () => {
   });
 
   // === TEST 12: Disconnect handling ===
-  it("should handle player disconnect and broadcast PLAYER_LEFT", async () => {
+  it("should handle player disconnect, mark player disconnected/offline, and broadcast PLAYER_LEFT", async () => {
     const emitSpy = vi.fn();
     const toMock = vi.fn().mockReturnValue({ emit: emitSpy });
     (mockServer.to as any).mockImplementation(toMock);
@@ -581,6 +591,8 @@ describe("GameLoopService", () => {
     const initialState = stateMachine.getState();
     const initialPlayer = initialState.players.get("p1");
     expect(initialPlayer).toBeDefined();
+    expect(initialPlayer?.status).toBe(PlayerStatus.ACTIVE);
+    expect(initialPlayer?.isOnline).toBe(true);
 
     // Call handlePlayerDisconnect
     await service.handlePlayerDisconnect(
@@ -588,6 +600,13 @@ describe("GameLoopService", () => {
       "p1",
       mockServer as unknown as Server,
     );
+
+    // Verify player is now disconnected and offline in actual state machine
+    const updatedState = stateMachine.getState();
+    expect(updatedState.players.get("p1")?.status).toBe(
+      PlayerStatus.DISCONNECTED,
+    );
+    expect(updatedState.players.get("p1")?.isOnline).toBe(false);
 
     // Since getState returns a clone, we need to check if persistStateMachine was called, which indicates the state was modified
     expect(matchService.persistStateMachine).toHaveBeenCalledWith("match-1");
@@ -602,5 +621,180 @@ describe("GameLoopService", () => {
         reason: PlayerStatus.DISCONNECTED,
       }),
     );
+  });
+
+  it("should return early and not persist or broadcast when player is not found", async () => {
+    const emitSpy = vi.fn();
+    const toMock = vi.fn().mockReturnValue({ emit: emitSpy });
+    (mockServer.to as any).mockImplementation(toMock);
+
+    // Set up state
+    stateMachine.transition(MatchStatus.COUNTDOWN);
+    stateMachine.transition(MatchStatus.ROUND_ACTIVE);
+
+    // Call handlePlayerDisconnect with unknown player ID
+    await service.handlePlayerDisconnect(
+      "match-1",
+      "non-existent-player",
+      mockServer as unknown as Server,
+    );
+
+    // Verify persistStateMachine was NOT called
+    expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+
+    // Verify PLAYER_LEFT was NOT emitted
+    expect(emitSpy).not.toHaveBeenCalled();
+  });
+
+  // === NEW TESTS: Race conditions & Idempotency / Error handling ===
+  describe("Race conditions & Idempotency / Error handling", () => {
+    it("should prevent duplicate endRound executions (idempotency guard)", async () => {
+      // Set up a round in progress
+      stateMachine.transition(MatchStatus.COUNTDOWN);
+      stateMachine.transition(MatchStatus.ROUND_ACTIVE);
+      stateMachine.startRound({
+        id: "q1",
+        content: "Test question",
+        options: ["A", "B"],
+        correctAnswer: "A",
+        difficulty: "MEDIUM",
+      });
+
+      // Submit answers
+      stateMachine.submitAnswer("p1", "A", Date.now());
+      stateMachine.submitAnswer("p2", "A", Date.now());
+
+      // 1. Call endRound first time
+      const firstCall = (service as any).endRound(
+        "match-1",
+        "room-1",
+        mockServer,
+      );
+
+      // 2. Call endRound immediately a second time while first is running
+      // Since JavaScript is single-threaded, if we call endRound again concurrently,
+      // it should hit the `endingRounds` lock check and return early.
+      const secondCall = (service as any).endRound(
+        "match-1",
+        "room-1",
+        mockServer,
+      );
+
+      await Promise.all([firstCall, secondCall]);
+
+      // State machine should only have evaluated and saved once
+      expect(stateMachine.getState().status).toBe(MatchStatus.ROUND_RESULT);
+      expect(matchService.saveRound).toHaveBeenCalledTimes(1);
+    });
+
+    it("should bypass endRound if match status is not ROUND_ACTIVE or round is not ACTIVE", async () => {
+      // Set up a state other than ROUND_ACTIVE (e.g. finished)
+      stateMachine.transition(MatchStatus.COUNTDOWN);
+      stateMachine.transition(MatchStatus.FINISHED);
+
+      // Spy on transition and evaluateRound
+      const transitionSpy = vi.spyOn(stateMachine, "transition");
+      const evaluateSpy = vi.spyOn(stateMachine, "evaluateRound");
+
+      // Call endRound directly
+      await (service as any).endRound("match-1", "room-1", mockServer);
+
+      // Since the match status is FINISHED, it should bypass transition and evaluation
+      expect(transitionSpy).not.toHaveBeenCalled();
+      expect(evaluateSpy).not.toHaveBeenCalled();
+    });
+
+    it("should catch and log errors in timeout callbacks", async () => {
+      vi.useFakeTimers();
+
+      const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
+
+      // Mock endRound and checkMatchEnd to throw errors
+      const endRoundSpy = vi
+        .spyOn(service as any, "endRound")
+        .mockRejectedValue(new Error("endRound failure"));
+      const checkMatchEndSpy = vi
+        .spyOn(service as any, "checkMatchEnd")
+        .mockRejectedValue(new Error("checkMatchEnd failure"));
+
+      // 1. Trigger the executeRound timeout
+      stateMachine.transition(MatchStatus.COUNTDOWN);
+      (service as any).usedQuestionIds.set("match-1", new Set());
+      await (service as any).executeRound("match-1", "room-1", mockServer);
+
+      // Fast forward to executeRound's 15s timeout
+      await vi.advanceTimersByTimeAsync(GAME_CONFIG.ROUND_DURATION_MS);
+
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Error in endRound timeout callback for match match-1:",
+        ),
+        expect.any(Error),
+      );
+
+      // Clear logger spies and mocks
+      loggerErrorSpy.mockClear();
+
+      // Reset mock endRound so we can call it successfully to schedule the 3s checkMatchEnd timer
+      endRoundSpy.mockRestore();
+      const loggerErrorSpy2 = vi.spyOn((service as any).logger, "error");
+
+      // Re-mock saveRound and saveAnswers for endRound
+      (matchService.saveRound as any).mockResolvedValue({ id: "round-1" });
+      (matchService.saveAnswers as any).mockResolvedValue({ count: 2 });
+
+      // Set up state for endRound to succeed
+      const players = [
+        {
+          id: "p1",
+          name: "Player 1",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+        {
+          id: "p2",
+          name: "Player 2",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+      ];
+      const testStateMachine = new MatchStateMachine(
+        "match-2",
+        "room-1",
+        players,
+      );
+      testStateMachine.transition(MatchStatus.COUNTDOWN);
+      testStateMachine.transition(MatchStatus.ROUND_ACTIVE);
+      testStateMachine.startRound({
+        id: "q1",
+        content: "Test question",
+        options: ["A", "B"],
+        correctAnswer: "A",
+        difficulty: "MEDIUM",
+      });
+      (matchService.getStateMachine as any).mockResolvedValue(testStateMachine);
+
+      // Call endRound directly, which will schedule the 3s checkMatchEnd timer
+      await (service as any).endRound("match-2", "room-1", mockServer);
+
+      // Fast forward to checkMatchEnd's 3s timeout
+      await vi.advanceTimersByTimeAsync(GAME_CONFIG.RESULT_DISPLAY_MS);
+
+      expect(loggerErrorSpy2).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Error in checkMatchEnd timeout callback for match match-2:",
+        ),
+        expect.any(Error),
+      );
+
+      vi.useRealTimers();
+      checkMatchEndSpy.mockRestore();
+    });
   });
 });

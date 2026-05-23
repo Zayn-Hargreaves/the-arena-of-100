@@ -217,4 +217,21 @@ export class MatchService {
       },
     });
   }
+
+  // Save multiple answers in a single batch
+  async saveAnswers(
+    answers: Array<{
+      matchId: string;
+      roundId: string;
+      userId: string;
+      answer: string;
+      isCorrect: boolean;
+      responseTimeMs: number;
+    }>,
+  ) {
+    if (answers.length === 0) return { count: 0 };
+    return this.prisma.answer.createMany({
+      data: answers,
+    });
+  }
 }

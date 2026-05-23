@@ -581,6 +581,71 @@ describe("MatchStateMachine gameplay methods", () => {
     expect(log.length).toBeGreaterThan(0);
     expect(log[0].type).toBe("STATE_TRANSITION");
   });
+
+  it("disconnectPlayer marks player disconnected and offline, logging the event", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+
+    // Call disconnectPlayer
+    machine.disconnectPlayer("p1");
+
+    // Check state update
+    const state = machine.getState();
+    expect(state.players.get("p1")?.status).toBe(PlayerStatus.DISCONNECTED);
+    expect(state.players.get("p1")?.isOnline).toBe(false);
+
+    // Verify it didn't mutate other players
+    expect(state.players.get("p2")?.status).toBe(PlayerStatus.ACTIVE);
+    expect(state.players.get("p2")?.isOnline).toBe(true);
+
+    // Verify event is logged
+    const eventLog = machine.getEventLog();
+    const disconnectEvent = eventLog.find(
+      (e) => e.type === "PLAYER_DISCONNECTED",
+    );
+    expect(disconnectEvent).toBeDefined();
+    expect(disconnectEvent?.payload).toEqual({ playerId: "p1" });
+  });
+
+  it("reconnectPlayer transitions DISCONNECTED player back to ACTIVE and sets isOnline to true", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+
+    // 1. Disconnect first
+    machine.disconnectPlayer("p1");
+    expect(machine.getState().players.get("p1")?.status).toBe(
+      PlayerStatus.DISCONNECTED,
+    );
+    expect(machine.getState().players.get("p1")?.isOnline).toBe(false);
+
+    // 2. Reconnect
+    machine.reconnectPlayer("p1");
+
+    // 3. Verify status restored to ACTIVE and isOnline to true
+    const state = machine.getState();
+    expect(state.players.get("p1")?.status).toBe(PlayerStatus.ACTIVE);
+    expect(state.players.get("p1")?.isOnline).toBe(true);
+
+    // Verify event is logged
+    const eventLog = machine.getEventLog();
+    const reconnectEvent = eventLog.find(
+      (e) => e.type === "PLAYER_RECONNECTED",
+    );
+    expect(reconnectEvent).toBeDefined();
+    expect(reconnectEvent?.payload).toEqual({ playerId: "p1" });
+  });
+
+  it("reconnectPlayer leaves ELIMINATED player status unchanged but sets isOnline to true", () => {
+    const players = makePlayers();
+    players[0].status = PlayerStatus.ELIMINATED;
+    const machine = new MatchStateMachine("m1", "r1", players);
+
+    // Reconnect the eliminated player
+    machine.reconnectPlayer("p1");
+
+    // Status must remain ELIMINATED, but isOnline must become true
+    const state = machine.getState();
+    expect(state.players.get("p1")?.status).toBe(PlayerStatus.ELIMINATED);
+    expect(state.players.get("p1")?.isOnline).toBe(true);
+  });
 });
 
 describe("MatchStateMachine guard branches", () => {

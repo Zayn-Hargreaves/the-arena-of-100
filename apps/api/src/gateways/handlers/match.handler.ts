@@ -47,6 +47,16 @@ export class MatchHandler extends BaseHandler {
       });
 
       this.logger.log(`Match starting: ${match.id}`);
+
+      // Start the match loop in background to not block the socket handler
+      this.gameLoopService
+        .startMatchLoop(match.id, payload.roomId, server)
+        .catch((err) => {
+          this.logger.error(
+            `Failed to start match loop for match ${match.id}:`,
+            err,
+          );
+        });
     } catch (error) {
       const code =
         error instanceof RoomError ? error.code : ErrorCode.INTERNAL_ERROR;

@@ -70,7 +70,7 @@ export class QuestionService {
       difficulty: prismaQuestion.difficulty as QuestionDifficulty,
       correctAnswer: prismaQuestion.correctAnswer,
       active: prismaQuestion.active,
-      category: QuestionCategory.GENERAL, // Temporary placeholder until schema is fixed
+      category: prismaQuestion.category as QuestionCategory,
     };
   }
 
