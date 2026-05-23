@@ -10,6 +10,7 @@ import {
   ServerEvent,
   type SnapshotPayload,
   type AnswerResultPayload,
+  type RoomJoinedPayload,
 } from "@arena/shared";
 
 interface Player {
@@ -120,13 +121,20 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       console.log("🏠 Room created:", data.code);
     });
 
-    newSocket.on(ServerEvent.ROOM_JOINED, (data) => {
+    newSocket.on(ServerEvent.ROOM_JOINED, (data: RoomJoinedPayload) => {
       set({
         room: {
           id: data.roomId,
           code: data.code,
           status: "WAITING",
-          players: [],
+          players: data.players
+            ? data.players.map((p) => ({
+                id: p.playerId,
+                name: p.playerName,
+                status: "READY",
+                score: 0,
+              }))
+            : [],
         },
       });
       console.log("🏠 Room joined:", data.code);

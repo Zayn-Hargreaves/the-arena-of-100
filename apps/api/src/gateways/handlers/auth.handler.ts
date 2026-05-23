@@ -5,11 +5,11 @@ import {
   ErrorCode,
   ERROR_MESSAGES,
   RoomJoinedPayload,
-  RoomPlayerJoinedPayload,
 } from "@arena/shared";
 import { AuthService } from "../../modules/auth/auth.service";
 import { RoomService } from "../../modules/room/room.service";
 import { MatchService } from "../../modules/match/match.service";
+import { GameLoopService } from "../../modules/match/game-loop.service";
 import { BaseHandler } from "./base.handler";
 
 @Injectable()
@@ -21,6 +21,7 @@ export class AuthHandler extends BaseHandler {
     private readonly authService: AuthService,
     private readonly roomService: RoomService,
     private readonly matchService: MatchService,
+    private readonly gameLoopService: GameLoopService,
   ) {
     super();
   }
@@ -76,13 +77,34 @@ export class AuthHandler extends BaseHandler {
     }
   }
 
-  handleDisconnect(client: Socket) {
+  async handleDisconnect(client: Socket) {
     const userId = client.data?.userId;
     if (userId) {
       const currentSocketId = this.connectedPlayers.get(userId);
       // Only delete from map if the disconnected socket is the active session
       if (currentSocketId === client.id) {
         this.connectedPlayers.delete(userId);
+
+        // NEW: Notify active matches
+        try {
+          const userActiveRooms =
+            await this.roomService.getUserActiveRooms(userId);
+          for (const rp of userActiveRooms) {
+            if (rp.room.currentMatchId) {
+              await this.gameLoopService.handlePlayerDisconnect(
+                rp.room.currentMatchId,
+                userId,
+                client.nsp.server,
+              );
+            }
+          }
+        } catch (error) {
+          this.logger.warn(
+            `Failed to notify match of disconnect for ${userId}`,
+            error,
+          );
+        }
+
         this.logger.log(`Player disconnected: ${userId}`);
       }
     }
@@ -91,34 +113,37 @@ export class AuthHandler extends BaseHandler {
   private async syncReconnection(client: Socket, userId: string) {
     try {
       const userActiveRooms = await this.roomService.getUserActiveRooms(userId);
+      if (userActiveRooms.length === 0) return;
 
-      for (const roomPlayer of userActiveRooms) {
-        const room = roomPlayer.room;
-        client.join(`room:${room.id}`);
+      // Only synchronize the latest active room (take 1) to avoid stale/abandoned room issues
+      // and prevent multiple concurrent Socket.io room joins causing client store conflicts
+      const roomPlayer = [...userActiveRooms].sort(
+        (a, b) => b.joinedAt.getTime() - a.joinedAt.getTime(),
+      )[0];
 
-        client.emit(ServerEvent.ROOM_JOINED, {
-          roomId: room.id,
-          code: room.code,
-        } satisfies RoomJoinedPayload);
+      const room = roomPlayer.room;
+      client.join(`room:${room.id}`);
 
-        for (const p of room.players) {
-          client.emit(ServerEvent.PLAYER_JOINED, {
-            playerId: p.userId,
-            playerName: p.user.username,
-          } satisfies RoomPlayerJoinedPayload);
+      // Emit ROOM_JOINED with the list of players to avoid N+1 socket emits
+      client.emit(ServerEvent.ROOM_JOINED, {
+        roomId: room.id,
+        code: room.code,
+        players: room.players.map((p) => ({
+          playerId: p.userId,
+          playerName: p.user.username,
+        })),
+      } satisfies RoomJoinedPayload);
+
+      if (room.currentMatchId) {
+        const stateMachine = await this.matchService.getStateMachine(
+          room.currentMatchId,
+        );
+        if (stateMachine) {
+          client.emit(ServerEvent.SNAPSHOT, stateMachine.getSnapshot(0));
         }
-
-        if (room.currentMatchId) {
-          const stateMachine = await this.matchService.getStateMachine(
-            room.currentMatchId,
-          );
-          if (stateMachine) {
-            client.emit(ServerEvent.SNAPSHOT, stateMachine.getSnapshot(0));
-          }
-        }
-
-        this.logger.log(`Reconnected user ${userId} to room ${room.id}`);
       }
+
+      this.logger.log(`Reconnected user ${userId} to room ${room.id}`);
     } catch (error) {
       this.logger.error("Error during reconnection sync:", error);
     }

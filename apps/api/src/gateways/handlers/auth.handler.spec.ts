@@ -4,12 +4,14 @@ import { AuthHandler } from "./auth.handler";
 import { AuthService } from "../../modules/auth/auth.service";
 import { RoomService } from "../../modules/room/room.service";
 import { MatchService } from "../../modules/match/match.service";
+import { GameLoopService } from "../../modules/match/game-loop.service";
 
 describe("AuthHandler", () => {
   let handler: AuthHandler;
   let authService: AuthService;
   let roomService: RoomService;
   let matchService: MatchService;
+  let gameLoopService: GameLoopService;
   let client: Socket;
 
   let mockSockets: Map<string, any>;
@@ -22,7 +24,15 @@ describe("AuthHandler", () => {
     matchService = {
       getStateMachine: vi.fn(),
     } as unknown as MatchService;
-    handler = new AuthHandler(authService, roomService, matchService);
+    gameLoopService = {
+      handlePlayerDisconnect: vi.fn(),
+    } as unknown as GameLoopService;
+    handler = new AuthHandler(
+      authService,
+      roomService,
+      matchService,
+      gameLoopService,
+    );
     mockSockets = new Map();
     client = {
       id: "socket-1",
@@ -230,6 +240,7 @@ describe("AuthHandler", () => {
     it("rejoins active rooms after authentication", async () => {
       vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
         {
+          joinedAt: new Date(),
           room: {
             id: "r1",
             code: "ABC",
@@ -244,18 +255,19 @@ describe("AuthHandler", () => {
       expect(client.join).toHaveBeenCalledWith("room:r1");
       expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.ROOM_JOINED,
-        expect.objectContaining({ roomId: "r1", code: "ABC" }),
+        expect.objectContaining({
+          roomId: "r1",
+          code: "ABC",
+          players: [{ playerId: "u1", playerName: "Alice" }],
+        }),
       );
-      expect(client.emit).toHaveBeenCalledWith(ServerEvent.PLAYER_JOINED, {
-        playerId: "u1",
-        playerName: "Alice",
-      });
     });
 
     it("emits snapshot when active match exists", async () => {
       const snapshot = { matchId: "m1", status: "ROUND_ACTIVE" };
       vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
         {
+          joinedAt: new Date(),
           room: {
             id: "r1",
             code: "ABC",

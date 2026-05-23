@@ -135,6 +135,10 @@ export interface AnswerResultPayload {
 export interface RoomJoinedPayload {
   roomId: string;
   code: string;
+  players?: Array<{
+    playerId: string;
+    playerName: string;
+  }>;
 }
 
 export interface RoomPlayerJoinedPayload {

@@ -8,11 +8,13 @@ import {
 import { MatchHandler } from "./match.handler";
 import { RoomService } from "../../modules/room/room.service";
 import { MatchService } from "../../modules/match/match.service";
+import { GameLoopService } from "../../modules/match/game-loop.service";
 
 describe("MatchHandler", () => {
   let handler: MatchHandler;
   let roomService: RoomService;
   let matchService: MatchService;
+  let gameLoopService: { checkEarlyTermination: ReturnType<typeof vi.fn> };
   let client: Socket;
   let server: Server;
 
@@ -23,10 +25,20 @@ describe("MatchHandler", () => {
       getStateMachine: vi.fn(),
       persistStateMachine: vi.fn(),
     } as unknown as MatchService;
-    handler = new MatchHandler(roomService, matchService);
+    gameLoopService = {
+      checkEarlyTermination: vi.fn().mockResolvedValue(undefined),
+    };
+    handler = new MatchHandler(
+      roomService,
+      matchService,
+      gameLoopService as unknown as GameLoopService,
+    );
     client = {
       emit: vi.fn(),
       data: { userId: "u1", username: "Alice" },
+      nsp: {
+        server: server,
+      },
     } as unknown as Socket;
     server = {
       to: vi.fn().mockReturnValue({ emit: vi.fn() }),
@@ -96,6 +108,7 @@ describe("MatchHandler", () => {
     it("submits answer and emits ANSWER_RESULT", async () => {
       const mockMachine = {
         getCurrentRound: vi.fn().mockReturnValue({ roundNo: 1 }),
+        getState: vi.fn().mockReturnValue({ roomId: "r1" }),
         submitAnswer: vi
           .fn()
           .mockReturnValue({ isCorrect: true, responseTimeMs: 500 }),
@@ -200,6 +213,30 @@ describe("MatchHandler", () => {
         code: ErrorCode.INTERNAL_ERROR,
         message: "42",
       });
+    });
+
+    it("calls checkEarlyTermination after submitting answer", async () => {
+      const mockMachine = {
+        getCurrentRound: vi.fn().mockReturnValue({ roundNo: 1 }),
+        getState: vi.fn().mockReturnValue({ roomId: "r1" }),
+        submitAnswer: vi
+          .fn()
+          .mockReturnValue({ isCorrect: true, responseTimeMs: 500 }),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+      vi.mocked(matchService.persistStateMachine).mockResolvedValue(undefined);
+
+      await handler.handleSubmitAnswer(client, {
+        matchId: "m1",
+        answer: "A",
+        roundNo: 1,
+        clientTimestamp: 1234567890,
+      });
+
+      // Verify that checkEarlyTermination was called
+      expect(gameLoopService.checkEarlyTermination).toHaveBeenCalled();
     });
   });
 
