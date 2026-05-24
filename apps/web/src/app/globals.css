@@ -13,7 +13,6 @@
 }
 
 body {
-  color: theme("colors.on-background");
-  background: theme("colors.background");
+  @apply text-on-background bg-background;
   font-family: "Inter", Arial, sans-serif;
 }

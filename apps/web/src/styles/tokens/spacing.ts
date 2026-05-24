@@ -24,4 +24,14 @@ export const SPACING = {
   },
 } as const;
 
-export type SpacingToken = keyof typeof SPACING;
+type NestedKeyOf<T> = T extends object
+  ? {
+      [K in keyof T]: K extends string
+        ? T[K] extends object
+          ? `${K}.${NestedKeyOf<T[K]>}` | K
+          : K
+        : never;
+    }[keyof T]
+  : never;
+
+export type SpacingToken = NestedKeyOf<typeof SPACING>;

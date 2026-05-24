@@ -1,14 +1,14 @@
 import React, { useState } from "react";
 import { Skeleton } from "./skeleton";
+import { cn } from "@/lib/utils";
 
-export interface AvatarProps {
+export interface AvatarProps extends React.HTMLAttributes<HTMLDivElement> {
   src?: string;
   alt?: string;
   fallback?: string;
   size?: "xs" | "sm" | "md" | "lg" | "xl";
   status?: "online" | "eliminated" | "offline";
   glow?: "primary" | "secondary" | "tertiary" | "error" | "none";
-  className?: string;
 }
 
 const sizeClasses = {
@@ -57,8 +57,12 @@ export const Avatar = React.forwardRef<HTMLDivElement, AvatarProps>(
     const sizeClass = sizeClasses[size];
     const glowClass = glowClasses[glow];
     const [imageError, setImageError] = useState(false);
-    const combinedClassName =
-      `relative inline-flex items-center justify-center rounded-full overflow-hidden ${sizeClass} ${glowClass} ${className}`.trim();
+    const combinedClassName = cn(
+      "relative inline-flex items-center justify-center rounded-full overflow-hidden",
+      sizeClass,
+      glowClass,
+      className,
+    );
 
     // Generate initials from fallback name
     const getInitials = (name?: string) => {
@@ -70,7 +74,7 @@ export const Avatar = React.forwardRef<HTMLDivElement, AvatarProps>(
         initials += names[names.length - 1].substring(0, 1).toUpperCase();
       }
 
-      return initials.substring(0, 2);
+      return initials;
     };
 
     // Generate background color based on fallback
@@ -88,25 +92,29 @@ export const Avatar = React.forwardRef<HTMLDivElement, AvatarProps>(
 
     return (
       <div ref={ref} className={combinedClassName}>
-        {src ? (
-          !imageError && (
-            <img
-              src={src}
-              alt={alt}
-              className="w-full h-full object-cover"
-              onError={() => {
-                setImageError(true);
-              }}
-            />
-          )
-        ) : fallback ? (
+        {src && !imageError && (
+          <img
+            src={src}
+            alt={alt}
+            loading="lazy"
+            className="w-full h-full object-cover"
+            onError={() => {
+              setImageError(true);
+            }}
+          />
+        )}
+
+        {!src && fallback && (
           <div
-            className="w-full h-full flex items-center justify-center text-on-primary font-bold"
+            className="w-full h-full flex items-center justify-center text-white font-bold"
             style={{ backgroundColor: getBackgroundColor() }}
+            aria-label={fallback}
           >
             {getInitials(fallback)}
           </div>
-        ) : (
+        )}
+
+        {(!src || imageError) && !fallback && (
           <Skeleton variant="circle" className={sizeClass} />
         )}
 

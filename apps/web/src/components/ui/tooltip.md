@@ -69,22 +69,23 @@ import {
   TooltipTrigger,
   TooltipContent,
   TooltipArrow,
+  TooltipPrimitive,
 } from "@/components/ui/tooltip";
 
 export function CustomTooltip() {
   return (
     <TooltipProvider>
-      <TooltipRoot>
+      <TooltipPrimitive.Root>
         <TooltipTrigger asChild>
           <button>Custom trigger</button>
         </TooltipTrigger>
-        <TooltipPortal>
+        <TooltipPrimitive.Portal>
           <TooltipContent side="right" className="bg-primary text-on-primary">
             Custom styled tooltip
             <TooltipArrow className="fill-primary" />
           </TooltipContent>
-        </TooltipPortal>
-      </TooltipRoot>
+        </TooltipPrimitive.Portal>
+      </TooltipPrimitive.Root>
     </TooltipProvider>
   );
 }

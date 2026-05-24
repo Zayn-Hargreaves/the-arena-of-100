@@ -7,7 +7,7 @@ export interface SpinnerProps {
 
 const sizeClasses = {
   sm: "w-4 h-4", // 16px
-  md: "w-5 h-5", // 24px
+  md: "w-5 h-5", // 20px
   lg: "w-10 h-10", // 40px
 };
 

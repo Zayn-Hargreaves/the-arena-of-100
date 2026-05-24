@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import { ANIMATION_VARIABLES } from "./src/styles/tokens/animations";
 
 const config: Config = {
   content: [
@@ -28,6 +29,13 @@ const config: Config = {
         // Error - Red (Eliminate, kick, kill switch)
         error: "#ffb4ab",
         "on-error": "#690005",
+
+        // Arena custom colors
+        arena: {
+          primary: "#ff6b35",
+          secondary: "#4ecdc4",
+          danger: "#ff4757",
+        },
 
         // Background and surfaces
         background: "#05060B",
@@ -76,6 +84,17 @@ const config: Config = {
         shimmer: "shimmer 2s infinite linear",
         "pulse-fast": "pulse 0.5s cubic-bezier(0.4, 0, 0.6, 1) infinite",
         "bounce-in": "bounceIn 0.5s ease-out",
+      },
+      transitionDuration: {
+        normal: ANIMATION_VARIABLES.duration.normal,
+        slow: ANIMATION_VARIABLES.duration.slow,
+        dramatic: ANIMATION_VARIABLES.duration.dramatic,
+      },
+      transitionTimingFunction: {
+        standard: ANIMATION_VARIABLES.easing.default,
+        decelerate: ANIMATION_VARIABLES.easing.out,
+        accelerate: ANIMATION_VARIABLES.easing.accelerate,
+        bounce: ANIMATION_VARIABLES.easing.bounce,
       },
       keyframes: {
         flicker: {

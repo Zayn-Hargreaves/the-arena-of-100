@@ -57,7 +57,7 @@ interface SocketState extends ConnectionState {
   // Actions
   connect: () => void;
   disconnect: () => void;
-  authenticate: (token: string) => void;
+  authenticate: (token?: string) => void;
   createRoom: (roomType: "PUBLIC" | "PRIVATE") => void;
   joinRoom: (roomCode: string) => void;
   leaveRoom: (roomId: string) => void;
@@ -87,6 +87,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
     const newSocket = io(`${API_URL}/game`, {
       transports: ["websocket", "polling"],
+      withCredentials: true,
       autoConnect: true,
     });
 
@@ -195,9 +196,9 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   },
 
   // Authenticate
-  authenticate: (token: string) => {
+  authenticate: (token?: string) => {
     const { socket } = get();
-    if (socket) {
+    if (socket && token) {
       socket.emit(ClientEvent.AUTHENTICATE, { token });
     }
   },

@@ -1,10 +1,10 @@
 :root {
-  --duration-normal: 300ms;
-  --duration-slow: 500ms;
-  --duration-dramatic: 500ms;
+  --duration-normal: theme("transitionDuration.normal");
+  --duration-slow: theme("transitionDuration.slow");
+  --duration-dramatic: theme("transitionDuration.dramatic");
 
-  --easing-standard: cubic-bezier(0.4, 0, 0.2, 1);
-  --easing-decelerate: cubic-bezier(0, 0, 0.2, 1);
-  --easing-accelerate: cubic-bezier(0.4, 0, 1, 1);
-  --easing-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --easing-standard: theme("transitionTimingFunction.standard");
+  --easing-decelerate: theme("transitionTimingFunction.decelerate");
+  --easing-accelerate: theme("transitionTimingFunction.accelerate");
+  --easing-bounce: theme("transitionTimingFunction.bounce");
 }

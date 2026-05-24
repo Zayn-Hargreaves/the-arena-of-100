@@ -29,37 +29,11 @@ export class AuthHandler extends BaseHandler {
   async handleAuthenticate(client: Socket, payload: { token: string }) {
     try {
       const decoded = this.authService.verifyToken(payload.token);
-
-      // Kick existing connection of this user if exists (O(1) lookup)
-      const oldSocketId = this.connectedPlayers.get(decoded.userId);
-      if (oldSocketId && oldSocketId !== client.id) {
-        const oldSocket = client.nsp?.sockets.get(oldSocketId);
-        if (oldSocket) {
-          this.logger.log(
-            `Kicking old socket: ${oldSocketId} for user: ${decoded.userId}`,
-          );
-          oldSocket.emit(ServerEvent.ERROR, {
-            code: ErrorCode.UNAUTHORIZED,
-            message: ERROR_MESSAGES[ErrorCode.UNAUTHORIZED],
-          });
-          oldSocket.disconnect(true);
-        }
-      }
-
-      this.connectedPlayers.set(decoded.userId, client.id);
-
-      client.data.userId = decoded.userId;
-      client.data.username = decoded.username;
-
-      client.emit(ServerEvent.AUTHENTICATED, {
-        userId: decoded.userId,
-        username: decoded.username,
-      });
-
-      this.logger.log(`Player authenticated: ${decoded.username}`);
-
-      // Reconnection sync: restore room/match state
-      await this.syncReconnection(client, decoded.userId);
+      await this.finalizeAuthentication(
+        client,
+        decoded.userId,
+        decoded.username,
+      );
     } catch (error: unknown) {
       if (error instanceof Error) {
         this.logger.error(
@@ -75,6 +49,17 @@ export class AuthHandler extends BaseHandler {
         ERROR_MESSAGES[ErrorCode.INVALID_TOKEN],
       );
     }
+  }
+
+  async handleAuthenticatedConnection(client: Socket) {
+    const userId = client.data?.userId;
+    const username = client.data?.username;
+
+    if (!userId || !username) {
+      return;
+    }
+
+    await this.finalizeAuthentication(client, userId, username);
   }
 
   async handleDisconnect(client: Socket) {
@@ -149,5 +134,42 @@ export class AuthHandler extends BaseHandler {
     } catch (error) {
       this.logger.error("Error during reconnection sync:", error);
     }
+  }
+
+  private async finalizeAuthentication(
+    client: Socket,
+    userId: string,
+    username: string,
+  ) {
+    // Kick existing connection of this user if exists (O(1) lookup)
+    const oldSocketId = this.connectedPlayers.get(userId);
+    if (oldSocketId && oldSocketId !== client.id) {
+      const oldSocket = client.nsp?.sockets.get(oldSocketId);
+      if (oldSocket) {
+        this.logger.log(
+          `Kicking old socket: ${oldSocketId} for user: ${userId}`,
+        );
+        oldSocket.emit(ServerEvent.ERROR, {
+          code: ErrorCode.UNAUTHORIZED,
+          message: ERROR_MESSAGES[ErrorCode.UNAUTHORIZED],
+        });
+        oldSocket.disconnect(true);
+      }
+    }
+
+    this.connectedPlayers.set(userId, client.id);
+
+    client.data.userId = userId;
+    client.data.username = username;
+
+    client.emit(ServerEvent.AUTHENTICATED, {
+      userId,
+      username,
+    });
+
+    this.logger.log(`Player authenticated: ${username}`);
+
+    // Reconnection sync: restore room/match state
+    await this.syncReconnection(client, userId);
   }
 }

@@ -148,7 +148,7 @@
 | Infrastructure           | 7/10       | Docker OK, missing dev tooling            |
 | DevOps/CI-CD             | 10/10      | GitHub Actions pipeline configured        |
 | Testing                  | 3/10       | Vitest setup with coverage enabled        |
-| **Overall**              | **7.2/10** | Strong foundation with complete UI system |
+| **Overall**              | **7.5/10** | Strong foundation with complete UI system |
 
 ## Milestones
 

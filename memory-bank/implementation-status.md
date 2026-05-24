@@ -124,16 +124,7 @@ Created the following components in `src/components/ui/`:
 
 ## Next Steps
 
-### Phase 5: Organisms and Templates
-
-Plan to implement:
-
-- Sidebar
-- TopAppBar
-- PlayerGrid
-- AnswerGrid
-- QuestionCard
-- And other game-specific components
+## Technical Debt
 
 ### Phase 5: Organisms and Templates
 

@@ -1,5 +1,6 @@
 import React from "react";
 import type { LucideProps } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export interface IconProps extends Omit<LucideProps, "ref"> {
   icon: React.ComponentType<LucideProps>;
@@ -17,7 +18,7 @@ const sizeClasses = {
 export const Icon = React.forwardRef<SVGSVGElement, IconProps>(
   ({ icon: IconComponent, size = "md", className = "", ...props }, ref) => {
     const sizeClass = sizeClasses[size];
-    const combinedClassName = `${sizeClass} ${className}`.trim();
+    const combinedClassName = cn(sizeClass, className);
 
     return <IconComponent ref={ref} className={combinedClassName} {...props} />;
   },

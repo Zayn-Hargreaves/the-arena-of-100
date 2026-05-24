@@ -31,15 +31,27 @@ import {
 export default function TestComponentsPage() {
   const [buttonLoading, setButtonLoading] = React.useState(false);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
+  const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const { toast } = useToast();
 
   const handleLoadingClick = () => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+
     setButtonLoading(true);
-    const timeout = setTimeout(() => {
+    timeoutRef.current = setTimeout(() => {
       setButtonLoading(false);
     }, 2000);
-    return () => clearTimeout(timeout);
   };
+
+  React.useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
 
   const showToast = (variant: "info" | "success" | "warning" | "error") => {
     const messages = {
@@ -51,7 +63,7 @@ export default function TestComponentsPage() {
 
     toast({
       title: variant.charAt(0).toUpperCase() + variant.slice(1),
-      description: messages[variant as keyof typeof messages],
+      description: messages[variant],
       variant: variant,
     });
   };

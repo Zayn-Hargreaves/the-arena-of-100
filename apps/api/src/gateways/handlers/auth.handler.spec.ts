@@ -140,6 +140,30 @@ describe("AuthHandler", () => {
     });
   });
 
+  describe("handleAuthenticatedConnection", () => {
+    it("finalizes authentication for cookie-based connections", async () => {
+      client.data = {
+        userId: "u1",
+        username: "Alice",
+      };
+
+      await handler.handleAuthenticatedConnection(client);
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.AUTHENTICATED, {
+        userId: "u1",
+        username: "Alice",
+      });
+    });
+
+    it("skips unauthenticated sockets", async () => {
+      client.data = {};
+
+      await handler.handleAuthenticatedConnection(client);
+
+      expect(client.emit).not.toHaveBeenCalled();
+    });
+  });
+
   describe("handleDisconnect", () => {
     it("removes player from connected map on disconnect", async () => {
       vi.mocked(authService.verifyToken).mockReturnValue({

@@ -1,4 +1,5 @@
 import React from "react";
+import { cn } from "@/lib/utils";
 
 export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   variant?: "terminal" | "default";
@@ -52,8 +53,15 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
     const sizeClass = sizeClasses[inputSize];
     const widthClass = fullWidth ? "w-full" : "";
 
-    const combinedClassName =
-      `${baseClass} ${errorClass} ${successClass} ${sizeClass} ${widthClass} rounded-md transition-all duration-200 ${className}`.trim();
+    const combinedClassName = cn(
+      baseClass,
+      errorClass,
+      successClass,
+      sizeClass,
+      widthClass,
+      "rounded-md transition-all duration-200",
+      className,
+    );
 
     const inputId =
       id ||

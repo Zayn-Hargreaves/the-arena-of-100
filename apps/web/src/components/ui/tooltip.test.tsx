@@ -1,8 +1,8 @@
-import React from "react";
 import { Tooltip, TooltipProvider } from "./tooltip";
 import { Button } from "./button";
+import { JSX } from "react/jsx-dev-runtime";
 
-export function TooltipDemo() {
+export function TooltipDemo(): JSX.Element {
   return (
     <TooltipProvider>
       <div className="flex flex-col gap-4 p-4">

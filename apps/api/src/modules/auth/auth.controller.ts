@@ -2,13 +2,26 @@
 // Auth Controller - REST Endpoints
 // ============================================================
 
-import { Controller, Post, Body, HttpCode, HttpStatus } from "@nestjs/common";
+import {
+  Controller,
+  Post,
+  Body,
+  HttpCode,
+  HttpStatus,
+  Res,
+} from "@nestjs/common";
+import { FastifyReply } from "fastify";
 import { AuthService, AuthResult } from "./auth.service";
 import { Public } from "../../common/decorators/public.decorator";
 import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
 import { GuestLoginDto, guestLoginSchema } from "./dto/guest-login.dto";
 import { RefreshDto, refreshSchema } from "./dto/refresh.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
+import {
+  ACCESS_TOKEN_COOKIE,
+  REFRESH_TOKEN_COOKIE,
+  serializeCookie,
+} from "../../common/utils/cookie";
 
 const guestLoginPipe = new ZodValidationPipe(guestLoginSchema);
 const refreshPipe = new ZodValidationPipe(refreshSchema);
@@ -27,8 +40,30 @@ export class AuthController {
   async guestLogin(
     @Body(guestLoginPipe)
     guestLoginDto: GuestLoginDto,
-  ): Promise<AuthResult> {
-    return this.authService.guestLogin(guestLoginDto.username);
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<AuthResult["user"]> {
+    const authResult = await this.authService.guestLogin(
+      guestLoginDto.username,
+    );
+
+    reply.header("Set-Cookie", [
+      serializeCookie(ACCESS_TOKEN_COOKIE, authResult.accessToken, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "lax",
+        path: "/",
+        maxAge: this.authService.getAccessTokenTtlSeconds(),
+      }),
+      serializeCookie(REFRESH_TOKEN_COOKIE, authResult.refreshToken, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "lax",
+        path: "/",
+        maxAge: this.authService.getRefreshTokenTtlSeconds(),
+      }),
+    ]);
+
+    return authResult.user;
   }
 
   @Post("refresh")

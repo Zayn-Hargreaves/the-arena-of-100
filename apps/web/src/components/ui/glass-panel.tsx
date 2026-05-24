@@ -1,4 +1,5 @@
 import React from "react";
+import { cn } from "@/lib/utils";
 
 export interface GlassPanelProps {
   variant?: "default" | "secondary" | "elevated";
@@ -25,7 +26,7 @@ export const GlassPanel = React.forwardRef<HTMLDivElement, GlassPanelProps>(
   ({ variant = "default", glow = "none", children, className = "" }, ref) => {
     const baseClass = variantClasses[variant];
     const glowClass = glowClasses[glow];
-    const combinedClassName = `${baseClass} ${glowClass} ${className}`.trim();
+    const combinedClassName = cn(baseClass, glowClass, className);
 
     return (
       <div ref={ref} className={combinedClassName}>

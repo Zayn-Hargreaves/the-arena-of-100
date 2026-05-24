@@ -50,18 +50,18 @@ Slice 8: E2E Integration Test ────────────────�
 | ------------------------------------- | -------- | ----------------------------------------------------------------------------------------- |
 | `apps/web/src/app/page.tsx`           | **Edit** | Thay nút tĩnh bằng logic: state machine cho login flow (idle → entering → logging → done) |
 | `apps/web/src/app/globals.css`        | **Edit** | Thêm style cho input, nút (đã có `btn-primary` cơ bản)                                    |
-| `apps/web/src/lib/api.ts`             | **New**  | Helper `guestLogin(username) → { token, user }` gọi `POST /auth/guest`                    |
-| `apps/web/src/stores/socket-store.ts` | **Edit** | Thêm action `login(username)` gọi REST rồi connect + authenticate WS                      |
+| `apps/web/src/lib/api.ts`             | **New**  | Helper `guestLogin(username) → { user }` gọi `POST /auth/guest` và để server set cookies  |
+| `apps/web/src/stores/socket-store.ts` | **Edit** | Thêm action `login(username)` gọi REST rồi connect WS bằng cookie auth                    |
 
 ### Flow chi tiết
 
 ```
 1. User nhập nickname vào input
 2. Click "Vào Game" → gọi POST /auth/guest { username }
-3. Nhận { accessToken, refreshToken, user { id, username } }
-4. Lưu token vào localStorage
-5. socket-store.connect() → socket.on("connect") → emit AUTHENTICATE { token }
-6. Nhận AUTHENTICATED { userId, username } → set isAuthenticated = true
+3. Nhận `{ user { id, username } }` và `Set-Cookie` chứa access/refresh token httpOnly
+4. Không lưu token trong localStorage; browser giữ cookie bảo mật
+5. `socket-store.connect()` dùng `withCredentials: true` → server đọc access cookie và tự xác thực socket
+6. Nhận `AUTHENTICATED { userId, username }` → set `isAuthenticated = true`
 7. Transition sang màn hình chọn Create/Join Room
 ```
 
@@ -75,8 +75,8 @@ type AuthState = "idle" | "entering" | "loading" | "authenticated";
 
 - [ ] Nhập username, click → thấy loading → thấy authenticated
 - [ ] Console log: "🔌 Connected" → "✅ Authenticated: [name]"
-- [ ] Token được lưu trong localStorage
-- [ ] Refresh trang → vẫn authenticated (dùng token cũ)
+- [ ] Token được server set vào httpOnly cookies, không dùng localStorage
+- [ ] Refresh trang → vẫn authenticated (dùng cookie cũ)
 
 ---
 

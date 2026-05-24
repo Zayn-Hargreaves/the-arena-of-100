@@ -1,4 +1,5 @@
 import React from "react";
+import { cn } from "@/lib/utils";
 
 export interface SkeletonProps {
   variant?: "text" | "circle" | "rect";
@@ -8,7 +9,7 @@ export interface SkeletonProps {
 }
 
 const variantClasses = {
-  text: "rounded-full",
+  text: "rounded",
   circle: "rounded-full",
   rect: "rounded-lg",
 };
@@ -21,8 +22,11 @@ export const Skeleton = React.forwardRef<HTMLDivElement, SkeletonProps>(
       height: height || (variant === "circle" ? "2rem" : "1rem"),
     };
 
-    const combinedClassName =
-      `bg-surface-container-high animate-shimmer ${shapeClass} ${className}`.trim();
+    const combinedClassName = cn(
+      "bg-surface-container-high animate-shimmer",
+      shapeClass,
+      className,
+    );
 
     return (
       <div

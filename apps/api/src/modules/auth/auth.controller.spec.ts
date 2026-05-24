@@ -22,6 +22,8 @@ describe("AuthController", () => {
       guestLogin: vi.fn(),
       refreshAccessToken: vi.fn(),
       logout: vi.fn(),
+      getAccessTokenTtlSeconds: vi.fn().mockReturnValue(86400),
+      getRefreshTokenTtlSeconds: vi.fn().mockReturnValue(604800),
     };
     service = mockAuthService as unknown as AuthService;
     controller = new AuthController(service);
@@ -37,21 +39,33 @@ describe("AuthController", () => {
 
   describe("guestLogin", () => {
     const guestLoginDto = { username: "guest_player" };
+    const reply = {
+      header: vi.fn(),
+    } as any;
 
     it("should login guest user successfully", async () => {
       vi.mocked(service.guestLogin).mockResolvedValue(mockAuthResult);
 
-      const result = await controller.guestLogin(guestLoginDto);
+      const result = await controller.guestLogin(guestLoginDto, reply);
 
       expect(service.guestLogin).toHaveBeenCalledWith(guestLoginDto.username);
-      expect(result).toEqual(mockAuthResult);
+      expect(reply.header).toHaveBeenCalledWith(
+        "Set-Cookie",
+        expect.arrayContaining([
+          expect.stringContaining("arena_access_token=access-token-123"),
+          expect.stringContaining("HttpOnly"),
+          expect.stringContaining("Secure"),
+          expect.stringContaining("arena_refresh_token=refresh-token-456"),
+        ]),
+      );
+      expect(result).toEqual(mockAuthResult.user);
     });
 
     it("should handle guest login errors", async () => {
       const error = new Error("Failed to login guest");
       vi.mocked(service.guestLogin).mockRejectedValue(error);
 
-      await expect(controller.guestLogin(guestLoginDto)).rejects.toThrow(
+      await expect(controller.guestLogin(guestLoginDto, reply)).rejects.toThrow(
         "Failed to login guest",
       );
       expect(service.guestLogin).toHaveBeenCalledWith(guestLoginDto.username);

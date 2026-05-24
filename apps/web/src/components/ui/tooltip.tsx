@@ -47,6 +47,8 @@ const Tooltip = ({
   );
 };
 
+Tooltip.displayName = "Tooltip";
+
 // Export individual components for more granular control
 const TooltipTrigger = TooltipPrimitive.Trigger;
 const TooltipContent = TooltipPrimitive.Content;

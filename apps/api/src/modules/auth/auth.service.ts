@@ -49,6 +49,14 @@ export class AuthService {
     ); // 7 days
   }
 
+  getAccessTokenTtlSeconds(): number {
+    return this.parseDurationToSeconds(this.jwtExpiresIn, 86400);
+  }
+
+  getRefreshTokenTtlSeconds(): number {
+    return this.refreshExpiresIn;
+  }
+
   // Guest Login (no password, just username)
   async guestLogin(username: string): Promise<AuthResult> {
     // Find or create user
@@ -59,9 +67,11 @@ export class AuthService {
     if (!user) {
       // Prevent creation of "admin" user via guest login
       if (username === "admin") {
-        throw new UnauthorizedException("Cannot create admin user via guest login");
+        throw new UnauthorizedException(
+          "Cannot create admin user via guest login",
+        );
       }
-      
+
       user = await this.prisma.user.create({
         data: {
           username,
@@ -69,7 +79,9 @@ export class AuthService {
           role: Role.GUEST, // Always create new users as GUEST
         },
       });
-      this.logger.log(`New guest user created: ${username} with role ${user.role}`);
+      this.logger.log(
+        `New guest user created: ${username} with role ${user.role}`,
+      );
     }
     // If user exists, preserve their existing role when logging in
 
@@ -138,5 +150,27 @@ export class AuthService {
   // Logout
   async logout(refreshToken: string): Promise<void> {
     await this.redis.del(`refresh:${refreshToken}`);
+  }
+
+  private parseDurationToSeconds(value: string, fallback: number): number {
+    const normalized = value.trim().toLowerCase();
+
+    const unitMatch = normalized.match(/^(\d+)([smhd])$/);
+    if (unitMatch) {
+      const amount = Number(unitMatch[1]);
+      const unit = unitMatch[2];
+
+      if (unit === "s") return amount;
+      if (unit === "m") return amount * 60;
+      if (unit === "h") return amount * 60 * 60;
+      if (unit === "d") return amount * 60 * 60 * 24;
+    }
+
+    const numericValue = Number(normalized);
+    if (Number.isFinite(numericValue) && numericValue > 0) {
+      return numericValue;
+    }
+
+    return fallback;
   }
 }

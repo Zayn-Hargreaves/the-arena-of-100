@@ -21,6 +21,7 @@ import {
 } from "@arena/shared";
 import { AuthHandler, RoomHandler, MatchHandler } from "./handlers";
 import { AuthService } from "../modules/auth/auth.service";
+import { ACCESS_TOKEN_COOKIE, getCookieValue } from "../common/utils/cookie";
 
 @WebSocketGateway({
   cors: {
@@ -74,12 +75,37 @@ export class GameGateway
         }
       }
 
+      if (!socket.data.userId) {
+        const accessToken = getCookieValue(
+          socket.handshake.headers?.cookie,
+          ACCESS_TOKEN_COOKIE,
+        );
+
+        if (accessToken) {
+          try {
+            const decoded = this.authService.verifyToken(accessToken);
+            socket.data.userId = decoded.userId;
+            socket.data.username = decoded.username;
+            this.logger.log(
+              `Cookie authentication successful for user: ${decoded.username}`,
+            );
+          } catch (error) {
+            this.logger.warn(
+              `Cookie authentication failed: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+        }
+      }
+
       next();
     });
   }
 
   async handleConnection(@ConnectedSocket() client: Socket) {
     this.logger.log(`Client connected: ${client.id}`);
+    await this.authHandler.handleAuthenticatedConnection(client);
   }
 
   async handleDisconnect(@ConnectedSocket() client: Socket) {

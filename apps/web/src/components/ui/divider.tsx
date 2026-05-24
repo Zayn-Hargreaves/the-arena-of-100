@@ -1,4 +1,5 @@
 import React from "react";
+import { cn } from "@/lib/utils";
 
 export interface DividerProps {
   orientation?: "horizontal" | "vertical";
@@ -14,7 +15,7 @@ export const Divider = React.forwardRef<HTMLDivElement, DividerProps>(
       : "h-full w-px bg-primary/30";
 
     const glowClass = glow ? "glow-primary" : "";
-    const combinedClassName = `${baseClasses} ${glowClass} ${className}`.trim();
+    const combinedClassName = cn(baseClasses, glowClass, className);
 
     return (
       <div
