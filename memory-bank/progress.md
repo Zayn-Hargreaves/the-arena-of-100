@@ -1,6 +1,6 @@
 # Progress: Arena of 100
 
-## Current Status: 🏗️ Base Scaffold Complete → CI/CD & Testing Setup
+## Current Status: 🏗️ Backend Complete → Frontend Implementation
 
 ### ✅ Completed (Phase 0: Planning & Setup)
 
@@ -29,14 +29,33 @@
 
 ### 🚧 In Progress (Phase 1: Core Implementation)
 
+#### Backend — ✅ Complete
+
 - [x] Install dependencies (`pnpm install`)
 - [x] Database migration and seeding
 - [x] Implement GameLoopService (countdown → round → evaluate → repeat)
 - [x] Implement round timer management (auto-end on timeout)
 - [x] Unit tests for game-core state machine
-- [ ] End-to-end room creation → join → match flow
-- [ ] Frontend lobby and game UI components with routing
-- [ ] Connect socket-store to UI components
+
+#### Frontend — 🚧 Needs Implementation (theo thứ tự phụ thuộc)
+
+> Chi tiết: xem [plan-e2e-test.md](./plan-e2e-test.md)
+
+- [ ] Guest login page + API client (`POST /auth/guest` → JWT → WS authenticate) _(Slice 1)_
+- [ ] Socket store — add 7 missing event handlers (MATCH_STARTED, ROUND_STARTED, ROUND_ENDED, PLAYER_ELIMINATED, MATCH_FINISHED, PLAYER_JOINED/LEFT reactive) _(Slice 2)_
+- [ ] Create Room page + Lobby UI (`/lobby/[roomCode]`, player list, room code display) _(Slice 3)_
+- [ ] Join Room page + redirect to lobby _(Slice 4)_
+- [ ] Game page `/game/[matchId]` — countdown overlay, question display, answer buttons, round timer _(Slice 5-6)_
+- [ ] Result page `/result/[matchId]` + elimination display _(Slice 7)_
+- [ ] Connect socket-store to all UI components (xóa console.log, reactive binding)
+- [ ] Frontend routing setup (App Router pages: `/`, `/lobby/[code]`, `/game/[matchId]`, `/result/[matchId]`)
+
+#### Integration
+
+- [ ] End-to-end room creation → join → match flow _(Slice 8 — integration test & edge cases)_
+
+#### Product Features (phụ thuộc frontend hoàn thiện)
+
 - [ ] Frictionless onboarding system with content moderation
 - [ ] Lobby lifecycle management (auto-start, host controls, heartbeat validation)
 - [ ] Spectator mode with micro-interactions
@@ -132,14 +151,16 @@
 
 ## Milestones
 
-| Milestone                   | Target         | Status      |
-| --------------------------- | -------------- | ----------- |
-| Base Scaffold               | Week 1         | ✅ Complete |
-| Architecture Review         | Week 1         | ✅ Complete |
-| Critical Fixes              | Week 2 (start) | 🔴 Next     |
-| Core Game Loop + Product UX | Week 2         | 🚧 Next     |
-| Reconnect & Polish          | Week 3         | 📋 Pending  |
-| MVP Launch                  | Week 4         | 🔮 Future   |
+| Milestone                | Target         | Status         |
+| ------------------------ | -------------- | -------------- |
+| Base Scaffold            | Week 1         | ✅ Complete    |
+| Architecture Review      | Week 1         | ✅ Complete    |
+| Critical Fixes           | Week 2 (start) | ✅ Complete    |
+| Core Game Loop (Backend) | Week 2         | ✅ Complete    |
+| Frontend UI (8 Slices)   | Week 2-3       | 🚧 In Progress |
+| Integration & E2E Test   | Week 3         | 📋 Pending     |
+| Product Features         | Week 3-4       | 📋 Pending     |
+| MVP Launch               | Week 4         | 🔮 Future      |
 
 ## What Works Now
 
@@ -148,18 +169,25 @@
 - Turborepo Remote Caching
 - Shared type definitions (events, state, socket protocol)
 - Match state machine (pure logic, no dependencies)
-- Backend module skeletons (auth, room, match)
-- Frontend home page UI (static only)
-- Docker infrastructure definition
+- Backend modules: auth (JWT), room (CRUD + WS), match (orchestration), question (CRUD + seed)
+- GameLoopService: countdown → round → evaluate → repeat loop
+- Round timer: auto-end round when time expires (15s)
+- GameGateway: refactored into handler classes (Auth, Room, Match)
+- State machine Redis persistence (serialize/deserialize)
+- Frontend landing page (static, needs login integration)
+- Zustand socket store (partial — 7 event handlers missing)
+- Docker infrastructure (PostgreSQL + Redis)
 - Redis service with full operation support
 
 ## What's Next (Priority Order)
 
-1. Start Docker containers (PostgreSQL + Redis)
-2. Run `pnpm db:push` to create database tables
-3. **🔴 Fix critical issues (QuestionModule, state persistence, gateway refactor)**
-4. Implement Game Loop Service
-5. Implement round timer management
-6. Write unit tests for game-core
-7. Build frontend lobby + game UI
-8. End-to-end integration
+> Chi tiết frontend plan: xem [plan-e2e-test.md](./plan-e2e-test.md)
+
+1. **Slice 1**: Guest login page + API client (`POST /auth/guest` → JWT → WS authenticate)
+2. **Slice 2**: Socket store — add 7 missing event handlers (MATCH_STARTED, ROUND_STARTED, ROUND_ENDED, PLAYER_ELIMINATED, MATCH_FINISHED, PLAYER_JOINED/LEFT reactive)
+3. **Slice 3**: Create Room page + Lobby UI (`/lobby/[roomCode]`)
+4. **Slice 4**: Join Room page + redirect to lobby
+5. **Slice 5**: Game page — match start + countdown UI
+6. **Slice 6**: Game page — question display + answer submit + timer
+7. **Slice 7**: Elimination display + Result page (`/result/[matchId]`)
+8. **Slice 8**: E2E integration test (toàn bộ flow) + edge cases

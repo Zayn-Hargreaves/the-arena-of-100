@@ -2,7 +2,9 @@
 
 ## Current Focus
 
-All critical fixes complete. Currently on branch `refactor/split-game-gateway` — gateway refactored, error handling pattern implemented, ready to transition to Phase 1 core game loop implementation.
+All critical fixes + backend core complete. Transitioning to frontend implementation. Current branch `refactor/split-game-gateway` — gateway refactored, error handling implemented, ready for frontend UI work.
+
+**Active plan**: [plan-e2e-test.md](./plan-e2e-test.md) — 8 atomic slices for end-to-end room → match flow.
 
 ## Recent Changes
 
@@ -78,8 +80,8 @@ All critical fixes complete. Currently on branch `refactor/split-game-gateway` �
 
 ### Pre-requisites
 
-1. Start Docker containers for PostgreSQL + Redis
-2. Run `pnpm db:push` to create database tables
+1. ~~Start Docker containers for PostgreSQL + Redis~~ (Completed)
+2. ~~Run `pnpm db:push` to create database tables~~ (Completed)
 
 ### Critical Fixes (Before Features)
 
@@ -88,17 +90,22 @@ All critical fixes complete. Currently on branch `refactor/split-game-gateway` �
 3. ~~Refactor `GameGateway` → split or delegate to handler classes~~ (Completed)
 4. ~~Migrate validation/serialization from class-validator/transformer to Zod~~ (Completed - see [processTechDebt.md](./processTechDebt.md))
 
-### Core Game Loop (MVP Minimum)
+### Core Game Loop (Backend)
 
 1. ~~Implement `GameLoopService` (countdown → round → evaluate → repeat)~~ (Completed)
 2. ~~Implement round timer (auto-end round when time expires)~~ (Completed)
 3. ~~Unit tests for `game-core` state machine~~ (Completed)
 
-### Frontend + Integration
+### Frontend (Current — theo plan-e2e-test.md)
 
-1. Build lobby + game UI pages with routing
-2. Connect socket-store to UI components
-3. End-to-end flow test
+1. **Slice 1**: Guest login page + API client
+2. **Slice 2**: Socket store — add missing event handlers
+3. **Slice 3**: Create Room + Lobby UI
+4. **Slice 4**: Join Room page
+5. **Slice 5**: Match start + countdown UI
+6. **Slice 6**: Game UI (question + answer + timer)
+7. **Slice 7**: Elimination + results
+8. **Slice 8**: E2E integration test
 
 ## Key Files Reference
 

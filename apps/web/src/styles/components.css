@@ -1,0 +1,41 @@
+.glass-panel {
+  background-color: theme("colors.surface-dim / 80%");
+  backdrop-filter: blur(20px);
+  border: 1px solid theme("colors.primary / 30%");
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+}
+
+.glass-panel-secondary {
+  background-color: theme("colors.surface-dim / 80%");
+  backdrop-filter: blur(20px);
+  border: 1px solid theme("colors.secondary-fixed / 30%");
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+}
+
+.glow-primary {
+  box-shadow: 0 0 20px theme("colors.primary / 30%");
+}
+
+.glow-secondary {
+  box-shadow: 0 0 20px theme("colors.secondary-fixed / 30%");
+}
+
+.glow-tertiary {
+  box-shadow: 0 0 25px theme("colors.tertiary / 40%");
+}
+
+.glow-error {
+  box-shadow: 0 0 25px theme("colors.error / 40%");
+}
+
+.text-glow-cyan {
+  text-shadow: 0 0 8px theme("colors.secondary-fixed / 80%");
+}
+
+.text-glow-purple {
+  text-shadow: 0 0 8px theme("colors.primary / 80%");
+}
+
+.text-glow-gold {
+  text-shadow: 0 0 8px theme("colors.tertiary / 80%");
+}
