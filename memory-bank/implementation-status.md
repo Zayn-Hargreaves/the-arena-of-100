@@ -2,7 +2,7 @@
 
 **Last Updated:** 2026-05-24
 
-## Current Phase: Phase 3 Completed
+## Current Phase: Phase 4 Completed
 
 ### ✅ Phase 1: Design Tokens and CSS Layers (Completed)
 
@@ -88,6 +88,33 @@ Created the following components in `src/components/ui/`:
    - Fallback to initials when image fails
    - Forward ref implementation
 
+### ✅ Phase 4: Molecular Components (Completed)
+
+Created the following components in `src/components/ui/`:
+
+1. **FormField** (`form-field.tsx`)
+   - Combines Input and Label components
+   - Handles loading, empty, and error states
+   - Proper accessibility attributes with htmlFor linking
+
+2. **Tooltip** (`tooltip.tsx`)
+   - Uses Radix UI Tooltip primitives
+   - Supports positioning on all sides
+   - Customizable through className prop
+   - Proper accessibility support
+
+3. **Toast** (`toast.tsx`)
+   - Uses Radix UI Toast primitives
+   - Four variants: info, success, warning, error
+   - Custom hook (useToast) for triggering toasts
+   - Proper accessibility and keyboard navigation
+
+4. **Modal** (`modal.tsx`)
+   - Uses Radix UI Dialog primitives
+   - Wrapped in GlassPanel with elevated variant and secondary glow
+   - Proper accessibility attributes
+   - Customizable through className prop
+
 ### 🧪 Testing
 
 - Created test page at `/test-components` to verify all components
@@ -97,14 +124,16 @@ Created the following components in `src/components/ui/`:
 
 ## Next Steps
 
-### Phase 4: Molecular Components
+### Phase 5: Organisms and Templates
 
 Plan to implement:
 
-- FormField
-- Tooltip
-- Toast
-- Modal
+- Sidebar
+- TopAppBar
+- PlayerGrid
+- AnswerGrid
+- QuestionCard
+- And other game-specific components
 
 ### Phase 5: Organisms and Templates
 

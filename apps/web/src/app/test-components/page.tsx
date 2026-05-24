@@ -10,10 +10,28 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Avatar } from "@/components/ui/avatar";
-import { Heart, Star, User, Settings, Plus, Check, X } from "lucide-react";
+import { FormField } from "@/components/ui/form-field";
+import { Tooltip } from "@/components/ui/tooltip";
+import { Modal } from "@/components/ui/modal";
+
+import { useToast } from "@/hooks/use-toast";
+import {
+  Heart,
+  Star,
+  User,
+  Settings,
+  Plus,
+  Check,
+  X,
+  HelpCircle,
+  Mail,
+  Lock,
+} from "lucide-react";
 
 export default function TestComponentsPage() {
   const [buttonLoading, setButtonLoading] = React.useState(false);
+  const [isModalOpen, setIsModalOpen] = React.useState(false);
+  const { toast } = useToast();
 
   const handleLoadingClick = () => {
     setButtonLoading(true);
@@ -21,6 +39,21 @@ export default function TestComponentsPage() {
       setButtonLoading(false);
     }, 2000);
     return () => clearTimeout(timeout);
+  };
+
+  const showToast = (variant: "info" | "success" | "warning" | "error") => {
+    const messages = {
+      info: "This is an informational toast message.",
+      success: "Operation completed successfully!",
+      warning: "This is a warning message.",
+      error: "An error occurred while processing your request.",
+    };
+
+    toast({
+      title: variant.charAt(0).toUpperCase() + variant.slice(1),
+      description: messages[variant as keyof typeof messages],
+      variant: variant,
+    });
   };
 
   return (
@@ -404,6 +437,192 @@ export default function TestComponentsPage() {
               <Avatar size="lg" fallback="P3" glow="tertiary" />
               <Avatar size="lg" fallback="P4" glow="error" />
             </div>
+          </GlassPanel>
+        </div>
+
+        <Divider glow />
+
+        {/* FormField Component */}
+        <div className="space-y-6">
+          <h2 className="text-2xl font-display text-secondary-fixed">
+            Form Fields
+          </h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <GlassPanel>
+              <h3 className="text-xl font-display mb-4 text-primary">
+                Basic Form Field
+              </h3>
+              <div className="space-y-4">
+                <FormField label="Email" id="email">
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="Enter your email"
+                  />
+                </FormField>
+
+                <FormField label="Username" id="username">
+                  <Input id="username" placeholder="Choose a username" />
+                </FormField>
+              </div>
+            </GlassPanel>
+
+            <GlassPanel>
+              <h3 className="text-xl font-display mb-4 text-primary">
+                With Validation
+              </h3>
+              <div className="space-y-4">
+                <FormField
+                  label="Email"
+                  id="email-error"
+                  error="Please enter a valid email address"
+                >
+                  <Input
+                    id="email-error"
+                    type="email"
+                    placeholder="Enter your email"
+                    error
+                  />
+                </FormField>
+
+                <FormField
+                  label="Password"
+                  id="password-error"
+                  error="Password must be at least 8 characters"
+                >
+                  <Input
+                    id="password-error"
+                    type="password"
+                    placeholder="Enter your password"
+                    error
+                  />
+                </FormField>
+              </div>
+            </GlassPanel>
+          </div>
+        </div>
+
+        <Divider />
+
+        {/* Tooltip Component */}
+        <div className="space-y-6">
+          <h2 className="text-2xl font-display text-secondary-fixed">
+            Tooltips
+          </h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <GlassPanel>
+              <h3 className="text-xl font-display mb-4 text-primary">
+                Basic Tooltips
+              </h3>
+              <div className="flex flex-wrap gap-4 items-center">
+                <Tooltip content="This is helpful information">
+                  <Button variant="icon">
+                    <HelpCircle className="w-5 h-5" />
+                  </Button>
+                </Tooltip>
+
+                <Tooltip content="Send message">
+                  <Button variant="icon">
+                    <Mail className="w-5 h-5" />
+                  </Button>
+                </Tooltip>
+
+                <Tooltip content="Secure connection">
+                  <Button variant="icon">
+                    <Lock className="w-5 h-5" />
+                  </Button>
+                </Tooltip>
+              </div>
+            </GlassPanel>
+
+            <GlassPanel>
+              <h3 className="text-xl font-display mb-4 text-primary">
+                Positioning
+              </h3>
+              <div className="flex flex-wrap gap-4 items-center">
+                <Tooltip content="Tooltip on top" side="top">
+                  <Button size="sm">Top</Button>
+                </Tooltip>
+
+                <Tooltip content="Tooltip on bottom" side="bottom">
+                  <Button size="sm">Bottom</Button>
+                </Tooltip>
+
+                <Tooltip content="Tooltip on left" side="left">
+                  <Button size="sm">Left</Button>
+                </Tooltip>
+
+                <Tooltip content="Tooltip on right" side="right">
+                  <Button size="sm">Right</Button>
+                </Tooltip>
+              </div>
+            </GlassPanel>
+          </div>
+        </div>
+
+        <Divider glow />
+
+        {/* Toast Component */}
+        <div className="space-y-6">
+          <h2 className="text-2xl font-display text-secondary-fixed">Toasts</h2>
+
+          <GlassPanel>
+            <h3 className="text-xl font-display mb-4 text-primary">
+              Toast Variants
+            </h3>
+            <div className="flex flex-wrap gap-4 items-center">
+              <Button onClick={() => showToast("info")}>Info Toast</Button>
+              <Button onClick={() => showToast("success")} variant="primary">
+                Success Toast
+              </Button>
+              <Button onClick={() => showToast("warning")} variant="secondary">
+                Warning Toast
+              </Button>
+              <Button onClick={() => showToast("error")} variant="danger">
+                Error Toast
+              </Button>
+            </div>
+          </GlassPanel>
+        </div>
+
+        <Divider />
+
+        {/* Modal Component */}
+        <div className="space-y-6">
+          <h2 className="text-2xl font-display text-secondary-fixed">Modals</h2>
+
+          <GlassPanel>
+            <h3 className="text-xl font-display mb-4 text-primary">
+              Modal Examples
+            </h3>
+            <div className="flex flex-wrap gap-4">
+              <Button onClick={() => setIsModalOpen(true)}>
+                Open Basic Modal
+              </Button>
+            </div>
+
+            <Modal
+              open={isModalOpen}
+              onOpenChange={setIsModalOpen}
+              title="Sample Modal"
+              description="This is a demonstration of the modal component."
+            >
+              <div className="space-y-4">
+                <p className="text-on-background">
+                  This modal uses the GlassPanel component for its styling,
+                  giving it the distinctive glass effect that fits with the rest
+                  of the UI components.
+                </p>
+                <div className="flex gap-2 justify-end">
+                  <Button variant="ghost" onClick={() => setIsModalOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button onClick={() => setIsModalOpen(false)}>Confirm</Button>
+                </div>
+              </div>
+            </Modal>
           </GlassPanel>
         </div>
       </div>

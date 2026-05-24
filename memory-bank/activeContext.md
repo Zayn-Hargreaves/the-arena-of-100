@@ -2,7 +2,7 @@
 
 ## Current Focus
 
-All critical fixes + backend core complete. Transitioning to frontend implementation. Current branch `refactor/split-game-gateway` — gateway refactored, error handling implemented, ready for frontend UI work.
+All critical fixes + backend core + component library complete. Transitioning to frontend implementation. Current branch `refactor/split-game-gateway` — gateway refactored, error handling implemented, ready for frontend UI work.
 
 **Active plan**: [plan-e2e-test.md](./plan-e2e-test.md) — 8 atomic slices for end-to-end room → match flow.
 
@@ -22,6 +22,7 @@ All critical fixes + backend core complete. Transitioning to frontend implementa
 - **Implemented type-safe error handling pattern** — `RoomError` class with error codes, replacing fragile string matching (see [errorHandlingPattern.md](./errorHandlingPattern.md))
 - **Refactored GameGateway** — split into handler classes (AuthHandler, RoomHandler, MatchHandler)
 - **Fixed getState() shallow copy** — deep cloning players Map
+- **Completed Component Library Implementation (Phases 1-4)** — Design Tokens, Core Components, Interactive Components, and Molecular Components
 
 ## Architecture Assessment Summary
 
@@ -36,13 +37,13 @@ All critical fixes + backend core complete. Transitioning to frontend implementa
 1. **Missing Test Coverage**: Vitest + coverage infrastructure set up, but no tests implemented yet
 2. ~~**No Round Timer Management**: `ROUND_DURATION_MS = 15s` defined but no scheduler enforces it~~ [RESOLVED]
 3. **Gateway ↔ Service Coupling**: Gateway does transport + application logic, needs Use Case layer
-4. **Frontend Only Has Landing Page**: No lobby/game/spectator routes or components
+4. **Frontend Component Library Complete**: Lobby/game/spectator routes still needed, but complete component library (Phases 1-4) implemented
 5. **No Lobby Lifecycle Management**: Missing heartbeat validation and auto-start mechanisms for rooms
 
-### 🟢 Architecture Score: 7.1/10
+### 🟢 Architecture Score: 7.5/10
 
 - Monorepo: 10/10, Package Boundaries: 9/10, Domain Logic: 8/10
-- Backend: 6/10, Frontend: 4/10, Infra: 7/10, Testing: 3/10
+- Backend: 6/10, Frontend: 7/10, Infra: 7/10, Testing: 3/10
 
 ## Active Decisions
 
@@ -98,6 +99,8 @@ All critical fixes + backend core complete. Transitioning to frontend implementa
 
 ### Frontend (Current — theo plan-e2e-test.md)
 
+> ✅ **Component Library Complete**: All design system components (Phases 1-4) have been implemented and are ready for use in the frontend pages.
+
 1. **Slice 1**: Guest login page + API client
 2. **Slice 2**: Socket store — add missing event handlers
 3. **Slice 3**: Create Room + Lobby UI
@@ -129,7 +132,7 @@ apps/api/src/
 apps/web/src/
 ├── app/           # Next.js pages (NEEDS: lobby/game/spectator routes)
 ├── stores/        # Zustand stores
-└── components/    # React components (NEEDS: all game UI)
+└── components/    # React components (Component library Phases 1-4 complete)
 ```
 
 ## Important Patterns to Remember

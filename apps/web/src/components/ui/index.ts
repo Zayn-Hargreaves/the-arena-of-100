@@ -7,6 +7,7 @@ export * from "./form-field";
 export * from "./glass-panel";
 export * from "./icon";
 export * from "./input";
+export * from "./modal";
 export * from "./skeleton";
 export * from "./spinner";
 export * from "./toast";

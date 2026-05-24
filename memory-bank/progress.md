@@ -37,12 +37,13 @@
 - [x] Implement round timer management (auto-end on timeout)
 - [x] Unit tests for game-core state machine
 
-#### Frontend — 🚧 Needs Implementation (theo thứ tự phụ thuộc)
+#### Frontend — 🚧 In Progress (theo thứ tự phụ thuộc)
 
 > Chi tiết: xem [plan-e2e-test.md](./plan-e2e-test.md)
 
+- [x] Component library implementation (Phases 1-4 complete)
 - [ ] Guest login page + API client (`POST /auth/guest` → JWT → WS authenticate) _(Slice 1)_
-- [ ] Socket store — add 7 missing event handlers (MATCH_STARTED, ROUND_STARTED, ROUND_ENDED, PLAYER_ELIMINATED, MATCH_FINISHED, PLAYER_JOINED/LEFT reactive) _(Slice 2)_
+- [ ] Socket store — add 7 missing event handlers (MATCH*STARTED, ROUND_STARTED, ROUND_ENDED, PLAYER_ELIMINATED, MATCH_FINISHED, PLAYER_JOINED/LEFT reactive) *(Slice 2)\_
 - [ ] Create Room page + Lobby UI (`/lobby/[roomCode]`, player list, room code display) _(Slice 3)_
 - [ ] Join Room page + redirect to lobby _(Slice 4)_
 - [ ] Game page `/game/[matchId]` — countdown overlay, question display, answer buttons, round timer _(Slice 5-6)_
@@ -143,11 +144,11 @@
 | Package Boundaries       | 9/10       | Clean separation, correct dependency flow |
 | Domain Logic (game-core) | 8/10       | Good state machine, needs serialization   |
 | Backend Architecture     | 6/10       | Modules OK, gateway bloated, no game loop |
-| Frontend Architecture    | 4/10       | Only scaffold, no real UI                 |
+| Frontend Architecture    | 7/10       | Complete component library (Phases 1-4)   |
 | Infrastructure           | 7/10       | Docker OK, missing dev tooling            |
 | DevOps/CI-CD             | 10/10      | GitHub Actions pipeline configured        |
 | Testing                  | 3/10       | Vitest setup with coverage enabled        |
-| **Overall**              | **6.7/10** | Solid foundation, CI/CD & Testing ready   |
+| **Overall**              | **7.2/10** | Strong foundation with complete UI system |
 
 ## Milestones
 
@@ -174,6 +175,7 @@
 - Round timer: auto-end round when time expires (15s)
 - GameGateway: refactored into handler classes (Auth, Room, Match)
 - State machine Redis persistence (serialize/deserialize)
+- Complete frontend component library (Phases 1-4: Design Tokens, Core Components, Interactive Components, Molecular Components)
 - Frontend landing page (static, needs login integration)
 - Zustand socket store (partial — 7 event handlers missing)
 - Docker infrastructure (PostgreSQL + Redis)
@@ -191,3 +193,5 @@
 6. **Slice 6**: Game page — question display + answer submit + timer
 7. **Slice 7**: Elimination display + Result page (`/result/[matchId]`)
 8. **Slice 8**: E2E integration test (toàn bộ flow) + edge cases
+
+> ✅ **Component Library Complete**: All design system components (Phases 1-4) have been implemented and are ready for use in the frontend pages.

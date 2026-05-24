@@ -2,36 +2,39 @@
 
 > **Mục tiêu**: Kết nối toàn bộ user journey từ landing page đến match kết thúc.
 > **Chiến lược**: 8 Atomic Slices — mỗi slice 2-4 files, testable ngay sau khi hoàn thành.
-> **Phụ thuộc**: Backend đã hoàn thiện (auth, room, match, game-loop, state-machine).
+> **Phụ thuộc**: Backend đã hoàn thiện (auth, room, match, game-loop, state-machine) và Component Library đã hoàn thành (Phases 1-4).
 
 ---
 
 ## Dependency Graph
 
 ```
-Slice 1: Guest Login ─────────────────────────────────────────────┐
-   │ (không phụ thuộc slice nào)                                   │
-   ▼                                                               │
-Slice 2: Socket Store Handlers ────────────────────────────────────┤
-   │ (cần Slice 1 để test)                                         │
-   ├───────────────────────────────────────────────────────────────┤
-   ▼                                                               │
-Slice 3: Create Room + Lobby UI ───────────────────────────────────┤
-   │ (cần Slice 2)                                                 │
-   ▼                                                               │
-Slice 4: Join Room + Redirect ─────────────────────────────────────┤
-   │ (cần Slice 2, độc lập với Slice 3)                            │
-   ▼                                                               │
-Slice 5: Match Start + Countdown UI ───────────────────────────────┤
-   │ (cần Slice 3 hoặc 4 để có room, cần Slice 2 để có store)      │
-   ▼                                                               │
-Slice 6: Game UI (Question + Answer) ──────────────────────────────┤
-   │ (cần Slice 5)                                                 │
-   ▼                                                               │
-Slice 7: Elimination + Results ────────────────────────────────────┤
-   │ (cần Slice 6)                                                 │
-   ▼                                                               │
-Slice 8: E2E Integration Test ─────────────────────────────────────┘
+Component Library (Phases 1-4) ─────────────────────────────────────┐
+   (không phụ thuộc)                                                │
+   ▼                                                                │
+Slice 1: Guest Login ────────────────────────────────────────────────┤
+   │ (có thể dùng component library)                                 │
+   ▼                                                                │
+Slice 2: Socket Store Handlers ──────────────────────────────────────┤
+   │ (cần Slice 1 để test)                                           │
+   ├─────────────────────────────────────────────────────────────────┤
+   ▼                                                                │
+Slice 3: Create Room + Lobby UI ─────────────────────────────────────┤
+   │ (cần Slice 2)                                                   │
+   ▼                                                                │
+Slice 4: Join Room + Redirect ───────────────────────────────────────┤
+   │ (cần Slice 2, độc lập với Slice 3)                              │
+   ▼                                                                │
+Slice 5: Match Start + Countdown UI ─────────────────────────────────┤
+   │ (cần Slice 3 hoặc 4 để có room, cần Slice 2 để có store)        │
+   ▼                                                                │
+Slice 6: Game UI (Question + Answer) ────────────────────────────────┤
+   │ (cần Slice 5)                                                   │
+   ▼                                                                │
+Slice 7: Elimination + Results ──────────────────────────────────────┤
+   │ (cần Slice 6)                                                   │
+   ▼                                                                │
+Slice 8: E2E Integration Test ───────────────────────────────────────┘
    (cần tất cả slices trên)
 ```
 
@@ -342,6 +345,17 @@ type GamePhase = "countdown" | "question" | "answered" | "result";
 
 ## File Inventory — Tất cả files sẽ thay đổi
 
+### Component Library (Phases 1-4) — ✅ Completed
+
+> Đã hoàn thành đầy đủ thư viện component theo thiết kế hệ thống:
+>
+> - Phase 1: Design Tokens và CSS Layers
+> - Phase 2: Core Components (Icon, Spinner, Skeleton, GlassPanel, Divider)
+> - Phase 3: Interactive Components (Button, Input, Badge, Avatar)
+> - Phase 4: Molecular Components (FormField, Tooltip, Toast, Modal)
+
+### E2E Flow Files
+
 | File                                            | Slice | Action  |
 | ----------------------------------------------- | ----- | ------- |
 | `apps/web/src/app/page.tsx`                     | 1,3,4 | Edit    |
@@ -367,13 +381,14 @@ type GamePhase = "countdown" | "question" | "answered" | "result";
 
 ## Tiến độ
 
-| Slice                      | Trạng thái | Ngày bắt đầu | Ngày hoàn thành |
-| -------------------------- | ---------- | ------------ | --------------- |
-| 1: Guest Login + Auth      | ⏳ Pending | —            | —               |
-| 2: Socket Store Handlers   | ⏳ Pending | —            | —               |
-| 3: Create Room + Lobby     | ⏳ Pending | —            | —               |
-| 4: Join Room               | ⏳ Pending | —            | —               |
-| 5: Match Start + Countdown | ⏳ Pending | —            | —               |
-| 6: Game UI (Q&A)           | ⏳ Pending | —            | —               |
-| 7: Elimination + Results   | ⏳ Pending | —            | —               |
-| 8: E2E Integration Test    | ⏳ Pending | —            | —               |
+| Slice                          | Trạng thái   | Ngày bắt đầu | Ngày hoàn thành |
+| ------------------------------ | ------------ | ------------ | --------------- |
+| Component Library (Phases 1-4) | ✅ Completed | 2026-05-24   | 2026-05-24      |
+| 1: Guest Login + Auth          | ⏳ Pending   | —            | —               |
+| 2: Socket Store Handlers       | ⏳ Pending   | —            | —               |
+| 3: Create Room + Lobby         | ⏳ Pending   | —            | —               |
+| 4: Join Room                   | ⏳ Pending   | —            | —               |
+| 5: Match Start + Countdown     | ⏳ Pending   | —            | —               |
+| 6: Game UI (Q&A)               | ⏳ Pending   | —            | —               |
+| 7: Elimination + Results       | ⏳ Pending   | —            | —               |
+| 8: E2E Integration Test        | ⏳ Pending   | —            | —               |

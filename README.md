@@ -188,9 +188,15 @@ Detailed documentation is available in the `memory-bank/` directory:
 - Implemented Badge component with 5 variants (online, eliminated, admin, warning, default)
 - Implemented Avatar component with image/initials/loading states and status indicators
 
+### ✅ Phase 4: Molecular Components (Completed)
+
+- Implemented FormField component for combining inputs with labels and error handling
+- Implemented Tooltip component using Radix UI primitives
+- Implemented Toast component with provider and hook for notifications
+- Implemented Modal component using Radix UI Dialog primitives
+
 ### 🔜 Future Phases
 
-- Molecular components (FormField, Tooltip, Toast, Modal)
 - Organisms and templates (Sidebar, TopAppBar, PlayerGrid, etc.)
 
 ## 📝 License
