@@ -8,7 +8,6 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
   errorMessage?: string;
   label?: string;
   fullWidth?: boolean;
-  className?: string;
 }
 
 const variantClasses = {
@@ -76,11 +75,17 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
           ref={ref}
           id={inputId}
           className={combinedClassName}
-          aria-invalid={error}
+          aria-invalid={error ? "true" : "false"}
+          aria-describedby={
+            error && errorMessage ? `${inputId}-error` : undefined
+          }
           {...props}
         />
         {errorMessage && error && (
-          <span className="mt-1 text-xs text-error flex items-center gap-1">
+          <span
+            id={`${inputId}-error`}
+            className="mt-1 text-xs text-error flex items-center gap-1"
+          >
             <svg
               xmlns="http://www.w3.org/2000/svg"
               className="h-3 w-3"
