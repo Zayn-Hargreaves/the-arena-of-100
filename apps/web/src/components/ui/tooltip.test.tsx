@@ -1,4 +1,5 @@
-import { Tooltip, TooltipProvider } from "./tooltip";
+import { Tooltip } from "./tooltip";
+import { TooltipProvider } from "./tooltip-provider";
 import { Button } from "./button";
 import { JSX } from "react/jsx-dev-runtime";
 

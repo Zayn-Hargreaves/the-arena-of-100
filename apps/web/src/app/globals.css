@@ -10,9 +10,15 @@
   --arena-primary: #ff6b35;
   --arena-secondary: #4ecdc4;
   --arena-danger: #ff4757;
+
+  /* Color variables with RGB values for alpha transparency */
+  --color-primary-rgb: 236, 178, 255; /* #ecb2ff */
+  --color-secondary-fixed-rgb: 125, 244, 255; /* #7df4ff */
+  --color-tertiary-rgb: 233, 196, 0; /* #e9c400 */
+  --color-error-rgb: 255, 180, 171; /* #ffb4ab */
+  --color-surface-dim-rgb: 18, 19, 28; /* #12131c */
 }
 
 body {
-  @apply text-on-background bg-background;
-  font-family: "Inter", Arial, sans-serif;
+  @apply text-on-background bg-background font-body;
 }

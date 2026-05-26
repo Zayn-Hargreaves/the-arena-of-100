@@ -1,3 +1,5 @@
+"use client";
+
 import React, { useState } from "react";
 import { Skeleton } from "./skeleton";
 import { cn } from "@/lib/utils";

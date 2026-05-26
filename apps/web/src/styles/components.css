@@ -1,41 +1,41 @@
 .glass-panel {
-  background-color: theme("colors.surface-dim / 80%");
+  background-color: rgba(var(--color-surface-dim-rgb), 0.8);
   backdrop-filter: blur(20px);
-  border: 1px solid theme("colors.primary / 30%");
+  border: 1px solid rgba(var(--color-primary-rgb), 0.3);
   box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
 }
 
 .glass-panel-secondary {
-  background-color: theme("colors.surface-dim / 80%");
+  background-color: rgba(var(--color-surface-dim-rgb), 0.8);
   backdrop-filter: blur(20px);
-  border: 1px solid theme("colors.secondary-fixed / 30%");
+  border: 1px solid rgba(var(--color-secondary-fixed-rgb), 0.3);
   box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
 }
 
 .glow-primary {
-  box-shadow: 0 0 20px theme("colors.primary / 30%");
+  box-shadow: 0 0 20px rgba(var(--color-primary-rgb), 0.3);
 }
 
 .glow-secondary {
-  box-shadow: 0 0 20px theme("colors.secondary-fixed / 30%");
+  box-shadow: 0 0 20px rgba(var(--color-secondary-fixed-rgb), 0.3);
 }
 
 .glow-tertiary {
-  box-shadow: 0 0 25px theme("colors.tertiary / 40%");
+  box-shadow: 0 0 25px rgba(var(--color-tertiary-rgb), 0.4);
 }
 
 .glow-error {
-  box-shadow: 0 0 25px theme("colors.error / 40%");
+  box-shadow: 0 0 25px rgba(var(--color-error-rgb), 0.4);
 }
 
 .text-glow-cyan {
-  text-shadow: 0 0 8px theme("colors.secondary-fixed / 80%");
+  text-shadow: 0 0 8px rgba(var(--color-secondary-fixed-rgb), 0.8);
 }
 
 .text-glow-purple {
-  text-shadow: 0 0 8px theme("colors.primary / 80%");
+  text-shadow: 0 0 8px rgba(var(--color-primary-rgb), 0.8);
 }
 
 .text-glow-gold {
-  text-shadow: 0 0 8px theme("colors.tertiary / 80%");
+  text-shadow: 0 0 8px rgba(var(--color-tertiary-rgb), 0.8);
 }

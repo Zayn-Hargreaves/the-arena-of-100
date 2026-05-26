@@ -45,6 +45,11 @@ const config: Config = {
         "surface-container-high": "#252640",
         "surface-container-highest": "#30314b",
       },
+      fontFamily: {
+        display: ["var(--font-display)", "sans-serif"],
+        body: ["var(--font-body)", "sans-serif"],
+        mono: ["var(--font-mono)", "monospace"],
+      },
       spacing: {
         unit: "4px",
         gutter: "16px",
