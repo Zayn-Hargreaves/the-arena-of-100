@@ -2,6 +2,7 @@ import { AuthController } from "./auth.controller";
 import { AuthService, AuthResult } from "./auth.service";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Role } from "@prisma/client";
+import { UnauthorizedException } from "@nestjs/common";
 
 describe("AuthController", () => {
   let controller: AuthController;
@@ -73,17 +74,18 @@ describe("AuthController", () => {
   });
 
   describe("refresh", () => {
-    const refreshDto = { refreshToken: "refresh-token-456" };
-    const request = { headers: { cookie: "" } } as any;
+    const request = {
+      headers: { cookie: "arena_refresh_token=refresh-token-456" },
+    } as any;
     const reply = { header: vi.fn() } as any;
 
-    it("should refresh access token from body successfully", async () => {
+    it("should refresh access token from cookie successfully", async () => {
       vi.mocked(service.refreshAccessToken).mockResolvedValue(mockAuthResult);
 
-      const result = await controller.refresh(request, reply, refreshDto);
+      const result = await controller.refresh(request, reply);
 
       expect(service.refreshAccessToken).toHaveBeenCalledWith(
-        refreshDto.refreshToken,
+        "refresh-token-456",
       );
       expect(reply.header).toHaveBeenCalledWith(
         "Set-Cookie",
@@ -96,48 +98,39 @@ describe("AuthController", () => {
       expect(result).toEqual(mockAuthResult.user);
     });
 
-    it("should prefer cookie token over body token when both present", async () => {
-      const requestWithCookie = {
-        headers: { cookie: "arena_refresh_token=cookie-token-789" },
-      } as any;
-      vi.mocked(service.refreshAccessToken).mockResolvedValue(mockAuthResult);
-
-      const result = await controller.refresh(
-        requestWithCookie,
-        reply,
-        refreshDto,
-      );
-
-      expect(service.refreshAccessToken).toHaveBeenCalledWith(
-        "cookie-token-789",
-      );
-      expect(result).toEqual(mockAuthResult.user);
-    });
-
     it("should handle refresh access token errors", async () => {
       const error = new Error("Invalid token");
       vi.mocked(service.refreshAccessToken).mockRejectedValue(error);
 
-      await expect(
-        controller.refresh(request, reply, refreshDto),
-      ).rejects.toThrow("Invalid token");
-      expect(service.refreshAccessToken).toHaveBeenCalledWith(
-        refreshDto.refreshToken,
+      await expect(controller.refresh(request, reply)).rejects.toThrow(
+        "Invalid token",
       );
+      expect(service.refreshAccessToken).toHaveBeenCalledWith(
+        "refresh-token-456",
+      );
+    });
+
+    it("should throw UnauthorizedException when no token is provided in cookie", async () => {
+      const emptyRequest = { headers: { cookie: "" } } as any;
+      await expect(controller.refresh(emptyRequest, reply)).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(service.refreshAccessToken).not.toHaveBeenCalled();
     });
   });
 
   describe("logout", () => {
-    const refreshDto = { refreshToken: "refresh-token-456" };
-    const request = { headers: { cookie: "" } } as any;
+    const request = {
+      headers: { cookie: "arena_refresh_token=refresh-token-456" },
+    } as any;
     const reply = { header: vi.fn() } as any;
 
     it("should logout successfully", async () => {
       vi.mocked(service.logout).mockResolvedValue(undefined);
 
-      const result = await controller.logout(request, reply, refreshDto);
+      const result = await controller.logout(request, reply);
 
-      expect(service.logout).toHaveBeenCalledWith(refreshDto.refreshToken);
+      expect(service.logout).toHaveBeenCalledWith("refresh-token-456");
       expect(reply.header).toHaveBeenCalledWith(
         "Set-Cookie",
         expect.arrayContaining([
@@ -149,25 +142,22 @@ describe("AuthController", () => {
       expect(result).toBeUndefined();
     });
 
-    it("should read token from cookie on logout", async () => {
-      const requestWithCookie = {
-        headers: { cookie: "arena_refresh_token=cookie-token-789" },
-      } as any;
-      vi.mocked(service.logout).mockResolvedValue(undefined);
-
-      await controller.logout(requestWithCookie, reply, refreshDto);
-
-      expect(service.logout).toHaveBeenCalledWith("cookie-token-789");
-    });
-
     it("should handle logout errors", async () => {
       const error = new Error("Logout failed");
       vi.mocked(service.logout).mockRejectedValue(error);
 
-      await expect(
-        controller.logout(request, reply, refreshDto),
-      ).rejects.toThrow("Logout failed");
-      expect(service.logout).toHaveBeenCalledWith(refreshDto.refreshToken);
+      await expect(controller.logout(request, reply)).rejects.toThrow(
+        "Logout failed",
+      );
+      expect(service.logout).toHaveBeenCalledWith("refresh-token-456");
+    });
+
+    it("should throw UnauthorizedException when no token is provided in cookie", async () => {
+      const emptyRequest = { headers: { cookie: "" } } as any;
+      await expect(controller.logout(emptyRequest, reply)).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(service.logout).not.toHaveBeenCalled();
     });
   });
 });

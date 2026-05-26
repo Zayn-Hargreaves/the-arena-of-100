@@ -10,6 +10,7 @@ import {
   HttpStatus,
   Req,
   Res,
+  UnauthorizedException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { FastifyReply, FastifyRequest } from "fastify";
@@ -17,7 +18,6 @@ import { AuthService, AuthResult } from "./auth.service";
 import { Public } from "../../common/decorators/public.decorator";
 import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
 import { GuestLoginDto, guestLoginSchema } from "./dto/guest-login.dto";
-import { RefreshDto } from "./dto/refresh.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
 import {
   ACCESS_TOKEN_COOKIE,
@@ -80,12 +80,12 @@ export class AuthController {
   async refresh(
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
-    @Body() refreshDto?: RefreshDto,
   ): Promise<AuthResult["user"]> {
-    const token =
-      getCookieValue(request.headers.cookie, REFRESH_TOKEN_COOKIE) ??
-      refreshDto?.refreshToken ??
-      "";
+    const token = getCookieValue(request.headers.cookie, REFRESH_TOKEN_COOKIE);
+
+    if (!token) {
+      throw new UnauthorizedException("Refresh token is required");
+    }
 
     const authResult = await this.authService.refreshAccessToken(token);
 
@@ -117,12 +117,12 @@ export class AuthController {
   async logout(
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
-    @Body() refreshDto?: RefreshDto,
   ): Promise<void> {
-    const token =
-      getCookieValue(request.headers.cookie, REFRESH_TOKEN_COOKIE) ??
-      refreshDto?.refreshToken ??
-      "";
+    const token = getCookieValue(request.headers.cookie, REFRESH_TOKEN_COOKIE);
+
+    if (!token) {
+      throw new UnauthorizedException("Refresh token is required");
+    }
 
     await this.authService.logout(token);
 
