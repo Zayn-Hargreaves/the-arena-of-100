@@ -79,6 +79,7 @@ export class MatchHandler extends BaseHandler {
       );
       if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
 
+      // Server-authoritative timestamp: clientTimestamp is telemetry-only, ignored for anti-cheat
       const serverTimestamp = Date.now();
       const result = stateMachine.submitAnswer(
         userId,

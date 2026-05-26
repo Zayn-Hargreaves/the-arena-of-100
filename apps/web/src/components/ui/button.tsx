@@ -33,16 +33,16 @@ const buttonVariants = cva(
     variants: {
       variant: {
         action:
-          "bg-primary text-on-primary hover:bg-primary-container hover:text-on-primary-container border border-primary focus:ring-2 focus:ring-primary focus:ring-opacity-50 transition-all duration-200 shadow-lg hover:shadow-primary/30",
+          "bg-secondary-container text-on-secondary-container hover:brightness-110 hover:animate-flicker hover:shadow-[0_0_25px_var(--secondary-container)] active:scale-95 active:brightness-90 border border-secondary-container focus-visible:ring-2 focus-visible:ring-secondary-fixed transition-all duration-200",
         primary:
-          "bg-secondary-container text-on-secondary-container hover:bg-secondary-fixed hover:text-on-secondary-fixed border border-secondary-container focus:ring-2 focus:ring-secondary-fixed focus:ring-opacity-50 transition-all duration-200",
+          "bg-primary text-on-primary hover:brightness-110 active:scale-95 border border-primary focus-visible:ring-2 focus-visible:ring-secondary-fixed transition-all duration-200",
         secondary:
-          "bg-surface-container text-on-background hover:bg-surface-container-high border border-surface-container-high focus:ring-2 focus:ring-secondary-fixed focus:ring-opacity-50 transition-all duration-200",
+          "bg-surface-container-high text-secondary-fixed hover:bg-surface-container-highest active:scale-95 border border-surface-container-high focus-visible:ring-2 focus-visible:ring-secondary-fixed transition-all duration-200",
         danger:
-          "bg-error text-on-error hover:bg-error/80 border border-error focus:ring-2 focus:ring-error focus:ring-opacity-50 transition-all duration-200",
+          "bg-error text-on-error hover:brightness-110 active:scale-95 border border-error focus-visible:ring-2 focus-visible:ring-secondary-fixed transition-all duration-200",
         ghost:
-          "bg-transparent text-on-background hover:bg-surface-container border border-transparent focus:ring-2 focus:ring-secondary-fixed focus:ring-opacity-50 transition-all duration-200",
-        icon: "bg-transparent text-on-background hover:bg-surface-container focus:ring-2 focus:ring-secondary-fixed focus:ring-opacity-50 transition-all duration-200 p-2 rounded-md",
+          "bg-transparent text-on-background hover:bg-surface-container/50 active:bg-surface-container border border-transparent focus-visible:ring-2 focus-visible:ring-secondary-fixed transition-all duration-200",
+        icon: "bg-transparent text-on-background hover:bg-surface-container/50 active:scale-90 border border-transparent focus-visible:ring-2 focus-visible:ring-secondary-fixed transition-all duration-200 p-2 rounded-md",
       },
       size: {
         sm: "text-sm px-3 py-1.5",

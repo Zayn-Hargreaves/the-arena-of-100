@@ -124,8 +124,6 @@ Created the following components in `src/components/ui/`:
 
 ## Next Steps
 
-## Technical Debt
-
 ### Phase 5: Organisms and Templates
 
 Plan to implement:

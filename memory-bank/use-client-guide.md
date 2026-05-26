@@ -155,7 +155,7 @@ function Layout({ children }: { children: React.ReactNode }) {
 1. **Kiểm tra imports**: Nếu thấy import từ `@radix-ui/*`, `framer-motion`, `react-hook-form`, v.v. → Cần "use client"
 2. **Kiểm tra hooks**: Nếu thấy `useState`, `useEffect`, `useRef`, v.v. → Cần "use client"
 3. **Kiểm tra event handlers**: Nếu thấy `onClick`, `onChange`, `onSubmit`, v.v. → Cần "use client"
-4. **Kiểm tra browser APIs**: Nếu thấy `window`, `document`, `localStorage`, `fetch` → Cần "use client"
+4. **Kiểm tra browser APIs**: Nếu thấy `window`, `document`, `localStorage` → Cần "use client"
 5. **Kiểm tra Next.js client hooks**: Nếu thấy `useSearchParams`, `useRouter`, `usePathname` → Cần "use client"
 
 ## Lưu ý quan trọng

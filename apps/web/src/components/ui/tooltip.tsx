@@ -25,7 +25,9 @@ const Tooltip = ({
 } & Omit<TooltipPrimitive.TooltipContentProps, "content">) => {
   return (
     <TooltipPrimitive.Root>
-      <TooltipPrimitive.Trigger asChild>{children}</TooltipPrimitive.Trigger>
+      <TooltipPrimitive.Trigger asChild>
+        {React.isValidElement(children) ? children : <span>{children}</span>}
+      </TooltipPrimitive.Trigger>
       <TooltipPrimitive.Portal>
         <TooltipPrimitive.Content
           side={side}

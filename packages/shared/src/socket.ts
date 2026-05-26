@@ -77,6 +77,7 @@ export interface SubmitAnswerPayload {
   matchId: string;
   roundNo: number;
   answer: string;
+  /** Telemetry-only. NOT used for scoring/timeout/anti-cheat — server uses Date.now(). */
   clientTimestamp: number;
 }
 

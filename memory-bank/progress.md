@@ -43,7 +43,7 @@
 
 - [x] Component library implementation (Phases 1-4 complete)
 - [ ] Guest login page + API client (`POST /auth/guest` → JWT → WS authenticate) _(Slice 1)_
-- [ ] Socket store — add 7 missing event handlers (MATCH*STARTED, ROUND_STARTED, ROUND_ENDED, PLAYER_ELIMINATED, MATCH_FINISHED, PLAYER_JOINED/LEFT reactive) *(Slice 2)\_
+- [ ] Socket store — add 7 missing event handlers (MATCH*STARTED, ROUND_STARTED, ROUND_ENDED, PLAYER_ELIMINATED, MATCH_FINISHED, PLAYER_JOINED/LEFT reactive) *(Slice 2)\*
 - [ ] Create Room page + Lobby UI (`/lobby/[roomCode]`, player list, room code display) _(Slice 3)_
 - [ ] Join Room page + redirect to lobby _(Slice 4)_
 - [ ] Game page `/game/[matchId]` — countdown overlay, question display, answer buttons, round timer _(Slice 5-6)_

@@ -63,11 +63,8 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
       className,
     );
 
-    const inputId =
-      id ||
-      (label
-        ? `input-${label.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`
-        : undefined);
+    const generatedId = React.useId();
+    const inputId = id || generatedId;
 
     return (
       <div className={`flex flex-col ${fullWidth ? "w-full" : ""}`}>

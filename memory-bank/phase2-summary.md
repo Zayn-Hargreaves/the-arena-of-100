@@ -75,7 +75,7 @@ All components created in `src/components/ui/` with proper TypeScript interfaces
 
 ## 📁 File Structure
 
-```
+```text
 src/
 ├── app/
 │   └── test-components/

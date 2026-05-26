@@ -8,9 +8,11 @@ import {
   Body,
   HttpCode,
   HttpStatus,
+  Req,
   Res,
 } from "@nestjs/common";
-import { FastifyReply } from "fastify";
+import { ConfigService } from "@nestjs/config";
+import { FastifyReply, FastifyRequest } from "fastify";
 import { AuthService, AuthResult } from "./auth.service";
 import { Public } from "../../common/decorators/public.decorator";
 import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
@@ -20,6 +22,7 @@ import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
 import {
   ACCESS_TOKEN_COOKIE,
   REFRESH_TOKEN_COOKIE,
+  getCookieValue,
   serializeCookie,
 } from "../../common/utils/cookie";
 
@@ -29,7 +32,10 @@ const refreshPipe = new ZodValidationPipe(refreshSchema);
 @ApiTags("Authentication")
 @Controller("auth")
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Post("guest")
   @Public()
@@ -49,14 +55,14 @@ export class AuthController {
     reply.header("Set-Cookie", [
       serializeCookie(ACCESS_TOKEN_COOKIE, authResult.accessToken, {
         httpOnly: true,
-        secure: true,
+        secure: this.configService.get("NODE_ENV") === "production",
         sameSite: "lax",
         path: "/",
         maxAge: this.authService.getAccessTokenTtlSeconds(),
       }),
       serializeCookie(REFRESH_TOKEN_COOKIE, authResult.refreshToken, {
         httpOnly: true,
-        secure: true,
+        secure: this.configService.get("NODE_ENV") === "production",
         sameSite: "lax",
         path: "/",
         maxAge: this.authService.getRefreshTokenTtlSeconds(),
@@ -73,10 +79,35 @@ export class AuthController {
   @ApiResponse({ status: 200, description: "Token refreshed successfully" })
   @ApiResponse({ status: 401, description: "Invalid token" })
   async refresh(
+    @Req() request: FastifyRequest,
     @Body(refreshPipe)
     refreshDto: RefreshDto,
-  ): Promise<AuthResult> {
-    return this.authService.refreshAccessToken(refreshDto.refreshToken);
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<AuthResult["user"]> {
+    const token =
+      getCookieValue(request.headers.cookie, REFRESH_TOKEN_COOKIE) ??
+      refreshDto.refreshToken;
+
+    const authResult = await this.authService.refreshAccessToken(token);
+
+    reply.header("Set-Cookie", [
+      serializeCookie(ACCESS_TOKEN_COOKIE, authResult.accessToken, {
+        httpOnly: true,
+        secure: this.configService.get("NODE_ENV") === "production",
+        sameSite: "lax",
+        path: "/",
+        maxAge: this.authService.getAccessTokenTtlSeconds(),
+      }),
+      serializeCookie(REFRESH_TOKEN_COOKIE, authResult.refreshToken, {
+        httpOnly: true,
+        secure: this.configService.get("NODE_ENV") === "production",
+        sameSite: "lax",
+        path: "/",
+        maxAge: this.authService.getRefreshTokenTtlSeconds(),
+      }),
+    ]);
+
+    return authResult.user;
   }
 
   @Post("logout")
@@ -85,9 +116,32 @@ export class AuthController {
   @ApiResponse({ status: 204, description: "Logout successful" })
   @ApiResponse({ status: 401, description: "Invalid token" })
   async logout(
+    @Req() request: FastifyRequest,
     @Body(refreshPipe)
     refreshDto: RefreshDto,
+    @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<void> {
-    await this.authService.logout(refreshDto.refreshToken);
+    const token =
+      getCookieValue(request.headers.cookie, REFRESH_TOKEN_COOKIE) ??
+      refreshDto.refreshToken;
+
+    await this.authService.logout(token);
+
+    reply.header("Set-Cookie", [
+      serializeCookie(ACCESS_TOKEN_COOKIE, "", {
+        httpOnly: true,
+        secure: this.configService.get("NODE_ENV") === "production",
+        sameSite: "lax",
+        path: "/",
+        maxAge: 0,
+      }),
+      serializeCookie(REFRESH_TOKEN_COOKIE, "", {
+        httpOnly: true,
+        secure: this.configService.get("NODE_ENV") === "production",
+        sameSite: "lax",
+        path: "/",
+        maxAge: 0,
+      }),
+    ]);
   }
 }

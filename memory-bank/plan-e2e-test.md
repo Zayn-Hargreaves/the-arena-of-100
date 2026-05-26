@@ -8,7 +8,7 @@
 
 ## Dependency Graph
 
-```
+```text
 Component Library (Phases 1-4) ─────────────────────────────────────┐
    (không phụ thuộc)                                                │
    ▼                                                                │
@@ -55,7 +55,7 @@ Slice 8: E2E Integration Test ────────────────�
 
 ### Flow chi tiết
 
-```
+```text
 1. User nhập nickname vào input
 2. Click "Vào Game" → gọi POST /auth/guest { username }
 3. Nhận `{ user { id, username } }` và `Set-Cookie` chứa access/refresh token httpOnly
@@ -140,7 +140,7 @@ type AuthState = "idle" | "entering" | "loading" | "authenticated";
 
 ### Flow
 
-```
+```text
 1. User click "Tạo Phòng" trên landing page
 2. socket-store.createRoom("PUBLIC") → emit CREATE_ROOM
 3. Nhận ROOM_CREATED { roomId, code } → store.room được set
@@ -175,7 +175,7 @@ type AuthState = "idle" | "entering" | "loading" | "authenticated";
 
 ### Flow
 
-```
+```text
 1. User nhập room code (6 ký tự)
 2. Click "Vào Phòng" → socket-store.joinRoom(code) → emit JOIN_ROOM
 3. Nhận ROOM_JOINED { roomId, code, players }
@@ -205,7 +205,7 @@ type AuthState = "idle" | "entering" | "loading" | "authenticated";
 
 ### Flow
 
-```
+```text
 1. Host click "Bắt Đầu" → emit START_MATCH
 2. MATCH_STARTING { matchId, countdown } → store.room.status = "COUNTDOWN"
 3. Router.push(`/game/${matchId}`)
@@ -243,7 +243,7 @@ type GamePhase = "countdown" | "question" | "answered" | "result";
 
 ### Flow
 
-```
+```text
 1. Nhận ROUND_STARTED { question: { id, content, options }, roundNo, endsAt }
    → store.match.currentQuestion = question
    → store.match.roundEndTime = endsAt
@@ -251,7 +251,7 @@ type GamePhase = "countdown" | "question" | "answered" | "result";
    → RoundTimer bắt đầu đếm ngược từ endsAt
 
 2. User click 1 đáp án
-   → emit SUBMIT_ANSWER { matchId, roundNo, answer, clientTimestamp }
+   → emit SUBMIT_ANSWER { matchId, roundNo, answer, clientTimestamp }  // clientTimestamp = telemetry-only, not used for anti-cheat
    → UI: disable tất cả nút, hiển thị "đã chọn"
 
 3. Nhận ANSWER_RESULT { isCorrect, responseTimeMs }
@@ -285,7 +285,7 @@ type GamePhase = "countdown" | "question" | "answered" | "result";
 
 ### Flow
 
-```
+```text
 1. Nhận ROUND_ENDED { correctAnswer, survivingPlayerIds, eliminatedPlayerIds }
    → Hiển thị đáp án đúng
    → PlayerStatusBar cập nhật số survivors

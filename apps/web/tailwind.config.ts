@@ -1,5 +1,7 @@
 import type { Config } from "tailwindcss";
+import plugin from "tailwindcss/plugin";
 import { ANIMATION_VARIABLES } from "./src/styles/tokens/animations";
+import tailwindcssAnimate from "tailwindcss-animate";
 
 const config: Config = {
   content: [
@@ -29,6 +31,7 @@ const config: Config = {
         // Error - Red (Eliminate, kick, kill switch)
         error: "#ffb4ab",
         "on-error": "#690005",
+        ring: "#ecb2ff",
 
         // Arena custom colors
         arena: {
@@ -140,7 +143,37 @@ const config: Config = {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    tailwindcssAnimate,
+    plugin(({ addUtilities }) => {
+      addUtilities({
+        ".glass-panel": {
+          backgroundColor: "rgba(var(--color-surface-dim-rgb), 0.8)",
+          backdropFilter: "blur(20px)",
+          border: "1px solid rgba(var(--color-primary-rgb), 0.3)",
+          boxShadow: "0 4px 30px rgba(0, 0, 0, 0.5)",
+        },
+        ".glass-panel-secondary": {
+          backgroundColor: "rgba(var(--color-surface-dim-rgb), 0.8)",
+          backdropFilter: "blur(20px)",
+          border: "1px solid rgba(var(--color-secondary-fixed-rgb), 0.3)",
+          boxShadow: "0 4px 30px rgba(0, 0, 0, 0.5)",
+        },
+        ".glow-primary": {
+          boxShadow: "0 0 20px rgba(var(--color-primary-rgb), 0.3)",
+        },
+        ".glow-secondary": {
+          boxShadow: "0 0 20px rgba(var(--color-secondary-fixed-rgb), 0.3)",
+        },
+        ".glow-tertiary": {
+          boxShadow: "0 0 25px rgba(var(--color-tertiary-rgb), 0.4)",
+        },
+        ".glow-error": {
+          boxShadow: "0 0 25px rgba(var(--color-error-rgb), 0.4)",
+        },
+      });
+    }),
+  ],
 };
 
 export default config;

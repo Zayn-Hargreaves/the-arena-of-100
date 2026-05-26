@@ -81,11 +81,9 @@ export const Avatar = React.forwardRef<HTMLDivElement, AvatarProps>(
 
     // Generate background color based on fallback
     const getBackgroundColor = () => {
-      if (!fallback) return "hsl(var(--surface-container))";
-
       let hash = 0;
-      for (let i = 0; i < fallback.length; i++) {
-        hash = fallback.charCodeAt(i) + ((hash << 5) - hash);
+      for (let i = 0; i < fallback!.length; i++) {
+        hash = fallback!.charCodeAt(i) + ((hash << 5) - hash);
       }
 
       const hue = Math.abs(hash) % 360;
@@ -106,7 +104,7 @@ export const Avatar = React.forwardRef<HTMLDivElement, AvatarProps>(
           />
         )}
 
-        {!src && fallback && (
+        {(imageError || !src) && fallback && (
           <div
             className="w-full h-full flex items-center justify-center text-white font-bold"
             style={{ backgroundColor: getBackgroundColor() }}

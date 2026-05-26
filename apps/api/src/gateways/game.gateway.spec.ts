@@ -18,6 +18,7 @@ describe("GameGateway", () => {
     authHandler = {
       handleAuthenticate: vi.fn(),
       handleDisconnect: vi.fn(),
+      handleAuthenticatedConnection: vi.fn(),
     } as unknown as AuthHandler;
     roomHandler = {
       handleCreateRoom: vi.fn(),

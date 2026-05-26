@@ -32,7 +32,7 @@ export const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
               glow="secondary"
               className={`relative overflow-hidden rounded-xl p-6 shadow-lg ${className}`}
             >
-              <DialogPrimitive.Close className="absolute right-4 top-4 rounded-md p-1 opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
+              <DialogPrimitive.Close className="absolute right-4 top-4 rounded-md p-1 opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:pointer-events-none">
                 <X className="h-4 w-4" />
                 <span className="sr-only">Close</span>
               </DialogPrimitive.Close>
@@ -42,7 +42,7 @@ export const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
               </DialogPrimitive.Title>
 
               {description && (
-                <DialogPrimitive.Description className="mt-2 text-sm text-muted-foreground">
+                <DialogPrimitive.Description className="mt-2 text-sm text-on-background/70">
                   {description}
                 </DialogPrimitive.Description>
               )}
