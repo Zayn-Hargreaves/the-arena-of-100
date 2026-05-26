@@ -17,7 +17,7 @@ import { AuthService, AuthResult } from "./auth.service";
 import { Public } from "../../common/decorators/public.decorator";
 import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
 import { GuestLoginDto, guestLoginSchema } from "./dto/guest-login.dto";
-import { RefreshDto, refreshSchema } from "./dto/refresh.dto";
+import { RefreshDto } from "./dto/refresh.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
 import {
   ACCESS_TOKEN_COOKIE,
@@ -27,7 +27,6 @@ import {
 } from "../../common/utils/cookie";
 
 const guestLoginPipe = new ZodValidationPipe(guestLoginSchema);
-const refreshPipe = new ZodValidationPipe(refreshSchema);
 
 @ApiTags("Authentication")
 @Controller("auth")
@@ -80,13 +79,13 @@ export class AuthController {
   @ApiResponse({ status: 401, description: "Invalid token" })
   async refresh(
     @Req() request: FastifyRequest,
-    @Body(refreshPipe)
-    refreshDto: RefreshDto,
     @Res({ passthrough: true }) reply: FastifyReply,
+    @Body() refreshDto?: RefreshDto,
   ): Promise<AuthResult["user"]> {
     const token =
       getCookieValue(request.headers.cookie, REFRESH_TOKEN_COOKIE) ??
-      refreshDto.refreshToken;
+      refreshDto?.refreshToken ??
+      "";
 
     const authResult = await this.authService.refreshAccessToken(token);
 
@@ -117,13 +116,13 @@ export class AuthController {
   @ApiResponse({ status: 401, description: "Invalid token" })
   async logout(
     @Req() request: FastifyRequest,
-    @Body(refreshPipe)
-    refreshDto: RefreshDto,
     @Res({ passthrough: true }) reply: FastifyReply,
+    @Body() refreshDto?: RefreshDto,
   ): Promise<void> {
     const token =
       getCookieValue(request.headers.cookie, REFRESH_TOKEN_COOKIE) ??
-      refreshDto.refreshToken;
+      refreshDto?.refreshToken ??
+      "";
 
     await this.authService.logout(token);
 

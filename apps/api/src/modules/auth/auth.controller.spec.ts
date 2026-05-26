@@ -80,7 +80,7 @@ describe("AuthController", () => {
     it("should refresh access token from body successfully", async () => {
       vi.mocked(service.refreshAccessToken).mockResolvedValue(mockAuthResult);
 
-      const result = await controller.refresh(request, refreshDto, reply);
+      const result = await controller.refresh(request, reply, refreshDto);
 
       expect(service.refreshAccessToken).toHaveBeenCalledWith(
         refreshDto.refreshToken,
@@ -104,8 +104,8 @@ describe("AuthController", () => {
 
       const result = await controller.refresh(
         requestWithCookie,
-        refreshDto,
         reply,
+        refreshDto,
       );
 
       expect(service.refreshAccessToken).toHaveBeenCalledWith(
@@ -119,7 +119,7 @@ describe("AuthController", () => {
       vi.mocked(service.refreshAccessToken).mockRejectedValue(error);
 
       await expect(
-        controller.refresh(request, refreshDto, reply),
+        controller.refresh(request, reply, refreshDto),
       ).rejects.toThrow("Invalid token");
       expect(service.refreshAccessToken).toHaveBeenCalledWith(
         refreshDto.refreshToken,
@@ -135,7 +135,7 @@ describe("AuthController", () => {
     it("should logout successfully", async () => {
       vi.mocked(service.logout).mockResolvedValue(undefined);
 
-      const result = await controller.logout(request, refreshDto, reply);
+      const result = await controller.logout(request, reply, refreshDto);
 
       expect(service.logout).toHaveBeenCalledWith(refreshDto.refreshToken);
       expect(reply.header).toHaveBeenCalledWith(
@@ -155,7 +155,7 @@ describe("AuthController", () => {
       } as any;
       vi.mocked(service.logout).mockResolvedValue(undefined);
 
-      await controller.logout(requestWithCookie, refreshDto, reply);
+      await controller.logout(requestWithCookie, reply, refreshDto);
 
       expect(service.logout).toHaveBeenCalledWith("cookie-token-789");
     });
@@ -165,7 +165,7 @@ describe("AuthController", () => {
       vi.mocked(service.logout).mockRejectedValue(error);
 
       await expect(
-        controller.logout(request, refreshDto, reply),
+        controller.logout(request, reply, refreshDto),
       ).rejects.toThrow("Logout failed");
       expect(service.logout).toHaveBeenCalledWith(refreshDto.refreshToken);
     });
