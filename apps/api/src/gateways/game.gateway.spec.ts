@@ -182,6 +182,82 @@ describe("GameGateway", () => {
       expect(mockSocket.data.userId).toBeUndefined();
       expect(next).toHaveBeenCalled();
     });
+
+    it("successfully authenticates with cookie when no handshake token or auth header is present", () => {
+      const mockSocket = {
+        handshake: {
+          auth: {},
+          headers: {
+            cookie: "arena_access_token=valid-cookie-token",
+          },
+        },
+        data: {},
+      } as any;
+      const next = vi.fn();
+      vi.mocked(authService.verifyToken).mockReturnValue({
+        userId: "cookie-user-123",
+        username: "cookie-user",
+      } as any);
+
+      middleware(mockSocket, next);
+
+      expect(authService.verifyToken).toHaveBeenCalledWith(
+        "valid-cookie-token",
+      );
+      expect(mockSocket.data.userId).toBe("cookie-user-123");
+      expect(mockSocket.data.username).toBe("cookie-user");
+      expect(next).toHaveBeenCalled();
+    });
+
+    it("handles cookie authentication failure gracefully without throwing", () => {
+      const mockSocket = {
+        handshake: {
+          auth: {},
+          headers: {
+            cookie: "arena_access_token=invalid-cookie-token",
+          },
+        },
+        data: {},
+      } as any;
+      const next = vi.fn();
+      vi.mocked(authService.verifyToken).mockImplementation(() => {
+        throw new Error("Invalid token in cookie");
+      });
+
+      middleware(mockSocket, next);
+
+      expect(authService.verifyToken).toHaveBeenCalledWith(
+        "invalid-cookie-token",
+      );
+      expect(mockSocket.data.userId).toBeUndefined();
+      expect(next).toHaveBeenCalled();
+    });
+
+    it("does not attempt cookie authentication if handshake token verification succeeds", () => {
+      const mockSocket = {
+        handshake: {
+          auth: { token: "valid-handshake-token" },
+          headers: {
+            cookie: "arena_access_token=another-token",
+          },
+        },
+        data: {},
+      } as any;
+      const next = vi.fn();
+      vi.mocked(authService.verifyToken).mockReturnValue({
+        userId: "handshake-user-123",
+        username: "handshake-user",
+      } as any);
+
+      middleware(mockSocket, next);
+
+      expect(authService.verifyToken).toHaveBeenCalledTimes(1);
+      expect(authService.verifyToken).toHaveBeenCalledWith(
+        "valid-handshake-token",
+      );
+      expect(mockSocket.data.userId).toBe("handshake-user-123");
+      expect(next).toHaveBeenCalled();
+    });
   });
 
   describe("handleDisconnect", () => {
