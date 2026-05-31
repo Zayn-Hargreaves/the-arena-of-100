@@ -1,0 +1,88 @@
+{
+  "HomePage": {
+    "subtitle": "Battle Royale Quiz",
+    "enterNickname": "Enter Battle Nickname",
+    "nicknamePlaceholder": "e.g., GLITCH_RUNNER",
+    "quickMatch": "Quick Match",
+    "createRoom": "Create Room",
+    "joinRoom": "Join Room",
+    "roomCode": "Match Room Code",
+    "roomCodePlaceholder": "ROOM CODE",
+    "rankings": "Rankings",
+    "settings": "Settings",
+    "alerts": {
+      "enterNickname": "Please enter a Nickname before joining the battle!",
+      "enterNicknameCreate": "Please enter a Nickname before creating a room!",
+      "enterNicknameJoin": "Please enter a Nickname before joining a room!",
+      "enterRoomCode": "Please enter the Room Code!"
+    },
+    "features": {
+      "warriorTitle": "100 Warriors",
+      "warriorDesc": "Survive alongside 99 other players in a real-time elimination room.",
+      "speedTitle": "Speed Quiz",
+      "speedDesc": "Think and react instantly within a 15s limit. Wrong answers mean elimination!",
+      "championTitle": "The Lone Champion",
+      "championDesc": "Cumulative rewards increase as opponents are eliminated. Be the last survivor to win."
+    }
+  },
+  "Errors": {
+    "ROOM_FULL": "The match room is full of warriors!",
+    "INVALID_ROOM_CODE": "Invalid or expired room code!",
+    "MATCH_ALREADY_STARTED": "The match has already started and cannot be joined!",
+    "USER_ALREADY_EXISTS": "This nickname is already taken in the room!",
+    "ROOM_NOT_FOUND": "Requested match room was not found!",
+    "UNKNOWN_ERROR": "An unknown error occurred. Please try again!"
+  },
+  "admin": {
+    "title": "CYBER OPERATIONS",
+    "subtitle": "Central server control system and database synchronization",
+    "rootAccess": "ROOT ACCESS",
+    "cpuCoreLoad": "CPU Core Load",
+    "cpuCaption": "4 cores @ 3.2GHz NestJS Process",
+    "ramAllocation": "RAM Allocation",
+    "ramCaption": "Fastify RAM usage (MAX: 1024MB)",
+    "activeLobbies": "Active Lobbies",
+    "lobbiesCaption": "Redis pub/sub channels active",
+    "dbAdministrationTitle": "DATABASE ADMINISTRATION (POSTGRESQL)",
+    "prismaStatusLabel": "PRISMA STATUS:",
+    "redisOperationsTitle": "REDIS SERVER OPERATIONS",
+    "redisStatusLabel": "MEMORY CACHE STATUS:",
+    "syncingQuestions": "SYNCING QUESTIONS...",
+    "syncQuestions": "SYNC (SEED) 100 QUESTIONS AGAIN",
+    "checkMigrations": "CHECK MIGRATIONS",
+    "resetActiveLobbies": "RESET ALL ACTIVE LOBBIES",
+    "warning": "WARNING: Resetting will disconnect all players currently in live battle. Use only in emergencies or maintenance.",
+    "units": {
+      "mb": "MB",
+      "rooms": "Rooms"
+    },
+    "status": {
+      "loading": "LOADING...",
+      "connected": "CONNECTED",
+      "disconnected": "DISCONNECTED",
+      "error": "ERROR"
+    },
+    "alerts": {
+      "seedSuccess": "Successfully seeded 100 Arena-standard questions into PostgreSQL DB!",
+      "resetConfirm": "Warning: You are about to clear all active lobbies and Redis game sessions. Continue?",
+      "resetSuccess": "Redis cache cleared and Socket.io server reset!",
+      "migrationsUpToDate": "Prisma migrations are already synchronized to the latest version!"
+    }
+  },
+  "Sidebar": {
+    "guestName": "Guest Player",
+    "guestRole": "Guest Player",
+    "playerRole": "Player",
+    "nav": {
+      "createRoom": "Create Room",
+      "arena": "Arena",
+      "rankings": "Rankings",
+      "settings": "Settings",
+      "profile": "Profile",
+      "admin": "Admin"
+    }
+  },
+  "Timer": {
+    "seconds": "seconds"
+  }
+}

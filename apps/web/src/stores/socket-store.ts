@@ -4,7 +4,7 @@
 // ============================================================
 
 import { create } from "zustand";
-import { io, Socket } from "socket.io-client";
+import type { Socket } from "socket.io-client";
 import {
   ClientEvent,
   ServerEvent,
@@ -24,6 +24,7 @@ interface Room {
   id: string;
   code: string;
   status: string;
+  hostId?: string | null;
   players: Player[];
 }
 
@@ -55,11 +56,16 @@ interface SocketState extends ConnectionState {
   error: string | null;
 
   // Actions
-  connect: () => void;
+  connect: () => Promise<void>;
   disconnect: () => void;
   authenticate: (token: string) => void;
-  createRoom: (roomType: "PUBLIC" | "PRIVATE") => void;
-  joinRoom: (roomCode: string) => void;
+  createRoom: (config: {
+    roomType: "PUBLIC" | "PRIVATE";
+    timeLimit: number;
+    maxPlayers: number;
+    category: string;
+  }) => void;
+  joinRoom: (roomCode: string) => Promise<void>;
   leaveRoom: (roomId: string) => void;
   startMatch: (roomId: string) => void;
   submitAnswer: (matchId: string, roundNo: number, answer: string) => void;
@@ -81,9 +87,11 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   error: null,
 
   // Connect to WebSocket
-  connect: () => {
+  connect: async () => {
     const { socket } = get();
     if (socket?.connected) return;
+
+    const { io } = await import("socket.io-client");
 
     const newSocket = io(`${API_URL}/game`, {
       transports: ["websocket", "polling"],
@@ -115,6 +123,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           id: data.roomId,
           code: data.code,
           status: "WAITING",
+          hostId: data.hostId ?? get().userId,
           players: [],
         },
       });
@@ -127,6 +136,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           id: data.roomId,
           code: data.code,
           status: "WAITING",
+          hostId:
+            (data as RoomJoinedPayload & { hostId?: string }).hostId ?? null,
           players: data.players
             ? data.players.map((p) => ({
                 id: p.playerId,
@@ -203,19 +214,50 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   },
 
   // Create Room
-  createRoom: (roomType: "PUBLIC" | "PRIVATE") => {
+  createRoom: (config) => {
     const { socket } = get();
     if (socket) {
-      socket.emit(ClientEvent.CREATE_ROOM, { roomType });
+      socket.emit(ClientEvent.CREATE_ROOM, {
+        roomType: config.roomType,
+        maxPlayers: config.maxPlayers,
+      });
     }
   },
 
   // Join Room
   joinRoom: (roomCode: string) => {
     const { socket } = get();
-    if (socket) {
-      socket.emit(ClientEvent.JOIN_ROOM, { roomCode });
+    if (!socket) {
+      return Promise.reject(new Error("Socket not connected"));
     }
+
+    return new Promise<void>((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        cleanup();
+        reject(new Error("Join room timed out"));
+      }, 8000);
+
+      const onJoined = (data: RoomJoinedPayload) => {
+        if (data.code !== roomCode) return;
+        cleanup();
+        resolve();
+      };
+
+      const onError = (data: { message: string }) => {
+        cleanup();
+        reject(new Error(data.message || "Failed to join room"));
+      };
+
+      const cleanup = () => {
+        clearTimeout(timeoutId);
+        socket.off(ServerEvent.ROOM_JOINED, onJoined);
+        socket.off(ServerEvent.ERROR, onError);
+      };
+
+      socket.on(ServerEvent.ROOM_JOINED, onJoined);
+      socket.on(ServerEvent.ERROR, onError);
+      socket.emit(ClientEvent.JOIN_ROOM, { roomCode });
+    });
   },
 
   // Leave Room

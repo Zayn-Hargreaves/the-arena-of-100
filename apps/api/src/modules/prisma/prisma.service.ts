@@ -25,7 +25,11 @@ export class PrismaService
     if (!connectionString) {
       throw new Error("DATABASE_URL environment variable is missing!");
     }
-    const pool = new Pool({ connectionString });
+    const isRender = connectionString.includes("render.com");
+    const pool = new Pool({
+      connectionString,
+      ssl: isRender ? true : undefined,
+    });
     const adapter = new PrismaPg(pool);
     super({ adapter });
     this.pool = pool;

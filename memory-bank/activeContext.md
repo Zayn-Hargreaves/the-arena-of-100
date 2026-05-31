@@ -65,6 +65,12 @@ All critical fixes complete. Currently on branch `refactor/split-game-gateway` �
 19. ~~**Zod Validation Migration**~~: Custom `ZodValidationPipe` for request/body parsing, gradual module-by-module migration, and Zod schema-based response serialization. (Completed)
 20. **Distributed Session Management**: Redis-based session tracking (`@socket.io/redis-adapter` or custom Redis cache) selected for production scaling, while maintaining high-performance O(1) in-memory tracking (using client.data.userId lookup) for the current development phase.
 21. **Persistent Guest Identity via Device ID (Model C)**: Approved using client-generated device ID (`guestId`) stored in localStorage as the primary unique key for guest logins. This resolves the unique username hijacking security risk and supports duplicate nicknames safely.
+22. **Candy 3D Jelly UI Exclusive Theme (2026-05-31)**: No dark/light mode toggles. Using Candy Light-Gradient backgrounds, thick ink borders (#2B2D42), glossy reflection buttons, and springy interactive wobbles.
+23. **Unified Sidebar Layout (2026-05-31)**: Thống nhất sidebar layout cho toàn bộ authenticated pages, kể cả Profile page.
+24. **Procedural Avatar System (2026-05-31)**: Dynamic vector procedural avatar fallback rendering and native spritesheet animation loop components (MelbitSprite).
+25. **3D Shadow Interaction (2026-05-31)**: Flat offset 3D shadows depressing on click/hover for tactile feedback.
+26. **Design System Source of Truth**: [migrateDesignSystem.md](./migrateDesignSystem.md) acts as the official step-by-step phased roadmap for system migration to ensure compatibility with 256k token models.
+27. **Design System Source of Truth**: [migrateDesignSystem.md](./migrateDesignSystem.md) acts as the official step-by-step phased roadmap for system migration to ensure compatibility with 256k token models.
 
 ## Pending Decisions (From Assessment)
 

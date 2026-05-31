@@ -30,6 +30,27 @@ export class HealthController {
     return checks;
   }
 
+  @Get("monitoring")
+  @Public()
+  async monitoring() {
+    const usage = process.cpuUsage();
+    const cpuUsage = Math.min(
+      100,
+      Number(((usage.user + usage.system) / 1_000_000).toFixed(1)),
+    );
+    const memoryUsageMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
+    const roomCount = await this.prisma.room.count({
+      where: { status: { in: ["WAITING", "IN_GAME"] } },
+    });
+
+    return {
+      cpuUsage,
+      memoryUsageMb,
+      roomCount,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
   private async checkDatabase(): Promise<{ status: string; latency?: number }> {
     try {
       const start = Date.now();

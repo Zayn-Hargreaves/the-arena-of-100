@@ -29,11 +29,13 @@ const envSchema = z.object({
 const parsedEnv = envSchema.parse(process.env);
 
 const connectionString = parsedEnv.DATABASE_URL;
+const isRender = connectionString.includes("render.com");
 const pool = new Pool({
   connectionString,
   max: 10, // Maximum number of clients in the pool
   idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
-  connectionTimeoutMillis: 2000, // Return an error after 2 seconds if connection could not be established
+  connectionTimeoutMillis: 15000, // Return an error after 15 seconds if connection could not be established
+  ssl: isRender ? true : undefined,
 });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
@@ -229,7 +231,7 @@ async function main() {
       ? question.tags.map((t) => normalizeString(t))
       : [];
 
-    const resolvedTags = [];
+    const resolvedTags: typeof existingTags = [];
     for (const tagName of targetTags) {
       const tag = tagMap.get(tagName);
       if (tag) {

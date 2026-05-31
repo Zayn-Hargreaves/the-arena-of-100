@@ -26,6 +26,14 @@ export const GAME_CONFIG = {
   ROOM_CODE_LENGTH: 6,
 } as const;
 
+export const ROOM_CATEGORY_OPTIONS = [
+  "Tất cả",
+  "Khoa học",
+  "Lịch sử",
+  "Công nghệ",
+  "Văn hóa",
+] as const;
+
 // Room Code Alphabet (excluding ambiguous chars: 0, O, I, 1, l)
 export const ROOM_CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 

@@ -29,14 +29,32 @@
 
 ### 🚧 In Progress (Phase 1: Core Implementation)
 
-- [x] Install dependencies (`pnpm install`)
-- [x] Database migration and seeding
-- [x] Implement GameLoopService (countdown → round → evaluate → repeat)
-- [x] Implement round timer management (auto-end on timeout)
-- [x] Unit tests for game-core state machine
-- [ ] End-to-end room creation → join → match flow
-- [ ] Frontend lobby and game UI components with routing
-- [ ] Connect socket-store to UI components
+- [x] End-to-end room creation → join → match flow
+- [x] Frontend lobby and game UI components with routing
+- [x] Connect socket-store to UI components
+
+#### Frontend — 🚧 In Progress (theo thứ tự phụ thuộc)
+
+> Chi tiết: xem [plan-e2e-test.md](./plan-e2e-test.md)
+
+- [x] Legacy component library implementation (Phases 1-4 complete, Cyberpunk style)
+- [ ] Candy 3D Jelly UI exclusive design system migration (Phases 1-4 complete; Phase 5 TODO in [migrateDesignSystem.md](./migrateDesignSystem.md))
+<!-- Remaining Phase 5 tasks: Step 5.1 shell templates, Step 5.2 legacy CSS cleanup, Step 5.3 end-to-end visual audit. -->
+- [x] Guest login page + API client (`POST /auth/guest` → JWT → WS authenticate) _(Slice 1)_
+- [x] Socket store — add 7 missing event handlers (MATCH*STARTED, ROUND_STARTED, ROUND_ENDED, PLAYER_ELIMINATED, MATCH_FINISHED, PLAYER_JOINED/LEFT reactive) *(Slice 2)\_
+- [x] Create Room page + Lobby UI (`/lobby/[roomCode]`, player list, room code display) _(Slice 3)_
+- [x] Join Room page + redirect to lobby _(Slice 4)_
+- [x] Game page `/game/[matchId]` — countdown overlay, question display, answer buttons, round timer _(Slice 5-6)_
+- [x] Result page `/result/[matchId]` + elimination display _(Slice 7)_
+- [x] Connect socket-store to all UI components (xóa console.log, reactive binding)
+- [x] Frontend routing setup (App Router pages: `/`, `/lobby/[code]`, `/game/[matchId]`, `/result/[matchId]`)
+
+#### Integration
+
+- [x] End-to-end room creation → join → match flow _(Slice 8 — integration test & edge cases)_
+
+#### Product Features (phụ thuộc frontend hoàn thiện)
+
 - [ ] Frictionless onboarding system with content moderation
 - [ ] Lobby lifecycle management (auto-start, host controls, heartbeat validation)
 - [ ] Spectator mode with micro-interactions
