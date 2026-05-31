@@ -8,10 +8,22 @@ import type { Socket } from "socket.io-client";
 import {
   ClientEvent,
   ServerEvent,
+  RoomStatus,
   type SnapshotPayload,
   type AnswerResultPayload,
+  type ErrorPayload,
   type RoomJoinedPayload,
 } from "@arena/shared";
+import { API_URL } from "@/lib/api";
+
+interface AuthResponse {
+  accessToken: string;
+  user: {
+    id: string;
+    username: string;
+    role: string;
+  };
+}
 
 interface Player {
   id: string;
@@ -46,6 +58,8 @@ interface ConnectionState {
   isAuthenticated: boolean;
   userId: string | null;
   username: string | null;
+  accessToken: string | null;
+  userRole: string | null;
 }
 
 interface SocketState extends ConnectionState {
@@ -58,21 +72,20 @@ interface SocketState extends ConnectionState {
   // Actions
   connect: () => Promise<void>;
   disconnect: () => void;
-  authenticate: (token: string) => void;
+  authenticate: (nickname: string) => Promise<void>;
+  refreshAccessToken: () => Promise<string | null>;
   createRoom: (config: {
     roomType: "PUBLIC" | "PRIVATE";
     timeLimit: number;
     maxPlayers: number;
     category: string;
-  }) => void;
+  }) => Promise<string>;
   joinRoom: (roomCode: string) => Promise<void>;
   leaveRoom: (roomId: string) => void;
   startMatch: (roomId: string) => void;
   submitAnswer: (matchId: string, roundNo: number, answer: string) => void;
   requestSnapshot: (matchId: string, lastSeenSeqNo: number) => void;
 }
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
 export const useSocketStore = create<SocketState>((set, get) => ({
   // Initial state
@@ -81,6 +94,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   isAuthenticated: false,
   userId: null,
   username: null,
+  accessToken: null,
+  userRole: null,
   room: null,
   match: null,
   lastAnswerResult: null,
@@ -101,6 +116,19 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     newSocket.on("connect", () => {
       set({ isConnected: true, error: null });
       console.log("🔌 Connected to game server");
+
+      const stateToken = get().accessToken;
+      if (stateToken) {
+        newSocket.emit(ClientEvent.AUTHENTICATE, { token: stateToken });
+        return;
+      }
+
+      void get()
+        .refreshAccessToken()
+        .then((token) => {
+          if (!token) return;
+          newSocket.emit(ClientEvent.AUTHENTICATE, { token });
+        });
     });
 
     newSocket.on("disconnect", () => {
@@ -122,7 +150,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         room: {
           id: data.roomId,
           code: data.code,
-          status: "WAITING",
+          status: RoomStatus.WAITING,
           hostId: data.hostId ?? get().userId,
           players: [],
         },
@@ -135,7 +163,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         room: {
           id: data.roomId,
           code: data.code,
-          status: "WAITING",
+          status: RoomStatus.WAITING,
           hostId:
             (data as RoomJoinedPayload & { hostId?: string }).hostId ?? null,
           players: data.players
@@ -183,6 +211,13 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     });
 
     newSocket.on(ServerEvent.ERROR, (data) => {
+      // If unauthorized or invalid token, clear local auth state
+      if (
+        data.message === "Invalid or expired token" ||
+        data.message === "Unauthorized"
+      ) {
+        set({ isAuthenticated: false, accessToken: null, userRole: null });
+      }
       set({ error: data.message });
       console.error("❌ Error:", data.message);
     });
@@ -199,29 +234,142 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         socket: null,
         isConnected: false,
         isAuthenticated: false,
+        userId: null,
+        username: null,
+        accessToken: null,
+        userRole: null,
         room: null,
         match: null,
       });
     }
   },
 
+  refreshAccessToken: async () => {
+    try {
+      const response = await fetch(`${API_URL}/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        set({
+          accessToken: null,
+          isAuthenticated: false,
+          userId: null,
+          username: null,
+          userRole: null,
+        });
+        return null;
+      }
+
+      const data = (await response.json()) as AuthResponse;
+
+      set({
+        accessToken: data.accessToken,
+        userId: data.user.id,
+        username: data.user.username,
+        userRole: data.user.role,
+      });
+
+      return data.accessToken;
+    } catch {
+      set({
+        accessToken: null,
+        isAuthenticated: false,
+        userId: null,
+        username: null,
+        userRole: null,
+      });
+      return null;
+    }
+  },
+
   // Authenticate
-  authenticate: (token: string) => {
+  authenticate: async (nickname: string) => {
     const { socket } = get();
-    if (socket) {
-      socket.emit(ClientEvent.AUTHENTICATE, { token });
+    if (!socket) return;
+
+    try {
+      const response = await fetch(`${API_URL}/auth/guest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ username: nickname }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || "Authentication failed");
+      }
+
+      const data = (await response.json()) as AuthResponse;
+
+      set({
+        accessToken: data.accessToken,
+        userRole: data.user.role,
+      });
+
+      socket.emit(ClientEvent.AUTHENTICATE, { token: data.accessToken });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to authenticate";
+      set({ error: message });
+      console.error("❌ Authentication error:", err);
     }
   },
 
   // Create Room
   createRoom: (config) => {
     const { socket } = get();
-    if (socket) {
+    if (!socket) {
+      return Promise.reject(new Error("Socket not connected"));
+    }
+
+    return new Promise<string>((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        cleanup();
+        reject(new Error("Create room timed out"));
+      }, 8000);
+
+      const onCreated = (data: {
+        roomId: string;
+        code: string;
+        hostId?: string;
+      }) => {
+        cleanup();
+        set({
+          room: {
+            id: data.roomId,
+            code: data.code,
+            status: RoomStatus.WAITING,
+            hostId: data.hostId ?? get().userId,
+            players: [],
+          },
+        });
+        resolve(data.code);
+      };
+
+      const onError = (data: ErrorPayload) => {
+        cleanup();
+        reject(new Error(data.message || "Failed to create room"));
+      };
+
+      const cleanup = () => {
+        clearTimeout(timeoutId);
+        socket.off(ServerEvent.ROOM_CREATED, onCreated);
+        socket.off(ServerEvent.ERROR, onError);
+      };
+
+      socket.on(ServerEvent.ROOM_CREATED, onCreated);
+      socket.on(ServerEvent.ERROR, onError);
+
       socket.emit(ClientEvent.CREATE_ROOM, {
         roomType: config.roomType,
         maxPlayers: config.maxPlayers,
+        timeLimit: config.timeLimit,
+        category: config.category,
       });
-    }
+    });
   },
 
   // Join Room
@@ -243,7 +391,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         resolve();
       };
 
-      const onError = (data: { message: string }) => {
+      const onError = (data: ErrorPayload) => {
         cleanup();
         reject(new Error(data.message || "Failed to join room"));
       };

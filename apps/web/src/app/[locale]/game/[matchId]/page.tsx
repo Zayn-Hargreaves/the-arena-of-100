@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, use, useRef } from "react";
+import React, { useState, useEffect, use, useRef, useCallback } from "react";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import { Timer } from "@/components/game/timer";
 import { AnswerTile } from "@/components/game/answer-tile";
@@ -14,281 +14,7 @@ interface GamePageProps {
   params: Promise<{ matchId: string }>;
 }
 
-interface AvatarOption {
-  seed: string;
-  name: string;
-  isAnimated?: boolean;
-  spritesheet?: string;
-}
-
-const avatars: AvatarOption[] = [
-  { seed: "avatar-cat", name: "Mèo Ngáo" },
-  {
-    seed: "jellyfrog",
-    name: "Ếch Thạch (Jelly)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/jellyfrog_spritesheet.webp",
-  },
-  {
-    seed: "clippit",
-    name: "Clippy Kỷ Niệm",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/clippit_spritesheet.webp",
-  },
-  {
-    seed: "dario",
-    name: "CEO Dario",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/dario_spritesheet.webp",
-  },
-  {
-    seed: "dentist",
-    name: "Nha Sĩ Chibi",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/dentist_spritesheet.webp",
-  },
-  {
-    seed: "nyakoshigure",
-    name: "Mèo Nyako",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/nyakoshigure_spritesheet.webp",
-  },
-  {
-    seed: "slavik",
-    name: "Slavik Tracksuit",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/slavik_spritesheet.webp",
-  },
-  {
-    seed: "tux",
-    name: "Chim Cánh Cụt Tux",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/tux_spritesheet.webp",
-  },
-  {
-    seed: "yellingdario",
-    name: "Dario Gào Thét",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/yellingdario_spritesheet.webp",
-  },
-  {
-    seed: "yorhasit2b",
-    name: "Hiệp Sĩ 2B Ngơ",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/yorhasit2b_spritesheet.webp",
-  },
-  {
-    seed: "airring",
-    name: "AirRing (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/airring_spritesheet.webp",
-  },
-  {
-    seed: "ask-jeeves",
-    name: "Ask Jeeves (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/ask-jeeves_spritesheet.webp",
-  },
-  {
-    seed: "azure",
-    name: "Azure (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/azure_spritesheet.webp",
-  },
-  {
-    seed: "broom-belle",
-    name: "Kiki (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/broom-belle_spritesheet.webp",
-  },
-  {
-    seed: "capy-2",
-    name: "Capy (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/capy-2_spritesheet.webp",
-  },
-  {
-    seed: "cinder",
-    name: "Cinder (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/cinder_spritesheet.webp",
-  },
-  {
-    seed: "clawd",
-    name: "Clawd (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/clawd_spritesheet.webp",
-  },
-  {
-    seed: "clippy",
-    name: "Clippy (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/clippy_spritesheet.webp",
-  },
-  {
-    seed: "da-zhuang",
-    name: "Đại Tráng (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/da-zhuang_spritesheet.webp",
-  },
-  {
-    seed: "dev",
-    name: "Dev (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/dev_spritesheet.webp",
-  },
-  {
-    seed: "dewdrop",
-    name: "Dewdrop (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/dewdrop_spritesheet.webp",
-  },
-  {
-    seed: "doodlebob",
-    name: "Doodle Bob (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/doodlebob_spritesheet.webp",
-  },
-  {
-    seed: "dude",
-    name: "Dude (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/dude_spritesheet.webp",
-  },
-  {
-    seed: "duo",
-    name: "Duo (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/duo_spritesheet.webp",
-  },
-  {
-    seed: "einstein",
-    name: "Einstein (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/einstein_spritesheet.webp",
-  },
-  {
-    seed: "esheep64",
-    name: "eSheep64 (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/esheep64_spritesheet.webp",
-  },
-  {
-    seed: "finderguy",
-    name: "Finder Guy (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/finderguy_spritesheet.webp",
-  },
-  {
-    seed: "fine-pup",
-    name: "Fine Pup (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/fine-pup_spritesheet.webp",
-  },
-  {
-    seed: "goblin-goods",
-    name: "Goblin Goods (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/goblin-goods_spritesheet.webp",
-  },
-  {
-    seed: "goblin",
-    name: "Goblin (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/goblin_spritesheet.webp",
-  },
-  {
-    seed: "goose",
-    name: "Goose (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/goose_spritesheet.webp",
-  },
-  {
-    seed: "kwehlet",
-    name: "Kwehlet (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/kwehlet_spritesheet.webp",
-  },
-  {
-    seed: "mini-sama",
-    name: "Mini Sama (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/mini-sama_spritesheet.webp",
-  },
-  {
-    seed: "miss-minute",
-    name: "Miss Minute (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/miss-minute_spritesheet.webp",
-  },
-  {
-    seed: "pc-guy",
-    name: "PC Guy (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/pc-guy_spritesheet.webp",
-  },
-  {
-    seed: "pope-amodei",
-    name: "Pope Amodei (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/pope-amodei_spritesheet.webp",
-  },
-  {
-    seed: "rubick",
-    name: "Rubick (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/rubick_spritesheet.webp",
-  },
-  {
-    seed: "sumi",
-    name: "Sumi (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/sumi_spritesheet.webp",
-  },
-  {
-    seed: "super-piglet",
-    name: "Super Piglet (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/super-piglet_spritesheet.webp",
-  },
-  {
-    seed: "theo",
-    name: "Theo (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/theo_spritesheet.webp",
-  },
-  {
-    seed: "thragg",
-    name: "Thragg (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/thragg_spritesheet.webp",
-  },
-  {
-    seed: "tibo",
-    name: "Tibo (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/tibo_spritesheet.webp",
-  },
-  {
-    seed: "tom",
-    name: "Tom (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/tom_spritesheet.webp",
-  },
-  {
-    seed: "totoro",
-    name: "Totoro (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/totoro_spritesheet.webp",
-  },
-  { seed: "avatar-frog", name: "Ếch Cụ" },
-  { seed: "avatar-octo", name: "Bạch Tuộc Nháy" },
-  { seed: "avatar-dog", name: "Cún Ngơ" },
-  { seed: "avatar-fox", name: "Cáo Xảo Quyệt" },
-  { seed: "avatar-unicorn", name: "Kỳ Lân Bay Màu" },
-  { seed: "avatar-ghost", name: "Ma Vui Vẻ" },
-  { seed: "avatar-cosmo", name: "Người Ngoài Hành Tinh" },
-];
+import { avatars } from "@/lib/avatars";
 
 export default function GamePage({ params }: GamePageProps) {
   const { matchId } = use(params);
@@ -310,7 +36,7 @@ export default function GamePage({ params }: GamePageProps) {
     typeof setTimeout
   > | null>(null);
 
-  const clearRoundTimers = () => {
+  const clearRoundTimers = useCallback(() => {
     if (evaluateTimeoutRef.current) {
       clearTimeout(evaluateTimeoutRef.current);
       evaluateTimeoutRef.current = null;
@@ -319,9 +45,9 @@ export default function GamePage({ params }: GamePageProps) {
       clearTimeout(roundTransitionTimeoutRef.current);
       roundTransitionTimeoutRef.current = null;
     }
-  };
+  }, []);
 
-  const handleEndRound = () => {
+  const handleEndRound = useCallback(() => {
     clearRoundTimers();
     setRoundCompleted(true);
     evaluateTimeoutRef.current = setTimeout(() => {
@@ -343,7 +69,7 @@ export default function GamePage({ params }: GamePageProps) {
         setRevealedCorrectAnswer(null);
       }, 3000);
     }, 1000);
-  };
+  }, [clearRoundTimers, router, matchId]);
 
   useEffect(() => {
     remainingCountRef.current = remainingCount;
@@ -385,7 +111,7 @@ export default function GamePage({ params }: GamePageProps) {
         intervalRef.current = null;
       }
     };
-  }, [roundCompleted]);
+  }, [roundCompleted, handleEndRound]);
 
   useEffect(() => {
     return () => {
@@ -394,7 +120,7 @@ export default function GamePage({ params }: GamePageProps) {
       }
       clearRoundTimers();
     };
-  }, []);
+  }, [clearRoundTimers]);
 
   const handleSelectAnswer = (option: string) => {
     if (roundCompleted) return;

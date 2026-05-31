@@ -84,5 +84,13 @@
   },
   "Timer": {
     "seconds": "seconds"
+  },
+  "NotFoundPage": {
+    "title": "SURVIVAL QUESTION • ROUND 404",
+    "question": "Question 404: Where is the page you are looking for currently located?",
+    "optionA": "A) Completely eliminated from the system",
+    "optionB": "B) Not yet discovered on the server",
+    "optionC": "C) Lost in the survival battle zone",
+    "optionD": "D) Return to home to start a new match!"
   }
 }

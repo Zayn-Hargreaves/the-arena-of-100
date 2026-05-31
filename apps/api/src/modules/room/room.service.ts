@@ -27,6 +27,8 @@ export class RoomService {
     hostId: string,
     roomType: "PUBLIC" | "PRIVATE",
     maxPlayers?: number,
+    timeLimit?: number,
+    category?: string,
   ) {
     const code = generateRoomCode();
     const room = await this.prisma.room.create({
@@ -36,6 +38,8 @@ export class RoomService {
         status: RoomStatus.WAITING,
         hostId,
         maxPlayers: maxPlayers ?? GAME_CONFIG.MAX_PLAYERS,
+        timeLimit: timeLimit ?? 15,
+        category: category ?? "ALL",
       },
     });
 
@@ -56,6 +60,8 @@ export class RoomService {
         status: room.status,
         hostId: room.hostId,
         playerCount: 1,
+        timeLimit: room.timeLimit,
+        category: room.category,
       },
       3600,
     );
@@ -200,6 +206,8 @@ export class RoomService {
         status: room.status,
         hostId: room.hostId,
         playerCount: room.players.length,
+        timeLimit: room.timeLimit,
+        category: room.category,
       },
       3600,
     );

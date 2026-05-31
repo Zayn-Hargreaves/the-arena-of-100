@@ -70,7 +70,7 @@ All critical fixes complete. Currently on branch `refactor/split-game-gateway` â
 24. **Procedural Avatar System (2026-05-31)**: Dynamic vector procedural avatar fallback rendering and native spritesheet animation loop components (MelbitSprite).
 25. **3D Shadow Interaction (2026-05-31)**: Flat offset 3D shadows depressing on click/hover for tactile feedback.
 26. **Design System Source of Truth**: [migrateDesignSystem.md](./migrateDesignSystem.md) acts as the official step-by-step phased roadmap for system migration to ensure compatibility with 256k token models.
-27. **Design System Source of Truth**: [migrateDesignSystem.md](./migrateDesignSystem.md) acts as the official step-by-step phased roadmap for system migration to ensure compatibility with 256k token models.
+27. **Type-Safe Error Handling**: Implemented custom `RoomError` class with structured error codes, replacing brittle string-matching of error messages in handlers and services (see [errorHandlingPattern.md](./errorHandlingPattern.md)).
 
 ## Pending Decisions (From Assessment)
 

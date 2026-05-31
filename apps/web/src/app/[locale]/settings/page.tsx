@@ -308,7 +308,7 @@ export default function SettingsPage() {
             {/* Quick action: Save configs */}
             <div className="pt-2">
               <button
-                className="jelly-btn-primary w-full h-12 font-display uppercase tracking-wider text-xs font-black border-[3px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42] rounded-2xl flex items-center justify-center gap-2"
+                className="jelly-btn bg-candy-pink text-white hover:bg-candy-pink/90 w-full h-12 font-display uppercase tracking-wider text-xs font-black border-[3px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42] rounded-2xl flex items-center justify-center gap-2"
                 onClick={() =>
                   toast({
                     description:

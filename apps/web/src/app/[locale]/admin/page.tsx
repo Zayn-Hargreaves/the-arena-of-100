@@ -3,6 +3,10 @@
 import React, { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
+import { useRouter } from "next/navigation";
+import { useToast } from "@/hooks/use-toast";
+import { useSocketStore } from "@/stores/socket-store";
+import { API_URL } from "@/lib/api";
 import {
   Server,
   Database,
@@ -14,14 +18,34 @@ import {
   Terminal,
 } from "lucide-react";
 
+// ── Response Types (mirrors API) ───────────────────────────
+
+interface MonitoringResponse {
+  cpuUsage?: number;
+  memoryUsageMb?: number;
+  roomCount?: number;
+}
+
+interface HealthCheckResponse {
+  services?: {
+    database?: { status?: string };
+    redis?: { status?: string };
+  };
+}
+
 type ServiceStatus = "loading" | "connected" | "disconnected" | "error";
 
 export default function AdminPage() {
   const t = useTranslations("admin");
+  const router = useRouter();
+  const { toast } = useToast();
+  const { accessToken, userRole } = useSocketStore();
+
   const [dbStatusState, setDbStatusState] = useState<ServiceStatus>("loading");
   const [redisStatusState, setRedisStatusState] =
     useState<ServiceStatus>("loading");
   const [seeding, setSeeding] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [metrics, setMetrics] = useState({
     cpuUsage: 0,
     memoryUsageMb: 0,
@@ -29,18 +53,14 @@ export default function AdminPage() {
   });
 
   useEffect(() => {
-    const fetchMonitoring = async (apiUrl: string) => {
+    const fetchMonitoring = async () => {
       try {
-        const response = await fetch(`${apiUrl}/health/monitoring`, {
+        const response = await fetch(`${API_URL}/health/monitoring`, {
           credentials: "include",
         });
 
         if (!response.ok) return;
-        const data = (await response.json()) as {
-          cpuUsage?: number;
-          memoryUsageMb?: number;
-          roomCount?: number;
-        };
+        const data = (await response.json()) as MonitoringResponse;
 
         setMetrics({
           cpuUsage: data.cpuUsage ?? 0,
@@ -52,12 +72,12 @@ export default function AdminPage() {
       }
     };
 
-    const fetchHealth = async (apiUrl: string) => {
+    const fetchHealth = async () => {
       setDbStatusState("loading");
       setRedisStatusState("loading");
 
       try {
-        const response = await fetch(`${apiUrl}/health`, {
+        const response = await fetch(`${API_URL}/health`, {
           credentials: "include",
         });
 
@@ -67,12 +87,7 @@ export default function AdminPage() {
           return;
         }
 
-        const data = (await response.json()) as {
-          services?: {
-            database?: { status?: string };
-            redis?: { status?: string };
-          };
-        };
+        const data = (await response.json()) as HealthCheckResponse;
 
         const dbStatus = data.services?.database?.status;
         const redisStatus = data.services?.redis?.status;
@@ -93,23 +108,106 @@ export default function AdminPage() {
       }
     };
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-    void Promise.all([fetchMonitoring(apiUrl), fetchHealth(apiUrl)]);
+    void Promise.all([fetchMonitoring(), fetchHealth()]);
   }, []);
 
-  const handleSeedQuestions = () => {
+  const handleSeedQuestions = async () => {
     setSeeding(true);
-    setTimeout(() => {
-      setSeeding(false);
-      alert(t("alerts.seedSuccess"));
-    }, 1500);
-  };
+    try {
+      const response = await fetch(`${API_URL}/admin/questions/sync`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
 
-  const handleResetSystem = () => {
-    if (confirm(t("alerts.resetConfirm"))) {
-      alert(t("alerts.resetSuccess"));
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || "Failed to sync questions");
+      }
+
+      toast({
+        title: "Database Seed Successful",
+        description: t("alerts.seedSuccess"),
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "An error occurred during synchronization";
+      toast({
+        title: "Sync Failed",
+        description: message,
+        variant: "error",
+      });
+    } finally {
+      setSeeding(false);
     }
   };
+
+  const handleResetSystem = async () => {
+    if (!confirm(t("alerts.resetConfirm"))) return;
+
+    setResetting(true);
+    try {
+      const response = await fetch(`${API_URL}/admin/system/reset`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || "Failed to reset system");
+      }
+
+      toast({
+        title: "System Reset Successful",
+        description: t("alerts.resetSuccess"),
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "An error occurred during reset";
+      toast({
+        title: "Reset Failed",
+        description: message,
+        variant: "error",
+      });
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  if (userRole !== "ADMIN") {
+    return (
+      <AppShellLayout>
+        <div className="max-w-md mx-auto w-full text-center space-y-6 pt-12 select-none">
+          <div className="bg-candy-red border-[3px] border-candy-ink rounded-3xl p-8 shadow-[6px_6px_0_0_#2B2D42] text-white space-y-4">
+            <div className="flex justify-center">
+              <AlertTriangle className="w-16 h-16 text-candy-yellow animate-bounce" />
+            </div>
+            <h1 className="font-display font-black text-2xl tracking-wider uppercase">
+              ACCESS DENIED
+            </h1>
+            <p className="font-mono text-xs font-black uppercase text-white/95 leading-relaxed">
+              You do not have administrative clearance to operate this terminal.
+            </p>
+          </div>
+          <button
+            onClick={() => router.push("/")}
+            className="px-6 py-3 bg-candy-yellow border-[3px] border-candy-ink rounded-2xl font-display font-black text-sm uppercase text-candy-ink shadow-[4px_4px_0_0_#000] hover:bg-yellow-300 active:translate-y-0.5 active:shadow-[2px_2px_0_0_#000] transition-all"
+          >
+            Return to Deck
+          </button>
+        </div>
+      </AppShellLayout>
+    );
+  }
 
   return (
     <AppShellLayout>
@@ -279,11 +377,21 @@ export default function AdminPage() {
             {/* Actions */}
             <div className="space-y-4">
               <button
+                disabled={resetting}
                 onClick={handleResetSystem}
-                className="w-full flex items-center justify-center h-12 bg-candy-red border-[3px] border-candy-ink rounded-2xl font-display font-black text-sm uppercase text-white shadow-[4px_4px_0_0_#000] hover:bg-red-600 active:translate-y-0.5 active:shadow-[2px_2px_0_0_#000] transition-all"
+                className="w-full flex items-center justify-center h-12 bg-candy-red border-[3px] border-candy-ink rounded-2xl font-display font-black text-sm uppercase text-white shadow-[4px_4px_0_0_#000] hover:bg-red-600 active:translate-y-0.5 active:shadow-[2px_2px_0_0_#000] transition-all disabled:opacity-50 disabled:pointer-events-none"
               >
-                <AlertTriangle className="w-4 h-4 mr-3 animate-pulse shrink-0" />
-                {t("resetActiveLobbies")}
+                {resetting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-3 animate-spin shrink-0" />
+                    RESETTING SYSTEM...
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle className="w-4 h-4 mr-3 animate-pulse shrink-0" />
+                    {t("resetActiveLobbies")}
+                  </>
+                )}
               </button>
 
               <div className="p-4 bg-candy-red/5 border-[2.5px] border-candy-ink rounded-2xl shadow-[2.5px_2.5px_0_0_#000]">

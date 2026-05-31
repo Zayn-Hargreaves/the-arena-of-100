@@ -20,281 +20,7 @@ interface LobbyPageProps {
   params: Promise<{ roomCode: string }>;
 }
 
-interface AvatarOption {
-  seed: string;
-  name: string;
-  isAnimated?: boolean;
-  spritesheet?: string;
-}
-
-const avatars: AvatarOption[] = [
-  { seed: "avatar-cat", name: "Mèo Ngáo" },
-  {
-    seed: "jellyfrog",
-    name: "Ếch Thạch (Jelly)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/jellyfrog_spritesheet.webp",
-  },
-  {
-    seed: "clippit",
-    name: "Clippy Kỷ Niệm",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/clippit_spritesheet.webp",
-  },
-  {
-    seed: "dario",
-    name: "CEO Dario",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/dario_spritesheet.webp",
-  },
-  {
-    seed: "dentist",
-    name: "Nha Sĩ Chibi",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/dentist_spritesheet.webp",
-  },
-  {
-    seed: "nyakoshigure",
-    name: "Mèo Nyako",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/nyakoshigure_spritesheet.webp",
-  },
-  {
-    seed: "slavik",
-    name: "Slavik Tracksuit",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/slavik_spritesheet.webp",
-  },
-  {
-    seed: "tux",
-    name: "Chim Cánh Cụt Tux",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/tux_spritesheet.webp",
-  },
-  {
-    seed: "yellingdario",
-    name: "Dario Gào Thét",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/yellingdario_spritesheet.webp",
-  },
-  {
-    seed: "yorhasit2b",
-    name: "Hiệp Sĩ 2B Ngơ",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/yorhasit2b_spritesheet.webp",
-  },
-  {
-    seed: "airring",
-    name: "AirRing (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/airring_spritesheet.webp",
-  },
-  {
-    seed: "ask-jeeves",
-    name: "Ask Jeeves (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/ask-jeeves_spritesheet.webp",
-  },
-  {
-    seed: "azure",
-    name: "Azure (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/azure_spritesheet.webp",
-  },
-  {
-    seed: "broom-belle",
-    name: "Kiki (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/broom-belle_spritesheet.webp",
-  },
-  {
-    seed: "capy-2",
-    name: "Capy (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/capy-2_spritesheet.webp",
-  },
-  {
-    seed: "cinder",
-    name: "Cinder (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/cinder_spritesheet.webp",
-  },
-  {
-    seed: "clawd",
-    name: "Clawd (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/clawd_spritesheet.webp",
-  },
-  {
-    seed: "clippy",
-    name: "Clippy (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/clippy_spritesheet.webp",
-  },
-  {
-    seed: "da-zhuang",
-    name: "Đại Tráng (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/da-zhuang_spritesheet.webp",
-  },
-  {
-    seed: "dev",
-    name: "Dev (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/dev_spritesheet.webp",
-  },
-  {
-    seed: "dewdrop",
-    name: "Dewdrop (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/dewdrop_spritesheet.webp",
-  },
-  {
-    seed: "doodlebob",
-    name: "Doodle Bob (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/doodlebob_spritesheet.webp",
-  },
-  {
-    seed: "dude",
-    name: "Dude (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/dude_spritesheet.webp",
-  },
-  {
-    seed: "duo",
-    name: "Duo (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/duo_spritesheet.webp",
-  },
-  {
-    seed: "einstein",
-    name: "Einstein (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/einstein_spritesheet.webp",
-  },
-  {
-    seed: "esheep64",
-    name: "eSheep64 (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/esheep64_spritesheet.webp",
-  },
-  {
-    seed: "finderguy",
-    name: "Finder Guy (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/finderguy_spritesheet.webp",
-  },
-  {
-    seed: "fine-pup",
-    name: "Fine Pup (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/fine-pup_spritesheet.webp",
-  },
-  {
-    seed: "goblin-goods",
-    name: "Goblin Goods (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/goblin-goods_spritesheet.webp",
-  },
-  {
-    seed: "goblin",
-    name: "Goblin (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/goblin_spritesheet.webp",
-  },
-  {
-    seed: "goose",
-    name: "Goose (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/goose_spritesheet.webp",
-  },
-  {
-    seed: "kwehlet",
-    name: "Kwehlet (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/kwehlet_spritesheet.webp",
-  },
-  {
-    seed: "mini-sama",
-    name: "Mini Sama (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/mini-sama_spritesheet.webp",
-  },
-  {
-    seed: "miss-minute",
-    name: "Miss Minute (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/miss-minute_spritesheet.webp",
-  },
-  {
-    seed: "pc-guy",
-    name: "PC Guy (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/pc-guy_spritesheet.webp",
-  },
-  {
-    seed: "pope-amodei",
-    name: "Pope Amodei (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/pope-amodei_spritesheet.webp",
-  },
-  {
-    seed: "rubick",
-    name: "Rubick (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/rubick_spritesheet.webp",
-  },
-  {
-    seed: "sumi",
-    name: "Sumi (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/sumi_spritesheet.webp",
-  },
-  {
-    seed: "super-piglet",
-    name: "Super Piglet (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/super-piglet_spritesheet.webp",
-  },
-  {
-    seed: "theo",
-    name: "Theo (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/theo_spritesheet.webp",
-  },
-  {
-    seed: "thragg",
-    name: "Thragg (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/thragg_spritesheet.webp",
-  },
-  {
-    seed: "tibo",
-    name: "Tibo (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/tibo_spritesheet.webp",
-  },
-  {
-    seed: "tom",
-    name: "Tom (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/tom_spritesheet.webp",
-  },
-  {
-    seed: "totoro",
-    name: "Totoro (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/totoro_spritesheet.webp",
-  },
-  { seed: "avatar-frog", name: "Ếch Cụ" },
-  { seed: "avatar-octo", name: "Bạch Tuộc Nháy" },
-  { seed: "avatar-dog", name: "Cún Ngơ" },
-  { seed: "avatar-fox", name: "Cáo Xảo Quyệt" },
-  { seed: "avatar-unicorn", name: "Kỳ Lân Bay Màu" },
-  { seed: "avatar-ghost", name: "Ma Vui Vẻ" },
-  { seed: "avatar-cosmo", name: "Người Ngoài Hành Tinh" },
-];
+import { avatars } from "@/lib/avatars";
 
 export default function LobbyPage({ params }: LobbyPageProps) {
   const { roomCode } = use(params);
@@ -361,13 +87,11 @@ export default function LobbyPage({ params }: LobbyPageProps) {
 
   const roomHostId = room?.hostId ?? null;
   const isHost = Boolean(userId && roomHostId && userId === roomHostId);
-  const showMockPlayers =
-    process.env.NODE_ENV === "development" ||
-    process.env.NEXT_PUBLIC_ENABLE_LOBBY_MOCK_PLAYERS === "true";
 
+  // Mock players only in local dev when the real players list is empty
+  const realPlayers = room?.players ?? [];
   const playersList =
-    room?.players ??
-    (showMockPlayers
+    process.env.NODE_ENV === "development" && realPlayers.length === 0
       ? [
           {
             id: userId || "1",
@@ -380,7 +104,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
           { id: "mock4", name: "Neon_Ghost", status: "READY", score: 0 },
           { id: "mock5", name: "Pixel_Hustler", status: "READY", score: 0 },
         ]
-      : []);
+      : realPlayers;
 
   // Get deterministic or local saved avatar details
   const getPlayerAvatar = (player: { id: string; name: string }) => {
@@ -509,52 +233,64 @@ export default function LobbyPage({ params }: LobbyPageProps) {
 
             {/* Grid list of guests showcasing beautiful animations */}
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              {playersList.map((player) => {
-                const playerAvatar = getPlayerAvatar(player);
-                const isCurrent = player.id === userId;
+              {playersList.length === 0 ? (
+                <div className="col-span-full flex flex-col items-center justify-center py-16 px-4 rounded-2xl border-[3px] border-dashed border-candy-ink/20 bg-white/50">
+                  <Users className="w-10 h-10 text-candy-ink/20 stroke-[1.5] mb-3" />
+                  <p className="font-display font-black text-base text-candy-ink/30 uppercase tracking-wider text-center">
+                    Đang chờ người chơi tham gia...
+                  </p>
+                  <p className="font-sans text-xs text-candy-ink/20 mt-1">
+                    Chia sẻ mã phòng để bắt đầu
+                  </p>
+                </div>
+              ) : (
+                playersList.map((player) => {
+                  const playerAvatar = getPlayerAvatar(player);
+                  const isCurrent = player.id === userId;
 
-                return (
-                  <div
-                    key={player.id}
-                    className={`p-4 flex items-center gap-3 rounded-2xl border-[3px] border-candy-ink transition-all shadow-[4px_4px_0_0_#2B2D42] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_0_#2B2D42] ${
-                      isCurrent
-                        ? "bg-candy-pink text-candy-ink"
-                        : "bg-white text-candy-ink"
-                    }`}
-                  >
-                    {playerAvatar.isAnimated ? (
-                      <div className="w-12 h-12 shrink-0 border-[2.5px] border-candy-ink rounded-xl bg-candy-cloud overflow-hidden flex items-center justify-center relative shadow-[2px_2px_0_0_#2B2D42]">
-                        <AnimatedSprite
-                          src={playerAvatar.spritesheet!}
-                          scale={2.2}
-                          row={0}
-                          speed={120}
+                  return (
+                    <div
+                      key={player.id}
+                      className={`p-4 flex items-center gap-3 rounded-2xl border-[3px] border-candy-ink transition-all shadow-[4px_4px_0_0_#2B2D42] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_0_#2B2D42] ${
+                        isCurrent
+                          ? "bg-candy-pink text-candy-ink"
+                          : "bg-white text-candy-ink"
+                      }`}
+                    >
+                      {playerAvatar.isAnimated ? (
+                        <div className="w-12 h-12 shrink-0 border-[2.5px] border-candy-ink rounded-xl bg-candy-cloud overflow-hidden flex items-center justify-center relative shadow-[2px_2px_0_0_#2B2D42]">
+                          <AnimatedSprite
+                            src={playerAvatar.spritesheet!}
+                            scale={2.2}
+                            row={0}
+                            speed={120}
+                          />
+                        </div>
+                      ) : (
+                        <Avatar
+                          size="md"
+                          fallback={playerAvatar.seed}
+                          status={isCurrent ? "online" : "offline"}
+                          className="border-[2.5px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42]"
                         />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-display text-sm truncate uppercase tracking-wide">
+                          {player.name}
+                        </p>
+                        <p
+                          className={cn(
+                            "font-mono text-[9px] uppercase tracking-widest font-black opacity-80",
+                            isCurrent ? "text-candy-ink" : "text-candy-pink",
+                          )}
+                        >
+                          {isCurrent ? "BẠN (HOST)" : "ĐÃ SẴN SÀNG"}
+                        </p>
                       </div>
-                    ) : (
-                      <Avatar
-                        size="md"
-                        fallback={playerAvatar.seed}
-                        status={isCurrent ? "online" : "offline"}
-                        className="border-[2.5px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42]"
-                      />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="font-display text-sm truncate uppercase tracking-wide">
-                        {player.name}
-                      </p>
-                      <p
-                        className={cn(
-                          "font-mono text-[9px] uppercase tracking-widest font-black opacity-80",
-                          isCurrent ? "text-candy-ink" : "text-candy-pink",
-                        )}
-                      >
-                        {isCurrent ? "BẠN (HOST)" : "ĐÃ SẴN SÀNG"}
-                      </p>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
         </div>

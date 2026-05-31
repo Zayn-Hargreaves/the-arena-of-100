@@ -30,7 +30,7 @@ const config: Config = {
         display: ["var(--font-display)", "sans-serif"],
         sans: ["var(--font-sans)", "sans-serif"],
         hand: ["var(--font-hand)", "cursive"],
-        body: ["var(--font-body)", "sans-serif"],
+        body: ["var(--font-sans)", "sans-serif"],
         mono: ["var(--font-mono)", "monospace"],
       },
       spacing: {

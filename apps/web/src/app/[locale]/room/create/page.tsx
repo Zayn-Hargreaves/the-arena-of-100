@@ -9,7 +9,7 @@ import { Sparkles, Globe, Lock, ShieldAlert, Cpu, Timer } from "lucide-react";
 
 export default function CreateRoomPage() {
   const router = useRouter();
-  const { createRoom, room, error } = useSocketStore();
+  const { createRoom } = useSocketStore();
   const [roomType, setRoomType] = useState<"PUBLIC" | "PRIVATE">("PUBLIC");
   const [timeLimit, setTimeLimit] = useState(15);
   const [maxPlayers, setMaxPlayers] = useState(100);
@@ -17,45 +17,27 @@ export default function CreateRoomPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     setCreateError(null);
     setIsCreating(true);
-    createRoom({
-      roomType,
-      timeLimit,
-      maxPlayers,
-      category,
-    });
+    try {
+      const roomCode = await createRoom({
+        roomType,
+        timeLimit,
+        maxPlayers,
+        category,
+      });
+      router.push(`/lobby/${roomCode}`);
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Không thể tạo phòng. Vui lòng thử lại.";
+      setCreateError(message);
+    } finally {
+      setIsCreating(false);
+    }
   };
-
-  // Listen to store updates for room creation success
-  React.useEffect(() => {
-    if (room?.code && !isCreating && !createError) {
-      router.push(`/lobby/${room.code}`);
-    }
-  }, [room?.code, isCreating, createError, router]);
-
-  React.useEffect(() => {
-    if (room?.code) {
-      setIsCreating(false);
-    }
-  }, [room?.code]);
-
-  React.useEffect(() => {
-    if (error && isCreating) {
-      setIsCreating(false);
-      setCreateError(error);
-    }
-  }, [error, isCreating]);
-
-  React.useEffect(() => {
-    if (!isCreating) return;
-    const timeout = window.setTimeout(() => {
-      setIsCreating(false);
-      setCreateError("Không thể tạo phòng. Vui lòng thử lại.");
-    }, 8000);
-    return () => window.clearTimeout(timeout);
-  }, [isCreating]);
 
   return (
     <AppShellLayout>

@@ -4,6 +4,7 @@ import React, { use, useEffect, useMemo, useState } from "react";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import { AnimatedSprite } from "@/components/ui/animated-sprite";
 import { Avatar } from "@/components/ui/avatar";
+import { API_URL } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import {
   Trophy,
@@ -54,8 +55,6 @@ type LoadState =
   | "not_found"
   | "unauthorized"
   | "network_error";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
 export default function ResultPage({ params }: ResultPageProps) {
   const { matchId } = use(params);

@@ -8,7 +8,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { z } from "zod";
-import { normalizeString } from "./seeds/questions";
+import { normalizeString } from "../src/prisma-seeds/questions";
 
 // Define environment schema
 const envSchema = z.object({
@@ -53,7 +53,7 @@ async function main() {
     selectedQuestions = testQuestionSeeds;
   } else if (seedEnv === "dev") {
     console.log(`🌱 Seeding questions using ${seedEnv} dataset...`);
-    const { questionSeeds } = await import("./seeds/questions");
+    const { questionSeeds } = await import("../src/prisma-seeds/questions");
     selectedQuestions = questionSeeds;
   } else {
     throw new Error(

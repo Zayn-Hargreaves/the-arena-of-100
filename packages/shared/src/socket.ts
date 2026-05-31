@@ -67,6 +67,8 @@ export interface LeaveRoomPayload {
 export interface CreateRoomPayload {
   roomType: "PUBLIC" | "PRIVATE";
   maxPlayers?: number;
+  timeLimit?: number;
+  category?: string;
 }
 
 export interface StartMatchPayload {

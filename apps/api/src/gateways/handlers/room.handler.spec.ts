@@ -41,7 +41,13 @@ describe("RoomHandler", () => {
         maxPlayers: 100,
       });
 
-      expect(roomService.createRoom).toHaveBeenCalledWith("u1", "PUBLIC", 100);
+      expect(roomService.createRoom).toHaveBeenCalledWith(
+        "u1",
+        "PUBLIC",
+        100,
+        undefined,
+        undefined,
+      );
       expect(client.join).toHaveBeenCalledWith("room:r1");
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ROOM_CREATED, {
         roomId: "r1",

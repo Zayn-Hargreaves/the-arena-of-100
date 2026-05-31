@@ -144,13 +144,16 @@ export class MatchStateMachine {
   }
 
   // Start New Round
-  startRound(question: {
-    id: string;
-    content: string;
-    options: string[];
-    correctAnswer: string;
-    difficulty?: "EASY" | "MEDIUM" | "HARD";
-  }): RoundState {
+  startRound(
+    question: {
+      id: string;
+      content: string;
+      options: string[];
+      correctAnswer: string;
+      difficulty?: "EASY" | "MEDIUM" | "HARD";
+    },
+    roundDurationMs?: number,
+  ): RoundState {
     if (this.state.status !== MatchStatus.ROUND_ACTIVE) {
       throw new Error("Cannot start round: match is not in ROUND_ACTIVE state");
     }
@@ -172,7 +175,7 @@ export class MatchStateMachine {
         difficulty: question.difficulty ?? "MEDIUM", // Default to MEDIUM if not provided
       },
       startedAt: now,
-      endsAt: now + GAME_CONFIG.ROUND_DURATION_MS,
+      endsAt: now + (roundDurationMs ?? GAME_CONFIG.ROUND_DURATION_MS),
       answers: new Map(),
       status: "ACTIVE",
       correctAnswer: question.correctAnswer,

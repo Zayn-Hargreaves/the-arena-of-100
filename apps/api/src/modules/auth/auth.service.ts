@@ -59,9 +59,11 @@ export class AuthService {
     if (!user) {
       // Prevent creation of "admin" user via guest login
       if (username === "admin") {
-        throw new UnauthorizedException("Cannot create admin user via guest login");
+        throw new UnauthorizedException(
+          "Cannot create admin user via guest login",
+        );
       }
-      
+
       user = await this.prisma.user.create({
         data: {
           username,
@@ -69,7 +71,9 @@ export class AuthService {
           role: Role.GUEST, // Always create new users as GUEST
         },
       });
-      this.logger.log(`New guest user created: ${username} with role ${user.role}`);
+      this.logger.log(
+        `New guest user created: ${username} with role ${user.role}`,
+      );
     }
     // If user exists, preserve their existing role when logging in
 
@@ -138,5 +142,43 @@ export class AuthService {
   // Logout
   async logout(refreshToken: string): Promise<void> {
     await this.redis.del(`refresh:${refreshToken}`);
+  }
+
+  getRefreshTokenTtlSeconds(): number {
+    return this.refreshExpiresIn;
+  }
+
+  getAccessTokenTtlSeconds(): number {
+    return this.parseExpiresInToSeconds(this.jwtExpiresIn);
+  }
+
+  private parseExpiresInToSeconds(value: string): number {
+    const trimmed = value.trim();
+    const numeric = Number(trimmed);
+
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return numeric;
+    }
+
+    const match = trimmed.match(/^(\d+)([smhd])$/i);
+    if (!match) {
+      return 24 * 60 * 60;
+    }
+
+    const amount = Number(match[1]);
+    const unit = match[2].toLowerCase();
+
+    switch (unit) {
+      case "s":
+        return amount;
+      case "m":
+        return amount * 60;
+      case "h":
+        return amount * 60 * 60;
+      case "d":
+        return amount * 24 * 60 * 60;
+      default:
+        return 24 * 60 * 60;
+    }
   }
 }
