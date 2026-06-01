@@ -38,7 +38,7 @@ export function clearCookie(name: string, secure: boolean): string {
   return serializeCookie(name, "", {
     path: "/",
     maxAge: 0,
-    sameSite: "lax",
+    sameSite: getSameSiteSetting(),
     httpOnly: true,
     secure,
   });
@@ -67,6 +67,14 @@ export function getCookieValue(
 
 export function shouldUseSecureCookies(nodeEnv: string | undefined): boolean {
   return nodeEnv === "production";
+}
+
+export function shouldUseCrossSiteCookies(): boolean {
+  return process.env.CROSS_SITE_COOKIES === "true";
+}
+
+export function getSameSiteSetting(): "lax" | "none" {
+  return shouldUseCrossSiteCookies() ? "none" : "lax";
 }
 
 export function resolveAccessTokenCookieMaxAge(ttlSeconds: number): number {

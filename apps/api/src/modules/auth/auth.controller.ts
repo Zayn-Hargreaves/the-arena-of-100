@@ -26,6 +26,8 @@ import {
   resolveAccessTokenCookieMaxAge,
   serializeCookie,
   shouldUseSecureCookies,
+  shouldUseCrossSiteCookies,
+  getSameSiteSetting,
 } from "./auth-cookie";
 
 const guestLoginPipe = new ZodValidationPipe(guestLoginSchema);
@@ -110,7 +112,9 @@ export class AuthController {
     );
 
     if (!refreshToken) {
-      throw new UnauthorizedException("Refresh token is required");
+      // Make logout idempotent - if no refresh token, still clear cookies and return success
+      this.clearAuthCookies(reply);
+      return;
     }
 
     await this.authService.logout(refreshToken);
@@ -122,7 +126,8 @@ export class AuthController {
     accessToken: string,
     refreshToken: string,
   ) {
-    const secure = shouldUseSecureCookies(process.env.NODE_ENV);
+    const secure = shouldUseSecureCookies(process.env.NODE_ENV) || shouldUseCrossSiteCookies();
+    const sameSite = getSameSiteSetting();
     const accessMaxAge = resolveAccessTokenCookieMaxAge(
       this.authService.getAccessTokenTtlSeconds(),
     );
@@ -132,14 +137,14 @@ export class AuthController {
       serializeCookie(ACCESS_TOKEN_COOKIE, accessToken, {
         httpOnly: true,
         secure,
-        sameSite: "lax",
+        sameSite,
         path: "/",
         maxAge: accessMaxAge,
       }),
       serializeCookie(REFRESH_TOKEN_COOKIE, refreshToken, {
         httpOnly: true,
         secure,
-        sameSite: "lax",
+        sameSite,
         path: "/",
         maxAge: refreshMaxAge,
       }),
@@ -147,7 +152,7 @@ export class AuthController {
   }
 
   private clearAuthCookies(reply: FastifyReply) {
-    const secure = shouldUseSecureCookies(process.env.NODE_ENV);
+    const secure = shouldUseSecureCookies(process.env.NODE_ENV) || shouldUseCrossSiteCookies();
     reply.header("Set-Cookie", [
       clearCookie(ACCESS_TOKEN_COOKIE, secure),
       clearCookie(REFRESH_TOKEN_COOKIE, secure),

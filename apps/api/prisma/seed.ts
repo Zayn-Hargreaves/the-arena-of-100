@@ -22,6 +22,10 @@ const envSchema = z.object({
     .transform((val) => val === "true")
     .default("false"),
   DATABASE_URL: z.string(),
+  DATABASE_SSL: z
+    .string()
+    .transform((val) => val === "true")
+    .default("false"),
   SEED_ENV: z.string().default("dev"),
 });
 
@@ -29,13 +33,14 @@ const envSchema = z.object({
 const parsedEnv = envSchema.parse(process.env);
 
 const connectionString = parsedEnv.DATABASE_URL;
-const isRender = connectionString.includes("render.com");
+const useSSL = process.env.DATABASE_SSL === 'true';
+const sslConfig = useSSL ? { rejectUnauthorized: false } : undefined;
 const pool = new Pool({
   connectionString,
   max: 10, // Maximum number of clients in the pool
   idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
   connectionTimeoutMillis: 15000, // Return an error after 15 seconds if connection could not be established
-  ssl: isRender ? true : undefined,
+  ssl: sslConfig,
 });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });

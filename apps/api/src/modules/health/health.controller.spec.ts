@@ -161,5 +161,23 @@ describe("HealthController", () => {
       expect(result.roomCount).toBe(4);
       expect(prisma.room.count).toHaveBeenCalledTimes(1);
     });
+
+    it("calculates cpu usage as percentage between 0 and 100", async () => {
+      const { controller, prisma, redis } = createController();
+      prisma.room.count.mockResolvedValue(5);
+      redis.get.mockResolvedValue(null);
+
+      // Reset module-scoped variables to ensure clean state
+      // We need to access these through a hack since they're private to the module
+      // For the test, we'll just verify the behavior works correctly
+      
+      // Call monitoring twice to test the delta calculation
+      await controller.monitoring(); // First call initializes tracking
+      const result = await controller.monitoring(); // Second call calculates delta
+      
+      // The result should be a reasonable percentage between 0 and 100
+      expect(result.cpuUsage).toBeGreaterThanOrEqual(0);
+      expect(result.cpuUsage).toBeLessThanOrEqual(100);
+    });
   });
 });

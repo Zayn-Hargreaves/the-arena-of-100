@@ -12,6 +12,8 @@ import {
 import { AdminService } from "./admin.service";
 import { Roles } from "../../common/decorators/roles.decorator";
 import { Role } from "@prisma/client";
+import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
+import { SyncQuestionsDto, syncQuestionsSchema } from "./dto/sync-questions.dto";
 
 @ApiTags("Admin")
 @ApiBearerAuth()
@@ -23,9 +25,10 @@ export class AdminController {
   @Post("questions/sync")
   @ApiOperation({ summary: "Sync database questions with seed data" })
   @ApiResponse({ status: 201, description: "Questions successfully synced" })
-  async syncQuestions(@Body() body: { clearExisting?: boolean }) {
-    const clearExisting = body?.clearExisting ?? true;
-    return this.adminService.syncQuestions(clearExisting);
+  async syncQuestions(
+    @Body(new ZodValidationPipe(syncQuestionsSchema)) dto: SyncQuestionsDto,
+  ) {
+    return this.adminService.syncQuestions(dto.clearExisting);
   }
 
   @Post("system/reset")

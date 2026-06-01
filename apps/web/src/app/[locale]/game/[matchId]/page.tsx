@@ -7,21 +7,26 @@ import { AnswerTile } from "@/components/game/answer-tile";
 import { Avatar } from "@/components/ui/avatar";
 import { AnimatedSprite } from "@/components/ui/animated-sprite";
 import { useSocketStore } from "@/stores/socket-store";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/i18n/routing";
+import { usePathname } from "next/navigation";
 import { Users, ShieldAlert, Swords } from "lucide-react";
-
-interface GamePageProps {
-  params: Promise<{ matchId: string }>;
-}
-
 import { avatars } from "@/lib/avatars";
 
+interface GamePageProps {
+  params: Promise<{ matchId: string; locale?: string }>;
+}
+
 export default function GamePage({ params }: GamePageProps) {
-  const { matchId } = use(params);
+  const resolvedParams = use(params);
+  const { matchId, locale } = resolvedParams;
   const router = useRouter();
+  const pathname = usePathname();
   const { match, submitAnswer, userId, lastAnswerResult } = useSocketStore();
 
-  // Local state controls for fallback/mock interactive flows
+  // Extract locale from pathname if not provided
+  const currentLocale = locale || pathname.split("/")[1] || "vi";
+
+  // Server-authoritative state
   const [timeLeft, setTimeLeft] = useState(15);
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
   const [roundCompleted, setRoundCompleted] = useState(false);
@@ -29,98 +34,105 @@ export default function GamePage({ params }: GamePageProps) {
     string | null
   >(null);
   const [remainingCount, setRemainingCount] = useState(100);
-  const remainingCountRef = useRef(100);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const evaluateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const roundTransitionTimeoutRef = useRef<ReturnType<
-    typeof setTimeout
-  > | null>(null);
 
-  const clearRoundTimers = useCallback(() => {
-    if (evaluateTimeoutRef.current) {
-      clearTimeout(evaluateTimeoutRef.current);
-      evaluateTimeoutRef.current = null;
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Clear all timers
+  const clearTimers = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
     }
-    if (roundTransitionTimeoutRef.current) {
-      clearTimeout(roundTransitionTimeoutRef.current);
-      roundTransitionTimeoutRef.current = null;
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
     }
   }, []);
 
-  const handleEndRound = useCallback(() => {
-    clearRoundTimers();
-    setRoundCompleted(true);
-    evaluateTimeoutRef.current = setTimeout(() => {
-      let newCount = remainingCountRef.current;
-      setRemainingCount((prev) => {
-        newCount = Math.max(1, Math.round(prev * 0.4));
-        remainingCountRef.current = newCount;
-        return newCount;
-      });
+  // Calculate time left based on server timestamp
+  const calculateTimeLeft = useCallback(() => {
+    if (!match?.roundEndTime) return 15;
 
-      roundTransitionTimeoutRef.current = setTimeout(() => {
-        if (newCount <= 12) {
-          router.push(`/result/${matchId}`);
-          return;
-        }
-        setTimeLeft(15);
-        setSelectedAnswer(null);
-        setRoundCompleted(false);
-        setRevealedCorrectAnswer(null);
-      }, 3000);
-    }, 1000);
-  }, [clearRoundTimers, router, matchId]);
+    const now = Date.now();
+    const endTime = match.roundEndTime;
+    const timeDiff = Math.max(0, Math.floor((endTime - now) / 1000));
+    return timeDiff;
+  }, [match?.roundEndTime]);
 
+  // Update time left based on server timestamp
   useEffect(() => {
-    remainingCountRef.current = remainingCount;
-  }, [remainingCount]);
+    if (roundCompleted) return;
 
-  useEffect(() => {
-    if (roundCompleted && lastAnswerResult?.correctAnswer) {
-      setRevealedCorrectAnswer(lastAnswerResult.correctAnswer);
-    }
-  }, [roundCompleted, lastAnswerResult]);
+    // Clear existing timer
+    clearTimers();
 
-  // Dynamic countdown emulation
-  useEffect(() => {
-    if (roundCompleted) {
-      return;
-    }
+    // Set initial time
+    setTimeLeft(calculateTimeLeft());
 
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-    }
-
+    // Update time every second
     intervalRef.current = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          if (intervalRef.current) {
-            clearInterval(intervalRef.current);
-            intervalRef.current = null;
-          }
-          handleEndRound();
-          return 0;
-        }
-        return prev - 1;
-      });
+      const newTimeLeft = calculateTimeLeft();
+      setTimeLeft(newTimeLeft);
+
+      // When time runs out, let server events handle the transition
+      // We don't manually trigger round end anymore
     }, 1000);
 
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
+      clearTimers();
     };
-  }, [roundCompleted, handleEndRound]);
+  }, [calculateTimeLeft, roundCompleted, clearTimers, match?.roundEndTime]);
 
+  // Handle round completion (when server sends ROUND_ENDED via lastAnswerResult)
+  useEffect(() => {
+    // When we receive a round ended event (via lastAnswerResult with correctAnswer)
+    if (lastAnswerResult?.correctAnswer && !roundCompleted) {
+      clearTimers();
+      setRoundCompleted(true);
+      setRevealedCorrectAnswer(lastAnswerResult.correctAnswer);
+
+      // Show results for 3 seconds then transition
+      timerRef.current = setTimeout(() => {
+        // Update remaining count (this should ideally come from server)
+        setRemainingCount((prev) => {
+          const newCount = Math.max(1, Math.round(prev * 0.4));
+          return newCount;
+        });
+
+        // Check if match should end
+        timerRef.current = setTimeout(() => {
+          // For now we'll use the existing logic as placeholder
+          // In a full implementation, this would be driven by MATCH_FINISHED event
+          if (remainingCount <= 12) {
+            router.push(`/result/${matchId}`);
+            return;
+          }
+
+          // Reset for next round (this will be handled by server events)
+          setTimeLeft(15);
+          setSelectedAnswer(null);
+          setRoundCompleted(false);
+          setRevealedCorrectAnswer(null);
+        }, 3000);
+      }, 1000);
+    }
+  }, [
+    lastAnswerResult,
+    roundCompleted,
+    clearTimers,
+    matchId,
+    currentLocale,
+    remainingCount,
+    router,
+  ]);
+
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-      clearRoundTimers();
+      clearTimers();
     };
-  }, [clearRoundTimers]);
+  }, [clearTimers]);
 
   const handleSelectAnswer = (option: string) => {
     if (roundCompleted) return;
@@ -154,7 +166,13 @@ export default function GamePage({ params }: GamePageProps) {
       .split("")
       .reduce((acc, char) => acc + char.charCodeAt(0), 0);
     const index = hash % avatars.length;
-    return avatars[index];
+    const avatar = avatars[index];
+    // Normalize avatar data to ensure consistent shape
+    return {
+      seed: avatar.seed,
+      isAnimated: Boolean(avatar.isAnimated),
+      spritesheet: avatar.spritesheet || "",
+    };
   };
 
   const questionText =

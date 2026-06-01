@@ -148,5 +148,25 @@ describe("AuthController", () => {
       ).rejects.toThrow("Logout failed");
       expect(service.logout).toHaveBeenCalledWith("refresh-token-456");
     });
+
+    it("should logout successfully even when refresh token is missing (idempotent)", async () => {
+      const noCookieRequest = {
+        headers: {},
+      } as unknown as { headers: { cookie: string } };
+
+      // Should not call authService.logout when refresh token is missing
+      const result = await controller.logout(noCookieRequest as never, reply as never);
+
+      // Should still clear cookies even when refresh token is missing
+      expect(service.logout).not.toHaveBeenCalled();
+      expect(result).toBeUndefined();
+      expect(reply.header).toHaveBeenCalledWith(
+        "Set-Cookie",
+        expect.arrayContaining([
+          expect.stringContaining("arena_access_token="),
+          expect.stringContaining("arena_refresh_token="),
+        ]),
+      );
+    });
   });
 });

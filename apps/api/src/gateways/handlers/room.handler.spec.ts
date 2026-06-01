@@ -96,6 +96,35 @@ describe("RoomHandler", () => {
         }),
       );
     });
+
+    it("creates room with timeLimit and category", async () => {
+      vi.mocked(roomService.createRoom).mockResolvedValue({
+        id: "r1",
+        code: "ABC123",
+        type: "PUBLIC",
+      } as any);
+
+      await handler.handleCreateRoom(client, {
+        roomType: "PUBLIC",
+        maxPlayers: 100,
+        timeLimit: 15,
+        category: "SCIENCE",
+      });
+
+      expect(roomService.createRoom).toHaveBeenCalledWith(
+        "u1",
+        "PUBLIC",
+        100,
+        15,
+        "SCIENCE",
+      );
+      expect(client.join).toHaveBeenCalledWith("room:r1");
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ROOM_CREATED, {
+        roomId: "r1",
+        code: "ABC123",
+        roomType: "PUBLIC",
+      });
+    });
   });
 
   describe("handleJoinRoom", () => {

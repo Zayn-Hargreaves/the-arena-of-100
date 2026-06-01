@@ -120,7 +120,14 @@ export default function LobbyPage({ params }: LobbyPageProps) {
       .split("")
       .reduce((acc, char) => acc + char.charCodeAt(0), 0);
     const index = hash % avatars.length;
-    return avatars[index];
+    const avatar = avatars[index];
+    // Normalize avatar data to ensure consistent shape
+    return {
+      seed: avatar.seed,
+      name: avatar.name,
+      isAnimated: Boolean(avatar.isAnimated),
+      spritesheet: avatar.spritesheet || "",
+    };
   };
 
   return (

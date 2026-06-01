@@ -7,6 +7,8 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { useSocketStore } from "@/stores/socket-store";
 import { API_URL } from "@/lib/api";
+import { Modal } from "@/components/ui/modal";
+import { Button } from "@/components/ui/button";
 import {
   Server,
   Database,
@@ -23,6 +25,7 @@ import {
 interface MonitoringResponse {
   cpuUsage?: number;
   memoryUsageMb?: number;
+  totalMemoryMb?: number;
   roomCount?: number;
 }
 
@@ -46,9 +49,11 @@ export default function AdminPage() {
     useState<ServiceStatus>("loading");
   const [seeding, setSeeding] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
   const [metrics, setMetrics] = useState({
     cpuUsage: 0,
     memoryUsageMb: 0,
+    totalMemoryMb: 0,
     roomCount: 0,
   });
 
@@ -65,6 +70,7 @@ export default function AdminPage() {
         setMetrics({
           cpuUsage: data.cpuUsage ?? 0,
           memoryUsageMb: data.memoryUsageMb ?? 0,
+          totalMemoryMb: data.totalMemoryMb ?? 0,
           roomCount: data.roomCount ?? 0,
         });
       } catch {
@@ -147,8 +153,11 @@ export default function AdminPage() {
   };
 
   const handleResetSystem = async () => {
-    if (!confirm(t("alerts.resetConfirm"))) return;
+    setShowResetModal(true);
+  };
 
+  const performResetSystem = async () => {
+    setShowResetModal(false);
     setResetting(true);
     try {
       const response = await fetch(`${API_URL}/admin/system/reset`, {
@@ -268,7 +277,7 @@ export default function AdminPage() {
                 {t("ramAllocation")}
               </span>
               <span className="font-mono font-black text-sm text-candy-blue">
-                {metrics.memoryUsageMb} {t("units.mb")}
+                {metrics.memoryUsageMb} {t("units.mb")} / {metrics.totalMemoryMb || '?'} {t("units.mb")}
               </span>
             </div>
 
@@ -277,7 +286,7 @@ export default function AdminPage() {
               <div
                 className="bg-candy-blue border-r-[2px] border-candy-ink h-full rounded-lg shadow-[0_0_4px_rgba(0,0,0,0.15)]"
                 style={{
-                  width: `${Math.max(0, Math.min(100, (metrics.memoryUsageMb / 1024) * 100))}%`,
+                  width: `${Math.max(0, Math.min(100, ((metrics.memoryUsageMb / (metrics.totalMemoryMb || 1024)) * 100)))}%`,
                 }}
               />
             </div>
@@ -403,6 +412,29 @@ export default function AdminPage() {
           </div>
         </div>
       </div>
+      <Modal
+        open={showResetModal}
+        onOpenChange={setShowResetModal}
+        title="Confirm Reset"
+        description={t("alerts.resetConfirm")}
+      >
+        <div className="flex gap-3 mt-4">
+          <Button
+            variant="danger"
+            onClick={performResetSystem}
+            className="flex-1"
+          >
+            Confirm
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => setShowResetModal(false)}
+            className="flex-1"
+          >
+            Cancel
+          </Button>
+        </div>
+      </Modal>
     </AppShellLayout>
   );
 }

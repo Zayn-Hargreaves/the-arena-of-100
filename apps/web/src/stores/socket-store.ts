@@ -13,6 +13,9 @@ import {
   type AnswerResultPayload,
   type ErrorPayload,
   type RoomJoinedPayload,
+  type RoundStartedPayload,
+  type RoundEndedPayload,
+  type MatchFinishedPayload,
 } from "@arena/shared";
 import { API_URL } from "@/lib/api";
 
@@ -189,6 +192,44 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
     newSocket.on(ServerEvent.MATCH_STARTING, (data) => {
       console.log("⚔️ Match starting:", data);
+    });
+
+    newSocket.on(ServerEvent.ROUND_STARTED, (data: RoundStartedPayload) => {
+      set((state) => ({
+        match: state.match
+          ? {
+              ...state.match,
+              currentRoundNo: data.roundNo,
+              currentQuestion: data.question,
+              roundEndTime: data.endsAt,
+            }
+          : null,
+      }));
+      console.log("⏱️ Round started:", data);
+    });
+
+    newSocket.on(ServerEvent.ROUND_ENDED, (data: RoundEndedPayload) => {
+      set((state) => ({
+        match: state.match
+          ? {
+              ...state.match,
+              roundEndTime: null, // Reset round end time
+            }
+          : null,
+        lastAnswerResult: {
+          matchId: data.matchId,
+          roundNo: data.roundNo,
+          isCorrect: false, // Will be updated by ANSWER_RESULT if applicable
+          responseTimeMs: 0,
+          correctAnswer: data.correctAnswer,
+        },
+      }));
+      console.log("🏁 Round ended:", data);
+    });
+
+    newSocket.on(ServerEvent.MATCH_FINISHED, (data: MatchFinishedPayload) => {
+      console.log("🏆 Match finished:", data);
+      // TODO: Navigate to results page - this would be handled by the UI component
     });
 
     newSocket.on(ServerEvent.SNAPSHOT, (data: SnapshotPayload) => {

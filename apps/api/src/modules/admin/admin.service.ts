@@ -179,15 +179,36 @@ export class AdminService {
     await this.prisma.roomPlayer.deleteMany();
     await this.prisma.room.deleteMany();
 
-    // Clear active lobby/match Redis keys
+    // Clear active lobby/match Redis keys using non-blocking SCAN approach
     const client = this.redis.getClient();
-    const roomKeys = await client.keys("room:*");
-    const matchKeys = await client.keys("match:*");
-    const allKeys = [...roomKeys, ...matchKeys];
+    let totalDeleted = 0;
 
-    if (allKeys.length > 0) {
-      await client.del(...allKeys);
-      this.logger.log(`Purged ${allKeys.length} Redis keys from cache.`);
+    // Helper function to scan and delete keys in batches
+    const scanAndDelete = async (pattern: string): Promise<number> => {
+      let cursor = '0';
+      let deletedCount = 0;
+      
+      do {
+        const result = await client.scan(cursor, 'MATCH', pattern, 'COUNT', 1000);
+        cursor = result[0];
+        const keys = result[1];
+        
+        if (keys.length > 0) {
+          const deleted = await client.del(...keys);
+          deletedCount += deleted;
+        }
+      } while (cursor !== '0');
+      
+      return deletedCount;
+    };
+
+    // Scan and delete both room and match keys
+    const roomDeleted = await scanAndDelete('room:*');
+    const matchDeleted = await scanAndDelete('match:*');
+    totalDeleted = roomDeleted + matchDeleted;
+
+    if (totalDeleted > 0) {
+      this.logger.log(`Purged ${totalDeleted} Redis keys from cache (${roomDeleted} room keys, ${matchDeleted} match keys).`);
     }
 
     return {

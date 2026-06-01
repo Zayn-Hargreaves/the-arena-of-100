@@ -1,12 +1,15 @@
 import { z } from "zod";
 import { ApiProperty } from "@nestjs/swagger";
+import { QuestionCategory } from "../../question/dto/get-questions.dto";
 
 export const createRoomSchema = z.object({
   roomType: z.enum(["PUBLIC", "PRIVATE"]),
   maxPlayers: z.number().int().min(2).max(100).optional(),
   timeLimit: z.number().int().min(5).max(60).optional(),
-  category: z.string().optional(),
+  category: z.union([z.nativeEnum(QuestionCategory), z.literal("ALL")]).optional(),
 });
+
+export type CreateRoomInput = z.infer<typeof createRoomSchema>;
 
 export type CreateRoomInput = z.infer<typeof createRoomSchema>;
 
@@ -41,5 +44,5 @@ export class CreateRoomDto implements CreateRoomInput {
     description: "Question category filter: ALL or specific category name",
     required: false,
   })
-  category?: string;
+  category?: QuestionCategory | "ALL";
 }

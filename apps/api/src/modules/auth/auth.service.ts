@@ -7,6 +7,7 @@ import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import * as jwt from "jsonwebtoken";
+import ms from "ms";
 import { nanoid } from "nanoid";
 import { Role } from "@prisma/client";
 
@@ -154,31 +155,37 @@ export class AuthService {
 
   private parseExpiresInToSeconds(value: string): number {
     const trimmed = value.trim();
-    const numeric = Number(trimmed);
 
+    // Handle pure numbers as seconds (backward compatibility)
+    const numeric = Number(trimmed);
     if (Number.isFinite(numeric) && numeric > 0) {
       return numeric;
     }
 
-    const match = trimmed.match(/^(\d+)([smhd])$/i);
-    if (!match) {
-      return 24 * 60 * 60;
+    try {
+      // Use ms package to parse the time duration
+      const milliseconds = ms(value);
+
+      // Convert milliseconds to seconds and ensure it's a finite positive number
+      if (
+        typeof milliseconds === "number" &&
+        Number.isFinite(milliseconds) &&
+        milliseconds > 0
+      ) {
+        const seconds = Math.floor(milliseconds / 1000);
+        return seconds;
+      }
+    } catch {
+      // If refresh fails, clear auth state
+      set({
+        isAuthenticated: false,
+        accessToken: null,
+        userRole: null,
+      });
+      return null;
     }
 
-    const amount = Number(match[1]);
-    const unit = match[2].toLowerCase();
-
-    switch (unit) {
-      case "s":
-        return amount;
-      case "m":
-        return amount * 60;
-      case "h":
-        return amount * 60 * 60;
-      case "d":
-        return amount * 24 * 60 * 60;
-      default:
-        return 24 * 60 * 60;
-    }
+    // Fallback to 24 hours (24 * 60 * 60 seconds) on invalid input
+    return 24 * 60 * 60;
   }
 }
