@@ -90,10 +90,12 @@ export class HealthController {
       const elapsedMs = Date.now() - this.previousTime;
       const numCpus = os.cpus().length;
 
-      cpuUsage = Math.min(
-        100,
-        (deltaCpuMicros / 1000 / (elapsedMs * numCpus)) * 100,
-      );
+      if (elapsedMs > 0 && numCpus > 0) {
+        cpuUsage = Math.min(
+          100,
+          (deltaCpuMicros / 1000 / (elapsedMs * numCpus)) * 100,
+        );
+      }
     }
 
     // Update previous values for next calculation

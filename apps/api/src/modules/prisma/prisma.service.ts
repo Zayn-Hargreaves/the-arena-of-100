@@ -25,6 +25,17 @@ export class PrismaService
     if (!connectionString) {
       throw new Error("DATABASE_URL environment variable is missing!");
     }
+    const nodeEnv = process.env.NODE_ENV ?? "development";
+    if (
+      process.env.PG_ALLOW_SELF_SIGNED === "true" &&
+      nodeEnv === "production"
+    ) {
+      throw new Error(
+        "PG_ALLOW_SELF_SIGNED=true is forbidden when NODE_ENV=production. " +
+          "Provide PG_SSL_CA or remove PG_ALLOW_SELF_SIGNED.",
+      );
+    }
+
     const useSSL = process.env.DATABASE_SSL === "true";
     const caCert = process.env.PG_SSL_CA;
     const allowSelfSigned = process.env.PG_ALLOW_SELF_SIGNED === "true";
@@ -33,7 +44,10 @@ export class PrismaService
     if (useSSL) {
       if (caCert) {
         sslConfig = { rejectUnauthorized: true, ca: caCert };
-      } else if (allowSelfSigned) {
+      } else if (
+        allowSelfSigned &&
+        (nodeEnv === "development" || nodeEnv === "test")
+      ) {
         sslConfig = { rejectUnauthorized: false };
       } else {
         sslConfig = { rejectUnauthorized: true };

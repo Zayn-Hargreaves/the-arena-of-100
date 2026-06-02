@@ -42,11 +42,21 @@ const useSSL = parsedEnv.DATABASE_SSL;
 const caCert = parsedEnv.PG_SSL_CA;
 const allowSelfSigned = parsedEnv.PG_ALLOW_SELF_SIGNED;
 
+if (allowSelfSigned && parsedEnv.NODE_ENV === "production") {
+  throw new Error(
+    "PG_ALLOW_SELF_SIGNED=true is forbidden when NODE_ENV=production. " +
+      "Provide PG_SSL_CA or remove PG_ALLOW_SELF_SIGNED.",
+  );
+}
+
 let sslConfig: { rejectUnauthorized: boolean; ca?: string } | undefined;
 if (useSSL) {
   if (caCert) {
     sslConfig = { rejectUnauthorized: true, ca: caCert };
-  } else if (allowSelfSigned) {
+  } else if (
+    allowSelfSigned &&
+    (parsedEnv.NODE_ENV === "development" || parsedEnv.NODE_ENV === "test")
+  ) {
     sslConfig = { rejectUnauthorized: false };
   } else {
     sslConfig = { rejectUnauthorized: true };

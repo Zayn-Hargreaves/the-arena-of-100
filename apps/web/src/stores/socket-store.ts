@@ -212,6 +212,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     });
 
     newSocket.on(ServerEvent.MATCH_STARTING, (data) => {
+      set({ remainingCount: null, lastAnswerResult: null });
       console.log("⚔️ Match starting:", data);
     });
 
@@ -225,6 +226,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
               roundEndTime: data.endsAt,
             }
           : null,
+        lastAnswerResult: null,
       }));
       console.log("⏱️ Round started:", data);
     });
@@ -274,6 +276,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           currentQuestion: data.currentQuestion,
           roundEndTime: data.roundEndTime,
         },
+        remainingCount: null,
+        lastAnswerResult: null,
       });
       console.log("📸 Snapshot received");
     });
@@ -313,6 +317,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         userRole: null,
         room: null,
         match: null,
+        remainingCount: null,
+        lastAnswerResult: null,
       });
     }
   },

@@ -191,12 +191,47 @@ describe("PrismaService SSL configuration", () => {
 
   it("should disable verification only when DATABASE_SSL=true and PG_ALLOW_SELF_SIGNED=true (dev override)", () => {
     setEnv({
+      NODE_ENV: "development",
       DATABASE_SSL: "true",
       PG_SSL_CA: undefined,
       PG_ALLOW_SELF_SIGNED: "true",
     });
     buildService();
     expect(getPoolSslConfig()).toEqual({ rejectUnauthorized: false });
+  });
+
+  it("should permit self-signed when NODE_ENV=test and PG_ALLOW_SELF_SIGNED=true", () => {
+    setEnv({
+      NODE_ENV: "test",
+      DATABASE_SSL: "true",
+      PG_SSL_CA: undefined,
+      PG_ALLOW_SELF_SIGNED: "true",
+    });
+    buildService();
+    expect(getPoolSslConfig()).toEqual({ rejectUnauthorized: false });
+  });
+
+  it("should throw when NODE_ENV=production and PG_ALLOW_SELF_SIGNED=true", () => {
+    setEnv({
+      NODE_ENV: "production",
+      DATABASE_SSL: "true",
+      PG_SSL_CA: undefined,
+      PG_ALLOW_SELF_SIGNED: "true",
+    });
+    expect(() => buildService()).toThrow(
+      /PG_ALLOW_SELF_SIGNED=true is forbidden when NODE_ENV=production/,
+    );
+  });
+
+  it("should keep verification enabled when PG_ALLOW_SELF_SIGNED=true but NODE_ENV is not dev/test", () => {
+    setEnv({
+      NODE_ENV: "staging",
+      DATABASE_SSL: "true",
+      PG_SSL_CA: undefined,
+      PG_ALLOW_SELF_SIGNED: "true",
+    });
+    buildService();
+    expect(getPoolSslConfig()).toEqual({ rejectUnauthorized: true });
   });
 
   it("should ignore PG_ALLOW_SELF_SIGNED when DATABASE_SSL is disabled", () => {

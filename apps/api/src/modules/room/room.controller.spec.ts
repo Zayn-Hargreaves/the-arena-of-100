@@ -96,6 +96,8 @@ describe("RoomController", () => {
     const createRoomDto: CreateRoomDto = {
       roomType: "PUBLIC",
       maxPlayers: 100,
+      timeLimit: 15,
+      category: "ALL",
     };
 
     it("should create a room successfully using request context userId", async () => {
@@ -107,6 +109,8 @@ describe("RoomController", () => {
         mockReq.user.userId,
         createRoomDto.roomType,
         createRoomDto.maxPlayers,
+        createRoomDto.timeLimit,
+        createRoomDto.category,
       );
       expect(result).toEqual(mockRoom);
     });
@@ -122,6 +126,8 @@ describe("RoomController", () => {
         mockReq.user.userId,
         createRoomDto.roomType,
         createRoomDto.maxPlayers,
+        createRoomDto.timeLimit,
+        createRoomDto.category,
       );
     });
   });

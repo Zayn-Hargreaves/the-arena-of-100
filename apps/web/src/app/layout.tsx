@@ -1,4 +1,5 @@
 import { Bungee, Fredoka, Gaegu, JetBrains_Mono } from "next/font/google";
+import { getLocale } from "next-intl/server";
 import "./globals.css";
 
 const displayFont = Bungee({
@@ -28,14 +29,16 @@ const monoFont = JetBrains_Mono({
   preload: false,
 });
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const locale = await getLocale();
+
   return (
     <html
-      lang="vi"
+      lang={locale}
       className={`${displayFont.variable} ${sansFont.variable} ${handFont.variable} ${monoFont.variable}`}
     >
       <body className="min-h-screen bg-background antialiased font-sans">

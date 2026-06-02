@@ -181,7 +181,7 @@ export class AuthService {
       Number.isFinite(milliseconds) &&
       milliseconds > 0
     ) {
-      return Math.floor(milliseconds / 1000);
+      return Math.max(1, Math.ceil(milliseconds / 1000));
     }
 
     // Fallback to 24 hours (24 * 60 * 60 seconds) on invalid input

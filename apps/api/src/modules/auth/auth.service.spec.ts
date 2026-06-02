@@ -66,6 +66,11 @@ describe("AuthService.parseExpiresInToSeconds", () => {
     const service = buildService("0");
     expect(getParse(service)("0")).toBe(86400);
   });
+
+  it("clamps sub-second durations to at least 1 second so JWT expiresIn is never 0", () => {
+    const service = buildService("500ms");
+    expect(getParse(service)("500ms")).toBe(1);
+  });
 });
 
 describe("AuthService.getAccessTokenTtlSeconds", () => {

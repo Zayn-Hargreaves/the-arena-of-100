@@ -65,7 +65,7 @@ export default function LocalNotFound() {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold text-gray-500 uppercase">
-                {t("NotFoundPage.timeRemaining")}
+                {t("timeRemaining")}
               </span>
               {/* SVG Timer */}
               <div className="bg-candy-yellow text-candy-ink font-black px-3 py-1 border-3 border-candy-ink rounded-lg flex items-center gap-1.5 animate-pulse">
