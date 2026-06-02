@@ -5,7 +5,7 @@ export const syncQuestionsSchema = z.object({
   clearExisting: z.boolean().optional().default(true),
 });
 
-export type SyncQuestionsInput = z.infer<typeof syncQuestionsSchema>;
+export type SyncQuestionsInput = z.input<typeof syncQuestionsSchema>;
 
 export class SyncQuestionsDto implements SyncQuestionsInput {
   @ApiProperty({

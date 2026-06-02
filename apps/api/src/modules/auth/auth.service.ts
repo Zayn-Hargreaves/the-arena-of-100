@@ -170,7 +170,7 @@ export class AuthService {
     // and may return undefined for unrecognized formats.
     let milliseconds: number | string | undefined;
     try {
-      milliseconds = ms(trimmed);
+      milliseconds = ms(trimmed as ms.StringValue);
     } catch {
       return 24 * 60 * 60;
     }
