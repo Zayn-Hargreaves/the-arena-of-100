@@ -25,10 +25,10 @@ export class PrismaService
     if (!connectionString) {
       throw new Error("DATABASE_URL environment variable is missing!");
     }
-    const nodeEnv = process.env.NODE_ENV ?? "development";
+    const nodeEnv = process.env.NODE_ENV;
     if (
       process.env.PG_ALLOW_SELF_SIGNED === "true" &&
-      nodeEnv === "production"
+      (nodeEnv === "production" || nodeEnv === undefined)
     ) {
       throw new Error(
         "PG_ALLOW_SELF_SIGNED=true is forbidden when NODE_ENV=production. " +

@@ -64,8 +64,12 @@ export class HealthController {
       this.checkRedis(),
     ]);
 
+    const allHealthy =
+      databaseHealth.status === "connected" &&
+      redisHealth.status === "connected";
+
     return {
-      status: "ok",
+      status: allHealthy ? "ok" : "unhealthy",
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       services: {

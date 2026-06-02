@@ -99,7 +99,7 @@ export default function LocalNotFound() {
           {/* The Question Area */}
           <div className="bg-[#FFF0F5] border-4 border-candy-ink rounded-2xl p-5 shadow-[4px_4px_0_0_#2B2D42] space-y-2">
             <span className="text-xs font-black text-candy-pink uppercase tracking-widest block">
-              QUESTION
+              {t("questionLabel")}
             </span>
             <p className="text-lg sm:text-xl font-bold text-candy-ink leading-relaxed">
               {t("question")}

@@ -793,6 +793,58 @@ describe("QuestionService", () => {
 
       await expect(service.getRandom()).rejects.toThrow(NotFoundException);
     });
+
+    it("should apply category filter when category is provided and not 'ALL'", async () => {
+      mockPrismaService.question.count.mockResolvedValueOnce(1);
+      mockPrismaService.question.findFirst.mockResolvedValueOnce(mockQuestion);
+
+      await service.getRandom(undefined, undefined, QuestionCategory.SCIENCE);
+
+      expect(mockPrismaService.question.count).toHaveBeenCalledWith({
+        where: {
+          active: true,
+          category: QuestionCategory.SCIENCE,
+        },
+      });
+      expect(mockPrismaService.question.findFirst).toHaveBeenCalledWith({
+        where: {
+          active: true,
+          category: QuestionCategory.SCIENCE,
+        },
+        skip: expect.any(Number),
+      });
+    });
+
+    it("should ignore category filter when category is 'ALL'", async () => {
+      mockPrismaService.question.count.mockResolvedValueOnce(5);
+      mockPrismaService.question.findFirst.mockResolvedValueOnce(mockQuestion);
+
+      await service.getRandom(undefined, undefined, "ALL");
+
+      expect(mockPrismaService.question.count).toHaveBeenCalledWith({
+        where: { active: true },
+      });
+    });
+
+    it("should combine category, difficulty, and excludeIds filters", async () => {
+      mockPrismaService.question.count.mockResolvedValueOnce(3);
+      mockPrismaService.question.findFirst.mockResolvedValueOnce(mockQuestion);
+
+      await service.getRandom(
+        QuestionDifficulty.HARD,
+        ["q-1", "q-2"],
+        QuestionCategory.TECHNOLOGY,
+      );
+
+      expect(mockPrismaService.question.count).toHaveBeenCalledWith({
+        where: {
+          active: true,
+          difficulty: QuestionDifficulty.HARD,
+          category: QuestionCategory.TECHNOLOGY,
+          id: { notIn: ["q-1", "q-2"] },
+        },
+      });
+    });
   });
 
   describe("getStats", () => {

@@ -126,6 +126,40 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       autoConnect: true,
     });
 
+    // Resolve only when the socket is both connected AND the server has
+    // acknowledged authentication, so callers' `await connect()` guarantees
+    // a ready/authenticated socket before invoking createRoom/joinRoom.
+    const AUTH_TIMEOUT_MS = 5000;
+    const authPromise = new Promise<void>((resolve, reject) => {
+      const onAuthenticated = () => {
+        clearTimeout(timeoutId);
+        newSocket.off(ServerEvent.AUTHENTICATED, onAuthenticated);
+        newSocket.off(ServerEvent.ERROR, onAuthError);
+        resolve();
+      };
+
+      const onAuthError = (data: ErrorPayload) => {
+        if (
+          data.message === "Invalid or expired token" ||
+          data.message === "Unauthorized"
+        ) {
+          clearTimeout(timeoutId);
+          newSocket.off(ServerEvent.AUTHENTICATED, onAuthenticated);
+          newSocket.off(ServerEvent.ERROR, onAuthError);
+          reject(new Error(data.message));
+        }
+      };
+
+      const timeoutId = setTimeout(() => {
+        newSocket.off(ServerEvent.AUTHENTICATED, onAuthenticated);
+        newSocket.off(ServerEvent.ERROR, onAuthError);
+        reject(new Error("Authentication timed out"));
+      }, AUTH_TIMEOUT_MS);
+
+      newSocket.once(ServerEvent.AUTHENTICATED, onAuthenticated);
+      newSocket.on(ServerEvent.ERROR, onAuthError);
+    });
+
     newSocket.on("connect", () => {
       set({ isConnected: true, error: null });
       console.log("🔌 Connected to game server");
@@ -188,8 +222,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           id: data.roomId,
           code: data.code,
           status: RoomStatus.WAITING,
-          hostId:
-            (data as RoomJoinedPayload & { hostId?: string }).hostId ?? null,
+          hostId: data.hostId ?? null,
           players: data.players
             ? data.players.map((p) => ({
                 id: p.playerId,
@@ -293,13 +326,21 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         data.message === "Invalid or expired token" ||
         data.message === "Unauthorized"
       ) {
-        set({ isAuthenticated: false, accessToken: null, userRole: null });
+        set({
+          isAuthenticated: false,
+          accessToken: null,
+          userRole: null,
+          userId: null,
+          username: null,
+        });
       }
       set({ error: data.message });
       console.error("❌ Error:", data.message);
     });
 
     set({ socket: newSocket });
+
+    await authPromise;
   },
 
   // Disconnect

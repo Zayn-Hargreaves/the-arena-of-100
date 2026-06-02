@@ -128,6 +128,7 @@ export class AuthHandler extends BaseHandler {
       client.emit(ServerEvent.ROOM_JOINED, {
         roomId: room.id,
         code: room.code,
+        hostId: room.hostId,
         players: room.players.map((p) => ({
           playerId: p.userId,
           playerName: p.user.username,

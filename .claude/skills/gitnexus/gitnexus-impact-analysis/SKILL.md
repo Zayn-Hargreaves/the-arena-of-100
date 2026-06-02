@@ -50,12 +50,12 @@ description: 'Use when the user wants to know what will break if they change som
 
 ## Risk Assessment
 
-| Affected                       | Risk     |
-| ------------------------------ | -------- |
-| <5 symbols, few processes      | LOW      |
-| 5-15 symbols, 2-5 processes    | MEDIUM   |
-| >15 symbols or many processes  | HIGH     |
-| Critical path (auth, payments) | CRITICAL |
+| Affected                                                                            | Risk     |
+| ----------------------------------------------------------------------------------- | -------- |
+| <5 symbols, few processes                                                           | LOW      |
+| 5-15 symbols, 2-5 processes                                                         | MEDIUM   |
+| >15 symbols or many processes                                                       | HIGH     |
+| Critical path (game state machine, socket events, match lifecycle, room management) | CRITICAL |
 
 ## Tools
 

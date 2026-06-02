@@ -16,7 +16,7 @@ const envSchema = z.object({
     .string()
     .transform((val) => val === "true")
     .default("false"),
-  NODE_ENV: z.string().default("development"),
+  NODE_ENV: z.string().optional(),
   FORCE_SEED_CLEANUP: z
     .string()
     .transform((val) => val === "true")
@@ -42,7 +42,10 @@ const useSSL = parsedEnv.DATABASE_SSL;
 const caCert = parsedEnv.PG_SSL_CA;
 const allowSelfSigned = parsedEnv.PG_ALLOW_SELF_SIGNED;
 
-if (allowSelfSigned && parsedEnv.NODE_ENV === "production") {
+if (
+  allowSelfSigned &&
+  (parsedEnv.NODE_ENV === "production" || parsedEnv.NODE_ENV === undefined)
+) {
   throw new Error(
     "PG_ALLOW_SELF_SIGNED=true is forbidden when NODE_ENV=production. " +
       "Provide PG_SSL_CA or remove PG_ALLOW_SELF_SIGNED.",

@@ -1,12 +1,23 @@
 import { ConfigService } from "@nestjs/config";
 import * as jwt from "jsonwebtoken";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { UnauthorizedException } from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
+import { Role } from "@prisma/client";
 
 type ServiceInternals = {
   parseExpiresInToSeconds: (value: string) => number;
+  generateTokens: (
+    userId: string,
+    username: string,
+    role: Role,
+  ) => Promise<{
+    accessToken: string;
+    refreshToken: string;
+    user: { id: string; username: string; role: Role };
+  }>;
 };
 
 function buildService(jwtExpiresIn: string): AuthService {
@@ -123,4 +134,265 @@ describe("AuthService JWT expiration unit alignment", () => {
 
     expect(decoded.exp - decoded.iat).toBe(3600);
   });
+});
+
+describe("AuthService.guestLogin", () => {
+  function buildServiceWithPrisma() {
+    const configService = {
+      get: vi.fn((key: string, fallback?: string | number) => {
+        if (key === "JWT_SECRET") return "test-secret";
+        if (key === "JWT_EXPIRES_IN") return "24h";
+        if (key === "REFRESH_EXPIRES_IN") return 604800;
+        return fallback;
+      }),
+    } as unknown as ConfigService;
+    const prismaService = {
+      user: {
+        findUnique: vi.fn(),
+        create: vi.fn(),
+      },
+    } as unknown as PrismaService;
+    const redisService = {
+      set: vi.fn().mockResolvedValue(undefined),
+      get: vi.fn().mockResolvedValue(null),
+      del: vi.fn().mockResolvedValue(undefined),
+    } as unknown as RedisService;
+    const service = new AuthService(prismaService, redisService, configService);
+    return { service, prisma: prismaService, redis: redisService };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("creates a new user with role GUEST when username does not exist", async () => {
+    const { service, prisma, redis } = buildServiceWithPrisma();
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
+    vi.mocked(prisma.user.create).mockResolvedValueOnce({
+      id: "u-1",
+      username: "guest_player",
+      guestId: "gid",
+      role: Role.GUEST,
+    } as never);
+
+    const result = await service.guestLogin("guest_player");
+
+    expect(prisma.user.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        username: "guest_player",
+        role: Role.GUEST,
+      }),
+    });
+    expect(redis.set).toHaveBeenCalledTimes(1);
+    expect(result.user).toEqual({
+      id: "u-1",
+      username: "guest_player",
+      role: Role.GUEST,
+    });
+    expect(result.accessToken).toBeTruthy();
+    expect(result.refreshToken).toBeTruthy();
+  });
+
+  it("returns existing user without creating a new record (role preserved)", async () => {
+    const { service, prisma, redis } = buildServiceWithPrisma();
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      id: "u-existing",
+      username: "regular_user",
+      guestId: "gid",
+      role: Role.ADMIN,
+    } as never);
+
+    const result = await service.guestLogin("regular_user");
+
+    expect(prisma.user.create).not.toHaveBeenCalled();
+    expect(redis.set).toHaveBeenCalledTimes(1);
+    expect(result.user.role).toBe(Role.ADMIN);
+  });
+
+  it("rejects the 'admin' username from guest login", async () => {
+    const { service, prisma } = buildServiceWithPrisma();
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
+
+    await expect(service.guestLogin("admin")).rejects.toThrow(
+      UnauthorizedException,
+    );
+    expect(prisma.user.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("AuthService.verifyToken", () => {
+  function buildServiceForVerify() {
+    const configService = {
+      get: vi.fn((key: string, fallback?: string | number) => {
+        if (key === "JWT_SECRET") return "test-secret";
+        if (key === "JWT_EXPIRES_IN") return "1h";
+        if (key === "REFRESH_EXPIRES_IN") return 604800;
+        return fallback;
+      }),
+    } as unknown as ConfigService;
+    return new AuthService(
+      {} as PrismaService,
+      {} as RedisService,
+      configService,
+    );
+  }
+
+  it("returns the decoded payload when the token is valid", () => {
+    const service = buildServiceForVerify();
+    const token = jwt.sign(
+      { userId: "u-1", username: "p1", role: Role.GUEST },
+      "test-secret",
+      { expiresIn: 60 },
+    );
+    const payload = service.verifyToken(token);
+    expect(payload).toMatchObject({
+      userId: "u-1",
+      username: "p1",
+      role: Role.GUEST,
+    });
+  });
+
+  it("throws UnauthorizedException for an invalid token", () => {
+    const service = buildServiceForVerify();
+    expect(() => service.verifyToken("not-a-real-token")).toThrow(
+      UnauthorizedException,
+    );
+  });
+});
+
+describe("AuthService.refreshAccessToken", () => {
+  function buildServiceForRefresh() {
+    const configService = {
+      get: vi.fn((key: string, fallback?: string | number) => {
+        if (key === "JWT_SECRET") return "test-secret";
+        if (key === "JWT_EXPIRES_IN") return "1h";
+        if (key === "REFRESH_EXPIRES_IN") return 604800;
+        return fallback;
+      }),
+    } as unknown as ConfigService;
+    const prismaService = {
+      user: { findUnique: vi.fn() },
+    } as unknown as PrismaService;
+    const redisService = {
+      set: vi.fn().mockResolvedValue(undefined),
+      get: vi.fn(),
+      del: vi.fn().mockResolvedValue(undefined),
+    } as unknown as RedisService;
+    const service = new AuthService(prismaService, redisService, configService);
+    return { service, prisma: prismaService, redis: redisService };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("rotates the refresh token and returns new tokens for a valid user", async () => {
+    const { service, prisma, redis } = buildServiceForRefresh();
+    vi.mocked(redis.get).mockResolvedValueOnce("u-1");
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      id: "u-1",
+      username: "p1",
+      guestId: "gid",
+      role: Role.GUEST,
+    } as never);
+
+    const result = await service.refreshAccessToken("old-refresh");
+
+    expect(redis.del).toHaveBeenCalledWith("refresh:old-refresh");
+    expect(redis.set).toHaveBeenCalledTimes(1);
+    expect(result.user.id).toBe("u-1");
+    expect(result.accessToken).toBeTruthy();
+    expect(result.refreshToken).toBeTruthy();
+  });
+
+  it("throws UnauthorizedException when the refresh token is unknown", async () => {
+    const { service, redis, prisma } = buildServiceForRefresh();
+    vi.mocked(redis.get).mockResolvedValueOnce(null);
+
+    await expect(service.refreshAccessToken("bad")).rejects.toThrow(
+      UnauthorizedException,
+    );
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("throws UnauthorizedException when the user no longer exists", async () => {
+    const { service, redis, prisma } = buildServiceForRefresh();
+    vi.mocked(redis.get).mockResolvedValueOnce("u-gone");
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
+
+    await expect(service.refreshAccessToken("orphan")).rejects.toThrow(
+      UnauthorizedException,
+    );
+  });
+});
+
+describe("AuthService.logout", () => {
+  it("deletes the refresh token from Redis", async () => {
+    const configService = {
+      get: vi.fn((key: string, fallback?: string | number) => {
+        if (key === "JWT_SECRET") return "test-secret";
+        if (key === "JWT_EXPIRES_IN") return "1h";
+        if (key === "REFRESH_EXPIRES_IN") return 604800;
+        return fallback;
+      }),
+    } as unknown as ConfigService;
+    const redis = {
+      del: vi.fn().mockResolvedValue(undefined),
+    } as unknown as RedisService;
+    const service = new AuthService({} as PrismaService, redis, configService);
+
+    await service.logout("rt-xyz");
+
+    expect(redis.del).toHaveBeenCalledWith("refresh:rt-xyz");
+  });
+});
+
+describe("AuthService.getRefreshTokenTtlSeconds", () => {
+  it("returns the configured refresh TTL in seconds", () => {
+    const service = buildService("1h");
+    expect(service.getRefreshTokenTtlSeconds()).toBe(604800);
+  });
+});
+
+describe("AuthService.generateTokens", () => {
+  it("issues a signed access token and stores the refresh token in Redis", async () => {
+    const service = buildService("1h");
+    const redis = (
+      service as unknown as { redis: { set: ReturnType<typeof vi.fn> } }
+    ).redis;
+
+    const internal = (
+      service as unknown as ServiceInternals
+    ).generateTokens.bind(service) as ServiceInternals["generateTokens"];
+
+    const result = await internal("u-1", "p1", Role.GUEST);
+
+    expect(redis.set).toHaveBeenCalledTimes(1);
+    const setCall = vi.mocked(redis.set).mock.calls[0];
+    expect(setCall[0]).toMatch(/^refresh:/);
+    expect(setCall[1]).toBe("u-1");
+    expect(setCall[2]).toBe(604800);
+    expect(result.user).toEqual({
+      id: "u-1",
+      username: "p1",
+      role: Role.GUEST,
+    });
+    expect(result.accessToken).toBeTruthy();
+    expect(result.refreshToken).toBeTruthy();
+
+    const decoded = jwt.verify(result.accessToken, "test-secret") as {
+      userId: string;
+      username: string;
+      role: Role;
+    };
+    expect(decoded).toMatchObject({
+      userId: "u-1",
+      username: "p1",
+      role: Role.GUEST,
+    });
+  });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });

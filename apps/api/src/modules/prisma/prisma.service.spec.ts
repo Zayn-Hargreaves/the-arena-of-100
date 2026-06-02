@@ -223,6 +223,18 @@ describe("PrismaService SSL configuration", () => {
     );
   });
 
+  it("should throw when NODE_ENV is undefined and PG_ALLOW_SELF_SIGNED=true", () => {
+    setEnv({
+      NODE_ENV: undefined,
+      DATABASE_SSL: "true",
+      PG_SSL_CA: undefined,
+      PG_ALLOW_SELF_SIGNED: "true",
+    });
+    expect(() => buildService()).toThrow(
+      /PG_ALLOW_SELF_SIGNED=true is forbidden when NODE_ENV=production/,
+    );
+  });
+
   it("should keep verification enabled when PG_ALLOW_SELF_SIGNED=true but NODE_ENV is not dev/test", () => {
     setEnv({
       NODE_ENV: "staging",

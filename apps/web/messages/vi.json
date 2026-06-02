@@ -88,6 +88,7 @@
   "NotFoundPage": {
     "title": "CÂU HỎI SINH TỬ • ROUND 404",
     "question": "Câu hỏi số 404: Đường dẫn bạn đang tìm kiếm hiện đang ở đâu?",
+    "questionLabel": "CÂU HỎI",
     "optionA": "A) Đã bị \"bay màu\" khỏi hệ thống",
     "optionB": "B) Chưa được khai phá trên máy chủ",
     "optionC": "C) Đi lạc vào vòng bo sinh tồn",

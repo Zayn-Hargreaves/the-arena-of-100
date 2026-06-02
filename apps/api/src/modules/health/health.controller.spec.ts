@@ -65,7 +65,7 @@ describe("HealthController", () => {
 
       const result = await controller.check();
 
-      expect(result.status).toBe("ok");
+      expect(result.status).toBe("unhealthy");
       expect(result.services.database).toEqual({ status: "disconnected" });
       expect(result.services.redis.status).toBe("connected");
     });
@@ -79,7 +79,7 @@ describe("HealthController", () => {
 
       const result = await controller.check();
 
-      expect(result.status).toBe("ok");
+      expect(result.status).toBe("unhealthy");
       expect(result.services.database.status).toBe("connected");
       expect(result.services.redis).toEqual({ status: "disconnected" });
     });
@@ -93,7 +93,7 @@ describe("HealthController", () => {
 
       const result = await controller.check();
 
-      expect(result.status).toBe("ok");
+      expect(result.status).toBe("unhealthy");
       expect(result.services.database).toEqual({ status: "disconnected" });
       expect(result.services.redis).toEqual({ status: "disconnected" });
     });

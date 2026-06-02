@@ -271,7 +271,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                   .map((player) => {
                     const playerAvatar = getPlayerAvatar(player);
                     const isCurrent = player.id === userId;
-                    const isHost = player.id === roomHostId;
+                    const isPlayerHost = player.id === roomHostId;
 
                     return (
                       <div
@@ -309,11 +309,11 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                               isCurrent ? "text-candy-ink" : "text-candy-pink",
                             )}
                           >
-                            {isCurrent && isHost
+                            {isCurrent && isPlayerHost
                               ? "BẠN (HOST)"
                               : isCurrent
                                 ? "BẠN"
-                                : isHost
+                                : isPlayerHost
                                   ? "HOST"
                                   : "ĐÃ SẴN SÀNG"}
                           </p>
