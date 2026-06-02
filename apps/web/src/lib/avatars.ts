@@ -6,18 +6,11 @@ export interface AvatarOption {
 }
 
 export const avatars: AvatarOption[] = [
-  { seed: "avatar-cat", name: "Mèo Ngáo" },
   {
     seed: "jellyfrog",
     name: "Ếch Thạch (Jelly)",
     isAnimated: true,
     spritesheet: "/arena_of_100/jellyfrog_spritesheet.webp",
-  },
-  {
-    seed: "clippit",
-    name: "Clippy Kỷ Niệm",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/clippit_spritesheet.webp",
   },
   {
     seed: "dario",
@@ -265,11 +258,4 @@ export const avatars: AvatarOption[] = [
     isAnimated: true,
     spritesheet: "/arena_of_100/totoro_spritesheet.webp",
   },
-  { seed: "avatar-frog", name: "Ếch Cụ" },
-  { seed: "avatar-octo", name: "Bạch Tuộc Nháy" },
-  { seed: "avatar-dog", name: "Cún Ngơ" },
-  { seed: "avatar-fox", name: "Cáo Xảo Quyệt" },
-  { seed: "avatar-unicorn", name: "Kỳ Lân Bay Màu" },
-  { seed: "avatar-ghost", name: "Ma Vui Vẻ" },
-  { seed: "avatar-cosmo", name: "Người Ngoài Hành Tinh" },
 ];
