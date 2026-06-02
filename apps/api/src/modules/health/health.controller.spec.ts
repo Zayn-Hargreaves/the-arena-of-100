@@ -1,4 +1,5 @@
 import { RoomStatus } from "@arena/shared";
+import os from "os";
 import { HealthController } from "./health.controller";
 
 describe("HealthController", () => {
@@ -25,6 +26,7 @@ describe("HealthController", () => {
 
   afterEach(() => {
     vi.resetAllMocks();
+    vi.restoreAllMocks();
   });
 
   describe("check", () => {
@@ -162,22 +164,80 @@ describe("HealthController", () => {
       expect(prisma.room.count).toHaveBeenCalledTimes(1);
     });
 
-    it("calculates cpu usage as percentage between 0 and 100", async () => {
+    it("returns null cpuUsage on first call (cold start)", async () => {
       const { controller, prisma, redis } = createController();
-      prisma.room.count.mockResolvedValue(5);
+      prisma.room.count.mockResolvedValue(0);
       redis.get.mockResolvedValue(null);
 
-      // Reset module-scoped variables to ensure clean state
-      // We need to access these through a hack since they're private to the module
-      // For the test, we'll just verify the behavior works correctly
-      
-      // Call monitoring twice to test the delta calculation
-      await controller.monitoring(); // First call initializes tracking
-      const result = await controller.monitoring(); // Second call calculates delta
-      
-      // The result should be a reasonable percentage between 0 and 100
-      expect(result.cpuUsage).toBeGreaterThanOrEqual(0);
-      expect(result.cpuUsage).toBeLessThanOrEqual(100);
+      const result = await controller.monitoring();
+
+      expect(result.cpuUsage).toBeNull();
+    });
+
+    it("calculates delta CPU usage from mocked process.cpuUsage and Date.now", async () => {
+      const { controller, prisma, redis } = createController();
+      prisma.room.count.mockResolvedValue(0);
+      redis.get.mockResolvedValue(null);
+
+      const cpuSpy = vi.spyOn(process, "cpuUsage");
+      const nowSpy = vi.spyOn(Date, "now");
+
+      nowSpy.mockReturnValueOnce(1_000_000);
+      cpuSpy.mockReturnValueOnce({ user: 1_000_000, system: 500_000 });
+      await controller.monitoring();
+
+      nowSpy.mockReturnValueOnce(1_001_000);
+      cpuSpy.mockReturnValueOnce({ user: 1_200_000, system: 600_000 });
+      const result = await controller.monitoring();
+
+      const deltaCpuMicros = 1_200_000 + 600_000 - (1_000_000 + 500_000);
+      const elapsedMs = 1_001_000 - 1_000_000;
+      const numCpus = os.cpus().length;
+      const expected = Math.min(
+        100,
+        (deltaCpuMicros / 1000 / (elapsedMs * numCpus)) * 100,
+      );
+
+      expect(result.cpuUsage).not.toBeNull();
+      expect(result.cpuUsage).toBeCloseTo(expected, 5);
+    });
+
+    it("caps delta CPU usage at 100", async () => {
+      const { controller, prisma, redis } = createController();
+      prisma.room.count.mockResolvedValue(0);
+      redis.get.mockResolvedValue(null);
+
+      const cpuSpy = vi.spyOn(process, "cpuUsage");
+      const nowSpy = vi.spyOn(Date, "now");
+
+      nowSpy.mockReturnValueOnce(1_000_000);
+      cpuSpy.mockReturnValueOnce({ user: 0, system: 0 });
+      await controller.monitoring();
+
+      nowSpy.mockReturnValueOnce(1_001_000);
+      cpuSpy.mockReturnValueOnce({
+        user: 1_000_000_000,
+        system: 1_000_000_000,
+      });
+      const result = await controller.monitoring();
+
+      expect(result.cpuUsage).toBe(100);
+    });
+
+    it("isolates CPU tracking state between controller instances", async () => {
+      const { controller: c1, prisma: p1, redis: r1 } = createController();
+      const { controller: c2, prisma: p2, redis: r2 } = createController();
+      p1.room.count.mockResolvedValue(0);
+      p2.room.count.mockResolvedValue(0);
+      r1.get.mockResolvedValue(null);
+      r2.get.mockResolvedValue(null);
+
+      await c1.monitoring();
+      await c1.monitoring();
+
+      const r2First = await c2.monitoring();
+
+      expect(r2First.cpuUsage).toBeNull();
     });
   });
 });

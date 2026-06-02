@@ -59,7 +59,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <button
           onClick={handleToggle}
           className={cn(
-            "absolute top-6 -right-3.5 p-1 rounded-lg bg-white border-3 border-candy-ink hover:bg-candy-yellow text-candy-ink shadow-[2px_2px_0_0_#2B2D42] hover:shadow-[1px_1px_0_0_#2B2D42] hover:translate-x-[0.5px] hover:translate-y-[0.5px] transition-all duration-200 outline-none focus:outline-none z-50",
+            "absolute top-6 -right-3.5 p-1 rounded-lg bg-white border-3 border-candy-ink hover:bg-candy-yellow text-candy-ink shadow-[2px_2px_0_0_#2B2D42] hover:shadow-[1px_1px_0_0_#2B2D42] hover:translate-x-[0.5px] hover:translate-y-[0.5px] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-candy-yellow z-50",
             "flex items-center justify-center",
           )}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -121,7 +121,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 key={item.key}
                 href={item.href}
                 className={cn(
-                  "group relative flex items-center transition-all duration-300 border-3 border-candy-ink outline-none focus:outline-none",
+                  "group relative flex items-center transition-all duration-300 border-3 border-candy-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-candy-yellow",
                   collapsed
                     ? "w-12 h-12 justify-center p-0 mx-auto rounded-2xl"
                     : "gap-3 p-3 rounded-xl",
@@ -195,7 +195,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <button
           onClick={() => setMobileOpen(!mobileOpen)}
-          className="p-2 rounded-xl bg-candy-cloud border-3 border-candy-ink hover:bg-candy-yellow text-candy-ink transition-all duration-200 outline-none focus:outline-none"
+          className="p-2 rounded-xl bg-candy-cloud border-3 border-candy-ink hover:bg-candy-yellow text-candy-ink transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-candy-yellow"
           aria-label={mobileOpen ? "Close menu" : "Open menu"}
         >
           {mobileOpen ? (

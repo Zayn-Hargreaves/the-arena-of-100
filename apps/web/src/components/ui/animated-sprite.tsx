@@ -17,6 +17,8 @@ export interface AnimatedSpriteProps extends React.HTMLAttributes<HTMLDivElement
 }
 
 const defaultRowFramesPerSheet = [6, 8, 8, 4, 5, 8, 6, 6, 6]; // Frame count per row for Melbit/Codex spritesheets
+const BASE_WIDTH = 192;
+const BASE_HEIGHT = 208;
 
 export const AnimatedSprite: React.FC<AnimatedSpriteProps> = ({
   src,
@@ -35,23 +37,25 @@ export const AnimatedSprite: React.FC<AnimatedSpriteProps> = ({
   const [frame, setFrame] = useState(0);
   const activeRow = Math.max(0, Math.min(row, rows - 1));
 
+  const cols = Math.max(1, rowFramesPerSheet[activeRow] ?? columns);
+
   useEffect(() => {
-    // Reset frame on row or src change
     setFrame(0);
 
-    const cols = Math.max(1, rowFramesPerSheet[activeRow] ?? columns);
     const timer = setInterval(() => {
       setFrame((f) => (f + 1) % cols);
     }, speed);
 
     return () => clearInterval(timer);
-  }, [activeRow, columns, rowFramesPerSheet, speed, src]);
+  }, [cols, speed, src]);
 
   // Compute background positions from provided sprite-sheet layout
   const xPercent = columns > 1 ? (frame / (columns - 1)) * 100 : 0;
   const yPercent = rows > 1 ? (activeRow / (rows - 1)) * 100 : 0;
 
-  const transform = `${mirror ? "scaleX(-1)" : "scaleX(1)"} scale(${scale})`;
+  const transform = mirror ? "scaleX(-1)" : "scaleX(1)";
+  const innerWidth = BASE_WIDTH * scale;
+  const innerHeight = BASE_HEIGHT * scale;
 
   return (
     <div
@@ -65,8 +69,8 @@ export const AnimatedSprite: React.FC<AnimatedSpriteProps> = ({
       <div className="w-full h-full flex items-center justify-center overflow-hidden">
         <div
           style={{
-            width: "192px",
-            height: "208px",
+            width: `${innerWidth}px`,
+            height: `${innerHeight}px`,
             flexShrink: 0,
             backgroundImage: `url('${src}')`,
             backgroundRepeat: "no-repeat",

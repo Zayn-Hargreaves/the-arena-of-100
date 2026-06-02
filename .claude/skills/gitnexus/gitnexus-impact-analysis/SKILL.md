@@ -1,6 +1,6 @@
 ---
 name: gitnexus-impact-analysis
-description: "Use when the user wants to know what will break if they change something, or needs safety analysis before editing code. Examples: \"Is it safe to change X?\", \"What depends on this?\", \"What will break?\""
+description: 'Use when the user wants to know what will break if they change something, or needs safety analysis before editing code. Examples: "Is it safe to change X?", "What depends on this?", "What will break?"'
 ---
 
 # Impact Analysis with GitNexus
@@ -21,6 +21,9 @@ description: "Use when the user wants to know what will break if they change som
 2. READ gitnexus://repo/{name}/processes                   → Check affected execution flows
 3. gitnexus_detect_changes()                               → Map current git changes to affected flows
 4. Assess risk and report to user
+5. GATE: if risk is HIGH or CRITICAL → STOP, surface warning,
+   require explicit user confirmation (or override flag) before
+   proceeding with edits; otherwise abort
 ```
 
 > If "Index is stale" → run `npx gitnexus analyze` in terminal.
@@ -34,6 +37,7 @@ description: "Use when the user wants to know what will break if they change som
 - [ ] READ processes to check affected execution flows
 - [ ] gitnexus_detect_changes() for pre-commit check
 - [ ] Assess risk level and report to user
+- [ ] If risk is HIGH or CRITICAL → halt and require explicit user confirmation before edits
 ```
 
 ## Understanding Output

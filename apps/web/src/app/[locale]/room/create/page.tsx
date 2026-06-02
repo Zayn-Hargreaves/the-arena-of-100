@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import { useSocketStore } from "@/stores/socket-store";
 import { useRouter } from "@/i18n/routing";
-import { ROOM_CATEGORY_OPTIONS } from "@arena/shared";
+import { ROOM_CATEGORY_OPTIONS, type RoomCategory } from "@arena/shared";
 import { Sparkles, Globe, Lock, ShieldAlert, Cpu, Timer } from "lucide-react";
 
 export default function CreateRoomPage() {
@@ -13,7 +13,7 @@ export default function CreateRoomPage() {
   const [roomType, setRoomType] = useState<"PUBLIC" | "PRIVATE">("PUBLIC");
   const [timeLimit, setTimeLimit] = useState(15);
   const [maxPlayers, setMaxPlayers] = useState(100);
-  const [category, setCategory] = useState("Tất cả");
+  const [category, setCategory] = useState<RoomCategory>("ALL");
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -146,15 +146,15 @@ export default function CreateRoomPage() {
             <div className="flex flex-wrap gap-3">
               {ROOM_CATEGORY_OPTIONS.map((cat) => (
                 <button
-                  key={cat}
-                  onClick={() => setCategory(cat)}
+                  key={cat.value}
+                  onClick={() => setCategory(cat.value)}
                   className={`px-5 py-2.5 rounded-full border-[3px] border-candy-ink text-xs font-display font-black uppercase tracking-wider transition-all duration-150 shadow-[3px_3px_0_0_#2B2D42] outline-none focus:outline-none ${
-                    category === cat
+                    category === cat.value
                       ? "bg-candy-blue text-white translate-y-[-2px] shadow-[5px_5px_0_0_#2B2D42]"
                       : "bg-white text-candy-ink hover:translate-y-[-1px] hover:shadow-[4px_4px_0_0_#2B2D42] active:translate-y-[2px] active:shadow-[1px_1px_0_0_#2B2D42]"
                   }`}
                 >
-                  {cat}
+                  {cat.label}
                 </button>
               ))}
             </div>

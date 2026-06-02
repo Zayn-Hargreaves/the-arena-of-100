@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import { AnimatedSprite } from "@/components/ui/animated-sprite";
 import { useSocketStore } from "@/stores/socket-store";
+import { useTranslations } from "next-intl";
 import {
   Gamepad2,
   Calendar,
@@ -17,6 +18,7 @@ import {
 
 export default function ProfilePage() {
   const { username } = useSocketStore();
+  const t = useTranslations("profile");
   const activeName = username || "Khách_Đấu_Thủ";
 
   // Avatar states loaded from localStorage
@@ -47,7 +49,7 @@ export default function ProfilePage() {
     {
       id: "h1",
       date: "30/05/2026",
-      mode: "Đấu Trường 1 vs 100",
+      mode: t("modes.arena1vs100"),
       rank: 1,
       score: 3200,
       status: "WON",
@@ -55,7 +57,7 @@ export default function ProfilePage() {
     {
       id: "h2",
       date: "29/05/2026",
-      mode: "Phòng Công Cộng",
+      mode: t("modes.publicRoom"),
       rank: 14,
       score: 1450,
       status: "ELIMINATED",
@@ -63,7 +65,7 @@ export default function ProfilePage() {
     {
       id: "h3",
       date: "28/05/2026",
-      mode: "Chế Độ Siêu Tốc",
+      mode: t("modes.speedMode"),
       rank: 3,
       score: 2600,
       status: "ELIMINATED",
@@ -71,7 +73,7 @@ export default function ProfilePage() {
     {
       id: "h4",
       date: "25/05/2026",
-      mode: "Trắc Nghiệm Sinh Tồn",
+      mode: t("modes.survivalQuiz"),
       rank: 28,
       score: 980,
       status: "ELIMINATED",
@@ -115,7 +117,7 @@ export default function ProfilePage() {
             <div className="flex justify-center sm:justify-start gap-4 text-xs font-mono font-black text-candy-ink/80">
               <span className="flex items-center gap-1">
                 <Calendar className="w-4 h-4 text-candy-blue" />
-                ĐĂNG KÝ: HÔM NAY
+                {t("registeredToday")}
               </span>
               <span>•</span>
               <span className="text-candy-pink">
@@ -129,13 +131,13 @@ export default function ProfilePage() {
         <div className="space-y-4">
           <h3 className="font-display font-black text-lg text-candy-ink uppercase tracking-wider flex items-center gap-2">
             <Activity className="w-5 h-5 text-candy-pink" />
-            CHỈ SỐ SINH TỒN
+            {t("stats.title")}
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {/* Matches Played */}
             <div className="bg-white border-[3px] border-candy-ink rounded-2xl p-4 text-center space-y-1 shadow-[4px_4px_0_0_#2B2D42] hover:-translate-y-0.5 transition-transform">
               <span className="text-xs font-mono font-black uppercase text-candy-ink/75">
-                TỔNG SỐ TRẬN
+                {t("stats.matches")}
               </span>
               <div className="font-display font-black text-3xl text-candy-blue flex items-center justify-center gap-2">
                 <Swords className="w-6 h-6 text-candy-blue" />
@@ -146,7 +148,7 @@ export default function ProfilePage() {
             {/* Wins */}
             <div className="bg-candy-yellow border-[3px] border-candy-ink rounded-2xl p-4 text-center space-y-1 shadow-[4px_4px_0_0_#2B2D42] hover:-translate-y-0.5 transition-transform">
               <span className="text-xs font-mono font-black uppercase text-candy-ink">
-                VÔ ĐỊCH (WINS)
+                {t("stats.wins")}
               </span>
               <div className="font-display font-black text-3xl text-candy-ink flex items-center justify-center gap-2">
                 <Trophy className="w-6 h-6 text-candy-ink" />
@@ -157,7 +159,7 @@ export default function ProfilePage() {
             {/* Response Time */}
             <div className="bg-white border-[3px] border-candy-ink rounded-2xl p-4 text-center space-y-1 shadow-[4px_4px_0_0_#2B2D42] hover:-translate-y-0.5 transition-transform">
               <span className="text-xs font-mono font-black uppercase text-candy-ink/75">
-                PHẢN XẠ TRUNG BÌNH
+                {t("stats.averageResponse")}
               </span>
               <div className="font-display font-black text-3xl text-candy-mint flex items-center justify-center gap-2">
                 <Zap className="w-6 h-6 text-candy-mint" />
@@ -168,11 +170,11 @@ export default function ProfilePage() {
             {/* Accuracy */}
             <div className="bg-white border-[3px] border-candy-ink rounded-2xl p-4 text-center space-y-1 shadow-[4px_4px_0_0_#2B2D42] hover:-translate-y-0.5 transition-transform">
               <span className="text-xs font-mono font-black uppercase text-candy-ink/75">
-                TỶ LỆ CHÍNH XÁC
+                {t("stats.accuracy")}
               </span>
               <div className="font-display font-black text-3xl text-candy-pink flex items-center justify-center gap-2">
                 <Target className="w-6 h-6 text-candy-pink" />
-                {stats.winRate}
+                {stats.survivalRate}
               </div>
             </div>
           </div>
@@ -182,7 +184,7 @@ export default function ProfilePage() {
         <div className="space-y-4 pt-2">
           <h3 className="font-display font-black text-lg text-candy-ink uppercase tracking-wider flex items-center gap-2">
             <Gamepad2 className="w-5 h-5 text-candy-blue" />
-            LỊCH SỬ THI ĐẤU GẦN ĐÂY
+            {t("history.title")}
           </h3>
 
           <div className="space-y-4">
@@ -222,7 +224,7 @@ export default function ProfilePage() {
                   <div className="flex flex-wrap items-center gap-6 md:gap-8 w-full md:w-auto md:text-right md:justify-end">
                     <div>
                       <p className="text-[10px] text-candy-ink/60 font-mono font-black uppercase">
-                        ĐIỂM SỐ
+                        {t("history.score")}
                       </p>
                       <p className="font-mono text-base font-black text-candy-blue">
                         {h.score} PTS
@@ -230,7 +232,7 @@ export default function ProfilePage() {
                     </div>
                     <div>
                       <p className="text-[10px] text-candy-ink/60 font-mono font-black uppercase">
-                        THỨ HẠNG
+                        {t("history.rank")}
                       </p>
                       <p className="font-display font-black text-base text-candy-ink">
                         #{h.rank} / 100
@@ -245,7 +247,7 @@ export default function ProfilePage() {
                         }`}
                       >
                         {isWon && <Sparkles className="w-3.5 h-3.5" />}
-                        {isWon ? "CHIẾN THẮNG" : "BỊ LOẠI"}
+                        {isWon ? t("status.WON") : t("status.ELIMINATED")}
                       </span>
                     </div>
                   </div>

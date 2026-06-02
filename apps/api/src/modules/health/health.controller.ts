@@ -32,7 +32,7 @@ interface HealthCheckResponse {
 }
 
 interface MonitoringResponse {
-  cpuUsage: number;
+  cpuUsage: number | null;
   memoryUsageMb: number;
   totalMemoryMb: number;
   roomCount: number;
@@ -44,15 +44,13 @@ interface MonitoringResponse {
 const MONITORING_ROOM_COUNT_CACHE_KEY = "health:active-room-count";
 const MONITORING_ROOM_COUNT_CACHE_TTL_SECONDS = 5;
 
-// ── Module-scoped variables for CPU usage tracking ──────────
-
-let previousCpuUsage: NodeJS.CpuUsage | null = null;
-let previousTime: number | null = null;
-
 // ── Controller ─────────────────────────────────────────────
 
 @Controller("health")
 export class HealthController {
+  private previousCpuUsage: NodeJS.CpuUsage | null = null;
+  private previousTime: number | null = null;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
@@ -82,20 +80,25 @@ export class HealthController {
   @Roles(Role.ADMIN)
   async monitoring(): Promise<MonitoringResponse> {
     const currentCpuUsage = process.cpuUsage();
-    let cpuUsage = 0;
+    let cpuUsage: number | null = null;
 
-    if (previousCpuUsage !== null && previousTime !== null) {
-      const deltaCpuMicros = (currentCpuUsage.user + currentCpuUsage.system) - 
-                            (previousCpuUsage.user + previousCpuUsage.system);
-      const elapsedMs = Date.now() - previousTime;
+    if (this.previousCpuUsage !== null && this.previousTime !== null) {
+      const deltaCpuMicros =
+        currentCpuUsage.user +
+        currentCpuUsage.system -
+        (this.previousCpuUsage.user + this.previousCpuUsage.system);
+      const elapsedMs = Date.now() - this.previousTime;
       const numCpus = os.cpus().length;
-      
-      cpuUsage = Math.min(100, (deltaCpuMicros / 1000) / (elapsedMs * numCpus) * 100);
+
+      cpuUsage = Math.min(
+        100,
+        (deltaCpuMicros / 1000 / (elapsedMs * numCpus)) * 100,
+      );
     }
 
     // Update previous values for next calculation
-    previousCpuUsage = currentCpuUsage;
-    previousTime = Date.now();
+    this.previousCpuUsage = currentCpuUsage;
+    this.previousTime = Date.now();
 
     const memoryUsageMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
     const totalMemoryMb = Math.round(os.totalmem() / (1024 * 1024));

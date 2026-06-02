@@ -32,6 +32,7 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly jwtSecret: string;
   private readonly jwtExpiresIn: string;
+  private readonly accessTokenTtlSeconds: number;
   private readonly refreshExpiresIn: number; // seconds
 
   constructor(
@@ -44,6 +45,9 @@ export class AuthService {
       "arena-100-secret-key",
     );
     this.jwtExpiresIn = this.configService.get<string>("JWT_EXPIRES_IN", "24h");
+    this.accessTokenTtlSeconds = this.parseExpiresInToSeconds(
+      this.jwtExpiresIn,
+    );
     this.refreshExpiresIn = this.configService.get<number>(
       "REFRESH_EXPIRES_IN",
       604800,
@@ -90,7 +94,7 @@ export class AuthService {
     const payload: TokenPayload = { userId, username, role };
 
     const accessToken = jwt.sign(payload, this.jwtSecret, {
-      expiresIn: this.jwtExpiresIn,
+      expiresIn: this.accessTokenTtlSeconds,
     } as jwt.SignOptions);
 
     const refreshToken = nanoid(64);
@@ -150,7 +154,7 @@ export class AuthService {
   }
 
   getAccessTokenTtlSeconds(): number {
-    return this.parseExpiresInToSeconds(this.jwtExpiresIn);
+    return this.accessTokenTtlSeconds;
   }
 
   private parseExpiresInToSeconds(value: string): number {
@@ -162,27 +166,22 @@ export class AuthService {
       return numeric;
     }
 
+    // Use ms package to parse the time duration. ms throws on empty strings
+    // and may return undefined for unrecognized formats.
+    let milliseconds: number | string | undefined;
     try {
-      // Use ms package to parse the time duration
-      const milliseconds = ms(value);
-
-      // Convert milliseconds to seconds and ensure it's a finite positive number
-      if (
-        typeof milliseconds === "number" &&
-        Number.isFinite(milliseconds) &&
-        milliseconds > 0
-      ) {
-        const seconds = Math.floor(milliseconds / 1000);
-        return seconds;
-      }
+      milliseconds = ms(trimmed);
     } catch {
-      // If refresh fails, clear auth state
-      set({
-        isAuthenticated: false,
-        accessToken: null,
-        userRole: null,
-      });
-      return null;
+      return 24 * 60 * 60;
+    }
+
+    // Convert milliseconds to seconds and ensure it's a finite positive number
+    if (
+      typeof milliseconds === "number" &&
+      Number.isFinite(milliseconds) &&
+      milliseconds > 0
+    ) {
+      return Math.floor(milliseconds / 1000);
     }
 
     // Fallback to 24 hours (24 * 60 * 60 seconds) on invalid input

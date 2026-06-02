@@ -6,6 +6,7 @@ import { AnimatedSprite } from "@/components/ui/animated-sprite";
 import { Avatar } from "@/components/ui/avatar";
 import { API_URL } from "@/lib/api";
 import { useRouter } from "next/navigation";
+import { useSocketStore } from "@/stores/socket-store";
 import {
   Trophy,
   Home,
@@ -59,6 +60,7 @@ type LoadState =
 export default function ResultPage({ params }: ResultPageProps) {
   const { matchId } = use(params);
   const router = useRouter();
+  const userId = useSocketStore((s) => s.userId);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [payload, setPayload] = useState<MatchResultApiResponse | null>(null);
 
@@ -161,22 +163,22 @@ export default function ResultPage({ params }: ResultPageProps) {
       score: player.score ?? 0,
     }));
     const sorted = [...players].sort((a, b) => b.score - a.score);
-    const winnerId = payload?.winnerId ?? payload?.winner?.userId;
-    const fallbackPlayer =
-      sorted.find((player) => player.id !== winnerId) ?? sorted[0];
-    const rank = fallbackPlayer
-      ? sorted.findIndex((player) => player.id === fallbackPlayer.id) + 1
+    const currentPlayer = userId
+      ? players.find((player) => player.id === userId)
+      : undefined;
+    const rank = currentPlayer
+      ? sorted.findIndex((player) => player.id === currentPlayer.id) + 1
       : 0;
 
     return {
-      name: fallbackPlayer?.name ?? "Khách Đấu Thủ",
+      name: currentPlayer?.name ?? "Khách Đấu Thủ",
       rank,
-      score: fallbackPlayer?.score ?? 0,
+      score: currentPlayer?.score ?? 0,
       speed: "--",
       accuracy: "--",
       eliminatedRound: null,
     };
-  }, [payload]);
+  }, [payload, userId]);
 
   if (loadState === "loading") {
     return (

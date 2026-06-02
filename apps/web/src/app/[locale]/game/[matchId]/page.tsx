@@ -22,7 +22,8 @@ export default function GamePage({ params }: GamePageProps) {
   const { matchId, locale } = resolvedParams;
   const router = useRouter();
   const pathname = usePathname();
-  const { match, submitAnswer, userId, lastAnswerResult } = useSocketStore();
+  const { match, submitAnswer, userId, lastAnswerResult, remainingCount } =
+    useSocketStore();
   const t = useTranslations("Game");
 
   // Extract locale from pathname if not provided
@@ -35,7 +36,6 @@ export default function GamePage({ params }: GamePageProps) {
   const [revealedCorrectAnswer, setRevealedCorrectAnswer] = useState<
     string | null
   >(null);
-  const [remainingCount, setRemainingCount] = useState(100);
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -94,19 +94,15 @@ export default function GamePage({ params }: GamePageProps) {
       setRoundCompleted(true);
       setRevealedCorrectAnswer(lastAnswerResult.correctAnswer);
 
-      // Show results for 3 seconds then transition
+      // Show results for 1 second then transition
       timerRef.current = setTimeout(() => {
-        // Update remaining count (this should ideally come from server)
-        setRemainingCount((prev) => {
-          const newCount = Math.max(1, Math.round(prev * 0.4));
-          return newCount;
-        });
+        // Read the server-authoritative remaining count at fire-time to
+        // avoid a stale closure over the selector value.
+        const newCount = useSocketStore.getState().remainingCount;
 
         // Check if match should end
         timerRef.current = setTimeout(() => {
-          // For now we'll use the existing logic as placeholder
-          // In a full implementation, this would be driven by MATCH_FINISHED event
-          if (remainingCount <= 12) {
+          if (newCount !== null && newCount <= 12) {
             router.push(`/result/${matchId}`);
             return;
           }
@@ -125,7 +121,6 @@ export default function GamePage({ params }: GamePageProps) {
     clearTimers,
     matchId,
     currentLocale,
-    remainingCount,
     router,
   ]);
 
@@ -225,7 +220,7 @@ export default function GamePage({ params }: GamePageProps) {
                 {t("remainingLabel")}
               </span>
               <span className="font-display font-black text-3xl text-candy-blue">
-                {remainingCount} / 100
+                {remainingCount ?? match?.players?.length ?? 100} / 100
               </span>
             </div>
           </div>

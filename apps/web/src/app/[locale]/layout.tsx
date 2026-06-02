@@ -1,6 +1,4 @@
 import type { Metadata } from "next";
-import { Bungee, Fredoka, Gaegu, JetBrains_Mono } from "next/font/google";
-import "../globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip-provider";
 import { hasLocale, NextIntlClientProvider } from "next-intl";
@@ -11,33 +9,6 @@ import {
 } from "next-intl/server";
 import { notFound } from "next/navigation";
 import { routing } from "@/i18n/routing";
-
-const displayFont = Bungee({
-  weight: "400",
-  subsets: ["latin"],
-  variable: "--font-display",
-  preload: false,
-});
-
-const sansFont = Fredoka({
-  subsets: ["latin"],
-  variable: "--font-sans",
-  preload: false,
-});
-
-const handFont = Gaegu({
-  weight: ["300", "400", "700"],
-  subsets: ["latin"],
-  variable: "--font-hand",
-  preload: false,
-});
-
-const monoFont = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
-  display: "swap",
-  preload: false,
-});
 
 export async function generateMetadata({
   params,
@@ -79,18 +50,11 @@ export default async function LocaleLayout({
   const messages = await getMessages();
 
   return (
-    <html
-      lang={locale}
-      className={`${displayFont.variable} ${sansFont.variable} ${handFont.variable} ${monoFont.variable}`}
-    >
-      <body className="min-h-screen bg-background antialiased font-sans">
-        <NextIntlClientProvider messages={messages}>
-          <TooltipProvider>
-            {children}
-            <Toaster />
-          </TooltipProvider>
-        </NextIntlClientProvider>
-      </body>
-    </html>
+    <NextIntlClientProvider messages={messages}>
+      <TooltipProvider>
+        {children}
+        <Toaster />
+      </TooltipProvider>
+    </NextIntlClientProvider>
   );
 }

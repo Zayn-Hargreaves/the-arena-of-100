@@ -1,5 +1,4 @@
 import type { Config } from "tailwindcss";
-import plugin from "tailwindcss/plugin";
 import { ANIMATION_VARIABLES } from "./src/styles/tokens/animations";
 import { COLORS } from "./src/styles/tokens/colors";
 import tailwindcssAnimate from "tailwindcss-animate";
@@ -25,6 +24,9 @@ const config: Config = {
         "candy-orange": COLORS.candyOrange,
         "candy-cloud": COLORS.candyCloud,
         white: COLORS.background,
+      },
+      borderWidth: {
+        "3": "3px",
       },
       fontFamily: {
         display: ["var(--font-display)", "sans-serif"],
@@ -100,14 +102,7 @@ const config: Config = {
       },
     },
   },
-  plugins: [
-    tailwindcssAnimate,
-    plugin(({ addUtilities }) => {
-      addUtilities({
-        // Candy 3D Jelly UI utilities are in globals.css
-      });
-    }),
-  ],
+  plugins: [tailwindcssAnimate],
 };
 
 export default config;

@@ -91,7 +91,8 @@
     "optionA": "A) Đã bị \"bay màu\" khỏi hệ thống",
     "optionB": "B) Chưa được khai phá trên máy chủ",
     "optionC": "C) Đi lạc vào vòng bo sinh tồn",
-    "optionD": "D) Quay lại trang chủ làm trận mới!"
+    "optionD": "D) Quay lại trang chủ làm trận mới!",
+    "timeRemaining": "HẾT GIỜ SAU:"
   },
   "Game": {
     "matchingTitle": "Trận Đấu Đang Diễn Ra",
@@ -108,5 +109,30 @@
     "eliminatedStatus": "LOẠI",
     "antiHackDescription": "Hệ thống Chống Hack",
     "antiHackDetails": "Thời gian phản hồi được máy chủ ghi nhận và so sánh độ lệch ping để đảm bảo tính công bằng tuyệt đối."
+  },
+  "profile": {
+    "registeredToday": "ĐĂNG KÝ: HÔM NAY",
+    "stats": {
+      "title": "CHỈ SỐ SINH TỒN",
+      "matches": "TỔNG SỐ TRẬN",
+      "wins": "VÔ ĐỊCH (WINS)",
+      "averageResponse": "PHẢN XẠ TRUNG BÌNH",
+      "accuracy": "TỶ LỆ CHÍNH XÁC"
+    },
+    "history": {
+      "title": "LỊCH SỬ THI ĐẤU GẦN ĐÂY",
+      "score": "ĐIỂM SỐ",
+      "rank": "THỨ HẠNG"
+    },
+    "status": {
+      "WON": "CHIẾN THẮNG",
+      "ELIMINATED": "BỊ LOẠI"
+    },
+    "modes": {
+      "arena1vs100": "Đấu Trường 1 vs 100",
+      "publicRoom": "Phòng Công Cộng",
+      "speedMode": "Chế Độ Siêu Tốc",
+      "survivalQuiz": "Trắc Nghiệm Sinh Tồn"
+    }
   }
 }

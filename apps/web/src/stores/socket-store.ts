@@ -56,6 +56,14 @@ interface Match {
   roundEndTime: number | null;
 }
 
+interface LastAnswerResult {
+  matchId: string;
+  roundNo: number;
+  isCorrect?: boolean;
+  responseTimeMs?: number;
+  correctAnswer?: string;
+}
+
 interface ConnectionState {
   isConnected: boolean;
   isAuthenticated: boolean;
@@ -69,7 +77,8 @@ interface SocketState extends ConnectionState {
   socket: Socket | null;
   room: Room | null;
   match: Match | null;
-  lastAnswerResult: AnswerResultPayload | null;
+  lastAnswerResult: LastAnswerResult | null;
+  remainingCount: number | null;
   error: string | null;
 
   // Actions
@@ -102,6 +111,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   room: null,
   match: null,
   lastAnswerResult: null,
+  remainingCount: null,
   error: null,
 
   // Connect to WebSocket
@@ -129,8 +139,19 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       void get()
         .refreshAccessToken()
         .then((token) => {
-          if (!token) return;
+          if (!token) {
+            set({ error: "Failed to obtain access token" });
+            return;
+          }
           newSocket.emit(ClientEvent.AUTHENTICATE, { token });
+        })
+        .catch((err: unknown) => {
+          const message =
+            err instanceof Error
+              ? err.message
+              : "Failed to refresh access token";
+          set({ error: message });
+          console.error("❌ Token refresh error:", err);
         });
     });
 
@@ -209,6 +230,12 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     });
 
     newSocket.on(ServerEvent.ROUND_ENDED, (data: RoundEndedPayload) => {
+      const prev = get().lastAnswerResult;
+      const priorForThisRound =
+        prev && prev.matchId === data.matchId && prev.roundNo === data.roundNo
+          ? prev
+          : null;
+
       set((state) => ({
         match: state.match
           ? {
@@ -219,10 +246,15 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         lastAnswerResult: {
           matchId: data.matchId,
           roundNo: data.roundNo,
-          isCorrect: false, // Will be updated by ANSWER_RESULT if applicable
-          responseTimeMs: 0,
+          ...(priorForThisRound?.isCorrect !== undefined && {
+            isCorrect: priorForThisRound.isCorrect,
+          }),
+          ...(priorForThisRound?.responseTimeMs !== undefined && {
+            responseTimeMs: priorForThisRound.responseTimeMs,
+          }),
           correctAnswer: data.correctAnswer,
         },
+        remainingCount: data.survivingPlayerIds.length,
       }));
       console.log("🏁 Round ended:", data);
     });

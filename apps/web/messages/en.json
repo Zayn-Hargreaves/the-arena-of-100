@@ -91,7 +91,8 @@
     "optionA": "A) Completely eliminated from the system",
     "optionB": "B) Not yet discovered on the server",
     "optionC": "C) Lost in the survival battle zone",
-    "optionD": "D) Return to home to start a new match!"
+    "optionD": "D) Return to home to start a new match!",
+    "timeRemaining": "TIME REMAINING:"
   },
   "Game": {
     "matchingTitle": "Live Match in Progress",
@@ -108,5 +109,30 @@
     "eliminatedStatus": "ELIMINATED",
     "antiHackDescription": "Anti-Hack System",
     "antiHackDetails": "Response time is recorded by the server and compared against ping deviation to ensure absolute fairness."
+  },
+  "profile": {
+    "registeredToday": "REGISTERED: TODAY",
+    "stats": {
+      "title": "SURVIVAL STATS",
+      "matches": "TOTAL MATCHES",
+      "wins": "VICTORIES (WINS)",
+      "averageResponse": "AVERAGE RESPONSE",
+      "accuracy": "ACCURACY RATE"
+    },
+    "history": {
+      "title": "RECENT BATTLE HISTORY",
+      "score": "SCORE",
+      "rank": "RANK"
+    },
+    "status": {
+      "WON": "VICTORY",
+      "ELIMINATED": "ELIMINATED"
+    },
+    "modes": {
+      "arena1vs100": "Arena 1 vs 100",
+      "publicRoom": "Public Room",
+      "speedMode": "Speed Mode",
+      "survivalQuiz": "Survival Quiz"
+    }
   }
 }

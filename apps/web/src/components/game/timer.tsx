@@ -28,7 +28,7 @@ export const Timer: React.FC<TimerProps> = ({
     duration > 0 ? Math.max(0, Math.min(100, (timeLeft / duration) * 100)) : 0;
 
   // Determine state thresholds
-  const isWarning = timeLeft <= duration * 0.25; // <25% duration
+  const isWarning = timeLeft <= duration * 0.5 && timeLeft > 5; // <50% duration, above danger
   const isDanger = timeLeft <= 5; // <5 seconds remaining
 
   const isCircular = Math.abs(size - height) < 10;

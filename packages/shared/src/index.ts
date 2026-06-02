@@ -26,12 +26,24 @@ export const GAME_CONFIG = {
   ROOM_CODE_LENGTH: 6,
 } as const;
 
-export const ROOM_CATEGORY_OPTIONS = [
-  "Tất cả",
-  "Khoa học",
-  "Lịch sử",
-  "Công nghệ",
-  "Văn hóa",
+export type RoomCategory =
+  | "ALL"
+  | "SCIENCE"
+  | "HISTORY"
+  | "TECHNOLOGY"
+  | "CULTURE";
+
+export interface RoomCategoryOption {
+  value: RoomCategory;
+  label: string;
+}
+
+export const ROOM_CATEGORY_OPTIONS: readonly RoomCategoryOption[] = [
+  { value: "ALL", label: "Tất cả" },
+  { value: "SCIENCE", label: "Khoa học" },
+  { value: "HISTORY", label: "Lịch sử" },
+  { value: "TECHNOLOGY", label: "Công nghệ" },
+  { value: "CULTURE", label: "Văn hóa" },
 ] as const;
 
 // Room Code Alphabet (excluding ambiguous chars: 0, O, I, 1, l)

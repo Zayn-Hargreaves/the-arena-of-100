@@ -25,8 +25,21 @@ export class PrismaService
     if (!connectionString) {
       throw new Error("DATABASE_URL environment variable is missing!");
     }
-    const useSSL = process.env.DATABASE_SSL === 'true';
-    const sslConfig = useSSL ? { rejectUnauthorized: false } : undefined;
+    const useSSL = process.env.DATABASE_SSL === "true";
+    const caCert = process.env.PG_SSL_CA;
+    const allowSelfSigned = process.env.PG_ALLOW_SELF_SIGNED === "true";
+
+    let sslConfig: { rejectUnauthorized: boolean; ca?: string } | undefined;
+    if (useSSL) {
+      if (caCert) {
+        sslConfig = { rejectUnauthorized: true, ca: caCert };
+      } else if (allowSelfSigned) {
+        sslConfig = { rejectUnauthorized: false };
+      } else {
+        sslConfig = { rejectUnauthorized: true };
+      }
+    }
+
     const pool = new Pool({
       connectionString,
       ssl: sslConfig,

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 import { avatars, type AvatarOption } from "@/lib/avatars";
+import type { CreateTypes } from "canvas-confetti";
 
 export default function HomePage() {
   const router = useRouter();
@@ -34,12 +35,7 @@ export default function HomePage() {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const confettiCanvasRef = useRef<HTMLCanvasElement>(null);
-  const confettiInstanceRef = useRef<
-    | (((options?: Record<string, unknown>) => Promise<unknown>) & {
-        reset?: () => void;
-      })
-    | null
-  >(null);
+  const confettiInstanceRef = useRef<CreateTypes | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -55,7 +51,7 @@ export default function HomePage() {
 
     return () => {
       isMounted = false;
-      confettiInstanceRef.current?.reset?.();
+      confettiInstanceRef.current?.reset();
       confettiInstanceRef.current = null;
     };
   }, []);
@@ -254,7 +250,7 @@ export default function HomePage() {
       </header>
 
       {/* Main Registration Area */}
-      <main className="flex-grow flex items-center justify-center py-12 px-4 relative z-10">
+      <section className="flex-grow flex items-center justify-center py-12 px-4 relative z-10">
         <div className="w-full max-w-lg">
           {/* Goofy Hero Title Area */}
           <div className="text-center mb-8 relative">
@@ -445,7 +441,7 @@ export default function HomePage() {
             </div>
           </div>
         </div>
-      </main>
+      </section>
 
       {/* Footer Area */}
       <footer className="bg-candy-ink text-white w-full py-8 border-t-5 border-candy-ink relative z-10 shadow-[0_-5px_0_0_#2B2D42]">

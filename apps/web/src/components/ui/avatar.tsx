@@ -144,6 +144,7 @@ export const Avatar = React.forwardRef<HTMLDivElement, AvatarProps>(
       status,
       glow = "none",
       className = "",
+      ...rest
     },
     ref,
   ) => {
@@ -159,7 +160,7 @@ export const Avatar = React.forwardRef<HTMLDivElement, AvatarProps>(
     );
 
     return (
-      <div ref={ref} className={combinedClassName}>
+      <div ref={ref} className={combinedClassName} {...rest}>
         {src && !imageError && (
           // eslint-disable-next-line @next/next/no-img-element -- Avatar needs native img for lightweight fallback/error handling.
           <img

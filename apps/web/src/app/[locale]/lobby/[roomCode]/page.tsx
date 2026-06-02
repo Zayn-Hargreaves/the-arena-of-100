@@ -5,7 +5,7 @@ import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import { Avatar } from "@/components/ui/avatar";
 import { AnimatedSprite } from "@/components/ui/animated-sprite";
 import { useSocketStore } from "@/stores/socket-store";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/i18n/routing";
 import { cn } from "@/lib/utils";
 import {
   Copy,
@@ -251,52 +251,69 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                   </p>
                 </div>
               ) : (
-                playersList.map((player) => {
-                  const playerAvatar = getPlayerAvatar(player);
-                  const isCurrent = player.id === userId;
+                playersList
+                  .filter(
+                    (
+                      player,
+                    ): player is {
+                      id: string;
+                      name: string;
+                      status: string;
+                      score: number;
+                    } =>
+                      typeof player === "object" &&
+                      player !== null &&
+                      typeof player.id === "string" &&
+                      typeof player.name === "string" &&
+                      typeof player.status === "string" &&
+                      typeof player.score === "number",
+                  )
+                  .map((player) => {
+                    const playerAvatar = getPlayerAvatar(player);
+                    const isCurrent = player.id === userId;
 
-                  return (
-                    <div
-                      key={player.id}
-                      className={`p-4 flex items-center gap-3 rounded-2xl border-[3px] border-candy-ink transition-all shadow-[4px_4px_0_0_#2B2D42] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_0_#2B2D42] ${
-                        isCurrent
-                          ? "bg-candy-pink text-candy-ink"
-                          : "bg-white text-candy-ink"
-                      }`}
-                    >
-                      {playerAvatar.isAnimated ? (
-                        <div className="w-12 h-12 shrink-0 border-[2.5px] border-candy-ink rounded-xl bg-candy-cloud overflow-hidden flex items-center justify-center relative shadow-[2px_2px_0_0_#2B2D42]">
-                          <AnimatedSprite
-                            src={playerAvatar.spritesheet!}
-                            scale={2.2}
-                            row={0}
-                            speed={120}
+                    return (
+                      <div
+                        key={player.id}
+                        className={`p-4 flex items-center gap-3 rounded-2xl border-[3px] border-candy-ink transition-all shadow-[4px_4px_0_0_#2B2D42] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_0_#2B2D42] ${
+                          isCurrent
+                            ? "bg-candy-pink text-candy-ink"
+                            : "bg-white text-candy-ink"
+                        }`}
+                      >
+                        {playerAvatar.isAnimated ? (
+                          <div className="w-12 h-12 shrink-0 border-[2.5px] border-candy-ink rounded-xl bg-candy-cloud overflow-hidden flex items-center justify-center relative shadow-[2px_2px_0_0_#2B2D42]">
+                            <AnimatedSprite
+                              src={playerAvatar.spritesheet!}
+                              scale={2.2}
+                              row={0}
+                              speed={120}
+                            />
+                          </div>
+                        ) : (
+                          <Avatar
+                            size="md"
+                            fallback={playerAvatar.seed}
+                            status={isCurrent ? "online" : "offline"}
+                            className="border-[2.5px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42]"
                           />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="font-display text-sm truncate uppercase tracking-wide">
+                            {player.name}
+                          </p>
+                          <p
+                            className={cn(
+                              "font-mono text-[9px] uppercase tracking-widest font-black opacity-80",
+                              isCurrent ? "text-candy-ink" : "text-candy-pink",
+                            )}
+                          >
+                            {isCurrent ? "BẠN (HOST)" : "ĐÃ SẴN SÀNG"}
+                          </p>
                         </div>
-                      ) : (
-                        <Avatar
-                          size="md"
-                          fallback={playerAvatar.seed}
-                          status={isCurrent ? "online" : "offline"}
-                          className="border-[2.5px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42]"
-                        />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="font-display text-sm truncate uppercase tracking-wide">
-                          {player.name}
-                        </p>
-                        <p
-                          className={cn(
-                            "font-mono text-[9px] uppercase tracking-widest font-black opacity-80",
-                            isCurrent ? "text-candy-ink" : "text-candy-pink",
-                          )}
-                        >
-                          {isCurrent ? "BẠN (HOST)" : "ĐÃ SẴN SÀNG"}
-                        </p>
                       </div>
-                    </div>
-                  );
-                })
+                    );
+                  })
               )}
             </div>
           </div>
