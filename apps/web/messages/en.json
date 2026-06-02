@@ -92,5 +92,21 @@
     "optionB": "B) Not yet discovered on the server",
     "optionC": "C) Lost in the survival battle zone",
     "optionD": "D) Return to home to start a new match!"
+  },
+  "Game": {
+    "matchingTitle": "Live Match in Progress",
+    "roundLabel": "ROUND",
+    "roundComplexity": "Round Complexity",
+    "roundLevelExtreme": "Level: Extreme",
+    "remainingLabel": "Remaining",
+    "rulesHeader": "BATTLE RULES // SYSTEM QUESTION",
+    "lockedAnswer": "ANSWER LOCKED",
+    "waiting": "WAITING...",
+    "fallbackQuestion": "In a monorepo system architecture using pnpm & Turborepo, which directory contains pure domain logic state machine code that is framework-independent?",
+    "opponentsTitle": "OPPONENTS NEARBY",
+    "aliveStatus": "ALIVE",
+    "eliminatedStatus": "ELIMINATED",
+    "antiHackDescription": "Anti-Hack System",
+    "antiHackDetails": "Response time is recorded by the server and compared against ping deviation to ensure absolute fairness."
   }
 }

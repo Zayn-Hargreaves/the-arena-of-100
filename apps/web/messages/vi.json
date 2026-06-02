@@ -92,5 +92,21 @@
     "optionB": "B) Chưa được khai phá trên máy chủ",
     "optionC": "C) Đi lạc vào vòng bo sinh tồn",
     "optionD": "D) Quay lại trang chủ làm trận mới!"
+  },
+  "Game": {
+    "matchingTitle": "Trận Đấu Đang Diễn Ra",
+    "roundLabel": "VÒNG",
+    "roundComplexity": "Độ Phức Tạp Vòng",
+    "roundLevelExtreme": "Cấp độ: Cực Hạn",
+    "remainingLabel": "Còn Lại",
+    "rulesHeader": "QUY TẮC PHÒNG ĐẤU // CÂU HỎI HỆ THỐNG",
+    "lockedAnswer": "ĐÃ KHÓA ĐÁP ÁN",
+    "waiting": "ĐANG ĐỢI...",
+    "fallbackQuestion": "Trong kiến trúc hệ thống monorepo sử dụng pnpm & Turborepo, thư mục nào chứa các code logic thuần túy (pure domain logic state machine) không phụ thuộc vào framework?",
+    "opponentsTitle": "ĐỐI THỦ XUNG QUANH",
+    "aliveStatus": "SỐNG",
+    "eliminatedStatus": "LOẠI",
+    "antiHackDescription": "Hệ thống Chống Hack",
+    "antiHackDetails": "Thời gian phản hồi được máy chủ ghi nhận và so sánh độ lệch ping để đảm bảo tính công bằng tuyệt đối."
   }
 }

@@ -9,6 +9,7 @@ import { AnimatedSprite } from "@/components/ui/animated-sprite";
 import { useSocketStore } from "@/stores/socket-store";
 import { useRouter } from "@/i18n/routing";
 import { usePathname } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { Users, ShieldAlert, Swords } from "lucide-react";
 import { avatars } from "@/lib/avatars";
 
@@ -22,6 +23,7 @@ export default function GamePage({ params }: GamePageProps) {
   const router = useRouter();
   const pathname = usePathname();
   const { match, submitAnswer, userId, lastAnswerResult } = useSocketStore();
+  const t = useTranslations("Game");
 
   // Extract locale from pathname if not provided
   const currentLocale = locale || pathname.split("/")[1] || "vi";
@@ -175,9 +177,7 @@ export default function GamePage({ params }: GamePageProps) {
     };
   };
 
-  const questionText =
-    match?.currentQuestion?.content ||
-    "Trong kiến trúc hệ thống monorepo sử dụng pnpm & Turborepo, thư mục nào chứa các code logic thuần túy (pure domain logic state machine) không phụ thuộc vào framework?";
+  const questionText = match?.currentQuestion?.content || t("fallbackQuestion");
   const options = match?.currentQuestion?.options || [
     "apps/api (NestJS)",
     "apps/web (Next.js)",
@@ -196,19 +196,19 @@ export default function GamePage({ params }: GamePageProps) {
           <div className="flex items-center gap-6 w-full md:w-auto">
             <div>
               <span className="block text-[10px] text-candy-ink/65 uppercase font-display font-black tracking-wider">
-                Trận Đấu Đang Diễn Ra
+                {t("matchingTitle")}
               </span>
               <span className="font-display font-black text-2xl text-candy-pink drop-shadow-[0_2px_0_rgba(0,0,0,0.02)]">
-                VÒNG {match?.currentRoundNo || 1}
+                {t("roundLabel")} {match?.currentRoundNo || 1}
               </span>
             </div>
             <div className="h-10 w-[3px] bg-candy-ink/10 hidden sm:block" />
             <div className="hidden sm:block">
               <span className="block text-[10px] text-candy-ink/65 uppercase font-display font-black tracking-wider">
-                Độ Phức Tạp Vòng
+                {t("roundComplexity")}
               </span>
               <span className="font-sans text-sm font-bold text-candy-orange bg-candy-yellow/15 border-[2px] border-candy-orange/30 px-2.5 py-0.5 rounded-lg inline-block">
-                Cấp độ: Cực Hạn
+                {t("roundLevelExtreme")}
               </span>
             </div>
           </div>
@@ -222,7 +222,7 @@ export default function GamePage({ params }: GamePageProps) {
             <div className="text-right">
               <span className="text-[10px] text-candy-ink/65 uppercase font-display font-black tracking-wider flex items-center gap-1 justify-end">
                 <Users className="w-3.5 h-3.5 text-candy-blue stroke-[2.5]" />
-                Còn Lại
+                {t("remainingLabel")}
               </span>
               <span className="font-display font-black text-3xl text-candy-blue">
                 {remainingCount} / 100
@@ -238,11 +238,11 @@ export default function GamePage({ params }: GamePageProps) {
             {/* Question Card */}
             <div className="p-8 md:p-10 rounded-3xl border-[3.5px] border-candy-ink bg-candy-yellow text-candy-ink shadow-[6px_6px_0_0_#2B2D42] flex flex-col justify-between min-h-[220px] relative overflow-hidden">
               <div className="bg-white border-[2.5px] border-candy-ink px-3 py-1 text-[9px] font-mono text-candy-ink font-black tracking-wider rounded-lg absolute top-3 left-4 shadow-[1.5px_1.5px_0_0_#2B2D42]">
-                QUY TẮC PHÒNG ĐẤU // CÂU HỎI HỆ THỐNG
+                {t("rulesHeader")}
               </div>
               <div className="absolute top-3 right-4 text-xs font-display font-black text-candy-pink animate-pulse flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-candy-pink border border-candy-ink" />
-                {roundCompleted ? "ĐÃ KHÓA ĐÁP ÁN" : "ĐANG ĐỢI..."}
+                {roundCompleted ? t("lockedAnswer") : t("waiting")}
               </div>
 
               <h2 className="font-sans font-bold text-lg md:text-2xl text-candy-ink leading-relaxed tracking-wide pt-8">
@@ -273,7 +273,7 @@ export default function GamePage({ params }: GamePageProps) {
             <div className="p-5 rounded-3xl border-[3.5px] border-candy-ink bg-white shadow-[5px_5px_0_0_#2B2D42] space-y-4">
               <h3 className="font-display font-black text-sm text-candy-ink uppercase tracking-wider flex items-center gap-2 border-b-[3px] border-candy-ink pb-2">
                 <Swords className="w-4.5 h-4.5 text-candy-red stroke-[2.5]" />
-                ĐỐI THỦ XUNG QUANH
+                {t("opponentsTitle")}
               </h3>
 
               <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
@@ -341,11 +341,11 @@ export default function GamePage({ params }: GamePageProps) {
                       <div className="shrink-0 ml-1">
                         {isAlive ? (
                           <span className="text-[9px] font-display font-black text-candy-ink bg-candy-mint border-[1.5px] border-candy-ink px-1.5 py-0.5 rounded-md shadow-[1px_1px_0_0_#2B2D42]">
-                            SỐNG
+                            {t("aliveStatus")}
                           </span>
                         ) : (
                           <span className="text-[9px] font-display font-black text-white bg-candy-red border-[1.5px] border-candy-ink px-1.5 py-0.5 rounded-md shadow-[1px_1px_0_0_#2B2D42]">
-                            LOẠI
+                            {t("eliminatedStatus")}
                           </span>
                         )}
                       </div>
@@ -358,9 +358,8 @@ export default function GamePage({ params }: GamePageProps) {
             <div className="p-4 rounded-2xl border-[3px] border-candy-ink bg-[#FFF8E7] flex gap-3 shadow-[4px_4px_0_0_#2B2D42]">
               <ShieldAlert className="w-5 h-5 text-candy-yellow shrink-0 mt-0.5 stroke-[2.5]" />
               <p className="text-[10px] leading-relaxed text-candy-ink font-semibold">
-                <strong>Hệ thống Chống Hack:</strong> Thời gian phản hồi được
-                máy chủ ghi nhận và so sánh độ lệch ping để đảm bảo tính công
-                bằng tuyệt đối.
+                <strong>{t("antiHackDescription")}:</strong>{" "}
+                {t("antiHackDetails")}
               </p>
             </div>
           </div>
