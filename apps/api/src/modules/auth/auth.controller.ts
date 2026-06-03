@@ -5,6 +5,7 @@
 import {
   Controller,
   Post,
+  Get,
   Body,
   HttpCode,
   HttpStatus,
@@ -21,6 +22,7 @@ import { FastifyReply, FastifyRequest } from "fastify";
 import {
   ACCESS_TOKEN_COOKIE,
   REFRESH_TOKEN_COOKIE,
+  CSRF_TOKEN_COOKIE,
   clearCookie,
   getCookieValue,
   resolveAccessTokenCookieMaxAge,
@@ -28,6 +30,7 @@ import {
   shouldUseSecureCookies,
   shouldUseCrossSiteCookies,
   getSameSiteSetting,
+  generateCsrfToken,
 } from "./auth-cookie";
 
 const guestLoginPipe = new ZodValidationPipe(guestLoginSchema);
@@ -63,6 +66,33 @@ export class AuthController {
       accessToken: authResult.accessToken,
       user: authResult.user,
     };
+  }
+
+  @Get("csrf-token")
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Get CSRF token" })
+  @ApiResponse({ status: 200, description: "CSRF token returned" })
+  async getCsrfToken(
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<{ csrfToken: string }> {
+    const token = generateCsrfToken();
+    const secure =
+      shouldUseSecureCookies(process.env.NODE_ENV) ||
+      shouldUseCrossSiteCookies();
+
+    reply.header(
+      "Set-Cookie",
+      serializeCookie(CSRF_TOKEN_COOKIE, token, {
+        httpOnly: false,
+        secure,
+        sameSite: "strict",
+        path: "/",
+        maxAge: 24 * 60 * 60,
+      }),
+    );
+
+    return { csrfToken: token };
   }
 
   @Post("refresh")
@@ -126,12 +156,15 @@ export class AuthController {
     accessToken: string,
     refreshToken: string,
   ) {
-    const secure = shouldUseSecureCookies(process.env.NODE_ENV) || shouldUseCrossSiteCookies();
+    const secure =
+      shouldUseSecureCookies(process.env.NODE_ENV) ||
+      shouldUseCrossSiteCookies();
     const sameSite = getSameSiteSetting();
     const accessMaxAge = resolveAccessTokenCookieMaxAge(
       this.authService.getAccessTokenTtlSeconds(),
     );
     const refreshMaxAge = this.authService.getRefreshTokenTtlSeconds();
+    const csrfToken = generateCsrfToken();
 
     reply.header("Set-Cookie", [
       serializeCookie(ACCESS_TOKEN_COOKIE, accessToken, {
@@ -148,14 +181,24 @@ export class AuthController {
         path: "/",
         maxAge: refreshMaxAge,
       }),
+      serializeCookie(CSRF_TOKEN_COOKIE, csrfToken, {
+        httpOnly: false,
+        secure,
+        sameSite: "strict",
+        path: "/",
+        maxAge: Math.min(accessMaxAge, 24 * 60 * 60),
+      }),
     ]);
   }
 
   private clearAuthCookies(reply: FastifyReply) {
-    const secure = shouldUseSecureCookies(process.env.NODE_ENV) || shouldUseCrossSiteCookies();
+    const secure =
+      shouldUseSecureCookies(process.env.NODE_ENV) ||
+      shouldUseCrossSiteCookies();
     reply.header("Set-Cookie", [
       clearCookie(ACCESS_TOKEN_COOKIE, secure),
       clearCookie(REFRESH_TOKEN_COOKIE, secure),
+      clearCookie(CSRF_TOKEN_COOKIE, secure),
     ]);
   }
 }

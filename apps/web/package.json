@@ -6,7 +6,8 @@
     "build": "next build",
     "dev": "NEXT_FONT_GOOGLE_MOCK=1 next dev --port 3000",
     "start": "next start",
-    "lint": "next lint --cache-location .eslintcache"
+    "lint": "next lint --cache-location .eslintcache",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@arena/shared": "workspace:*",

@@ -17,6 +17,9 @@
 - [x] Memory bank documentation
 - [x] **Architecture assessment & review (2025-05-09)**
 - [x] **CI/CD Pipeline with GitHub Actions & Vitest setup (2026-05-12)**
+- [x] **CSRF Protection — double-submit cookie pattern (2026-06-03)**
+- [x] **Rate Limiting — @nestjs/throttler global + admin-specific (2026-06-03)**
+- [x] **Hardcoded locale redirect fix (2026-06-03)**
 
 ### 🔴 Critical Fixes (Phase 0.5: Before Feature Development)
 
@@ -85,7 +88,6 @@
 
 ### 🔮 Future (Phase 3: Production Ready)
 
-- [ ] Rate limiting
 - [ ] Sound effects
 - [ ] Advanced question management
 - [ ] Tournament mode
@@ -114,6 +116,8 @@
 - `SocketNamespace` missing SPECTATOR entry
 - `packages/config` directory exists but is empty
 - **Dependency Risk**: `class-validator` & `class-transformer` are unmaintained, migration to Zod completed (packages removed as direct dependencies, code migrated to use Zod validation/serialization)
+- **Profile/Rankings pages use hardcoded mock data** — Needs backend API endpoints (player stats, leaderboard)
+- **Design system Phase 5 incomplete** — Shell templates, legacy CSS cleanup, visual audit still TODO
 
 ### 🟢 Nice-to-Have
 

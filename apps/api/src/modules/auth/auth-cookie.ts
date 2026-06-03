@@ -1,7 +1,10 @@
+import { randomBytes } from "crypto";
+
 const ONE_DAY_SECONDS = 24 * 60 * 60;
 
 export const ACCESS_TOKEN_COOKIE = "arena_access_token";
 export const REFRESH_TOKEN_COOKIE = "arena_refresh_token";
+export const CSRF_TOKEN_COOKIE = "csrf_token";
 
 interface SerializeCookieOptions {
   maxAge: number;
@@ -83,4 +86,8 @@ export function resolveAccessTokenCookieMaxAge(ttlSeconds: number): number {
   }
 
   return ONE_DAY_SECONDS;
+}
+
+export function generateCsrfToken(): string {
+  return randomBytes(32).toString("hex");
 }

@@ -20,6 +20,10 @@ All critical fixes complete. Currently on branch `refactor/split-game-gateway` �
 - **Implemented type-safe error handling pattern** — `RoomError` class with error codes, replacing fragile string matching (see [errorHandlingPattern.md](./errorHandlingPattern.md))
 - **Refactored GameGateway** — split into handler classes (AuthHandler, RoomHandler, MatchHandler)
 - **Fixed getState() shallow copy** — deep cloning players Map
+- **CSRF Protection (2026-06-03)** — Added double-submit cookie pattern: `CsrfGuard` validates `X-CSRF-Token` header on state-changing requests; CSRF token cookie set on login/refresh; frontend `apiFetch()` auto-injects header (see [securityLayer.md](./securityLayer.md))
+- **Rate Limiting (2026-06-03)** — Added `@nestjs/throttler` globally (100 req/min); stricter limits on admin endpoints: 5 sync/min, 2 resets/5min
+- **Hardcoded locale redirect fix (2026-06-03)** — Root `page.tsx` now reads `routing.defaultLocale` instead of hardcoded `/vi`
+- **Admin UI improvements (2026-06-03)** — Replaced `alert()` with `toast()` for migration check; added `typecheck` script to web package
 
 ## Architecture Assessment Summary
 

@@ -6,7 +6,7 @@ import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { useSocketStore } from "@/stores/socket-store";
-import { API_URL } from "@/lib/api";
+import { API_URL, apiFetch } from "@/lib/api";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import {
@@ -120,7 +120,7 @@ export default function AdminPage() {
   const handleSeedQuestions = async () => {
     setSeeding(true);
     try {
-      const response = await fetch(`${API_URL}/admin/questions/sync`, {
+      const response = await apiFetch("/admin/questions/sync", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -160,7 +160,7 @@ export default function AdminPage() {
     setShowResetModal(false);
     setResetting(true);
     try {
-      const response = await fetch(`${API_URL}/admin/system/reset`, {
+      const response = await apiFetch("/admin/system/reset", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -277,7 +277,8 @@ export default function AdminPage() {
                 {t("ramAllocation")}
               </span>
               <span className="font-mono font-black text-sm text-candy-blue">
-                {metrics.memoryUsageMb} {t("units.mb")} / {metrics.totalMemoryMb || '?'} {t("units.mb")}
+                {metrics.memoryUsageMb} {t("units.mb")} /{" "}
+                {metrics.totalMemoryMb || "?"} {t("units.mb")}
               </span>
             </div>
 
@@ -286,7 +287,7 @@ export default function AdminPage() {
               <div
                 className="bg-candy-blue border-r-[2px] border-candy-ink h-full rounded-lg shadow-[0_0_4px_rgba(0,0,0,0.15)]"
                 style={{
-                  width: `${Math.max(0, Math.min(100, ((metrics.memoryUsageMb / (metrics.totalMemoryMb || 1024)) * 100)))}%`,
+                  width: `${Math.max(0, Math.min(100, (metrics.memoryUsageMb / (metrics.totalMemoryMb || 1024)) * 100))}%`,
                 }}
               />
             </div>
@@ -357,7 +358,12 @@ export default function AdminPage() {
               </button>
 
               <button
-                onClick={() => alert(t("alerts.migrationsUpToDate"))}
+                onClick={() =>
+                  toast({
+                    title: t("checkMigrations"),
+                    description: t("alerts.migrationsUpToDate"),
+                  })
+                }
                 className="w-full flex items-center justify-center h-12 bg-white border-[3px] border-candy-ink rounded-2xl font-display font-black text-xs uppercase text-candy-ink shadow-[4px_4px_0_0_#000] hover:bg-candy-cloud active:translate-y-0.5 active:shadow-[2px_2px_0_0_#000] transition-all"
               >
                 <ShieldCheck className="w-4 h-4 mr-2 text-candy-mint shrink-0" />
