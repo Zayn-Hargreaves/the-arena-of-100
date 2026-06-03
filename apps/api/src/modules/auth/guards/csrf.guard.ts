@@ -12,12 +12,10 @@ import {
   ForbiddenException,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
-import { IS_PUBLIC_KEY } from "../../../common/decorators/public.decorator";
 import { CSRF_EXEMPT_KEY } from "../../../common/decorators/csrf-exempt.decorator";
 import { CSRF_TOKEN_COOKIE, getCookieValue } from "../auth-cookie";
 
 const CSRF_HEADER = "x-csrf-token";
-const SAFE_METHODS = ["GET", "HEAD", "OPTIONS"];
 
 @Injectable()
 export class CsrfGuard implements CanActivate {
@@ -31,10 +29,6 @@ export class CsrfGuard implements CanActivate {
       return true;
     }
 
-    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
     const isCsrfExempt = this.reflector.getAllAndOverride<boolean>(
       CSRF_EXEMPT_KEY,
       [context.getHandler(), context.getClass()],
@@ -42,12 +36,6 @@ export class CsrfGuard implements CanActivate {
 
     // Explicit CSRF exemption always wins.
     if (isCsrfExempt) {
-      return true;
-    }
-
-    // Public routes still require CSRF on mutating methods unless the
-    // method itself is safe (defense-in-depth for auth/guest/refresh).
-    if (isPublic && SAFE_METHODS.includes(request.method)) {
       return true;
     }
 
