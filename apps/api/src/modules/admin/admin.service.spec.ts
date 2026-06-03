@@ -98,13 +98,11 @@ describe("AdminService", () => {
         findMany: vi.fn().mockResolvedValue([]),
       },
       user: {
-        upsert: vi
-          .fn()
-          .mockResolvedValue({
-            id: "u-admin",
-            username: "admin",
-            role: Role.ADMIN,
-          }),
+        upsert: vi.fn().mockResolvedValue({
+          id: "u-admin",
+          username: "admin",
+          role: Role.ADMIN,
+        }),
       },
       eventLog: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
       answer: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
@@ -194,19 +192,22 @@ describe("AdminService", () => {
           ] as Question[],
         };
       });
-      const { AdminService: FreshAdminService } =
-        await import("./admin.service");
-      prisma.tag.findMany.mockResolvedValueOnce([]);
-      const fresh = new FreshAdminService(
-        prisma as unknown as PrismaService,
-        redis as unknown as RedisService,
-      );
+      try {
+        const { AdminService: FreshAdminService } =
+          await import("./admin.service");
+        prisma.tag.findMany.mockResolvedValueOnce([]);
+        const fresh = new FreshAdminService(
+          prisma as unknown as PrismaService,
+          redis as unknown as RedisService,
+        );
 
-      const result = await fresh.syncQuestions(false);
+        const result = await fresh.syncQuestions(false);
 
-      expect(prisma.tag.createMany).not.toHaveBeenCalled();
-      expect(result.tagsCount).toBe(0);
-      vi.doUnmock("../../prisma-seeds/questions");
+        expect(prisma.tag.createMany).not.toHaveBeenCalled();
+        expect(result.tagsCount).toBe(0);
+      } finally {
+        vi.doUnmock("../../prisma-seeds/questions");
+      }
     });
 
     it("creates a new question when none exists", async () => {
@@ -314,6 +315,25 @@ describe("AdminService", () => {
       expect(prisma.match.deleteMany).toHaveBeenCalledTimes(1);
       expect(prisma.roomPlayer.deleteMany).toHaveBeenCalledTimes(1);
       expect(prisma.room.deleteMany).toHaveBeenCalledTimes(1);
+
+      // Enforce the deletion order: eventLog → answer → matchRound →
+      // matchPlayer → match → roomPlayer → room. A reordering would
+      // risk violating FK constraints on dependent tables.
+      const order = [
+        prisma.eventLog.deleteMany.mock.invocationCallOrder[0],
+        prisma.answer.deleteMany.mock.invocationCallOrder[0],
+        prisma.matchRound.deleteMany.mock.invocationCallOrder[0],
+        prisma.matchPlayer.deleteMany.mock.invocationCallOrder[0],
+        prisma.match.deleteMany.mock.invocationCallOrder[0],
+        prisma.roomPlayer.deleteMany.mock.invocationCallOrder[0],
+        prisma.room.deleteMany.mock.invocationCallOrder[0],
+      ];
+      const sorted = [...order].sort((a, b) => a - b);
+      expect(order).toEqual(sorted);
+      // And each step must strictly follow the previous one.
+      for (let i = 1; i < order.length; i++) {
+        expect(order[i]).toBeGreaterThan(order[i - 1]);
+      }
     });
 
     it("scans and deletes matching room:* and match:* keys", async () => {

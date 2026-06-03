@@ -86,7 +86,7 @@ export class AuthController {
       serializeCookie(CSRF_TOKEN_COOKIE, token, {
         httpOnly: false,
         secure,
-        sameSite: "strict",
+        sameSite: getSameSiteSetting(),
         path: "/",
         maxAge: 24 * 60 * 60,
       }),
@@ -184,7 +184,7 @@ export class AuthController {
       serializeCookie(CSRF_TOKEN_COOKIE, csrfToken, {
         httpOnly: false,
         secure,
-        sameSite: "strict",
+        sameSite: getSameSiteSetting(),
         path: "/",
         maxAge: Math.min(accessMaxAge, 24 * 60 * 60),
       }),

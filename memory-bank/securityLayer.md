@@ -34,8 +34,9 @@ This works because:
 
 ### Exceptions
 
-- **Public endpoints** (marked `@Public()`) skip CSRF validation: `/auth/guest`, `/auth/refresh`, `/auth/csrf-token`, `/health/*`
-- **GET/HEAD/OPTIONS** requests skip CSRF validation (safe methods)
+- **Public endpoints** (marked `@Public()`) skip CSRF validation on safe methods only: `/auth/csrf-token` (GET) and `/health` (GET). Mutating public endpoints (`/auth/guest`, `/auth/refresh`, `/auth/logout`) still require a valid `X-CSRF-Token` header and matching `csrf_token` cookie.
+- **GET/HEAD/OPTIONS** requests skip CSRF validation (safe methods) — this is why `/health/monitoring` (a `GET`) bypasses CSRF, not because it is public. It is still protected by JWT auth + `@Roles(ADMIN)`.
+- **Explicit CSRF exemption** via `@CsrfExempt()` skips CSRF validation for any method.
 
 ### When SameSite=None
 

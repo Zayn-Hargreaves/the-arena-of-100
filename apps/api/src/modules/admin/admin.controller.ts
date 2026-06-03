@@ -2,18 +2,18 @@
 // Admin Controller - Secured Maintenance API Endpoints
 // ============================================================
 
-import { Controller, Post, Body } from "@nestjs/common";
+import { Controller, Post, Body, HttpCode, HttpStatus } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
   ApiResponse,
+  ApiBody,
 } from "@nestjs/swagger";
 import { AdminService } from "./admin.service";
 import { Roles } from "../../common/decorators/roles.decorator";
 import { Role } from "@prisma/client";
-import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
 import {
   SyncQuestionsDto,
   syncQuestionsSchema,
@@ -28,20 +28,24 @@ export class AdminController {
 
   @Post("questions/sync")
   @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Sync database questions with seed data" })
-  @ApiResponse({ status: 201, description: "Questions successfully synced" })
-  async syncQuestions(
-    @Body(new ZodValidationPipe(syncQuestionsSchema)) dto: SyncQuestionsDto,
-  ) {
-    return this.adminService.syncQuestions(dto.clearExisting);
+  @ApiResponse({ status: 200, description: "Questions successfully synced" })
+  @ApiBody({ type: SyncQuestionsDto, required: false })
+  async syncQuestions(@Body() body?: SyncQuestionsDto) {
+    // Body is optional: an empty POST should default clearExisting to true
+    // rather than being rejected by the validation pipe.
+    const parsed = syncQuestionsSchema.parse(body ?? {});
+    return this.adminService.syncQuestions(parsed.clearExisting);
   }
 
   @Post("system/reset")
   @Throttle({ default: { limit: 2, ttl: 300000 } })
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: "Reset system state: clear all lobbies, matches, and Redis cache",
   })
-  @ApiResponse({ status: 201, description: "System successfully reset" })
+  @ApiResponse({ status: 200, description: "System successfully reset" })
   async resetSystem() {
     return this.adminService.resetSystem();
   }

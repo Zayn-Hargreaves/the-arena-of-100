@@ -62,7 +62,11 @@ export function getCookieValue(
       continue;
     }
 
-    return decodeURIComponent(valueParts.join("="));
+    try {
+      return decodeURIComponent(valueParts.join("="));
+    } catch {
+      return null;
+    }
   }
 
   return null;

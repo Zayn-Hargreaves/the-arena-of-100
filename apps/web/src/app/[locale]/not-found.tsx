@@ -57,7 +57,7 @@ export default function LocalNotFound() {
         </div>
 
         {/* Quiz Battle Neobrutalist Card */}
-        <div className="bg-white border-5 border-candy-ink rounded-[2rem] p-6 sm:p-8 shadow-[8px_8px_0_0_#2B2D42] text-left space-y-6 transform rotate-1">
+        <div className="bg-white border-3 border-candy-ink rounded-[2rem] p-6 sm:p-8 shadow-[8px_8px_0_0_#2B2D42] text-left space-y-6 transform rotate-1">
           {/* Header / Round Status */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b-4 border-candy-ink pb-4">
             <div className="bg-candy-red text-white font-black text-sm px-4 py-2 border-4 border-candy-ink rounded-full inline-block uppercase tracking-wide transform -rotate-2">

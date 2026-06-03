@@ -116,6 +116,15 @@ describe("auth-cookie", () => {
       );
       expect(v).toBe("a=b=c");
     });
+
+    it("returns null on malformed percent-encoded values", () => {
+      // %E0 is not a valid UTF-8 sequence; decodeURIComponent throws URIError.
+      const v = getCookieValue(
+        `${ACCESS_TOKEN_COOKIE}=%E0%A4%A`,
+        ACCESS_TOKEN_COOKIE,
+      );
+      expect(v).toBeNull();
+    });
   });
 
   describe("shouldUseSecureCookies", () => {

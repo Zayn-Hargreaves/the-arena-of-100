@@ -22,11 +22,18 @@ export async function apiFetch(
   const headers = new Headers(options.headers);
 
   if (isMutating) {
+    // Mutating requests must include the csrf_token cookie AND the
+    // matching X-CSRF-Token header so the server-side CsrfGuard can
+    // validate the double-submit pattern on cross-origin requests.
     const csrfToken = getCsrfToken();
     if (csrfToken) {
       headers.set("X-CSRF-Token", csrfToken);
     }
   }
 
-  return fetch(url, { ...options, headers });
+  return fetch(url, {
+    ...options,
+    headers,
+    credentials: isMutating ? "include" : options.credentials,
+  });
 }

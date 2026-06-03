@@ -10,6 +10,7 @@ import { Roles } from "../../common/decorators/roles.decorator";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { Public } from "../../common/decorators/public.decorator";
+import { CpuSamplerService } from "./services/cpu-sampler.service";
 import os from "os";
 
 // ── DTO Types ──────────────────────────────────────────────
@@ -48,12 +49,10 @@ const MONITORING_ROOM_COUNT_CACHE_TTL_SECONDS = 5;
 
 @Controller("health")
 export class HealthController {
-  private previousCpuUsage: NodeJS.CpuUsage | null = null;
-  private previousTime: number | null = null;
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly cpuSampler: CpuSamplerService,
   ) {}
 
   @Get()
@@ -83,28 +82,7 @@ export class HealthController {
   @ApiBearerAuth()
   @Roles(Role.ADMIN)
   async monitoring(): Promise<MonitoringResponse> {
-    const currentCpuUsage = process.cpuUsage();
-    let cpuUsage: number | null = null;
-
-    if (this.previousCpuUsage !== null && this.previousTime !== null) {
-      const deltaCpuMicros =
-        currentCpuUsage.user +
-        currentCpuUsage.system -
-        (this.previousCpuUsage.user + this.previousCpuUsage.system);
-      const elapsedMs = Date.now() - this.previousTime;
-      const numCpus = os.cpus().length;
-
-      if (elapsedMs > 0 && numCpus > 0) {
-        cpuUsage = Math.min(
-          100,
-          (deltaCpuMicros / 1000 / (elapsedMs * numCpus)) * 100,
-        );
-      }
-    }
-
-    // Update previous values for next calculation
-    this.previousCpuUsage = currentCpuUsage;
-    this.previousTime = Date.now();
+    const cpuUsage = this.cpuSampler.sample();
 
     const memoryUsageMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
     const totalMemoryMb = Math.round(os.totalmem() / (1024 * 1024));

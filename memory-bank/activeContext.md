@@ -2,7 +2,7 @@
 
 ## Current Focus
 
-All critical fixes complete. Currently on branch `refactor/split-game-gateway` — gateway refactored, error handling pattern implemented, ready to transition to Phase 1 core game loop implementation.
+Currently on branch `migrate/ui/design-system`. Review cohort is focused on the admin/health monitoring UI (`apps/web/src/app/[locale]/admin/page.tsx`, `apps/web/src/app/[locale]/not-found.tsx`) and the admin dashboard wiring (CSRF + JWT cookies, role-based access, monitoring metrics).
 
 ## Recent Changes
 

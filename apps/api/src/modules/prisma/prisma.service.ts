@@ -11,6 +11,7 @@ import {
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
+import { buildSslConfig } from "../../common/database/ssl-config";
 
 @Injectable()
 export class PrismaService
@@ -25,34 +26,13 @@ export class PrismaService
     if (!connectionString) {
       throw new Error("DATABASE_URL environment variable is missing!");
     }
-    const nodeEnv = process.env.NODE_ENV;
-    if (
-      process.env.PG_ALLOW_SELF_SIGNED === "true" &&
-      (nodeEnv === "production" || nodeEnv === undefined)
-    ) {
-      throw new Error(
-        "PG_ALLOW_SELF_SIGNED=true is forbidden when NODE_ENV=production. " +
-          "Provide PG_SSL_CA or remove PG_ALLOW_SELF_SIGNED.",
-      );
-    }
 
-    const useSSL = process.env.DATABASE_SSL === "true";
-    const caCert = process.env.PG_SSL_CA;
-    const allowSelfSigned = process.env.PG_ALLOW_SELF_SIGNED === "true";
-
-    let sslConfig: { rejectUnauthorized: boolean; ca?: string } | undefined;
-    if (useSSL) {
-      if (caCert) {
-        sslConfig = { rejectUnauthorized: true, ca: caCert };
-      } else if (
-        allowSelfSigned &&
-        (nodeEnv === "development" || nodeEnv === "test")
-      ) {
-        sslConfig = { rejectUnauthorized: false };
-      } else {
-        sslConfig = { rejectUnauthorized: true };
-      }
-    }
+    const sslConfig = buildSslConfig({
+      nodeEnv: process.env.NODE_ENV,
+      useSSL: process.env.DATABASE_SSL === "true",
+      caCert: process.env.PG_SSL_CA,
+      allowSelfSigned: process.env.PG_ALLOW_SELF_SIGNED === "true",
+    });
 
     const pool = new Pool({
       connectionString,

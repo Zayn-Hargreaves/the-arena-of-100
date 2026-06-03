@@ -1,6 +1,7 @@
 import { RoomStatus } from "@arena/shared";
 import os from "os";
 import { HealthController } from "./health.controller";
+import { CpuSamplerService } from "./services/cpu-sampler.service";
 
 describe("HealthController", () => {
   const createController = () => {
@@ -17,10 +18,17 @@ describe("HealthController", () => {
       getClient: vi.fn(),
     };
 
+    const cpuSampler = new CpuSamplerService();
+
     return {
-      controller: new HealthController(prisma as never, redis as never),
+      controller: new HealthController(
+        prisma as never,
+        redis as never,
+        cpuSampler,
+      ),
       prisma,
       redis,
+      cpuSampler,
     };
   };
 
@@ -224,7 +232,11 @@ describe("HealthController", () => {
       expect(result.cpuUsage).toBe(100);
     });
 
-    it("isolates CPU tracking state between controller instances", async () => {
+    it("isolates CPU tracking between sampler instances", async () => {
+      // In production all controllers share a single CpuSamplerService
+      // (Nest DI singleton). In tests we construct a fresh sampler per
+      // controller so this verifies that the sampler — not the
+      // controller — owns the baseline state.
       const { controller: c1, prisma: p1, redis: r1 } = createController();
       const { controller: c2, prisma: p2, redis: r2 } = createController();
       p1.room.count.mockResolvedValue(0);

@@ -17,14 +17,9 @@ description: 'Use when the user wants to rename, extract, split, move, or restru
 
 ```
 1. gitnexus_impact({target: "X", direction: "upstream"})  → Map all dependents
-2. GATE: if gitnexus_impact severity is HIGH or CRITICAL → STOP,
-   present a clear warning to the user, and require explicit user
-   acknowledgement before any rename/extract/split edits. Do not
-   proceed to gitnexus_query, gitnexus_context, or planning without
-   confirmation.
-3. gitnexus_query({query: "X"})                            → Find execution flows involving X
-4. gitnexus_context({name: "X"})                           → See all incoming/outgoing refs
-5. Plan update order: interfaces → implementations → callers → tests
+2. gitnexus_query({query: "X"})                            → Find execution flows involving X
+3. gitnexus_context({name: "X"})                           → See all incoming/outgoing refs
+4. Plan update order: interfaces → implementations → callers → tests
 ```
 
 > If "Index is stale" → run `npx gitnexus analyze` in terminal.

@@ -116,8 +116,13 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
   // Connect to WebSocket
   connect: async () => {
-    const { socket } = get();
-    if (socket?.connected) return;
+    const state = get();
+    // socket.connected only proves the WS handshake succeeded, not that
+    // authentication completed. On auth failure the socket can be left
+    // in a connected-but-unauthenticated state, so require the auth
+    // flag as well — otherwise AppShellLayout's retry logic (which only
+    // checks !isConnected) would be permanently bypassed.
+    if (state.socket?.connected && state.isAuthenticated) return;
 
     const { io } = await import("socket.io-client");
 
@@ -321,12 +326,17 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     });
 
     newSocket.on(ServerEvent.ERROR, (data) => {
-      // If unauthorized or invalid token, clear local auth state
+      // If unauthorized or invalid token, clear local auth state and
+      // null the socket so the next connect() can reinitialize
+      // (otherwise the connect guard would short-circuit on
+      // socket.connected and skip re-auth).
       if (
         data.message === "Invalid or expired token" ||
         data.message === "Unauthorized"
       ) {
         set({
+          socket: null,
+          isConnected: false,
           isAuthenticated: false,
           accessToken: null,
           userRole: null,
@@ -405,37 +415,78 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   },
 
   // Authenticate
-  authenticate: async (nickname: string) => {
+  authenticate: (nickname: string): Promise<void> => {
     const { socket } = get();
-    if (!socket) return;
-
-    try {
-      const response = await fetch(`${API_URL}/auth/guest`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ username: nickname }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || "Authentication failed");
-      }
-
-      const data = (await response.json()) as AuthResponse;
-
-      set({
-        accessToken: data.accessToken,
-        userRole: data.user.role,
-      });
-
-      socket.emit(ClientEvent.AUTHENTICATE, { token: data.accessToken });
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to authenticate";
-      set({ error: message });
-      console.error("❌ Authentication error:", err);
+    if (!socket) {
+      return Promise.reject(new Error("Socket not connected"));
     }
+
+    const AUTH_TIMEOUT_MS = 5000;
+
+    return new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timeoutId);
+        socket.off(ServerEvent.AUTHENTICATED, onAuthenticated);
+        socket.off(ServerEvent.ERROR, onAuthError);
+      };
+
+      const onAuthenticated = () => {
+        cleanup();
+        resolve();
+      };
+
+      const onAuthError = (data: ErrorPayload) => {
+        if (
+          data.message === "Invalid or expired token" ||
+          data.message === "Unauthorized"
+        ) {
+          cleanup();
+          reject(new Error(data.message));
+        }
+      };
+
+      const timeoutId = setTimeout(() => {
+        cleanup();
+        reject(new Error("Authentication timed out"));
+      }, AUTH_TIMEOUT_MS);
+
+      socket.on(ServerEvent.AUTHENTICATED, onAuthenticated);
+      socket.on(ServerEvent.ERROR, onAuthError);
+
+      void (async () => {
+        try {
+          const response = await fetch(`${API_URL}/auth/guest`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ username: nickname }),
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.message || "Authentication failed");
+          }
+
+          const data = (await response.json()) as AuthResponse;
+
+          set({
+            accessToken: data.accessToken,
+            userRole: data.user.role,
+          });
+
+          socket.emit(ClientEvent.AUTHENTICATE, {
+            token: data.accessToken,
+          });
+        } catch (err) {
+          cleanup();
+          const message =
+            err instanceof Error ? err.message : "Failed to authenticate";
+          set({ error: message });
+          console.error("❌ Authentication error:", err);
+          reject(err instanceof Error ? err : new Error(message));
+        }
+      })();
+    });
   },
 
   // Create Room
