@@ -8,7 +8,8 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { z } from "zod";
-import { normalizeString } from "./seeds/questions";
+import { normalizeString } from "../src/prisma-seeds/questions";
+import { buildSslConfig } from "../src/common/database/ssl-config";
 
 // Define environment schema
 const envSchema = z.object({
@@ -16,12 +17,21 @@ const envSchema = z.object({
     .string()
     .transform((val) => val === "true")
     .default("false"),
-  NODE_ENV: z.string().default("development"),
+  NODE_ENV: z.string().optional(),
   FORCE_SEED_CLEANUP: z
     .string()
     .transform((val) => val === "true")
     .default("false"),
   DATABASE_URL: z.string(),
+  DATABASE_SSL: z
+    .string()
+    .transform((val) => val === "true")
+    .default("false"),
+  PG_SSL_CA: z.string().optional(),
+  PG_ALLOW_SELF_SIGNED: z
+    .string()
+    .transform((val) => val === "true")
+    .default("false"),
   SEED_ENV: z.string().default("dev"),
 });
 
@@ -29,11 +39,25 @@ const envSchema = z.object({
 const parsedEnv = envSchema.parse(process.env);
 
 const connectionString = parsedEnv.DATABASE_URL;
+const useSSL = parsedEnv.DATABASE_SSL;
+const caCert = parsedEnv.PG_SSL_CA;
+const allowSelfSigned = parsedEnv.PG_ALLOW_SELF_SIGNED;
+
+// buildSslConfig throws on the production+self-signed combination;
+// that check used to live in this file too.
+const sslConfig = buildSslConfig({
+  nodeEnv: parsedEnv.NODE_ENV,
+  useSSL,
+  caCert,
+  allowSelfSigned,
+});
+
 const pool = new Pool({
   connectionString,
   max: 10, // Maximum number of clients in the pool
   idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
-  connectionTimeoutMillis: 2000, // Return an error after 2 seconds if connection could not be established
+  connectionTimeoutMillis: 15000, // Return an error after 15 seconds if connection could not be established
+  ssl: sslConfig,
 });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
@@ -51,7 +75,7 @@ async function main() {
     selectedQuestions = testQuestionSeeds;
   } else if (seedEnv === "dev") {
     console.log(`🌱 Seeding questions using ${seedEnv} dataset...`);
-    const { questionSeeds } = await import("./seeds/questions");
+    const { questionSeeds } = await import("../src/prisma-seeds/questions");
     selectedQuestions = questionSeeds;
   } else {
     throw new Error(
@@ -229,7 +253,7 @@ async function main() {
       ? question.tags.map((t) => normalizeString(t))
       : [];
 
-    const resolvedTags = [];
+    const resolvedTags: typeof existingTags = [];
     for (const tagName of targetTags) {
       const tag = tagMap.get(tagName);
       if (tag) {

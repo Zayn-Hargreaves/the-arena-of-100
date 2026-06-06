@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateQuestions, Question } from "./questions";
+import { validateQuestions, Question } from "../../src/prisma-seeds/questions";
 
 describe("Questions Seed Validation - Tags", () => {
   const baseValidQuestion: Question = {

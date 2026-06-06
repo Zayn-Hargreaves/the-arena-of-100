@@ -44,6 +44,8 @@ export class RoomController {
       userId,
       createRoomDto.roomType,
       createRoomDto.maxPlayers,
+      createRoomDto.timeLimit,
+      createRoomDto.category,
     );
   }
 

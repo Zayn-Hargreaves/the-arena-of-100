@@ -15,7 +15,11 @@ import {
   QuestionDifficulty,
   QuestionCategory,
 } from "./dto/get-questions.dto";
-import { Prisma, Question as PrismaQuestion } from "@prisma/client";
+import {
+  Prisma,
+  Question as PrismaQuestion,
+  QuestionCategory as PrismaQuestionCategory,
+} from "@prisma/client";
 import { Question } from "./entities/question.entity";
 import { QuestionResponseDto } from "./dto/question-response.dto";
 import { BulkImportDto } from "./dto/bulk-import.dto";
@@ -288,6 +292,7 @@ export class QuestionService {
   async getRandom(
     difficulty?: QuestionDifficulty,
     excludeIds?: string[],
+    category?: string,
   ): Promise<Question> {
     const where: Prisma.QuestionWhereInput = {
       active: true,
@@ -297,10 +302,9 @@ export class QuestionService {
       where.difficulty = difficulty;
     }
 
-    // Category filtering is temporarily disabled due to schema mismatch
-    // if (category) {
-    //   where.category = category;
-    // }
+    if (category && category !== "ALL") {
+      where.category = category as PrismaQuestionCategory;
+    }
 
     if (excludeIds?.length) {
       where.id = {

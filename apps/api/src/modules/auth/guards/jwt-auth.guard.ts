@@ -12,6 +12,7 @@ import {
 import { Reflector } from "@nestjs/core";
 import { AuthService } from "../auth.service";
 import { IS_PUBLIC_KEY } from "../../../common/decorators/public.decorator";
+import { ACCESS_TOKEN_COOKIE, getCookieValue } from "../auth-cookie";
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -34,9 +35,14 @@ export class JwtAuthGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest();
     const authHeader = request.headers.authorization;
-    const token = authHeader?.startsWith("Bearer ")
+    const headerToken = authHeader?.startsWith("Bearer ")
       ? authHeader.replace("Bearer ", "").trim()
       : undefined;
+    const cookieToken = getCookieValue(
+      request.headers.cookie,
+      ACCESS_TOKEN_COOKIE,
+    );
+    const token = headerToken ?? cookieToken ?? undefined;
 
     if (!token) {
       throw new UnauthorizedException(

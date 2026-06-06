@@ -1,51 +1,28 @@
+@import "../styles/utilities.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --background: #1A1A2E;
-  --foreground: #F8F9FA;
+  /* Candy Color variables with RGB values for alpha transparency */
+  --color-candy-ink-rgb: 43, 45, 66; /* #2B2D42 */
+  --color-candy-pink-rgb: 255, 133, 162; /* #FF85A2 */
+  --color-candy-yellow-rgb: 255, 208, 0; /* #FFD000 */
+  --color-candy-mint-rgb: 46, 196, 182; /* #2EC4B6 */
+  --color-candy-blue-rgb: 58, 134, 200; /* #3A86C8 */
+  --color-candy-red-rgb: 239, 71, 111; /* #EF476F */
+  --color-candy-purple-rgb: 162, 155, 254; /* #A29BFE */
+  --color-candy-orange-rgb: 255, 122, 0; /* #FF7A00 */
+  --color-candy-cloud-rgb: 253, 240, 237; /* #FDF0ED */
+  --color-background-rgb: 255, 255, 255; /* #FFFFFF */
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: 'Inter', Arial, sans-serif;
-}
-
-/* Game-specific styles */
-@layer components {
-  .btn-primary {
-    @apply bg-arena-primary hover:bg-orange-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 active:scale-95;
-  }
-
-  .btn-secondary {
-    @apply bg-arena-secondary hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition-all duration-200;
-  }
-
-  .btn-danger {
-    @apply bg-arena-danger hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-200;
-  }
-
-  .card {
-    @apply bg-gray-800/50 backdrop-blur-sm rounded-xl p-6 border border-gray-700;
-  }
-
-  .game-timer {
-    @apply text-6xl font-bold text-arena-primary animate-pulse-fast;
-  }
-
-  .player-avatar {
-    @apply w-12 h-12 rounded-full bg-gradient-to-br from-arena-primary to-arena-secondary flex items-center justify-center text-white font-bold;
-  }
-
-  .eliminated {
-    @apply opacity-50 line-through;
-  }
-
-  .winner-glow {
-    @apply ring-4 ring-yellow-400 animate-bounce-in;
-  }
+  background: linear-gradient(135deg, #fff0f5 0%, #e6e6fa 50%, #e0f2fe 100%);
+  background-attachment: fixed;
+  color: #2b2d42;
+  font-family: var(--font-sans), sans-serif;
 }
 
 /* Scrollbar styling */
@@ -54,14 +31,55 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #1A1A2E;
+  background: #fff0f5;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #4A4A6A;
+  background: #2b2d42;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #6A6A8A;
+  background: #ef476f;
+}
+
+@keyframes float-item {
+  0%,
+  100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-15px) rotate(10deg);
+  }
+}
+
+.floating-candy {
+  animation: float-item 5s infinite ease-in-out;
+}
+
+.floating-donut {
+  animation: float-item 6s infinite ease-in-out 1s;
+}
+
+.floating-star {
+  animation: float-item 4.5s infinite ease-in-out 0.5s;
+}
+
+.confetti-particle {
+  position: absolute;
+  pointer-events: none;
+  z-index: 100;
+  border-radius: 50%;
+  animation: confetti-fall 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+@keyframes confetti-fall {
+  0% {
+    transform: translate(0, 0) scale(1) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--dx), var(--dy)) scale(0) rotate(var(--rot));
+    opacity: 0;
+  }
 }

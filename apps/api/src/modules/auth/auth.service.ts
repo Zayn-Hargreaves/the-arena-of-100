@@ -7,6 +7,7 @@ import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import * as jwt from "jsonwebtoken";
+import ms from "ms";
 import { nanoid } from "nanoid";
 import { Role } from "@prisma/client";
 
@@ -31,6 +32,7 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly jwtSecret: string;
   private readonly jwtExpiresIn: string;
+  private readonly accessTokenTtlSeconds: number;
   private readonly refreshExpiresIn: number; // seconds
 
   constructor(
@@ -43,6 +45,9 @@ export class AuthService {
       "arena-100-secret-key",
     );
     this.jwtExpiresIn = this.configService.get<string>("JWT_EXPIRES_IN", "24h");
+    this.accessTokenTtlSeconds = this.parseExpiresInToSeconds(
+      this.jwtExpiresIn,
+    );
     this.refreshExpiresIn = this.configService.get<number>(
       "REFRESH_EXPIRES_IN",
       604800,
@@ -59,9 +64,11 @@ export class AuthService {
     if (!user) {
       // Prevent creation of "admin" user via guest login
       if (username === "admin") {
-        throw new UnauthorizedException("Cannot create admin user via guest login");
+        throw new UnauthorizedException(
+          "Cannot create admin user via guest login",
+        );
       }
-      
+
       user = await this.prisma.user.create({
         data: {
           username,
@@ -69,7 +76,9 @@ export class AuthService {
           role: Role.GUEST, // Always create new users as GUEST
         },
       });
-      this.logger.log(`New guest user created: ${username} with role ${user.role}`);
+      this.logger.log(
+        `New guest user created: ${username} with role ${user.role}`,
+      );
     }
     // If user exists, preserve their existing role when logging in
 
@@ -85,7 +94,7 @@ export class AuthService {
     const payload: TokenPayload = { userId, username, role };
 
     const accessToken = jwt.sign(payload, this.jwtSecret, {
-      expiresIn: this.jwtExpiresIn,
+      expiresIn: this.accessTokenTtlSeconds,
     } as jwt.SignOptions);
 
     const refreshToken = nanoid(64);
@@ -138,5 +147,44 @@ export class AuthService {
   // Logout
   async logout(refreshToken: string): Promise<void> {
     await this.redis.del(`refresh:${refreshToken}`);
+  }
+
+  getRefreshTokenTtlSeconds(): number {
+    return this.refreshExpiresIn;
+  }
+
+  getAccessTokenTtlSeconds(): number {
+    return this.accessTokenTtlSeconds;
+  }
+
+  private parseExpiresInToSeconds(value: string): number {
+    const trimmed = value.trim();
+
+    // Handle pure numbers as seconds (backward compatibility)
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return numeric;
+    }
+
+    // Use ms package to parse the time duration. ms throws on empty strings
+    // and may return undefined for unrecognized formats.
+    let milliseconds: number | string | undefined;
+    try {
+      milliseconds = ms(trimmed as ms.StringValue);
+    } catch {
+      return 24 * 60 * 60;
+    }
+
+    // Convert milliseconds to seconds and ensure it's a finite positive number
+    if (
+      typeof milliseconds === "number" &&
+      Number.isFinite(milliseconds) &&
+      milliseconds > 0
+    ) {
+      return Math.max(1, Math.ceil(milliseconds / 1000));
+    }
+
+    // Fallback to 24 hours (24 * 60 * 60 seconds) on invalid input
+    return 24 * 60 * 60;
   }
 }

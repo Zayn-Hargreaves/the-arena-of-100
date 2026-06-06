@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+import { Pool } from "pg";
 import { PrismaService } from "./prisma.service";
 
 // Mock pg Pool
@@ -96,5 +97,162 @@ describe("PrismaService", () => {
 
     expect(mockDisconnect).toHaveBeenCalled();
     expect(mockEnd).toHaveBeenCalled();
+  });
+});
+
+describe("PrismaService SSL configuration", () => {
+  const ORIGINAL_ENV = { ...process.env };
+
+  const setEnv = (overrides: Record<string, string | undefined>) => {
+    for (const [key, value] of Object.entries(overrides)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  };
+
+  const restoreEnv = () => {
+    for (const key of Object.keys(process.env)) {
+      if (!(key in ORIGINAL_ENV)) {
+        delete process.env[key];
+      }
+    }
+    for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
+      process.env[key] = value;
+    }
+  };
+
+  const buildService = (): PrismaService => {
+    process.env.DATABASE_URL = "postgresql://user:pass@localhost:5432/db";
+    return new PrismaService();
+  };
+
+  const getPoolSslConfig = () => {
+    const calls = vi.mocked(Pool).mock.calls;
+    const lastCall = calls[calls.length - 1];
+    return lastCall?.[0]?.ssl;
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    restoreEnv();
+  });
+
+  it("should not set ssl config when DATABASE_SSL is unset", () => {
+    setEnv({
+      DATABASE_SSL: undefined,
+      PG_SSL_CA: undefined,
+      PG_ALLOW_SELF_SIGNED: undefined,
+    });
+    buildService();
+    expect(getPoolSslConfig()).toBeUndefined();
+  });
+
+  it("should not set ssl config when DATABASE_SSL is false", () => {
+    setEnv({
+      DATABASE_SSL: "false",
+      PG_SSL_CA: undefined,
+      PG_ALLOW_SELF_SIGNED: undefined,
+    });
+    buildService();
+    expect(getPoolSslConfig()).toBeUndefined();
+  });
+
+  it("should use verified TLS with provided CA when DATABASE_SSL=true and PG_SSL_CA is set", () => {
+    const fakeCa =
+      "-----BEGIN CERTIFICATE-----\nMIIBfake\n-----END CERTIFICATE-----";
+    setEnv({
+      DATABASE_SSL: "true",
+      PG_SSL_CA: fakeCa,
+      PG_ALLOW_SELF_SIGNED: undefined,
+    });
+    buildService();
+    expect(getPoolSslConfig()).toEqual({
+      rejectUnauthorized: true,
+      ca: fakeCa,
+    });
+  });
+
+  it("should verify against system CAs by default when DATABASE_SSL=true and no CA is provided", () => {
+    setEnv({
+      DATABASE_SSL: "true",
+      PG_SSL_CA: undefined,
+      PG_ALLOW_SELF_SIGNED: undefined,
+    });
+    buildService();
+    expect(getPoolSslConfig()).toEqual({ rejectUnauthorized: true });
+    expect(getPoolSslConfig()).not.toHaveProperty("ca");
+  });
+
+  it("should disable verification only when DATABASE_SSL=true and PG_ALLOW_SELF_SIGNED=true (dev override)", () => {
+    setEnv({
+      NODE_ENV: "development",
+      DATABASE_SSL: "true",
+      PG_SSL_CA: undefined,
+      PG_ALLOW_SELF_SIGNED: "true",
+    });
+    buildService();
+    expect(getPoolSslConfig()).toEqual({ rejectUnauthorized: false });
+  });
+
+  it("should permit self-signed when NODE_ENV=test and PG_ALLOW_SELF_SIGNED=true", () => {
+    setEnv({
+      NODE_ENV: "test",
+      DATABASE_SSL: "true",
+      PG_SSL_CA: undefined,
+      PG_ALLOW_SELF_SIGNED: "true",
+    });
+    buildService();
+    expect(getPoolSslConfig()).toEqual({ rejectUnauthorized: false });
+  });
+
+  it("should throw when NODE_ENV=production and PG_ALLOW_SELF_SIGNED=true", () => {
+    setEnv({
+      NODE_ENV: "production",
+      DATABASE_SSL: "true",
+      PG_SSL_CA: undefined,
+      PG_ALLOW_SELF_SIGNED: "true",
+    });
+    expect(() => buildService()).toThrow(
+      /PG_ALLOW_SELF_SIGNED=true is forbidden when NODE_ENV=production/,
+    );
+  });
+
+  it("should throw when NODE_ENV is undefined and PG_ALLOW_SELF_SIGNED=true", () => {
+    setEnv({
+      NODE_ENV: undefined,
+      DATABASE_SSL: "true",
+      PG_SSL_CA: undefined,
+      PG_ALLOW_SELF_SIGNED: "true",
+    });
+    expect(() => buildService()).toThrow(
+      /PG_ALLOW_SELF_SIGNED=true is forbidden when NODE_ENV=production/,
+    );
+  });
+
+  it("should keep verification enabled when PG_ALLOW_SELF_SIGNED=true but NODE_ENV is not dev/test", () => {
+    setEnv({
+      NODE_ENV: "staging",
+      DATABASE_SSL: "true",
+      PG_SSL_CA: undefined,
+      PG_ALLOW_SELF_SIGNED: "true",
+    });
+    buildService();
+    expect(getPoolSslConfig()).toEqual({ rejectUnauthorized: true });
+  });
+
+  it("should ignore PG_ALLOW_SELF_SIGNED when DATABASE_SSL is disabled", () => {
+    setEnv({
+      DATABASE_SSL: "false",
+      PG_SSL_CA: undefined,
+      PG_ALLOW_SELF_SIGNED: "true",
+    });
+    buildService();
+    expect(getPoolSslConfig()).toBeUndefined();
   });
 });

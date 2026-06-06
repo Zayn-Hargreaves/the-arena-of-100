@@ -829,4 +829,21 @@ describe("MatchStateMachine guard branches", () => {
     // p2 has more correctAnswers with same responseTime → p2 wins
     expect(machine.getState().winnerId).toBe("p2");
   });
+
+  it("uses custom roundDurationMs if provided in startRound", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    const customDuration = 30000; // 30 seconds
+    const round = machine.startRound(
+      {
+        id: "q1",
+        content: "Q?",
+        options: ["A", "B"],
+        correctAnswer: "A",
+      },
+      customDuration,
+    );
+    expect(round.endsAt).toBe(round.startedAt + customDuration);
+  });
 });

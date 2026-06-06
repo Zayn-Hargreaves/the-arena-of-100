@@ -17,6 +17,9 @@
 - [x] Memory bank documentation
 - [x] **Architecture assessment & review (2025-05-09)**
 - [x] **CI/CD Pipeline with GitHub Actions & Vitest setup (2026-05-12)**
+- [x] **CSRF Protection — double-submit cookie pattern (2026-06-03)**
+- [x] **Rate Limiting — @nestjs/throttler global + admin-specific (2026-06-03)**
+- [x] **Hardcoded locale redirect fix (2026-06-03)**
 
 ### 🔴 Critical Fixes (Phase 0.5: Before Feature Development)
 
@@ -29,14 +32,32 @@
 
 ### 🚧 In Progress (Phase 1: Core Implementation)
 
-- [x] Install dependencies (`pnpm install`)
-- [x] Database migration and seeding
-- [x] Implement GameLoopService (countdown → round → evaluate → repeat)
-- [x] Implement round timer management (auto-end on timeout)
-- [x] Unit tests for game-core state machine
-- [ ] End-to-end room creation → join → match flow
-- [ ] Frontend lobby and game UI components with routing
-- [ ] Connect socket-store to UI components
+- [x] End-to-end room creation → join → match flow
+- [x] Frontend lobby and game UI components with routing
+- [x] Connect socket-store to UI components
+
+#### Frontend — 🚧 In Progress (theo thứ tự phụ thuộc)
+
+> Chi tiết: xem [plan-e2e-test.md](./plan-e2e-test.md)
+
+- [x] Legacy component library implementation (Phases 1-4 complete, Cyberpunk style)
+- [ ] Candy 3D Jelly UI exclusive design system migration (Phases 1-4 complete; Phase 5 TODO in [migrateDesignSystem.md](./migrateDesignSystem.md))
+<!-- Remaining Phase 5 tasks: Step 5.1 shell templates, Step 5.2 legacy CSS cleanup, Step 5.3 end-to-end visual audit. -->
+- [x] Guest login page + API client (`POST /auth/guest` → JWT → WS authenticate) _(Slice 1)_
+- [x] Socket store — add 7 missing event handlers (MATCH*STARTED, ROUND_STARTED, ROUND_ENDED, PLAYER_ELIMINATED, MATCH_FINISHED, PLAYER_JOINED/LEFT reactive) *(Slice 2)\_
+- [x] Create Room page + Lobby UI (`/lobby/[roomCode]`, player list, room code display) _(Slice 3)_
+- [x] Join Room page + redirect to lobby _(Slice 4)_
+- [x] Game page `/game/[matchId]` — countdown overlay, question display, answer buttons, round timer _(Slice 5-6)_
+- [x] Result page `/result/[matchId]` + elimination display _(Slice 7)_
+- [x] Connect socket-store to all UI components (xóa console.log, reactive binding)
+- [x] Frontend routing setup (App Router pages: `/`, `/lobby/[code]`, `/game/[matchId]`, `/result/[matchId]`)
+
+#### Integration
+
+- [x] End-to-end room creation → join → match flow _(Slice 8 — integration test & edge cases)_
+
+#### Product Features (phụ thuộc frontend hoàn thiện)
+
 - [ ] Frictionless onboarding system with content moderation
 - [ ] Lobby lifecycle management (auto-start, host controls, heartbeat validation)
 - [ ] Spectator mode with micro-interactions
@@ -67,7 +88,6 @@
 
 ### 🔮 Future (Phase 3: Production Ready)
 
-- [ ] Rate limiting
 - [ ] Sound effects
 - [ ] Advanced question management
 - [ ] Tournament mode
@@ -96,6 +116,8 @@
 - `SocketNamespace` missing SPECTATOR entry
 - `packages/config` directory exists but is empty
 - **Dependency Risk**: `class-validator` & `class-transformer` are unmaintained, migration to Zod completed (packages removed as direct dependencies, code migrated to use Zod validation/serialization)
+- **Profile/Rankings pages use hardcoded mock data** — Needs backend API endpoints (player stats, leaderboard)
+- **Design system Phase 5 incomplete** — Shell templates, legacy CSS cleanup, visual audit still TODO
 
 ### 🟢 Nice-to-Have
 

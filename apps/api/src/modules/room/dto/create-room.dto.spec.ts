@@ -1,6 +1,7 @@
 import { createRoomSchema, CreateRoomDto } from "./create-room.dto";
 import { describe, it, expect } from "vitest";
 import { ZodError } from "zod";
+import { QuestionCategory } from "../../question/dto/get-questions.dto";
 
 describe("CreateRoomDto & Schema", () => {
   describe("createRoomSchema", () => {
@@ -33,6 +34,29 @@ describe("CreateRoomDto & Schema", () => {
 
     it("should throw if maxPlayers is a decimal number", () => {
       const input = { roomType: "PUBLIC", maxPlayers: 50.5 };
+      expect(() => createRoomSchema.parse(input)).toThrow(ZodError);
+    });
+
+    it("should validate when category is a valid enum value", () => {
+      const input = { roomType: "PUBLIC", category: QuestionCategory.SCIENCE };
+      const parsed = createRoomSchema.parse(input);
+      expect(parsed).toEqual(input);
+    });
+
+    it("should validate when category is 'ALL'", () => {
+      const input = { roomType: "PUBLIC", category: "ALL" };
+      const parsed = createRoomSchema.parse(input);
+      expect(parsed).toEqual(input);
+    });
+
+    it("should validate when category is omitted", () => {
+      const input = { roomType: "PUBLIC" };
+      const parsed = createRoomSchema.parse(input);
+      expect(parsed).toEqual(input);
+    });
+
+    it("should throw if category is an invalid string", () => {
+      const input = { roomType: "PUBLIC", category: "INVALID_CATEGORY" };
       expect(() => createRoomSchema.parse(input)).toThrow(ZodError);
     });
   });

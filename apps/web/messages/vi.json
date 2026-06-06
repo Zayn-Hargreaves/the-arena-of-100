@@ -1,0 +1,139 @@
+{
+  "HomePage": {
+    "subtitle": "Đấu Trường Trí Tuệ Sinh Tử",
+    "enterNickname": "Nhập Biệt Danh Chiến Đấu",
+    "nicknamePlaceholder": "VÍ DỤ: GLITCH_RUNNER",
+    "quickMatch": "Tìm Trận Nhanh",
+    "createRoom": "Tạo Phòng",
+    "joinRoom": "Vào Phòng",
+    "roomCode": "Mã Phòng Đấu",
+    "roomCodePlaceholder": "MÃ PHÒNG",
+    "rankings": "Xếp Hạng",
+    "settings": "Cài Đặt",
+    "alerts": {
+      "enterNickname": "Vui lòng nhập Biệt danh trước khi tham chiến!",
+      "enterNicknameCreate": "Vui lòng nhập Biệt danh trước khi tạo phòng!",
+      "enterNicknameJoin": "Vui lòng nhập Biệt danh trước khi vào phòng!",
+      "enterRoomCode": "Vui lòng nhập Mã phòng!"
+    },
+    "features": {
+      "warriorTitle": "100 Chiến Binh",
+      "warriorDesc": "Nhập vai sinh tồn cùng 99 người chơi khác trong phòng đấu loại trực tiếp thời gian thực.",
+      "speedTitle": "Câu Hỏi Tốc Độ",
+      "speedDesc": "Suy nghĩ và phản xạ thần tốc trong giới hạn 15s. Đáp án sai đồng nghĩa với loại bỏ!",
+      "championTitle": "Ngôi Vị Độc Tôn",
+      "championDesc": "Giải thưởng tích lũy tăng dần theo số lượng đối thủ bị loại. Sống sót sau cùng để thắng."
+    }
+  },
+  "Errors": {
+    "ROOM_FULL": "Phòng đấu đã đầy chiến binh!",
+    "INVALID_ROOM_CODE": "Mã phòng không hợp lệ hoặc đã hết hạn!",
+    "MATCH_ALREADY_STARTED": "Trận đấu đã bắt đầu, không thể tham gia!",
+    "USER_ALREADY_EXISTS": "Biệt danh này đã được sử dụng trong phòng!",
+    "ROOM_NOT_FOUND": "Không tìm thấy phòng đấu yêu cầu!",
+    "UNKNOWN_ERROR": "Đã xảy ra lỗi không xác định. Vui lòng thử lại!"
+  },
+  "admin": {
+    "title": "TÁC VỤ HỆ THỐNG",
+    "subtitle": "Hệ thống kiểm soát máy chủ trung tâm và đồng bộ cơ sở dữ liệu",
+    "rootAccess": "QUYỀN ROOT",
+    "cpuCoreLoad": "TẢI CPU CORE",
+    "cpuCaption": "4 cores @ 3.2GHz tiến trình NestJS",
+    "ramAllocation": "PHÂN BỔ RAM",
+    "ramCaption": "Mức sử dụng RAM Fastify (TỐI ĐA: 1024MB)",
+    "activeLobbies": "PHÒNG ĐANG HOẠT ĐỘNG",
+    "lobbiesCaption": "Kênh Redis pub/sub đang hoạt động",
+    "dbAdministrationTitle": "QUẢN TRỊ CƠ SỞ DỮ LIỆU (POSTGRESQL)",
+    "prismaStatusLabel": "TRẠNG THÁI PRISMA:",
+    "redisOperationsTitle": "VẬN HÀNH MÁY CHỦ REDIS",
+    "redisStatusLabel": "TRẠNG THÁI MEMORY CACHE:",
+    "syncingQuestions": "ĐANG ĐỒNG BỘ CÂU HỎI...",
+    "syncQuestions": "ĐỒNG BỘ (SEED) LẠI 100 CÂU HỎI",
+    "checkMigrations": "KIỂM TRA MIGRATIONS",
+    "resetActiveLobbies": "RESET TOÀN BỘ ACTIVE LOBBIES",
+    "warning": "KHUYẾN CÁO: Thao tác reset sẽ ngắt kết nối toàn bộ người chơi đang trong live battle. Chỉ sử dụng trong tình huống khẩn cấp hoặc bảo trì.",
+    "units": {
+      "mb": "MB",
+      "rooms": "Phòng"
+    },
+    "status": {
+      "loading": "ĐANG TẢI...",
+      "connected": "ĐÃ KẾT NỐI",
+      "disconnected": "MẤT KẾT NỐI",
+      "error": "LỖI"
+    },
+    "alerts": {
+      "seedSuccess": "Đã seed thành công 100 câu hỏi chuẩn Đấu Trường vào PostgreSQL DB!",
+      "resetConfirm": "Cảnh báo: Bạn sắp giải phóng toàn bộ active lobbies và Redis game sessions. Tiếp tục?",
+      "resetSuccess": "Đã xóa cache Redis và reset máy chủ Socket.io!",
+      "migrationsUpToDate": "Prisma Migrations đã đồng bộ ở phiên bản mới nhất!"
+    }
+  },
+  "Sidebar": {
+    "guestName": "Người chơi khách",
+    "guestRole": "Người chơi khách",
+    "playerRole": "Người chơi",
+    "nav": {
+      "createRoom": "Tạo Phòng",
+      "arena": "Đấu Trường",
+      "rankings": "Xếp Hạng",
+      "settings": "Cài Đặt",
+      "profile": "Hồ Sơ",
+      "admin": "Admin"
+    }
+  },
+  "Timer": {
+    "seconds": "giây"
+  },
+  "NotFoundPage": {
+    "title": "CÂU HỎI SINH TỬ • ROUND 404",
+    "question": "Câu hỏi số 404: Đường dẫn bạn đang tìm kiếm hiện đang ở đâu?",
+    "questionLabel": "CÂU HỎI",
+    "optionA": "A) Đã bị \"bay màu\" khỏi hệ thống",
+    "optionB": "B) Chưa được khai phá trên máy chủ",
+    "optionC": "C) Đi lạc vào vòng bo sinh tồn",
+    "optionD": "D) Quay lại trang chủ làm trận mới!",
+    "timeRemaining": "HẾT GIỜ SAU:"
+  },
+  "Game": {
+    "matchingTitle": "Trận Đấu Đang Diễn Ra",
+    "roundLabel": "VÒNG",
+    "roundComplexity": "Độ Phức Tạp Vòng",
+    "roundLevelExtreme": "Cấp độ: Cực Hạn",
+    "remainingLabel": "Còn Lại",
+    "rulesHeader": "QUY TẮC PHÒNG ĐẤU // CÂU HỎI HỆ THỐNG",
+    "lockedAnswer": "ĐÃ KHÓA ĐÁP ÁN",
+    "waiting": "ĐANG ĐỢI...",
+    "fallbackQuestion": "Trong kiến trúc hệ thống monorepo sử dụng pnpm & Turborepo, thư mục nào chứa các code logic thuần túy (pure domain logic state machine) không phụ thuộc vào framework?",
+    "opponentsTitle": "ĐỐI THỦ XUNG QUANH",
+    "aliveStatus": "SỐNG",
+    "eliminatedStatus": "LOẠI",
+    "antiHackDescription": "Hệ thống Chống Hack",
+    "antiHackDetails": "Thời gian phản hồi được máy chủ ghi nhận và so sánh độ lệch ping để đảm bảo tính công bằng tuyệt đối."
+  },
+  "profile": {
+    "registeredToday": "ĐĂNG KÝ: HÔM NAY",
+    "stats": {
+      "title": "CHỈ SỐ SINH TỒN",
+      "matches": "TỔNG SỐ TRẬN",
+      "wins": "VÔ ĐỊCH (WINS)",
+      "averageResponse": "PHẢN XẠ TRUNG BÌNH",
+      "accuracy": "TỶ LỆ CHÍNH XÁC"
+    },
+    "history": {
+      "title": "LỊCH SỬ THI ĐẤU GẦN ĐÂY",
+      "score": "ĐIỂM SỐ",
+      "rank": "THỨ HẠNG"
+    },
+    "status": {
+      "WON": "CHIẾN THẮNG",
+      "ELIMINATED": "BỊ LOẠI"
+    },
+    "modes": {
+      "arena1vs100": "Đấu Trường 1 vs 100",
+      "publicRoom": "Phòng Công Cộng",
+      "speedMode": "Chế Độ Siêu Tốc",
+      "survivalQuiz": "Trắc Nghiệm Sinh Tồn"
+    }
+  }
+}

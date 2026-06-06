@@ -1,0 +1,59 @@
+/* Tactile 3D Cards */
+.jelly-card {
+  background: #ffffff;
+  border: 3.5px solid #2b2d42;
+  border-radius: 20px;
+  box-shadow: 0 8px 0 0 #2b2d42;
+  transition:
+    transform 0.15s cubic-bezier(0.23, 1, 0.32, 1),
+    box-shadow 0.15s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.jelly-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 0 0 #2b2d42;
+}
+
+/* Glossy 3D Buttons */
+.jelly-btn {
+  position: relative;
+  font-family: var(--font-display), sans-serif;
+  text-transform: uppercase;
+  font-weight: 900;
+  border: 3.5px solid #2b2d42;
+  border-radius: 16px;
+  box-shadow: 0 6px 0 0 #2b2d42;
+  overflow: hidden;
+  transition:
+    transform 0.1s cubic-bezier(0.23, 1, 0.32, 1),
+    box-shadow 0.1s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.jelly-btn::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 35%;
+  background: rgba(255, 255, 255, 0.35);
+  border-radius: 12px 12px 0 0;
+  pointer-events: none;
+}
+
+.jelly-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 0 0 #2b2d42;
+}
+
+.jelly-btn:active {
+  transform: translateY(4px);
+  box-shadow: 0 2px 0 0 #2b2d42;
+}
+
+/* Transition utilities */
+.transition-all-delayed {
+  transition-property: all;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 500ms;
+}

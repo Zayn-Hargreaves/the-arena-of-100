@@ -1,19 +1,49 @@
-import type { Metadata } from "next";
+import { Bungee, Fredoka, Gaegu, JetBrains_Mono } from "next/font/google";
+import { getLocale } from "next-intl/server";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: "Arena of 100 - Game Đấu Trường 100",
-  description: "Real-time multiplayer quiz battle royale game",
-};
+const displayFont = Bungee({
+  weight: "400",
+  subsets: ["latin"],
+  variable: "--font-display",
+  preload: false,
+});
 
-export default function RootLayout({
+const sansFont = Fredoka({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  preload: false,
+});
+
+const handFont = Gaegu({
+  weight: ["300", "400", "700"],
+  subsets: ["latin"],
+  variable: "--font-hand",
+  preload: false,
+});
+
+const monoFont = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono",
+  display: "swap",
+  preload: false,
+});
+
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const locale = await getLocale();
+
   return (
-    <html lang="vi">
-      <body className="min-h-screen bg-arena-dark antialiased">{children}</body>
+    <html
+      lang={locale}
+      className={`${displayFont.variable} ${sansFont.variable} ${handFont.variable} ${monoFont.variable}`}
+    >
+      <body className="min-h-screen bg-background antialiased font-sans">
+        {children}
+      </body>
     </html>
   );
 }

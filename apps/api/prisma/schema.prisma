@@ -60,6 +60,8 @@ model Room {
   status        String   // WAITING | COUNTDOWN | IN_GAME | FINISHED
   hostId        String
   maxPlayers    Int      @default(100)
+  timeLimit     Int      @default(15)
+  category      String   @default("ALL")
   currentMatchId String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

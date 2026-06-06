@@ -26,6 +26,8 @@ export class RoomHandler extends BaseHandler {
         userId,
         payload.roomType,
         payload.maxPlayers,
+        payload.timeLimit,
+        payload.category,
       );
 
       client.join(`room:${room.id}`);

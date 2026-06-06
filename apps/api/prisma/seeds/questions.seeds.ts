@@ -1,5 +1,5 @@
 /// <reference types="vitest/globals" />
-import { Question, validateQuestions } from "./questions";
+import { Question, validateQuestions } from "../../src/prisma-seeds/questions";
 
 export const testQuestionSeeds: Question[] = [
   // EASY
