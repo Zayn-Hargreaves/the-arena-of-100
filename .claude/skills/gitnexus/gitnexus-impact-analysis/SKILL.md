@@ -21,14 +21,6 @@ description: 'Use when the user wants to know what will break if they change som
 2. READ gitnexus://repo/{name}/processes                   → Check affected execution flows
 3. gitnexus_detect_changes()                               → Map current git changes to affected flows
 4. Assess risk and report to user
-   - Check if changes touch critical paths (auth, payments) — flag for immediate escalation
-   - Apply tiered risk elevation:
-     - Critical path hit + MEDIUM risk → bump to HIGH
-     - Critical path hit + HIGH risk → bump to CRITICAL
-     - Direct callers (d=1) on critical path → automatic CRITICAL
-   - For HIGH or CRITICAL: require explicit user confirmation OR an override reason before proceeding
-   - Include recommended mitigations (isolate behind feature flag, expand test coverage, staged rollout)
-   - Specify escalation contacts (platform team, security team) based on affected area
 ```
 
 > If "Index is stale" → run `npx gitnexus analyze` in terminal.
@@ -56,12 +48,10 @@ description: 'Use when the user wants to know what will break if they change som
 
 | Affected                       | Risk     |
 | ------------------------------ | -------- |
-| <5 symbols, 1-2 processes      | LOW      |
-| 5-15 symbols, 3-6 processes    | MEDIUM   |
-| >15 symbols or 7+ processes    | HIGH     |
+| <5 symbols, few processes      | LOW      |
+| 5-15 symbols, 2-5 processes    | MEDIUM   |
+| >15 symbols or many processes  | HIGH     |
 | Critical path (auth, payments) | CRITICAL |
-
-> **Critical path bump rule**: If the affected execution flow includes auth, payments, or user data handling, elevate risk one tier regardless of symbol/process count — MEDIUM→HIGH, HIGH→CRITICAL. This applies whenever the change touches critical infrastructure, not just as a static row in the table.
 
 ## Tools
 

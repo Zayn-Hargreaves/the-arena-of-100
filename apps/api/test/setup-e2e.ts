@@ -53,7 +53,18 @@ function baseRedisUrl(): string {
 }
 
 function redisDbIndex(): number {
-  const pathname = new URL(baseRedisUrl()).pathname;
+  const redisUrl = baseRedisUrl();
+  if (!redisUrl) {
+    return 0;
+  }
+
+  let pathname = "";
+  try {
+    pathname = new URL(redisUrl).pathname;
+  } catch {
+    return 0;
+  }
+
   const parsed = Number(pathname.slice(1));
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
@@ -145,6 +156,52 @@ async function recreateTestDatabase(targetDatabaseName: string): Promise<void> {
   const templateDatabaseName = new URL(baseDatabaseUrl()).pathname.slice(1);
 
   await withAdminClient(async (client) => {
+    const templateExists = await client.query<{ exists: boolean }>(
+      `SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1) AS "exists"`,
+      [templateDatabaseName],
+    );
+    if (!templateExists.rows[0]?.exists) {
+      throw new Error(
+        `❌ E2E template database "${templateDatabaseName}" does not exist. ` +
+          "Run infrastructure/scripts/test-db-up.sh first.",
+      );
+    }
+
+    const templateClient = new Client({
+      connectionString: baseDatabaseUrl(),
+      ssl: buildSslConfig({
+        nodeEnv: process.env.NODE_ENV,
+        useSSL: process.env.DATABASE_SSL === "true",
+        caCert: process.env.PG_SSL_CA,
+        allowSelfSigned: process.env.PG_ALLOW_SELF_SIGNED === "true",
+      }),
+    });
+
+    await templateClient.connect();
+    try {
+      const questionTable = await templateClient.query<{
+        questionsTable: string | null;
+      }>(`SELECT to_regclass('public.questions') AS "questionsTable"`);
+      if (!questionTable.rows[0]?.questionsTable) {
+        throw new Error(
+          `❌ E2E template database "${templateDatabaseName}" is not initialized. ` +
+            "Missing public.questions table. Run infrastructure/scripts/test-db-up.sh first.",
+        );
+      }
+
+      const activeQuestions = await templateClient.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS "count" FROM "questions" WHERE "active" = true`,
+      );
+      if (Number(activeQuestions.rows[0]?.count ?? "0") <= 0) {
+        throw new Error(
+          `❌ E2E template database "${templateDatabaseName}" has no active questions. ` +
+            "Run infrastructure/scripts/test-db-up.sh first.",
+        );
+      }
+    } finally {
+      await templateClient.end();
+    }
+
     await client.query(
       `SELECT pg_terminate_backend(pid)
        FROM pg_stat_activity
@@ -199,7 +256,10 @@ export async function cleanupE2ETestEnv(importMetaUrl: string): Promise<void> {
     return;
   }
 
-  await dropTestDatabase(state.databaseName);
-  stateByFile.delete(importMetaUrl);
-  restoreBaseTestEnv();
+  try {
+    await dropTestDatabase(state.databaseName);
+  } finally {
+    stateByFile.delete(importMetaUrl);
+    restoreBaseTestEnv();
+  }
 }
