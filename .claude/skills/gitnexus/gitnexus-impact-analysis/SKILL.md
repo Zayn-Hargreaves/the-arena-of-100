@@ -20,16 +20,15 @@ description: 'Use when the user wants to know what will break if they change som
 1. gitnexus_impact({target: "X", direction: "upstream"})  → What depends on this
 2. READ gitnexus://repo/{name}/processes                   → Check affected execution flows
 3. gitnexus_detect_changes()                               → Map current git changes to affected flows
-4. Cross-reference affected flows against the project's critical paths
-   (e.g., game state machine, socket events, match lifecycle, room
-   management, auth). Concretely: fetch canonical process
-   definitions via READ gitnexus://repo/{name}/processes, then run
-   gitnexus_detect_changes({scope: "staged"}) to produce the
-   affected-flows list, and intersect the two. Any intersection
-   with a critical path escalates the risk rating by one tier
-   (LOW→MEDIUM, MEDIUM→HIGH, HIGH→CRITICAL).
-5. Assess risk and report to user; require explicit confirmation or
-   an override flag when escalating to HIGH/CRITICAL.
+4. Assess risk and report to user
+   - Check if changes touch critical paths (auth, payments) — flag for immediate escalation
+   - Apply tiered risk elevation:
+     - Critical path hit + MEDIUM risk → bump to HIGH
+     - Critical path hit + HIGH risk → bump to CRITICAL
+     - Direct callers (d=1) on critical path → automatic CRITICAL
+   - For HIGH or CRITICAL: require explicit user confirmation OR an override reason before proceeding
+   - Include recommended mitigations (isolate behind feature flag, expand test coverage, staged rollout)
+   - Specify escalation contacts (platform team, security team) based on affected area
 ```
 
 > If "Index is stale" → run `npx gitnexus analyze` in terminal.
@@ -55,19 +54,14 @@ description: 'Use when the user wants to know what will break if they change som
 
 ## Risk Assessment
 
-`symbols` = direct/indirect callers and importers of the changed symbol.
-`processes` = distinct execution flows (in the GitNexus process graph) that touch the changed symbol.
+| Affected                       | Risk     |
+| ------------------------------ | -------- |
+| <5 symbols, 1-2 processes      | LOW      |
+| 5-15 symbols, 3-6 processes    | MEDIUM   |
+| >15 symbols or 7+ processes    | HIGH     |
+| Critical path (auth, payments) | CRITICAL |
 
-| Affected (symbols / processes, i.e. distinct runtime execution flows touching the change) | Risk     |
-| ----------------------------------------------------------------------------------------- | -------- |
-| <5 symbols, few processes                                                                 | LOW      |
-| 5-15 symbols, 2-5 processes                                                               | MEDIUM   |
-| >15 symbols or many processes                                                             | HIGH     |
-| Critical path (auth, payments)                                                            | CRITICAL |
-
-> Auth-touching changes (validateUser, loginHandler, sessionManager,
-> token refresh) are always treated as one tier higher than the raw
-> counts imply, because they can compromise account integrity.
+> **Critical path bump rule**: If the affected execution flow includes auth, payments, or user data handling, elevate risk one tier regardless of symbol/process count — MEDIUM→HIGH, HIGH→CRITICAL. This applies whenever the change touches critical infrastructure, not just as a static row in the table.
 
 ## Tools
 
@@ -109,9 +103,5 @@ gitnexus_detect_changes({scope: "staged"})
 2. READ gitnexus://repo/my-app/processes
    → LoginFlow and TokenRefresh touch validateUser
 
-3. Risk: 2 direct callers + 2 indirect = 4 symbols, 2 processes = LOW
-   by the table, but escalated to MEDIUM (one tier) because
-   validateUser and the symbols in LoginFlow/TokenRefresh are on
-   the auth critical path. A non-auth change with the same shape
-   would stay LOW.
+3. Risk: 2 direct callers, 2 processes = MEDIUM
 ```

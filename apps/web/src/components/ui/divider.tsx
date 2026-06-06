@@ -10,8 +10,8 @@ export const Divider = React.forwardRef<HTMLDivElement, DividerProps>(
   ({ orientation = "horizontal", className = "" }, ref) => {
     const isHorizontal = orientation === "horizontal";
     const baseClasses = isHorizontal
-      ? "w-full h-1 bg-candy-ink/30"
-      : "h-full w-1 bg-candy-ink/30";
+      ? "w-full h-1 rounded-full bg-candy-ink/20"
+      : "h-full w-1 rounded-full bg-candy-ink/20";
 
     const combinedClassName = cn(baseClasses, className);
 

@@ -21,6 +21,10 @@
     "db:seed:test": "pnpm --filter @arena/api run prisma:seed:test",
     "docker:up": "docker compose -f infrastructure/docker-compose.yml up -d",
     "docker:down": "docker compose -f infrastructure/docker-compose.yml down",
+    "test:db:up": "bash infrastructure/scripts/test-db-up.sh",
+    "test:db:down": "bash infrastructure/scripts/test-db-down.sh",
+    "test:db:reset": "pnpm test:db:down && pnpm test:db:up",
+    "test:e2e": "pnpm test:db:up && pnpm --filter @arena/api test:e2e",
     "prepare": "husky"
   },
   "devDependencies": {

@@ -17,13 +17,8 @@ import { CreateRoomDto, createRoomSchema } from "./dto/create-room.dto";
 import { JoinRoomDto, joinRoomSchema } from "./dto/join-room.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
 import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
-import { FastifyRequest } from "fastify";
-import { TokenPayload } from "../auth/auth.service";
+import { AuthenticatedRequest } from "../auth/auth.types";
 import { Public } from "../../common/decorators/public.decorator";
-
-export interface AuthenticatedRequest extends FastifyRequest {
-  user: TokenPayload;
-}
 
 @ApiTags("Rooms")
 @Controller("rooms")

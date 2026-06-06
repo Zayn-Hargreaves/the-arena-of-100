@@ -15,6 +15,9 @@ export * from "./socket";
 // Errors
 export * from "./errors";
 
+// Avatar Seeds
+export * from "./avatars";
+
 // Game Constants
 export const GAME_CONFIG = {
   MAX_PLAYERS: 100,
@@ -24,7 +27,28 @@ export const GAME_CONFIG = {
   RESULT_DISPLAY_MS: 3_000, // 3 seconds to show result
   MAX_ROUNDS: 50, // Safety limit
   ROOM_CODE_LENGTH: 6,
+  // Scoring: each correct answer grants base + speed bonus
+  // total = SCORE_BASE_CORRECT + max(0, (WINDOW - responseTimeMs) / DIVISOR)
+  // Max bonus: 50 (when responseTime = 0)
+  // Min bonus: 0  (when responseTime >= WINDOW)
+  SCORE_BASE_CORRECT: 100,
+  SCORE_SPEED_BONUS_WINDOW_MS: 10_000,
+  SCORE_SPEED_BONUS_DIVISOR: 200,
 } as const;
+
+// Compute round score for a single correct answer.
+// Returns base, speedBonus, and total. Incorrect answers earn 0 (caller should not invoke).
+export function computeRoundScore(responseTimeMs: number): {
+  base: number;
+  speedBonus: number;
+  total: number;
+} {
+  const base = GAME_CONFIG.SCORE_BASE_CORRECT;
+  const clamped = Math.max(0, responseTimeMs);
+  const raw = Math.max(0, GAME_CONFIG.SCORE_SPEED_BONUS_WINDOW_MS - clamped);
+  const speedBonus = raw / GAME_CONFIG.SCORE_SPEED_BONUS_DIVISOR;
+  return { base, speedBonus, total: base + speedBonus };
+}
 
 export type RoomCategory =
   | "ALL"

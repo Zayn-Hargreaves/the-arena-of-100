@@ -1,16 +1,16 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
+import type { AvatarSeed } from "@arena/shared";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
+import { MiniGlyph } from "@/components/ui/mini-glyph";
+import { PanelSection } from "@/components/ui/panel-section";
+import { SpriteFrame } from "@/components/ui/sprite-frame";
 import { toast } from "@/hooks/use-toast";
-import {
-  Volume2,
-  VolumeX,
-  Eye,
-  Keyboard,
-  ShieldCheck,
-  Settings,
-} from "lucide-react";
+import { useProfileStats } from "@/hooks/use-profile-stats";
+import { useUpdateAvatar } from "@/hooks/use-update-avatar";
+import { avatars, findAvatarBySeed } from "@/lib/avatars";
 import { cn } from "@/lib/utils";
 
 const STORAGE_KEY = "arena-settings";
@@ -37,7 +37,31 @@ const defaultSettings: SettingsState = {
   quickAnswers: true,
 };
 
+function syncLocalAvatar(seed: AvatarSeed) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const avatar = findAvatarBySeed(seed);
+
+  if (!avatar) {
+    return;
+  }
+
+  localStorage.setItem("avatarSeed", seed);
+  localStorage.setItem("avatarName", avatar.name);
+  localStorage.setItem(
+    "avatarIsAnimated",
+    avatar.isAnimated ? "true" : "false",
+  );
+  localStorage.setItem("avatarSpritesheet", avatar.spritesheet ?? "");
+}
+
 export default function SettingsPage() {
+  const tAvatar = useTranslations("settings.avatar");
+  const profileQuery = useProfileStats();
+  const updateAvatar = useUpdateAvatar();
+
   // Audio State
   const [sfxEnabled, setSfxEnabled] = useState(defaultSettings.sfxEnabled);
   const [sfxVolume, setSfxVolume] = useState(defaultSettings.sfxVolume);
@@ -55,6 +79,10 @@ export default function SettingsPage() {
   const [quickAnswers, setQuickAnswers] = useState(
     defaultSettings.quickAnswers,
   ); // Press 1-4 for answers
+
+  const currentAvatarSeed = (profileQuery.data?.user.avatar ??
+    "jellyfrog") as AvatarSeed;
+  const currentAvatar = findAvatarBySeed(currentAvatarSeed);
 
   useEffect(() => {
     try {
@@ -99,6 +127,26 @@ export default function SettingsPage() {
     quickAnswers,
   ]);
 
+  const handleAvatarChange = (seed: AvatarSeed) => {
+    if (seed === currentAvatarSeed || updateAvatar.isPending) {
+      return;
+    }
+
+    updateAvatar.mutate(seed, {
+      onSuccess: () => {
+        syncLocalAvatar(seed);
+        toast({ description: tAvatar("updated"), variant: "success" });
+      },
+      onError: (error) => {
+        toast({
+          description:
+            error instanceof Error ? error.message : tAvatar("updateFailed"),
+          variant: "error",
+        });
+      },
+    });
+  };
+
   return (
     <AppShellLayout>
       <div className="max-w-4xl mx-auto w-full space-y-8 pt-2 pb-8 select-none relative z-10">
@@ -111,10 +159,15 @@ export default function SettingsPage() {
           <div className="absolute top-0 right-0 w-32 h-full bg-candy-mint/5 -skew-x-12 translate-x-8" />
           <div className="relative space-y-1.5">
             <h1 className="font-display font-black text-3xl md:text-4xl text-candy-ink tracking-wider uppercase drop-shadow-[2px_2px_0_#FFE45E] flex items-center gap-2">
-              <Settings className="w-8 h-8 text-candy-yellow stroke-candy-ink stroke-[2.5px] animate-spin-slow" />
+              <span className="inline-flex items-center justify-center w-10 h-10 rounded-2xl bg-white border-[2px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42] text-candy-yellow">
+                <MiniGlyph
+                  variant="settings"
+                  className="w-6 h-6 animate-spin-slow"
+                />
+              </span>
               CẤU HÌNH HỆ THỐNG
             </h1>
-            <p className="font-body text-xs md:text-sm text-candy-ink font-semibold opacity-85">
+            <p className="font-body text-xs md:text-sm text-candy-ink font-semibold opacity-85 leading-6">
               Tinh chỉnh âm thanh, đồ họa và phím tắt điều khiển đấu trường của
               bạn
             </p>
@@ -124,22 +177,24 @@ export default function SettingsPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
           {/* Column 1: Sound Settings */}
           <div className="space-y-6">
-            <div className="bg-candy-cloud border-candy-ink border-[3px] shadow-[4px_4px_0_0_#2B2D42] p-6 space-y-6 rounded-3xl relative overflow-hidden">
-              <h3 className="bg-candy-mint border-b-[3px] border-candy-ink p-4 -mx-6 -mt-6 rounded-t-[21px] flex items-center gap-2 font-display font-black text-candy-ink uppercase tracking-wider text-sm">
-                <Volume2 className="w-5 h-5 text-candy-ink" />
-                Cài Đặt Âm Thanh
-              </h3>
-
+            <PanelSection
+              title="Cài Đặt Âm Thanh"
+              glyph="sound"
+              className="space-y-6"
+            >
               {/* Sound Effects SFX */}
               <div className="space-y-3 pt-2">
                 <div className="flex justify-between items-center">
-                  <span className="font-display font-black text-xs uppercase tracking-wide text-candy-ink">
+                  <label
+                    htmlFor="settings-sfx-volume"
+                    className="font-display font-black text-xs uppercase tracking-wide text-candy-ink"
+                  >
                     Hiệu Ứng (SFX)
-                  </span>
+                  </label>
                   <button
                     onClick={() => setSfxEnabled(!sfxEnabled)}
                     className={cn(
-                      "px-4 py-1 rounded-xl text-xs font-display font-black border-[2px] border-candy-ink transition-all duration-200 shadow-[2px_2px_0_0_#2B2D42]",
+                      "min-h-11 px-4 py-2 rounded-xl text-xs font-display font-black border-[2px] border-candy-ink transition-all duration-200 shadow-[2px_2px_0_0_#2B2D42]",
                       sfxEnabled
                         ? "bg-candy-pink text-white translate-y-[1px] shadow-[1px_1px_0_0_#2B2D42]"
                         : "bg-white hover:bg-candy-cloud text-candy-ink",
@@ -149,8 +204,12 @@ export default function SettingsPage() {
                   </button>
                 </div>
                 <div className="flex items-center gap-4 bg-white/50 border-[2px] border-candy-ink p-3 rounded-2xl shadow-[2px_2px_0_0_#2B2D42]">
-                  <VolumeX className="w-4 h-4 text-candy-ink shrink-0" />
+                  <MiniGlyph
+                    variant="sound"
+                    className="w-4 h-4 text-candy-ink shrink-0"
+                  />
                   <input
+                    id="settings-sfx-volume"
                     type="range"
                     min="0"
                     max="100"
@@ -168,13 +227,16 @@ export default function SettingsPage() {
               {/* Music BGM */}
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
-                  <span className="font-display font-black text-xs uppercase tracking-wide text-candy-ink">
+                  <label
+                    htmlFor="settings-bgm-volume"
+                    className="font-display font-black text-xs uppercase tracking-wide text-candy-ink"
+                  >
                     Nhạc Nền (BGM)
-                  </span>
+                  </label>
                   <button
                     onClick={() => setBgmEnabled(!bgmEnabled)}
                     className={cn(
-                      "px-4 py-1 rounded-xl text-xs font-display font-black border-[2px] border-candy-ink transition-all duration-200 shadow-[2px_2px_0_0_#2B2D42]",
+                      "min-h-11 px-4 py-2 rounded-xl text-xs font-display font-black border-[2px] border-candy-ink transition-all duration-200 shadow-[2px_2px_0_0_#2B2D42]",
                       bgmEnabled
                         ? "bg-candy-yellow text-candy-ink translate-y-[1px] shadow-[1px_1px_0_0_#2B2D42]"
                         : "bg-white hover:bg-candy-cloud text-candy-ink",
@@ -184,8 +246,12 @@ export default function SettingsPage() {
                   </button>
                 </div>
                 <div className="flex items-center gap-4 bg-white/50 border-[2px] border-candy-ink p-3 rounded-2xl shadow-[2px_2px_0_0_#2B2D42]">
-                  <VolumeX className="w-4 h-4 text-candy-ink shrink-0" />
+                  <MiniGlyph
+                    variant="sound"
+                    className="w-4 h-4 text-candy-ink shrink-0"
+                  />
                   <input
+                    id="settings-bgm-volume"
                     type="range"
                     min="0"
                     max="100"
@@ -199,15 +265,14 @@ export default function SettingsPage() {
                   </span>
                 </div>
               </div>
-            </div>
+            </PanelSection>
 
             {/* Keyboard Shortcuts controls */}
-            <div className="bg-candy-cloud border-candy-ink border-[3px] shadow-[4px_4px_0_0_#2B2D42] p-6 space-y-4 rounded-3xl relative overflow-hidden">
-              <h3 className="bg-candy-mint border-b-[3px] border-candy-ink p-4 -mx-6 -mt-6 rounded-t-[21px] flex items-center gap-2 font-display font-black text-candy-ink uppercase tracking-wider text-sm">
-                <Keyboard className="w-5 h-5 text-candy-ink" />
-                Phím Tắt Điều Khiển
-              </h3>
-
+            <PanelSection
+              title="Phím Tắt Điều Khiển"
+              glyph="controls"
+              className="space-y-4"
+            >
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-2">
                 <div className="space-y-0.5">
                   <span className="font-display font-black text-xs uppercase tracking-wide text-candy-ink block">
@@ -220,7 +285,7 @@ export default function SettingsPage() {
                 <button
                   onClick={() => setQuickAnswers(!quickAnswers)}
                   className={cn(
-                    "px-4 py-2 rounded-xl text-xs font-display font-black border-[2px] border-candy-ink transition-all duration-200 shadow-[2px_2px_0_0_#2B2D42] shrink-0",
+                    "min-h-11 px-4 py-2 rounded-xl text-xs font-display font-black border-[2px] border-candy-ink transition-all duration-200 shadow-[2px_2px_0_0_#2B2D42] shrink-0",
                     quickAnswers
                       ? "bg-candy-pink text-white translate-y-[1px] shadow-[1px_1px_0_0_#2B2D42]"
                       : "bg-white hover:bg-candy-cloud text-candy-ink",
@@ -229,17 +294,80 @@ export default function SettingsPage() {
                   {quickAnswers ? "KÍCH HOẠT" : "VÔ HIỆU"}
                 </button>
               </div>
-            </div>
+            </PanelSection>
+
+            <PanelSection title={tAvatar("title")} glyph="avatar">
+              <p className="font-body text-xs text-candy-ink/75 font-semibold pt-2">
+                {tAvatar("subtitle")}
+              </p>
+
+              <div className="bg-white/70 border-[2px] border-candy-ink rounded-2xl p-4 shadow-[2px_2px_0_0_#2B2D42] flex items-center gap-4">
+                <SpriteFrame
+                  src={currentAvatar?.spritesheet}
+                  scale={0.35}
+                  width="64px"
+                  height="70px"
+                  frameClassName="w-20 h-20 rounded-2xl shrink-0"
+                  skeletonSize="54px"
+                />
+                <div className="min-w-0">
+                  <p className="font-mono text-[10px] text-candy-ink/60 font-black uppercase tracking-wider">
+                    {tAvatar("current")}
+                  </p>
+                  <p className="font-display font-black text-sm text-candy-ink uppercase truncate">
+                    {currentAvatar?.name ?? "Jellyfrog"}
+                  </p>
+                  <p className="font-mono text-[10px] text-candy-ink/60 font-black uppercase tracking-wider mt-1">
+                    {profileQuery.data?.user.username ?? "Guest"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-3 gap-3">
+                {avatars.map((avatar) => {
+                  const isActive = avatar.seed === currentAvatarSeed;
+                  const isPending =
+                    updateAvatar.isPending && avatar.seed !== currentAvatarSeed;
+
+                  return (
+                    <button
+                      key={avatar.seed}
+                      type="button"
+                      onClick={() => handleAvatarChange(avatar.seed)}
+                      disabled={updateAvatar.isPending}
+                      className={cn(
+                        "rounded-2xl border-[3px] border-candy-ink p-3 bg-white shadow-[3px_3px_0_0_#2B2D42] text-center transition-all",
+                        isActive
+                          ? "bg-candy-yellow -translate-y-0.5 shadow-[4px_4px_0_0_#2B2D42]"
+                          : "hover:-translate-y-0.5",
+                        isPending && "opacity-60",
+                      )}
+                    >
+                      <SpriteFrame
+                        src={avatar.spritesheet}
+                        scale={0.22}
+                        width="44px"
+                        height="48px"
+                        frameClassName="w-14 h-14 mx-auto rounded-xl bg-candy-cloud"
+                        skeletonSize="32px"
+                      />
+                      <p className="mt-2 text-[10px] font-display font-black uppercase text-candy-ink leading-tight line-clamp-2">
+                        {avatar.name}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            </PanelSection>
           </div>
 
           {/* Column 2: Graphics Settings */}
           <div className="space-y-6">
-            <div className="bg-candy-cloud border-candy-ink border-[3px] shadow-[4px_4px_0_0_#2B2D42] p-6 space-y-6 rounded-3xl relative overflow-hidden">
-              <h3 className="bg-candy-mint border-b-[3px] border-candy-ink p-4 -mx-6 -mt-6 rounded-t-[21px] flex items-center gap-2 font-display font-black text-candy-ink uppercase tracking-wider text-sm">
-                <Eye className="w-5 h-5 text-candy-ink" />
-                Cài Đặt Đồ Họa (UI/UX)
-              </h3>
-
+            <PanelSection
+              title="Cài Đặt Đồ Họa (UI/UX)"
+              glyph="display"
+              className="space-y-6"
+            >
               {/* Glowing strength */}
               <div className="space-y-3 pt-2">
                 <span className="font-display font-black text-xs uppercase tracking-wide text-candy-ink block">
@@ -276,7 +404,7 @@ export default function SettingsPage() {
                   <button
                     onClick={() => setScanlines(!scanlines)}
                     className={cn(
-                      "px-4 py-1.5 rounded-xl text-xs font-display font-black border-[2px] border-candy-ink transition-all duration-200 shadow-[2px_2px_0_0_#2B2D42]",
+                      "min-h-11 px-4 py-2 rounded-xl text-xs font-display font-black border-[2px] border-candy-ink transition-all duration-200 shadow-[2px_2px_0_0_#2B2D42]",
                       scanlines
                         ? "bg-candy-pink text-white translate-y-[1px] shadow-[1px_1px_0_0_#2B2D42]"
                         : "bg-white hover:bg-candy-cloud text-candy-ink",
@@ -293,7 +421,7 @@ export default function SettingsPage() {
                   <button
                     onClick={() => setParticles(!particles)}
                     className={cn(
-                      "px-4 py-1.5 rounded-xl text-xs font-display font-black border-[2px] border-candy-ink transition-all duration-200 shadow-[2px_2px_0_0_#2B2D42]",
+                      "min-h-11 px-4 py-2 rounded-xl text-xs font-display font-black border-[2px] border-candy-ink transition-all duration-200 shadow-[2px_2px_0_0_#2B2D42]",
                       particles
                         ? "bg-candy-pink text-white translate-y-[1px] shadow-[1px_1px_0_0_#2B2D42]"
                         : "bg-white hover:bg-candy-cloud text-candy-ink",
@@ -303,7 +431,7 @@ export default function SettingsPage() {
                   </button>
                 </div>
               </div>
-            </div>
+            </PanelSection>
 
             {/* Quick action: Save configs */}
             <div className="pt-2">
@@ -316,7 +444,7 @@ export default function SettingsPage() {
                   })
                 }
               >
-                <ShieldCheck className="w-5 h-5 text-white" />
+                <MiniGlyph variant="settings" className="w-5 h-5 text-white" />
                 Lưu Tùy Chỉnh
               </button>
             </div>

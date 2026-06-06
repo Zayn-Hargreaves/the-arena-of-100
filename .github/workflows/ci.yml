@@ -216,6 +216,109 @@ jobs:
             packages/game-core/coverage/lcov.info
           fail_ci_if_error: true
 
+  e2e:
+    needs: install
+    runs-on: ubuntu-latest
+    env:
+      CI_DB_E2E_USER: arena_test
+      CI_DB_E2E_PASSWORD: arena_test
+      CI_DB_E2E_NAME: arena_test
+    strategy:
+      matrix:
+        node-version: [20, 22]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: arena_test
+          POSTGRES_PASSWORD: arena_test
+          POSTGRES_DB: arena_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
+      - name: Restore node_modules
+        id: node-modules-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: '**/node_modules'
+          key: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ matrix.node-version }}
+
+      - name: Install dependencies
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore Prisma Client
+        id: prisma-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            node_modules/.prisma
+            apps/api/node_modules/.prisma
+          key: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
+
+      - name: Fallback Generate Prisma
+        if: steps.prisma-cache.outputs.cache-hit != 'true'
+        run: pnpm db:generate
+        env:
+          DATABASE_URL: postgresql://${{ env.CI_DB_E2E_USER }}:${{ env.CI_DB_E2E_PASSWORD }}@localhost:5432/${{ env.CI_DB_E2E_NAME }}
+
+      - name: Push Prisma schema to test DB
+        run: pnpm --filter @arena/api exec prisma db push
+        env:
+          DATABASE_URL: postgresql://${{ env.CI_DB_E2E_USER }}:${{ env.CI_DB_E2E_PASSWORD }}@localhost:5432/${{ env.CI_DB_E2E_NAME }}
+
+      - name: Seed questions (dev dataset)
+        run: pnpm --filter @arena/api prisma:seed:dev
+        env:
+          DATABASE_URL: postgresql://${{ env.CI_DB_E2E_USER }}:${{ env.CI_DB_E2E_PASSWORD }}@localhost:5432/${{ env.CI_DB_E2E_NAME }}
+
+      - name: Seed demo users + matches
+        run: pnpm --filter @arena/api prisma:seed:demo
+        env:
+          DATABASE_URL: postgresql://${{ env.CI_DB_E2E_USER }}:${{ env.CI_DB_E2E_PASSWORD }}@localhost:5432/${{ env.CI_DB_E2E_NAME }}
+
+      - name: Run E2E tests
+        # Bypass the workspace `test:e2e` script because it hardcodes
+        # DATABASE_URL via cross-env, which would override the CI
+        # step-level env. We call vitest directly so the URL and
+        # Redis DB index configured above are honored.
+        run: pnpm --filter @arena/api exec vitest run --config test/vitest-e2e.config.ts
+        env:
+          DATABASE_URL: postgresql://${{ env.CI_DB_E2E_USER }}:${{ env.CI_DB_E2E_PASSWORD }}@localhost:5432/${{ env.CI_DB_E2E_NAME }}
+          REDIS_URL: redis://localhost:6379/1
+          NODE_ENV: test
+          JWT_SECRET: ${{ secrets.CI_JWT_SECRET || 'ci-test-secret-key' }}
+
   build:
     needs: install
     runs-on: ubuntu-latest

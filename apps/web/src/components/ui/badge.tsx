@@ -17,9 +17,9 @@ const variantClasses = {
 };
 
 const sizeClasses = {
-  sm: "text-xs px-2 py-0.5",
-  md: "text-sm px-3 py-1",
-  lg: "text-base px-4 py-1.5",
+  sm: "text-xs px-2 py-1 leading-4",
+  md: "text-sm px-3 py-1.5 leading-5",
+  lg: "text-base px-4 py-2 leading-5",
 };
 
 const iconSizeClasses = {
@@ -47,7 +47,7 @@ export const Badge = React.forwardRef<HTMLSpanElement, BadgeProps>(
     const combinedClassName = cn(
       baseClass,
       sizeClass,
-      "inline-flex items-center justify-center rounded-full font-display font-bold border-3 border-candy-ink whitespace-nowrap",
+      "inline-flex items-center justify-center rounded-full font-display font-bold tracking-wide border-3 border-candy-ink whitespace-nowrap",
       className,
     );
 

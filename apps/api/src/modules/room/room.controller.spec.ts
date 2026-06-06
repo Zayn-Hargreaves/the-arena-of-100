@@ -1,4 +1,5 @@
-import { RoomController, AuthenticatedRequest } from "./room.controller";
+import { RoomController } from "./room.controller";
+import type { AuthenticatedRequest } from "../auth/auth.types";
 import { RoomService } from "./room.service";
 import { CreateRoomDto } from "./dto/create-room.dto";
 import { JoinRoomDto } from "./dto/join-room.dto";

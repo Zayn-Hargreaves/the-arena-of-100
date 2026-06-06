@@ -15,7 +15,7 @@ export default tseslint.config(
     files: ['**/*.ts', '**/*.tsx'],
     languageOptions: {
       parserOptions: {
-        project: ['./tsconfig.app.json', './tsconfig.spec.json'],
+        project: ['./tsconfig.app.json', './tsconfig.spec.json', './tsconfig.e2e.json'],
       },
     },
   },
@@ -34,6 +34,6 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['dist/**', 'node_modules/**', 'prisma/**', 'prisma.config.ts', 'vitest.config.ts'],
+    ignores: ['dist/**', 'node_modules/**', 'prisma/**', 'prisma.config.ts', 'vitest.config.ts', 'test/vitest-e2e.config.ts'],
   }
 );

@@ -39,6 +39,7 @@ model User {
   username  String   @unique
   guestId   String?  @unique
   role      Role     @default(GUEST)
+  avatar    String   @default("jellyfrog")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

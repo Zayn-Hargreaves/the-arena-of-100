@@ -8,9 +8,12 @@ export interface GlassPanelProps {
 }
 
 const variantClasses = {
-  default: "jelly-card rounded-2xl bg-white",
-  secondary: "jelly-card rounded-2xl bg-candy-cloud",
-  elevated: "jelly-card rounded-2xl bg-white shadow-xl",
+  default:
+    "jelly-card rounded-2xl bg-white border-[3px] border-candy-ink/80 shadow-[4px_4px_0_0_#2B2D42]",
+  secondary:
+    "jelly-card rounded-2xl bg-candy-cloud border-[3px] border-candy-ink/70 shadow-[4px_4px_0_0_#2B2D42]",
+  elevated:
+    "jelly-card rounded-2xl bg-white border-[3px] border-candy-ink shadow-[6px_6px_0_0_#2B2D42]",
 };
 
 export const GlassPanel = React.forwardRef<HTMLDivElement, GlassPanelProps>(

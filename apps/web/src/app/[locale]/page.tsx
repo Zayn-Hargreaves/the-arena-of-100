@@ -1,22 +1,14 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import { AvatarSelector } from "@/components/home/avatar-selector";
 import { Link, useRouter } from "@/i18n/routing";
+import { MiniGlyph } from "@/components/ui/mini-glyph";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
-import { Avatar } from "@/components/ui/avatar";
-import { AnimatedSprite } from "@/components/ui/animated-sprite";
 import { useToast } from "@/hooks/use-toast";
 import { useSocketStore } from "@/stores/socket-store";
-import {
-  Swords,
-  Trophy,
-  Compass,
-  ArrowRight,
-  UserCheck,
-  Sparkles,
-  Smile,
-} from "lucide-react";
+import { ArrowRight, UserCheck } from "lucide-react";
 
 import { avatars, type AvatarOption } from "@/lib/avatars";
 import type { CreateTypes } from "canvas-confetti";
@@ -33,7 +25,6 @@ export default function HomePage() {
   const [avatarIndex, setAvatarIndex] = useState(0);
   const [squash, setSquash] = useState(false);
 
-  const containerRef = useRef<HTMLDivElement>(null);
   const confettiCanvasRef = useRef<HTMLCanvasElement>(null);
   const confettiInstanceRef = useRef<CreateTypes | null>(null);
 
@@ -118,7 +109,7 @@ export default function HomePage() {
         "#FFD000",
         "#2EC4B6",
         "#3A86C8",
-        "#A29BFE",
+        "#2BB8D8",
         "#FF7A00",
       ],
       origin,
@@ -197,7 +188,16 @@ export default function HomePage() {
   const currentAvatar = avatars[avatarIndex];
 
   return (
-    <main className="text-candy-ink min-h-screen flex flex-col font-sans selection:bg-candy-pink selection:text-white relative bg-gradient-to-br from-[#FFF0F5] via-[#E6E6FA] to-[#E0F2FE] overflow-x-hidden antialiased">
+    <main
+      id="main-content"
+      className="text-candy-ink min-h-screen flex flex-col font-sans selection:bg-candy-pink selection:text-white relative bg-gradient-to-br from-[#FFF0F5] via-[#E6E6FA] to-[#E0F2FE] overflow-x-hidden antialiased"
+    >
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-[60] focus:px-4 focus:py-3 focus:rounded-2xl focus:bg-white focus:text-candy-ink focus:border-[3px] focus:border-candy-ink focus:shadow-[4px_4px_0_0_#2B2D42] focus:font-display focus:font-black focus:text-xs focus:uppercase"
+      >
+        Skip to main content
+      </a>
       <canvas
         ref={confettiCanvasRef}
         className="pointer-events-none fixed inset-0 z-50"
@@ -228,11 +228,11 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-4 md:px-8 flex justify-between items-center">
           <div className="flex items-center gap-4">
             <div className="hover:animate-bounce bg-candy-pink text-white font-display text-xl md:text-2xl px-5 py-2.5 border-4 border-candy-ink rounded-2xl transform -rotate-3 shadow-[4px_4px_0_0_#2B2D42] cursor-pointer flex items-center gap-2">
-              <Swords className="w-6 h-6 text-white" />
+              <MiniGlyph variant="leaderboard" className="w-6 h-6 text-white" />
               <span>ARENA 100</span>
             </div>
             <span className="hidden md:inline-flex bg-candy-mint text-white font-display text-xs px-3 py-1.5 border-3 border-candy-ink rounded-full transform rotate-2 items-center gap-1.5">
-              LỐ LĂNG • VÔ TRI <Smile className="w-3.5 h-3.5" />
+              LỐ LĂNG • VÔ TRI <span aria-hidden="true">☺</span>
             </span>
           </div>
 
@@ -273,66 +273,12 @@ export default function HomePage() {
             </div>
 
             <form onSubmit={handleQuickMatchSubmit} className="space-y-6">
-              {/* Goofy Avatar Carousel Selector */}
-              <div className="text-center">
-                <label className="font-display text-sm text-candy-ink block mb-3 uppercase tracking-wider">
-                  CHỌN HÌNH ĐẠI DIỆN
-                </label>
-
-                <div className="flex justify-center items-center gap-6">
-                  {/* Left arrow button */}
-                  <button
-                    type="button"
-                    onClick={() => cycleAvatar(-1)}
-                    className="w-12 h-12 bg-candy-yellow border-4 border-candy-ink rounded-2xl flex items-center justify-center text-xl shadow-[3px_3px_0_0_#2B2D42] active:translate-y-[2px] active:shadow-[1px_1px_0_0_#2B2D42] hover:-translate-y-[2px] hover:shadow-[3px_5px_0_0_#2B2D42] transition-all"
-                    aria-label="Avatar trước"
-                  >
-                    ◀
-                  </button>
-
-                  {/* Bouncy avatar circle wrapper */}
-                  <div className="flex flex-col items-center">
-                    <div
-                      ref={containerRef}
-                      className={`w-28 h-28 rounded-[2.2rem] bg-candy-cloud border-5 border-candy-ink flex items-center justify-center shadow-[4px_4px_0_0_#2B2D42] transition-transform duration-300 relative group overflow-hidden ${
-                        squash
-                          ? "scale-90 -rotate-6"
-                          : "scale-105 rotate-3 hover:scale-110"
-                      }`}
-                    >
-                      {currentAvatar.isAnimated && currentAvatar.spritesheet ? (
-                        <AnimatedSprite
-                          src={currentAvatar.spritesheet}
-                          row={0}
-                          scale={0.45}
-                          width="86px"
-                          height="86px"
-                        />
-                      ) : (
-                        <Avatar
-                          size="xl"
-                          fallback={currentAvatar.name}
-                          glow="none"
-                          className="w-20 h-20 border-none bg-transparent"
-                        />
-                      )}
-                    </div>
-                    <span className="mt-3 bg-candy-pink text-white font-hand text-2xl px-4 py-0.5 border-3 border-candy-ink rounded-full shadow-[2px_2px_0_0_#000] transform -rotate-1">
-                      {currentAvatar.name}
-                    </span>
-                  </div>
-
-                  {/* Right arrow button */}
-                  <button
-                    type="button"
-                    onClick={() => cycleAvatar(1)}
-                    className="w-12 h-12 bg-candy-yellow border-4 border-candy-ink rounded-2xl flex items-center justify-center text-xl shadow-[3px_3px_0_0_#2B2D42] active:translate-y-[2px] active:shadow-[1px_1px_0_0_#2B2D42] hover:-translate-y-[2px] hover:shadow-[3px_5px_0_0_#2B2D42] transition-all"
-                    aria-label="Avatar tiếp theo"
-                  >
-                    ▶
-                  </button>
-                </div>
-              </div>
+              <AvatarSelector
+                avatar={currentAvatar}
+                isAnimating={squash}
+                onPrevious={() => cycleAvatar(-1)}
+                onNext={() => cycleAvatar(1)}
+              />
 
               {/* Comic-book style Callsign / Nickname Input */}
               <div className="text-left">
@@ -358,7 +304,7 @@ export default function HomePage() {
                       className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center text-candy-mint"
                       title="Đã đồng bộ socket"
                     >
-                      <UserCheck className="w-6 h-6" />
+                      <UserCheck className="w-5 h-5" />
                     </div>
                   )}
                 </div>
@@ -369,9 +315,9 @@ export default function HomePage() {
                 {/* Primary Giant 3D Play button */}
                 <Button
                   type="submit"
-                  className="w-full h-14 jelly-btn bg-candy-mint text-white font-display text-xl py-4 uppercase tracking-wide flex items-center justify-center gap-3"
+                  className="w-full min-h-14 jelly-btn bg-candy-mint text-white font-display text-xl py-4 uppercase tracking-wide flex items-center justify-center gap-3"
                 >
-                  <Sparkles className="w-5 h-5" />
+                  <MiniGlyph variant="trend" className="w-5 h-5" />
                   VÀO ĐẤU TRƯỜNG
                 </Button>
 
@@ -380,7 +326,7 @@ export default function HomePage() {
                   <button
                     type="button"
                     onClick={handleCreateRoom}
-                    className="w-full h-12 bg-white hover:bg-candy-cloud text-candy-ink font-display text-[11px] border-4 border-candy-ink rounded-[1.5rem] shadow-[0_5px_0_0_#2B2D42] active:translate-y-[4px] active:shadow-[0_1px_0_0_#2B2D42] transition-all flex items-center justify-center gap-2 uppercase font-bold"
+                    className="w-full min-h-12 bg-white hover:bg-candy-cloud text-candy-ink font-display text-[11px] border-4 border-candy-ink rounded-[1.5rem] shadow-[0_5px_0_0_#2B2D42] active:translate-y-[4px] active:shadow-[0_1px_0_0_#2B2D42] transition-all flex items-center justify-center gap-2 uppercase font-bold leading-4"
                   >
                     TẠO PHÒNG RIÊNG
                   </button>
@@ -388,7 +334,7 @@ export default function HomePage() {
                   <button
                     type="button"
                     onClick={() => setIsJoining(!isJoining)}
-                    className="w-full h-12 bg-candy-cloud/40 hover:bg-candy-cloud text-candy-ink font-display text-[11px] border-4 border-candy-ink rounded-[1.5rem] shadow-[0_5px_0_0_#2B2D42] active:translate-y-[4px] active:shadow-[0_1px_0_0_#2B2D42] transition-all flex items-center justify-center gap-2 uppercase font-bold"
+                    className="w-full min-h-12 bg-candy-cloud/40 hover:bg-candy-cloud text-candy-ink font-display text-[11px] border-4 border-candy-ink rounded-[1.5rem] shadow-[0_5px_0_0_#2B2D42] active:translate-y-[4px] active:shadow-[0_1px_0_0_#2B2D42] transition-all flex items-center justify-center gap-2 uppercase font-bold leading-4"
                   >
                     {t("joinRoom")}
                   </button>
@@ -399,21 +345,28 @@ export default function HomePage() {
             {/* Expansible Room Code form */}
             {isJoining && (
               <div className="mt-6 space-y-3 text-left p-4 bg-candy-cloud border-4 border-candy-ink rounded-2xl animate-in slide-in-from-top duration-300">
-                <label className="block text-xs font-mono font-bold text-candy-ink uppercase tracking-wider">
+                <label
+                  htmlFor="room-code"
+                  className="block text-xs font-mono font-bold text-candy-ink uppercase tracking-wider"
+                >
                   {t("roomCode")}
                 </label>
                 <div className="flex gap-2">
                   <input
+                    id="room-code"
                     type="text"
                     placeholder={t("roomCodePlaceholder")}
                     maxLength={6}
                     value={roomCode}
                     onChange={(e) => setRoomCode(e.target.value)}
+                    aria-label={t("roomCode")}
                     className="flex-1 h-12 px-4 rounded-xl bg-white border-3 border-candy-ink text-candy-ink placeholder:text-candy-ink/30 font-mono font-bold text-center tracking-widest text-sm uppercase focus:outline-none focus:border-candy-blue"
                   />
                   <button
+                    type="button"
                     onClick={handleJoinRoom}
-                    className="px-5 rounded-xl bg-candy-blue border-3 border-candy-ink text-white hover:bg-candy-blue/90 shadow-[2px_2px_0_0_#2B2D42] active:translate-y-[2px] active:shadow-[0px_0px_0_0_#2B2D42] font-mono font-bold text-xs flex items-center justify-center transition-all"
+                    className="min-h-12 px-5 rounded-xl bg-candy-blue border-3 border-candy-ink text-white hover:bg-candy-blue/90 shadow-[2px_2px_0_0_#2B2D42] active:translate-y-[2px] active:shadow-[0px_0px_0_0_#2B2D42] font-mono font-bold text-xs flex items-center justify-center transition-all"
+                    aria-label={t("joinRoom")}
                   >
                     <ArrowRight className="w-5 h-5" />
                   </button>
@@ -427,7 +380,7 @@ export default function HomePage() {
                 href="/rankings"
                 className="text-candy-ink hover:text-candy-blue flex items-center gap-1.5 font-bold"
               >
-                <Trophy className="w-4 h-4" />
+                <MiniGlyph variant="leaderboard" className="w-4 h-4" />
                 {t("rankings")}
               </Link>
               <span className="text-candy-ink/20">|</span>
@@ -435,7 +388,7 @@ export default function HomePage() {
                 href="/settings"
                 className="text-candy-ink hover:text-candy-blue flex items-center gap-1.5 font-bold"
               >
-                <Compass className="w-4 h-4" />
+                <MiniGlyph variant="settings" className="w-4 h-4" />
                 {t("settings")}
               </Link>
             </div>
@@ -448,7 +401,7 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center px-4 md:px-8 gap-4 text-center">
           <div className="flex flex-col items-center md:items-start gap-1">
             <div className="font-display text-xl text-candy-yellow flex items-center gap-2">
-              <Swords className="w-5 h-5" />
+              <MiniGlyph variant="leaderboard" className="w-5 h-5" />
               <span>ARENA OF 100</span>
             </div>
             <span className="font-hand text-lg text-gray-400">

@@ -164,10 +164,10 @@ export default function CreateRoomPage() {
           <div className="space-y-4">
             <div className="flex justify-between items-center">
               <label className="font-display font-black text-base text-candy-ink uppercase tracking-wider flex items-center gap-2">
-                <Cpu className="w-5 h-5 text-candy-purple stroke-[2.5]" />
+                <Cpu className="w-5 h-5 text-candy-blue stroke-[2.5]" />
                 Giới Hạn Đối Thủ
               </label>
-              <span className="font-display font-black text-lg text-candy-purple border-2 border-candy-ink bg-white px-2.5 py-0.5 rounded-lg shadow-[2px_2px_0_0_#2B2D42]">
+              <span className="font-display font-black text-lg text-candy-blue border-2 border-candy-ink bg-white px-2.5 py-0.5 rounded-lg shadow-[2px_2px_0_0_#2B2D42]">
                 {maxPlayers} Người
               </span>
             </div>
@@ -178,7 +178,7 @@ export default function CreateRoomPage() {
                   onClick={() => setMaxPlayers(num)}
                   className={`flex-1 py-3 rounded-2xl border-[3px] border-candy-ink font-display font-black text-sm transition-all duration-150 shadow-[3px_3px_0_0_#2B2D42] outline-none focus:outline-none ${
                     maxPlayers === num
-                      ? "bg-candy-purple text-white translate-y-[-2px] shadow-[5px_5px_0_0_#2B2D42]"
+                      ? "bg-candy-blue text-white translate-y-[-2px] shadow-[5px_5px_0_0_#2B2D42]"
                       : "bg-white text-candy-ink hover:translate-y-[-1px] hover:shadow-[4px_4px_0_0_#2B2D42] active:translate-y-[2px] active:shadow-[1px_1px_0_0_#2B2D42]"
                   }`}
                 >

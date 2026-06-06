@@ -2,7 +2,16 @@ import Link from "next/link";
 
 export default function NotFound() {
   return (
-    <main className="text-candy-ink min-h-screen flex flex-col font-sans relative bg-gradient-to-br from-[#FFF0F5] via-[#E6E6FA] to-[#E0F2FE] overflow-x-hidden antialiased items-center justify-center p-4">
+    <main
+      id="main-content"
+      className="text-candy-ink min-h-screen flex flex-col font-sans relative bg-gradient-to-br from-[#FFF0F5] via-[#E6E6FA] to-[#E0F2FE] overflow-x-hidden antialiased items-center justify-center p-4"
+    >
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-[60] focus:px-4 focus:py-3 focus:rounded-2xl focus:bg-white focus:text-candy-ink focus:border-[3px] focus:border-candy-ink focus:shadow-[4px_4px_0_0_#2B2D42] focus:font-display focus:font-black focus:text-xs focus:uppercase"
+      >
+        Skip to main content
+      </a>
       {/* Vector Floating Geometric Shapes Background */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden select-none z-0 opacity-15">
         {/* Floating Sparkle Star Left */}

@@ -2,8 +2,14 @@
   "extends": "./tsconfig.app.json",
   "compilerOptions": {
     "types": ["vitest/globals", "node"],
-    "rootDir": "."
+    "rootDir": ".",
+    "noEmit": true
   },
-  "include": ["src/**/*.spec.ts", "src/**/*.test.ts", "prisma/**/*.test.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "test/**/*.ts",
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts",
+    "prisma/**/*.test.ts"
+  ],
+  "exclude": ["node_modules", "dist", "test/**/*.e2e-spec.ts"]
 }

@@ -7,9 +7,9 @@ export interface SpinnerProps {
 }
 
 const sizeClasses = {
-  sm: "w-4 h-4", // 16px
-  md: "w-5 h-5", // 20px
-  lg: "w-10 h-10", // 40px
+  sm: "w-4 h-4",
+  md: "w-5 h-5",
+  lg: "w-10 h-10",
 };
 
 const borderWidthClasses = {
@@ -37,7 +37,9 @@ export const Spinner = React.forwardRef<HTMLDivElement, SpinnerProps>(
       .join(" ");
 
     return (
-      <div ref={ref} className={baseClasses} role="status" aria-label={label} />
+      <div ref={ref} className={baseClasses} role="status">
+        <span className="sr-only">{label}</span>
+      </div>
     );
   },
 );

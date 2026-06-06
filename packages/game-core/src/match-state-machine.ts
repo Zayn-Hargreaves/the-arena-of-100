@@ -12,6 +12,7 @@ import {
   type AnswerState,
   GAME_CONFIG,
   ErrorCode,
+  computeRoundScore,
 } from "@arena/shared";
 interface DeserializedMatch {
   state: {
@@ -274,6 +275,9 @@ export class MatchStateMachine {
         if (player) {
           player.correctAnswers++;
           player.totalResponseTimeMs += answer.responseTimeMs;
+          // B2: Accumulate score = base + speed bonus (floored to int for DB Int column)
+          const roundScore = computeRoundScore(answer.responseTimeMs);
+          player.score += Math.floor(roundScore.total);
         }
       }
     }
@@ -404,6 +408,14 @@ export class MatchStateMachine {
         this.logEvent("PLAYER_RECONNECTED", { playerId });
       }
     }
+  }
+
+  // Get accumulated scores for all players (B2: for DB persistence at match end)
+  getPlayerScores(): Array<{ userId: string; score: number }> {
+    return Array.from(this.state.players.entries()).map(([userId, p]) => ({
+      userId,
+      score: p.score,
+    }));
   }
 
   // Get Match Snapshot (for reconnect)
