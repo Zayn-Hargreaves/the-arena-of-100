@@ -7,6 +7,10 @@
 export { MatchStateMachine } from "./match-state-machine";
 export type { StateTransitionHandler } from "./match-state-machine";
 
+// Pure domain scoring
+export { computeRoundScore } from "./scoring";
+export type { RoundScore } from "./scoring";
+
 // Re-export shared types for convenience
 export {
   MatchStatus,

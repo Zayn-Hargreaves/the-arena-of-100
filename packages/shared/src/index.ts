@@ -15,6 +15,9 @@ export * from "./socket";
 // Errors
 export * from "./errors";
 
+// Avatar Seeds
+export * from "./avatars";
+
 // Game Constants
 export const GAME_CONFIG = {
   MAX_PLAYERS: 100,
@@ -24,6 +27,13 @@ export const GAME_CONFIG = {
   RESULT_DISPLAY_MS: 3_000, // 3 seconds to show result
   MAX_ROUNDS: 50, // Safety limit
   ROOM_CODE_LENGTH: 6,
+  // Scoring: each correct answer grants base + speed bonus
+  // total = SCORE_BASE_CORRECT + max(0, (WINDOW - responseTimeMs) / DIVISOR)
+  // Max bonus: 50 (when responseTime = 0)
+  // Min bonus: 0  (when responseTime >= WINDOW)
+  SCORE_BASE_CORRECT: 100,
+  SCORE_SPEED_BONUS_WINDOW_MS: 10_000,
+  SCORE_SPEED_BONUS_DIVISOR: 200,
 } as const;
 
 export type RoomCategory =

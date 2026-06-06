@@ -39,6 +39,7 @@ model User {
   username  String   @unique
   guestId   String?  @unique
   role      Role     @default(GUEST)
+  avatar    String   @default("jellyfrog")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -107,6 +108,8 @@ model Match {
   answers   Answer[]
   eventLogs EventLog[]
 
+  // Speeds up the weekly-window filter in /rankings/leaderboard.
+  @@index([status, endedAt], map: "matches_status_ended_at_idx")
   @@map("matches")
 }
 
@@ -182,6 +185,8 @@ model Answer {
   user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([roundId, userId])
+  // Speeds up answer_agg in /rankings/leaderboard.
+  @@index([matchId, userId], map: "answers_match_id_user_id_idx")
   @@map("answers")
 }
 

@@ -18,7 +18,13 @@
     "prisma:studio": "prisma studio",
     "prisma:seed": "tsx prisma/seed.ts",
     "prisma:seed:dev": "cross-env SEED_ENV=dev tsx prisma/seed.ts",
-    "prisma:seed:test": "cross-env SEED_ENV=test tsx prisma/seed.ts"
+    "prisma:seed:test": "cross-env SEED_ENV=test tsx prisma/seed.ts",
+    "prisma:seed:demo": "tsx --tsconfig prisma/tsconfig.json prisma/seed-demo.ts",
+    "prisma:seed:demo:reset": "cross-env DEMO_RESET=true tsx --tsconfig prisma/tsconfig.json prisma/seed-demo.ts",
+    "prisma:seed:demo:unsafe": "cross-env DEMO_ALLOW_DEV_DB=true tsx --tsconfig prisma/tsconfig.json prisma/seed-demo.ts",
+    "prisma:seed:demo:reset:unsafe": "cross-env DEMO_ALLOW_DEV_DB=true DEMO_RESET=true tsx --tsconfig prisma/tsconfig.json prisma/seed-demo.ts",
+    "test:e2e": "cross-env NODE_ENV=test bash -ac 'source .env.test && vitest run --config test/vitest-e2e.config.ts'",
+    "test:e2e:watch": "cross-env NODE_ENV=test bash -ac 'source .env.test && vitest --config test/vitest-e2e.config.ts'"
   },
   "dependencies": {
     "@arena/game-core": "workspace:*",
@@ -54,17 +60,20 @@
     "@nestjs/cli": "^11.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.1.21",
+    "@swc/core": "^1.15.40",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/ms": "^2.1.0",
     "@types/node": "^22.10.5",
     "@types/pg": "^8.20.0",
     "@vitest/coverage-v8": "^2.1.8",
     "cross-env": "^10.1.0",
+    "dotenv-cli": "^7.4.2",
     "eslint": "^9.17.0",
     "fastify": "^5.0.0",
     "prisma": "^7.8.0",
     "tsx": "^4.22.1",
     "typescript": "^6.0.3",
+    "unplugin-swc": "^1.5.9",
     "vitest": "^2.1.8"
   }
 }

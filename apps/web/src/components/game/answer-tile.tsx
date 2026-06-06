@@ -12,7 +12,8 @@ export interface AnswerTileProps {
   className?: string;
 }
 
-const assertNever = (_value: never): never => {
+const assertNever = (value: never): never => {
+  void value;
   throw new Error("Unhandled answer tile variant");
 };
 

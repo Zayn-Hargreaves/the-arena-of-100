@@ -1,171 +1,245 @@
 # Active Context: Arena of 100
 
+> Cập nhật 2026-06-06 dựa trên code + GitNexus.
+> Một số mục dưới đây từng đánh dấu "chưa có" nay đã có code thật và được cập nhật lại.
+
 ## Current Focus
 
-Currently on branch `migrate/ui/design-system`. Review cohort is focused on the admin/health monitoring UI (`apps/web/src/app/[locale]/admin/page.tsx`, `apps/web/src/app/[locale]/not-found.tsx`) and the admin dashboard wiring (CSRF + JWT cookies, role-based access, monitoring metrics).
+- Nhánh hiện tại: `migrate/ui/design-system`.
+- Trọng tâm review: `apps/web/src/app/[locale]/admin/page.tsx` (admin/health monitoring UI) và phần liên quan.
+- Trạng thái thật của code đã vượt xa những gì các file memory-bank cũ mô tả. Mục tiêu cập nhật tài liệu lần này:
+  - Khẳng định các mốc đã xong.
+  - Liệt kê các gap còn lại cần làm tiếp.
+  - Bám sát branch hiện tại để chốt phạm vi trước khi mở PR feature mới.
 
 ## Recent Changes
 
-- Created full monorepo structure with pnpm + Turborepo
-- Implemented shared types package (events, state, socket protocol)
-- Built MatchStateMachine in game-core (pure domain logic)
-- Scaffolded NestJS backend with modules: auth, room, match, health
-- Created Next.js frontend with Tailwind CSS + Zustand store
-- Defined Prisma schema for PostgreSQL
-- Set up Docker Compose for infrastructure
-- Created comprehensive memory bank documentation
-- **Completed architecture assessment (2026-05-09)**
-- **Identified 3 critical issues + 5 significant gaps**
-- **Set up CI/CD Pipeline & Vitest Infrastructure (2026-05-12)**
-- **Implemented type-safe error handling pattern** — `RoomError` class with error codes, replacing fragile string matching (see [errorHandlingPattern.md](./errorHandlingPattern.md))
-- **Refactored GameGateway** — split into handler classes (AuthHandler, RoomHandler, MatchHandler)
-- **Fixed getState() shallow copy** — deep cloning players Map
-- **CSRF Protection (2026-06-03)** — Added double-submit cookie pattern: `CsrfGuard` validates `X-CSRF-Token` header on state-changing requests; CSRF token cookie set on login/refresh; frontend `apiFetch()` auto-injects header (see [securityLayer.md](./securityLayer.md))
-- **Rate Limiting (2026-06-03)** — Added `@nestjs/throttler` globally (100 req/min); stricter limits on admin endpoints: 5 sync/min, 2 resets/5min
-- **Hardcoded locale redirect fix (2026-06-03)** — Root `page.tsx` now reads `routing.defaultLocale` instead of hardcoded `/vi`
-- **Admin UI improvements (2026-06-03)** — Replaced `alert()` with `toast()` for migration check; added `typecheck` script to web package
+- Tạo full monorepo pnpm + Turborepo
+- Shared types, MatchStateMachine, NestJS scaffold (auth/room/match/health), Next.js scaffold
+- Prisma schema + Docker Compose
+- Memory bank docs
+- **Architecture assessment (2026-05-09)**
+- **CI/CD + Vitest (2026-05-12)**
+- **Type-safe error handling** — `RoomError` + `ErrorCode` (xem [errorHandlingPattern.md](./errorHandlingPattern.md))
+- **Gateway refactor** — `AuthHandler`, `RoomHandler`, `MatchHandler`
+- **State machine persistence** — `MatchStateMachine.serialize/deserialize` + Redis (TTL 2h)
+- **Question module** — full CRUD + bulk import + admin sync + seed data
+- **`getState()` deep-clone fix** — players Map không còn leak
+- **Zod migration** — bỏ `class-validator` / `class-transformer` (xem [processTechDebt.md](./processTechDebt.md))
+- **CSRF (2026-06-03)** — `CsrfGuard` + double-submit cookie, `apiFetch` inject `X-CSRF-Token`
+- **Rate Limiting (2026-06-03)** — `@nestjs/throttler` global 100/min; admin 5/min sync, 2/5min reset
+- **Hardcoded locale redirect fix (2026-06-03)** — `routing.defaultLocale` thay vì `/vi`
+- **Admin UI (2026-06-03)** — toast cho migration check; `typecheck` script cho web
+- **E2E in CI (2026-06-06)** — thêm job `e2e` vào `.github/workflows/ci.yml`, chạy 11 vitest E2E tests trên mỗi PR + push main, matrix Node [20, 22], dùng `services: postgres/redis` (không cần Docker-in-Docker). Step-level `DATABASE_URL` override `postgresql://arena_test:arena_test@localhost:5432/arena_test` — gọi vitest trực tiếp thay vì qua script `test:e2e` vì `cross-env` trong script sẽ ghi đè env CI. Push schema + seed:dev + seed:demo trước khi run. Follow-up hardening cùng ngày: bỏ cache `**/node_modules` để dựa vào pnpm store cache của `actions/setup-node`, tăng độ an toàn Prisma cache key bằng `node-version` + `pnpm-lock.yaml`, và bật `junit` + `json` reports để upload artifact khi E2E fail. Estimated **+120–180s/pipeline** — Docker services spin-up, schema push, hai seed steps, và runner load có thể kéo dài thời gian thực tế.
+
+- **CI/E2E scaling note (2026-06-06)** — giữ suite ở chế độ serial (`singleFork`, `fileParallelism: false`) vì tất cả spec vẫn share 1 PostgreSQL test DB + Redis DB 1. Đây là trade-off ưu tiên stability cho PR hiện tại. Hướng brainstorm nếu muốn scale sau này: (1) per-worker DB naming + global setup, (2) transaction rollback per test, hoặc (3) testcontainers per worker; chỉ khi đó mới nên bật parallelism để giảm wall-clock time.
 
 ## Architecture Assessment Summary
 
-### 🔴 Critical Issues (Fix Before Phase 1)
+### 🔴 Critical Issues — All Resolved
 
-1. ~~**GameGateway God Object**~~ [RESOLVED]: Refactored GameGateway into separate event handler classes (AuthHandler, RoomHandler, MatchHandler), making the main gateway a lean router.
-2. ~~**In-Memory State Machines**~~ [RESOLVED]: Implemented Redis serialization & persistence for MatchStateMachine crash recovery.
-3. ~~**Missing QuestionModule**~~ [RESOLVED]: QuestionModule fully implemented with REST endpoints for CRUD and bulk import, along with database seeding.
+1. ~~GameGateway God Object~~ [RESOLVED] — Refactored thành `AuthHandler`/`RoomHandler`/`MatchHandler`.
+2. ~~In-Memory State Machines~~ [RESOLVED] — `MatchService.persistStateMachine` + restore qua `getStateMachine`.
+3. ~~Missing QuestionModule~~ [RESOLVED] — Full REST + admin sync + seed.
 
-### 🟡 Significant Gaps
+### 🟡 Significant Gaps (cập nhật 2026-06-06)
 
-1. **Missing Test Coverage**: Vitest + coverage infrastructure set up, but no tests implemented yet
-2. ~~**No Round Timer Management**: `ROUND_DURATION_MS = 15s` defined but no scheduler enforces it~~ [RESOLVED]
-3. **Gateway ↔ Service Coupling**: Gateway does transport + application logic, needs Use Case layer
-4. **Frontend Only Has Landing Page**: No lobby/game/spectator routes or components
-5. **No Lobby Lifecycle Management**: Missing heartbeat validation and auto-start mechanisms for rooms
+1. ~~Missing Test Coverage~~ — Bây giờ có spec cho game-core, game-loop (kể cả persistence), auth, room, question, admin, handlers, common pipes/interceptors.
+2. ~~No Round Timer Management~~ [RESOLVED] — `GameLoopService` đã enforce 15s timeout.
+3. **Gateway ↔ Service Coupling** — gateway vẫn gọi service trực tiếp; use-case layer chưa tách hẳn. Đã chấp nhận cho MVP.
+4. ~~Frontend Only Has Landing Page~~ [RESOLVED] — Có lobby/game/result/profile/rankings/settings/admin/room-create.
+5. **No Lobby Lifecycle Management** — Chưa có auto-start, host controls, heartbeat. Đây là gap lớn nhất còn lại.
 
-### 🟢 Architecture Score: 7.1/10
+### 🟢 Architecture Score (cập nhật 2026-06-06)
 
-- Monorepo: 10/10, Package Boundaries: 9/10, Domain Logic: 8/10
-- Backend: 6/10, Frontend: 4/10, Infra: 7/10, Testing: 3/10
+- Monorepo: 10/10, Package Boundaries: 9/10, Domain Logic: 9/10
+- Backend: 7/10, Frontend: 7/10, Infra: 7/10, Testing: 7/10
+- **Overall: ~8.0/10**
 
-## Active Decisions
+## Active Decisions (selected highlights)
 
-1. **NestJS + Fastify**: Chosen for performance and enterprise patterns
-2. **Socket.io**: Chosen for WebSocket with fallback support
-3. **Zustand**: Chosen over Redux for simplicity and performance
-4. **Modular Monolith**: Single deployable unit with clear module boundaries
-5. **Event Sourcing**: All game actions as events for audit and replay
-6. **Frictionless Onboarding**: Prioritized over account creation for Time-to-Fun optimization with content moderation
-7. **Lobby Lifecycle Management**: Auto-start for public rooms, host controls for private with heartbeat validation
-8. **Micro-interactions**: Emotes system instead of chat for spectator engagement
-9. **Performance Optimization**: Event batching and throttling for real-time interactions
-10. **Scalable Infrastructure**: Separate communication channels for players and spectators
-11. **Resilience**: Graceful error handling and fallback mechanisms
-12. **Security**: Content moderation and rate limiting
-13. **Accessibility**: WCAG compliance and inclusive design
-14. **Product Engineering Focus**: Building production-ready user experiences, not just technical demos
-15. **Anonymous Identity Tracking**: Device fingerprinting for persistent guest identity
-16. **Optimistic UI**: Instant feedback with smart recovery mechanisms
-17. **Game Operations**: Administrative tools for emergency interventions
-18. **Testing Framework**: Vitest chosen for its performance and native ESM support
-19. ~~**Zod Validation Migration**~~: Custom `ZodValidationPipe` for request/body parsing, gradual module-by-module migration, and Zod schema-based response serialization. (Completed)
-20. **Distributed Session Management**: Redis-based session tracking (`@socket.io/redis-adapter` or custom Redis cache) selected for production scaling, while maintaining high-performance O(1) in-memory tracking (using client.data.userId lookup) for the current development phase.
-21. **Persistent Guest Identity via Device ID (Model C)**: Approved using client-generated device ID (`guestId`) stored in localStorage as the primary unique key for guest logins. This resolves the unique username hijacking security risk and supports duplicate nicknames safely.
-22. **Candy 3D Jelly UI Exclusive Theme (2026-05-31)**: No dark/light mode toggles. Using Candy Light-Gradient backgrounds, thick ink borders (#2B2D42), glossy reflection buttons, and springy interactive wobbles.
-23. **Unified Sidebar Layout (2026-05-31)**: Thống nhất sidebar layout cho toàn bộ authenticated pages, kể cả Profile page.
-24. **Procedural Avatar System (2026-05-31)**: Dynamic vector procedural avatar fallback rendering and native spritesheet animation loop components (MelbitSprite).
-25. **3D Shadow Interaction (2026-05-31)**: Flat offset 3D shadows depressing on click/hover for tactile feedback.
-26. **Design System Source of Truth**: [migrateDesignSystem.md](./migrateDesignSystem.md) acts as the official step-by-step phased roadmap for system migration to ensure compatibility with 256k token models.
-27. **Type-Safe Error Handling**: Implemented custom `RoomError` class with structured error codes, replacing brittle string-matching of error messages in handlers and services (see [errorHandlingPattern.md](./errorHandlingPattern.md)).
+1. NestJS + Fastify + Socket.io + Zustand
+2. Server-authoritative, event-sourced, modular monolith
+3. Frictionless onboarding với content moderation
+4. Lobby auto-start (public) + host controls (private) + heartbeat
+5. Micro-interactions (emotes) thay cho chat
+6. Performance: event batching, throttling, separate channels cho spectator
+7. Resilience: graceful degradation, content fallback
+8. Security: content moderation, rate limiting, device fingerprint
+9. Anonymous identity tracking (Model C — `guestId` trong localStorage)
+10. Optimistic UI với smart recovery
+11. Game operations: admin tools cho emergency interventions
+12. Testing: Vitest với `*.spec.ts`
+13. Zod migration: `ZodValidationPipe` + `ZodSerialize`
+14. Distributed session: Redis in-memory + high-perf O(1) `client.data.userId` lookups
+15. Persistent guest identity: `guestId` (Model C)
+16. Candy 3D Jelly UI theme (light gradient, thick ink borders, glossy reflections, jelly wobble)
+17. Procedural avatar fallback + MelbitSprite
+18. **Type-safe error handling** với `RoomError`
+19. CSRF double-submit cookie pattern
+20. Rate limiting: `@nestjs/throttler` global + admin-specific
 
-## Pending Decisions (From Assessment)
+## Pending Decisions
 
-- [x] Gateway refactor strategy: Split 1 gateway into multiple handler classes (Command Pattern selected & implemented)
-- [ ] Timer strategy: `setTimeout` in NestJS vs. Redis-based distributed timers
-- [x] Test framework: Vitest vs. Jest for game-core (Vitest selected)
-- [ ] Frontend routing structure: `/lobby/[code]`, `/game/[matchId]`
-- [x] Guest login hijacking security fix: Scheduled for a separate PR to migrate auth.service lookup from `username` to device-based `guestId` (Model C).
+- [x] Gateway refactor strategy → Command Pattern via handler classes
+- [x] Test framework → Vitest
+- [x] Frontend routing structure → `/lobby/[code]`, `/game/[matchId]`
+- [x] Guest login hijacking fix → Model C device-based `guestId`
+- [ ] **Timer strategy for lobby auto-start**: `setTimeout` in-process vs. Redis-based distributed timers (chưa chốt vì chưa có nhu cầu scale)
+- [ ] **Spectator transport**: WebSocket chung hay SSE riêng? (chưa có yêu cầu mass spectator)
 
 ## Next Steps (Immediate — Priority Order)
 
-### Pre-requisites
+### Prerequisite
 
-1. Start Docker containers for PostgreSQL + Redis
-2. Run `pnpm db:push` to create database tables
+1. Start Docker containers
+2. `pnpm install` + `pnpm db:push`
 
-### Critical Fixes (Before Features)
+### Critical Fixes — All Done
 
-1. ~~Add `QuestionModule` + seed data~~ (Completed)
-2. ~~Add `MatchStateMachine.serialize()/deserialize()` + Redis persistence~~ (Completed)
-3. ~~Refactor `GameGateway` → split or delegate to handler classes~~ (Completed)
-4. ~~Migrate validation/serialization from class-validator/transformer to Zod~~ (Completed - see [processTechDebt.md](./processTechDebt.md))
+1. ~~QuestionModule~~ ✅
+2. ~~State persistence + Redis~~ ✅
+3. ~~Gateway refactor~~ ✅
+4. ~~Zod migration~~ ✅
 
-### Core Game Loop (MVP Minimum)
+### Core Game Loop — Done
 
-1. ~~Implement `GameLoopService` (countdown → round → evaluate → repeat)~~ (Completed)
-2. ~~Implement round timer (auto-end round when time expires)~~ (Completed)
-3. ~~Unit tests for `game-core` state machine~~ (Completed)
+1. ~~GameLoopService (countdown → round → evaluate → repeat)~~ ✅
+2. ~~Round timer (auto-end round)~~ ✅
+3. ~~Unit tests cho game-core state machine~~ ✅
 
-### Frontend + Integration
+### Next PR: Lobby Lifecycle + Graceful Exit Baseline
 
-1. Build lobby + game UI pages with routing
-2. Connect socket-store to UI components
-3. End-to-end flow test
+1. Backend: room state machine `WAITING → COUNTDOWN → STARTING → IN_GAME`
+2. Auto-start countdown cho public room; host "force start" cho private room
+3. Heartbeat/presence validation + AFK sweeping scheduler
+4. Frontend: countdown overlay, leave flow + confirm modal, "waiting for players" UI
+5. Tests: room lifecycle, heartbeat, leave flow
 
-## Key Files Reference
+### Following PR: Real Player Stats + Leaderboard
+
+1. Backend: `GET /users/me/stats`, `GET /users/:id/history`, `GET /rankings/leaderboard`
+2. Frontend: useProfileStats, useMatchHistory, useLeaderboard
+3. Tests: API endpoints + page integration
+
+### Polish (Phase 2)
+
+1. Design System Phase 5 (shell templates, legacy CSS cleanup, visual audit)
+2. Tie-break + sudden death
+3. Spectator mode + drop-in spectating
+4. Optimistic UI rollback
+5. E2E tests với Playwright
+6. Accessibility audit
+
+## Key Files Reference (verified 2026-06-06)
 
 ```
 packages/shared/src/
-├── events.ts      # Event types and factory
-├── state.ts       # State interfaces
-├── socket.ts      # Socket protocol (client/server events)
-└── index.ts       # Constants and utilities
+├── events.ts        # Event types and factory
+├── state.ts         # State interfaces
+├── socket.ts        # Socket protocol
+├── errors.ts        # RoomError + ErrorCode
+└── index.ts         # Constants and utilities
 
 packages/game-core/src/
-└── match-state-machine.ts  # Core game logic (state transitions, domain serialization)
+├── match-state-machine.ts        # Core state machine + serialize/deserialize
+└── match-state-machine.spec.ts   # Vitest spec (round-trip, immutability)
 
 apps/api/src/
-├── main.ts        # Entry point
-├── app.module.ts  # Root module
-├── gateways/      # WebSocket gateway (refactored into handler classes)
-└── modules/       # Feature modules (QuestionModule completed)
-    └── match/match.service.ts  # Match orchestration (Redis persistence for crash recovery)
+├── main.ts
+├── app.module.ts                 # CsrfGuard + ThrottlerGuard global
+├── common/
+│   ├── pipes/zod-validation.pipe.ts
+│   └── interceptors/zod-serializer.interceptor.ts
+├── modules/
+│   ├── auth/                     # Guest login, JWT, CSRF
+│   ├── room/                     # create/join/leave/list
+│   ├── match/
+│   │   ├── match.service.ts      # persistence, state machine wrapper
+│   │   ├── game-loop.service.ts  # countdown → round → result
+│   │   └── game-loop.service.{spec,persistence.spec}.ts
+│   ├── question/                 # CRUD + bulk + random + stats
+│   ├── admin/                    # syncQuestions + resetSystem
+│   ├── health/                   # /health + /health/monitoring
+│   └── prisma/                   # PrismaService
+└── gateways/
+    ├── game.gateway.ts
+    └── handlers/{base,auth,room,match}.handler.ts
 
 apps/web/src/
-├── app/           # Next.js pages (NEEDS: lobby/game/spectator routes)
-├── stores/        # Zustand stores
-└── components/    # React components (NEEDS: all game UI)
+├── app/[locale]/
+│   ├── page.tsx                       # Home + guest nickname/avatar
+│   ├── room/create/page.tsx
+│   ├── lobby/[roomCode]/page.tsx
+│   ├── game/[matchId]/page.tsx
+│   ├── result/[matchId]/page.tsx
+│   ├── profile/page.tsx               # useProfileStats + useMatchHistory
+│   ├── rankings/page.tsx              # useLeaderboard
+│   ├── settings/page.tsx
+│   ├── admin/page.tsx                 # monitoring + sync + reset
+│   ├── layout.tsx
+│   └── not-found.tsx
+├── stores/socket-store.ts             # auto-reconnect, 7+ handlers
+├── lib/api.ts                         # CSRF-aware apiFetch
+├── components/
+│   ├── ui/{button,glass-panel,avatar,...}.tsx
+│   ├── ui/sidebar.tsx                 # desktop + mobile
+│   └── game/{answer-tile,timer,player-grid}.tsx
+└── styles/tokens/{colors,animations,...}.ts
 ```
 
 ## Important Patterns to Remember
 
-- All timestamps are server-side (anti-cheat)
+- Server-authoritative timestamps (anti-cheat)
 - Client sends intent, server validates and executes
-- State transitions are guarded (can't skip states)
-- Events are immutable (append-only)
+- State transitions guarded
+- Events immutable (append-only)
 - Redis for fast state, PostgreSQL for persistence
 - **State machines MUST be persisted to Redis after each transition**
-- **Gateway handlers should delegate to Use Case / Service layer**
-- **Never expose correctAnswer to client via snapshot or events**
-- Lobby lifecycle management differs for public vs private rooms
-- Micro-interactions require event batching for performance
-- Graceful exit prioritized over AFK detection for resource management
-- Asset preloading ensures fairness across all players
-- Mass-spectator isolation prevents server overload
-- Content moderation protects product reputation
-- Accessibility features ensure inclusive design
-- Device fingerprinting enables persistent identity
-- Optimistic UI requires careful rollback handling
-- Administrative tools need secure access controls
+- **Never expose correctAnswer to client via snapshot/events**
+- Lobby lifecycle: public auto-start, private host control
+- Micro-interactions: event batching for performance
+- Graceful exit > AFK detection
+- Asset preloading for fairness
+- Mass-spectator isolation
+- Content moderation
+- Accessibility (WCAG)
+- Device fingerprinting
+- Optimistic UI: lock + rollback
+- Admin tools: secure access
 
-## Current Blockers
+## Current Blockers (updated 2026-06-06)
 
-- ~~**🔴 In-Memory state machines**~~ [RESOLVED]: Redis persistence implemented
-- ~~**🔴 GameGateway monolith**~~ [RESOLVED]: Refactored into handler classes
-- Missing frictionless onboarding functionality with content moderation
-- No lobby lifecycle management with heartbeat validation
-- No graceful exit mechanism
-- Missing spectator mode with micro-interactions
-- No asset preloading system with fallback
-- No mass-spectator isolation infrastructure
-- No anonymous identity tracking with device fingerprinting
-- No optimistic UI with smart recovery mechanisms
-- No game operations tools for emergency interventions
+Đã gỡ hết blocker kỹ thuật. Các gap product còn lại:
+
+- Lobby lifecycle + heartbeat (gap lớn nhất)
+- Design System Phase 5 cleanup
+- Spectator mode + drop-in spectating
+- AFK sweeping
+- Graceful exit UX
+- Content moderation + device fingerprint
+- Optimistic UI rollback đầy đủ
+- Game operations kill switch
+
+## Testing Roadmap
+
+**Hiện tại (đã làm 2026-06-06)**: 418 unit tests + 11 API E2E tests (users + rankings) tích hợp vào CI trên mọi PR + push main. Job `e2e` dùng real NestJS + Fastify + Prisma + Redis, real CSRF flow, real JWT auth.
+
+**Giai đoạn 2 (sau khi lobby/UI ổn định, ~1-2 sprint)**:
+
+- **Playwright smoke test** 3-5 cases: guest login → lobby → create room → join → see other player → start match flow.
+- Job riêng (`e2e:browser`), trigger: chỉ push main + nightly scheduled, không chạy matrix Node version (chỉ Node 22) vì browser E2E chậm.
+- Reference setup: `@playwright/test`, browser install qua `npx playwright install --with-deps chromium`, web app chạy qua `pnpm --filter @arena/web start` với API URL trỏ vào localhost:3001 (API test instance).
+
+**Giai đoạn 3 (pre-launch)**:
+
+- **k6 load test** cho 100 concurrent WebSocket connections/room — quan trọng cho game real-time.
+- Test scenario: 100 users join cùng room, simulate answer flow, đo p95/p99 latency, packet loss tolerance, reconnect storms.
+- Script chạy scheduled (nightly) + pre-release gate.
+
+**Lý do không làm Playwright ngay**:
+
+1. Core value của game = state machine + WebSocket real-time, đã cover qua API E2E (real CSRF + Prisma + Redis).
+2. WebSocket timing rất khó test ổn định qua browser (race conditions, flakey).
+3. Frontend hiện chưa có logic phức tạp đủ để cần UI E2E.
+4. Để CV đẹp (FAANG-style): "API E2E (Vitest + Fastify inject + real CSRF/Prisma/Redis)" thể hiện hiểu testing pyramid tốt hơn 5 Playwright smoke tests.

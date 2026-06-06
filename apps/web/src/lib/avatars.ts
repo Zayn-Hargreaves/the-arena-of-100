@@ -1,261 +1,73 @@
+import { AVATAR_SEEDS, type AvatarSeed } from "@arena/shared";
+
 export interface AvatarOption {
-  seed: string;
+  seed: AvatarSeed;
   name: string;
   isAnimated?: boolean;
   spritesheet?: string;
 }
 
-export const avatars: AvatarOption[] = [
-  {
-    seed: "jellyfrog",
-    name: "Ếch Thạch (Jelly)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/jellyfrog_spritesheet.webp",
-  },
-  {
-    seed: "dario",
-    name: "CEO Dario",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/dario_spritesheet.webp",
-  },
-  {
-    seed: "dentist",
-    name: "Nha Sĩ Chibi",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/dentist_spritesheet.webp",
-  },
-  {
-    seed: "nyakoshigure",
-    name: "Mèo Nyako",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/nyakoshigure_spritesheet.webp",
-  },
-  {
-    seed: "slavik",
-    name: "Slavik Tracksuit",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/slavik_spritesheet.webp",
-  },
-  {
-    seed: "tux",
-    name: "Chim Cánh Cụt Tux",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/tux_spritesheet.webp",
-  },
-  {
-    seed: "yellingdario",
-    name: "Dario Gào Thét",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/yellingdario_spritesheet.webp",
-  },
-  {
-    seed: "yorhasit2b",
-    name: "Hiệp Sĩ 2B Ngơ",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/yorhasit2b_spritesheet.webp",
-  },
-  {
-    seed: "airring",
-    name: "AirRing (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/airring_spritesheet.webp",
-  },
-  {
-    seed: "ask-jeeves",
-    name: "Ask Jeeves (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/ask-jeeves_spritesheet.webp",
-  },
-  {
-    seed: "azure",
-    name: "Azure (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/azure_spritesheet.webp",
-  },
-  {
-    seed: "broom-belle",
-    name: "Kiki (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/broom-belle_spritesheet.webp",
-  },
-  {
-    seed: "capy-2",
-    name: "Capy (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/capy-2_spritesheet.webp",
-  },
-  {
-    seed: "cinder",
-    name: "Cinder (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/cinder_spritesheet.webp",
-  },
-  {
-    seed: "clawd",
-    name: "Clawd (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/clawd_spritesheet.webp",
-  },
-  {
-    seed: "clippy",
-    name: "Clippy (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/clippy_spritesheet.webp",
-  },
-  {
-    seed: "da-zhuang",
-    name: "Đại Tráng (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/da-zhuang_spritesheet.webp",
-  },
-  {
-    seed: "dev",
-    name: "Dev (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/dev_spritesheet.webp",
-  },
-  {
-    seed: "dewdrop",
-    name: "Dewdrop (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/dewdrop_spritesheet.webp",
-  },
-  {
-    seed: "doodlebob",
-    name: "Doodle Bob (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/doodlebob_spritesheet.webp",
-  },
-  {
-    seed: "dude",
-    name: "Dude (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/dude_spritesheet.webp",
-  },
-  {
-    seed: "duo",
-    name: "Duo (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/duo_spritesheet.webp",
-  },
-  {
-    seed: "einstein",
-    name: "Einstein (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/einstein_spritesheet.webp",
-  },
-  {
-    seed: "esheep64",
-    name: "eSheep64 (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/esheep64_spritesheet.webp",
-  },
-  {
-    seed: "finderguy",
-    name: "Finder Guy (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/finderguy_spritesheet.webp",
-  },
-  {
-    seed: "fine-pup",
-    name: "Fine Pup (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/fine-pup_spritesheet.webp",
-  },
-  {
-    seed: "goblin-goods",
-    name: "Goblin Goods (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/goblin-goods_spritesheet.webp",
-  },
-  {
-    seed: "goblin",
-    name: "Goblin (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/goblin_spritesheet.webp",
-  },
-  {
-    seed: "goose",
-    name: "Goose (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/goose_spritesheet.webp",
-  },
-  {
-    seed: "kwehlet",
-    name: "Kwehlet (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/kwehlet_spritesheet.webp",
-  },
-  {
-    seed: "mini-sama",
-    name: "Mini Sama (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/mini-sama_spritesheet.webp",
-  },
-  {
-    seed: "miss-minute",
-    name: "Miss Minute (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/miss-minute_spritesheet.webp",
-  },
-  {
-    seed: "pc-guy",
-    name: "PC Guy (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/pc-guy_spritesheet.webp",
-  },
-  {
-    seed: "pope-amodei",
-    name: "Pope Amodei (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/pope-amodei_spritesheet.webp",
-  },
-  {
-    seed: "rubick",
-    name: "Rubick (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/rubick_spritesheet.webp",
-  },
-  {
-    seed: "sumi",
-    name: "Sumi (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/sumi_spritesheet.webp",
-  },
-  {
-    seed: "super-piglet",
-    name: "Super Piglet (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/super-piglet_spritesheet.webp",
-  },
-  {
-    seed: "theo",
-    name: "Theo (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/theo_spritesheet.webp",
-  },
-  {
-    seed: "thragg",
-    name: "Thragg (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/thragg_spritesheet.webp",
-  },
-  {
-    seed: "tibo",
-    name: "Tibo (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/tibo_spritesheet.webp",
-  },
-  {
-    seed: "tom",
-    name: "Tom (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/tom_spritesheet.webp",
-  },
-  {
-    seed: "totoro",
-    name: "Totoro (Community)",
-    isAnimated: true,
-    spritesheet: "/arena_of_100/totoro_spritesheet.webp",
-  },
-];
+const SPRITESHEET_PATH = "/arena_of_100";
+
+const AVATAR_METADATA: Record<AvatarSeed, { name: string }> = {
+  jellyfrog: { name: "Ếch Thạch (Jelly)" },
+  dario: { name: "CEO Dario" },
+  dentist: { name: "Nha Sĩ Chibi" },
+  nyakoshigure: { name: "Mèo Nyako" },
+  slavik: { name: "Slavik Tracksuit" },
+  tux: { name: "Chim Cánh Cụt Tux" },
+  yellingdario: { name: "Dario Gào Thét" },
+  yorhasit2b: { name: "Hiệp Sĩ 2B Ngơ" },
+  airring: { name: "AirRing (Community)" },
+  "ask-jeeves": { name: "Ask Jeeves (Community)" },
+  azure: { name: "Azure (Community)" },
+  "broom-belle": { name: "Kiki (Community)" },
+  "capy-2": { name: "Capy (Community)" },
+  cinder: { name: "Cinder (Community)" },
+  clawd: { name: "Clawd (Community)" },
+  clippy: { name: "Clippy (Community)" },
+  "da-zhuang": { name: "Đại Tráng (Community)" },
+  dev: { name: "Dev (Community)" },
+  dewdrop: { name: "Dewdrop (Community)" },
+  doodlebob: { name: "Doodle Bob (Community)" },
+  dude: { name: "Dude (Community)" },
+  duo: { name: "Duo (Community)" },
+  einstein: { name: "Einstein (Community)" },
+  esheep64: { name: "eSheep64 (Community)" },
+  finderguy: { name: "Finder Guy (Community)" },
+  "fine-pup": { name: "Fine Pup (Community)" },
+  "goblin-goods": { name: "Goblin Goods (Community)" },
+  goblin: { name: "Goblin (Community)" },
+  goose: { name: "Goose (Community)" },
+  kwehlet: { name: "Kwehlet (Community)" },
+  "mini-sama": { name: "Mini Sama (Community)" },
+  "miss-minute": { name: "Miss Minute (Community)" },
+  "pc-guy": { name: "PC Guy (Community)" },
+  "pope-amodei": { name: "Pope Amodei (Community)" },
+  rubick: { name: "Rubick (Community)" },
+  sumi: { name: "Sumi (Community)" },
+  "super-piglet": { name: "Super Piglet (Community)" },
+  theo: { name: "Theo (Community)" },
+  thragg: { name: "Thragg (Community)" },
+  tibo: { name: "Tibo (Community)" },
+  tom: { name: "Tom (Community)" },
+  totoro: { name: "Totoro (Community)" },
+};
+
+// Derived from AVATAR_SEEDS (const from @arena/shared) and therefore
+// guaranteed to be non-empty at runtime; no empty-list guard needed.
+export const avatars: AvatarOption[] = AVATAR_SEEDS.map((seed) => ({
+  seed,
+  name: AVATAR_METADATA[seed].name,
+  isAnimated: true,
+  spritesheet: `${SPRITESHEET_PATH}/${seed}_spritesheet.webp`,
+}));
+
+export function findAvatarBySeed(seed: AvatarSeed): AvatarOption {
+  if (avatars.length === 0) {
+    throw new Error(
+      "findAvatarBySeed: AVATAR_SEEDS yielded no entries; avatar catalog is empty.",
+    );
+  }
+  return avatars.find((a) => a.seed === seed) ?? (avatars[0] as AvatarOption);
+}

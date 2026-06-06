@@ -3,11 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "audit:a11y": "python3 ../../.opencode/skills/frontend-design/scripts/accessibility_checker.py src",
+    "audit:ux": "python3 ../../.opencode/skills/frontend-design/scripts/ux_audit.py src",
     "build": "next build",
     "dev": "NEXT_FONT_GOOGLE_MOCK=1 next dev --port 3000",
     "start": "next start",
     "lint": "next lint --cache-location .eslintcache",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify": "pnpm build && pnpm typecheck && pnpm lint"
   },
   "dependencies": {
     "@arena/shared": "workspace:*",

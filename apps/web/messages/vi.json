@@ -1,4 +1,7 @@
 {
+  "common": {
+    "skipToMainContent": "Chuyển đến nội dung chính"
+  },
   "HomePage": {
     "subtitle": "Đấu Trường Trí Tuệ Sinh Tử",
     "enterNickname": "Nhập Biệt Danh Chiến Đấu",
@@ -118,22 +121,75 @@
       "matches": "TỔNG SỐ TRẬN",
       "wins": "VÔ ĐỊCH (WINS)",
       "averageResponse": "PHẢN XẠ TRUNG BÌNH",
-      "accuracy": "TỶ LỆ CHÍNH XÁC"
+      "accuracy": "TỶ LỆ CHÍNH XÁC",
+      "footer": {
+        "totalScore": "TỔNG ĐIỂM",
+        "winRate": "TỶ LỆ THẮNG",
+        "survivalRate": "TỶ LỆ SỐNG SÓT",
+        "correctAnswers": "ĐÁP ĐÚNG"
+      }
     },
     "history": {
       "title": "LỊCH SỬ THI ĐẤU GẦN ĐÂY",
       "score": "ĐIỂM SỐ",
-      "rank": "THỨ HẠNG"
+      "rank": "THỨ HẠNG",
+      "players": "NGƯỜI CHƠI",
+      "duration": "THỜI LƯỢNG",
+      "empty": "Chưa có lịch sử thi đấu — hãy tham gia trận đầu tiên!",
+      "loadMore": "TẢI THÊM"
     },
     "status": {
       "WON": "CHIẾN THẮNG",
-      "ELIMINATED": "BỊ LOẠI"
+      "ELIMINATED": "BỊ LOẠI",
+      "ABANDONED": "BỎ CUỘC"
     },
-    "modes": {
-      "arena1vs100": "Đấu Trường 1 vs 100",
-      "publicRoom": "Phòng Công Cộng",
-      "speedMode": "Chế Độ Siêu Tốc",
-      "survivalQuiz": "Trắc Nghiệm Sinh Tồn"
+    "roomCategory": {
+      "ALL": "Tất cả",
+      "SCIENCE": "Khoa học",
+      "HISTORY": "Lịch sử",
+      "TECHNOLOGY": "Công nghệ",
+      "CULTURE": "Văn hóa"
+    },
+    "error": {
+      "loadFailed": "Không tải được dữ liệu hồ sơ.",
+      "signinRequired": "Hãy đăng nhập để xem hồ sơ.",
+      "retry": "Thử lại"
+    }
+  },
+  "rankings": {
+    "title": "BẢNG VÀNG CAO THỦ",
+    "subtitle": "Vinh danh những bộ óc siêu việt sống sót lâu nhất trong đấu trường",
+    "period": {
+      "weekly": "TUẦN NÀY",
+      "all": "ALL-TIME"
+    },
+    "tableTitle": "TOP PHÂN HẠNG TIẾP THEO",
+    "columns": {
+      "rank": "Hạng",
+      "player": "Đấu Thủ",
+      "score": "Điểm Số",
+      "speed": "Phản Xạ",
+      "accuracy": "Tỉ Lệ Đúng"
+    },
+    "accuracyShort": "Chính xác",
+    "empty": "Chưa có dữ liệu xếp hạng.",
+    "error": {
+      "loadFailed": "Không tải được bảng xếp hạng.",
+      "rowUnavailable": "Không thể hiển thị hàng bảng xếp hạng.",
+      "retry": "Thử lại"
+    }
+  },
+  "settings": {
+    "avatar": {
+      "title": "HÌNH ĐẠI DIỆN",
+      "subtitle": "Chọn nhân vật đại diện cho bạn trong đấu trường.",
+      "current": "HIỆN TẠI",
+      "selectAvatar": "Chọn Hình Đại Diện",
+      "avatarNavigation": "Điều hướng hình đại diện",
+      "previous": "Avatar trước",
+      "next": "Avatar tiếp theo",
+      "updated": "Đã cập nhật hình đại diện!",
+      "updateFailed": "Không thể cập nhật hình đại diện."
     }
   }
 }

@@ -143,7 +143,8 @@ describe("MatchStateMachine.serialize/deserialize", () => {
 
     // Verify player score and correctAnswers are updated before serialization
     const preSerializeState = machine.getState();
-    expect(preSerializeState.players.get("p1")?.score).toBe(0); // Score not implemented yet
+    // B2: responseTime=100ms → bonus=(10000-100)/200=49.5 → floor=49 → total=149
+    expect(preSerializeState.players.get("p1")?.score).toBe(149);
     expect(preSerializeState.players.get("p1")?.correctAnswers).toBe(1);
     expect(preSerializeState.players.get("p1")?.totalResponseTimeMs).toBe(100);
 
@@ -155,7 +156,7 @@ describe("MatchStateMachine.serialize/deserialize", () => {
     expect(state.players.get("p2")?.status).toBe(PlayerStatus.ELIMINATED);
 
     // Verify player score and correctAnswers are preserved through serialization
-    expect(state.players.get("p1")?.score).toBe(0); // Score not implemented yet
+    expect(state.players.get("p1")?.score).toBe(149);
     expect(state.players.get("p1")?.correctAnswers).toBe(1);
     expect(state.players.get("p1")?.totalResponseTimeMs).toBe(100);
   });
@@ -845,5 +846,139 @@ describe("MatchStateMachine guard branches", () => {
       customDuration,
     );
     expect(round.endsAt).toBe(round.startedAt + customDuration);
+  });
+});
+
+// ============================================================
+// B2: Score accumulation and getPlayerScores
+// ============================================================
+
+describe("MatchStateMachine score accumulation (B2)", () => {
+  const setupActiveRound = (
+    machine: MatchStateMachine,
+    correctAnswer = "A",
+  ) => {
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    return machine.startRound({
+      id: "q1",
+      content: "Pick A",
+      options: ["A", "B"],
+      correctAnswer,
+    });
+  };
+
+  it("awards 0 score to a player who answered wrong", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    const round = setupActiveRound(machine);
+
+    machine.submitAnswer("p1", "B", round.startedAt + 500); // wrong
+    machine.submitAnswer("p2", "A", round.startedAt + 2000); // correct
+
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound();
+
+    const scores = machine.getPlayerScores();
+    const p1 = scores.find((s) => s.userId === "p1")!;
+    const p2 = scores.find((s) => s.userId === "p2")!;
+    expect(p1.score).toBe(0);
+    expect(p2.score).toBeGreaterThan(0);
+  });
+
+  it("awards 0 score to a player who did not answer", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    const round = setupActiveRound(machine);
+
+    machine.submitAnswer("p1", "A", round.startedAt + 100);
+    // p2 doesn't answer
+
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound();
+
+    const scores = machine.getPlayerScores();
+    const p1 = scores.find((s) => s.userId === "p1")!;
+    const p2 = scores.find((s) => s.userId === "p2")!;
+    expect(p1.score).toBeGreaterThan(0);
+    expect(p2.score).toBe(0);
+  });
+
+  it("accumulates score across multiple rounds for the same player", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    // Round 1: p1 correct, p2 wrong (eliminated)
+    const round1 = setupActiveRound(machine);
+    machine.submitAnswer("p1", "A", round1.startedAt + 200);
+    machine.submitAnswer("p2", "B", round1.startedAt + 200);
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound();
+    machine.transition(MatchStatus.ROUND_RESULT);
+
+    // Round 2: only p1 survives, p2 is eliminated and cannot submit
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    const round2 = machine.startRound({
+      id: "q2",
+      content: "Pick A again",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+    machine.submitAnswer("p1", "A", round2.startedAt + 4000);
+    // p2 is ELIMINATED — submitAnswer will throw, so don't call it
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound();
+
+    const scores = machine.getPlayerScores();
+    const p1 = scores.find((s) => s.userId === "p1")!;
+    // Round 1: rt=200 → bonus=(10000-200)/200=49 → floor=49 → total=149
+    // Round 2: rt=4000 → bonus=(10000-4000)/200=30 → floor=30 → total=130
+    // p1 sum: 149 + 130 = 279
+    expect(p1.score).toBe(279);
+    // p2 was eliminated in round 1, never scored
+    const p2 = scores.find((s) => s.userId === "p2")!;
+    expect(p2.score).toBe(0);
+  });
+
+  it("getPlayerScores returns all players even with score=0", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    const scores = machine.getPlayerScores();
+    expect(scores).toHaveLength(2);
+    expect(scores.every((s) => s.score === 0)).toBe(true);
+  });
+
+  it("getPlayerScores is a snapshot (mutating result does not affect internal state)", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    const round = setupActiveRound(machine);
+    machine.submitAnswer("p1", "A", round.startedAt + 100);
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound();
+
+    const scores = machine.getPlayerScores();
+    scores[0].score = 99999; // attempt to mutate
+    const fresh = machine.getPlayerScores();
+    expect(fresh[0].score).not.toBe(99999);
+  });
+
+  it("max bonus edge: responseTime=0 yields total=150", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    const round = setupActiveRound(machine);
+    machine.submitAnswer("p1", "A", round.startedAt + 0); // instant
+    machine.submitAnswer("p2", "B", round.startedAt + 0);
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound();
+
+    const scores = machine.getPlayerScores();
+    const p1 = scores.find((s) => s.userId === "p1")!;
+    expect(p1.score).toBe(150); // 100 base + 50 max bonus
+  });
+
+  it("min bonus edge: responseTime>=10000 yields total=100 (no bonus)", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    const round = setupActiveRound(machine);
+    machine.submitAnswer("p1", "A", round.startedAt + 12000); // slow but correct
+    machine.submitAnswer("p2", "B", round.startedAt + 12000);
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound();
+
+    const scores = machine.getPlayerScores();
+    const p1 = scores.find((s) => s.userId === "p1")!;
+    expect(p1.score).toBe(100); // 100 base + 0 bonus
   });
 });

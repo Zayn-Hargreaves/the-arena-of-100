@@ -16,8 +16,10 @@ export class RedisService implements OnModuleDestroy {
       "REDIS_URL",
       "redis://localhost:6379",
     );
+    const keyPrefix = this.configService.get<string>("REDIS_KEY_PREFIX");
 
     this.client = new Redis(redisUrl, {
+      ...(keyPrefix ? { keyPrefix } : {}),
       maxRetriesPerRequest: 3,
       retryStrategy(times) {
         return Math.min(times * 50, 2000);

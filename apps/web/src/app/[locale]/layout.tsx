@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-import { Toaster } from "@/components/ui/toaster";
-import { TooltipProvider } from "@/components/ui/tooltip-provider";
+import { AppProviders } from "@/components/providers/app-providers";
 import { hasLocale, NextIntlClientProvider } from "next-intl";
 import {
   getMessages,
@@ -51,10 +50,7 @@ export default async function LocaleLayout({
 
   return (
     <NextIntlClientProvider messages={messages}>
-      <TooltipProvider>
-        {children}
-        <Toaster />
-      </TooltipProvider>
+      <AppProviders>{children}</AppProviders>
     </NextIntlClientProvider>
   );
 }

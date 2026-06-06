@@ -1,4 +1,7 @@
 {
+  "common": {
+    "skipToMainContent": "Skip to main content"
+  },
   "HomePage": {
     "subtitle": "Battle Royale Quiz",
     "enterNickname": "Enter Battle Nickname",
@@ -118,22 +121,75 @@
       "matches": "TOTAL MATCHES",
       "wins": "VICTORIES (WINS)",
       "averageResponse": "AVERAGE RESPONSE",
-      "accuracy": "ACCURACY RATE"
+      "accuracy": "ACCURACY RATE",
+      "footer": {
+        "totalScore": "TOTAL SCORE",
+        "winRate": "WIN RATE",
+        "survivalRate": "SURVIVAL RATE",
+        "correctAnswers": "CORRECT ANSWERS"
+      }
     },
     "history": {
       "title": "RECENT BATTLE HISTORY",
       "score": "SCORE",
-      "rank": "RANK"
+      "rank": "RANK",
+      "players": "PLAYERS",
+      "duration": "DURATION",
+      "empty": "No recent battle history yet — join your first match!",
+      "loadMore": "LOAD MORE"
     },
     "status": {
       "WON": "VICTORY",
-      "ELIMINATED": "ELIMINATED"
+      "ELIMINATED": "ELIMINATED",
+      "ABANDONED": "ABANDONED"
     },
-    "modes": {
-      "arena1vs100": "Arena 1 vs 100",
-      "publicRoom": "Public Room",
-      "speedMode": "Speed Mode",
-      "survivalQuiz": "Survival Quiz"
+    "roomCategory": {
+      "ALL": "All",
+      "SCIENCE": "Science",
+      "HISTORY": "History",
+      "TECHNOLOGY": "Technology",
+      "CULTURE": "Culture"
+    },
+    "error": {
+      "loadFailed": "Failed to load profile data.",
+      "signinRequired": "Please sign in to view your profile.",
+      "retry": "Retry"
+    }
+  },
+  "rankings": {
+    "title": "CHAMPIONS LEADERBOARD",
+    "subtitle": "Honoring the sharpest minds surviving the arena",
+    "period": {
+      "weekly": "THIS WEEK",
+      "all": "ALL-TIME"
+    },
+    "tableTitle": "NEXT TOP RANKED PLAYERS",
+    "columns": {
+      "rank": "Rank",
+      "player": "Player",
+      "score": "Score",
+      "speed": "Speed",
+      "accuracy": "Accuracy"
+    },
+    "accuracyShort": "Accuracy",
+    "empty": "No leaderboard data yet.",
+    "error": {
+      "loadFailed": "Failed to load leaderboard.",
+      "rowUnavailable": "Leaderboard row unavailable.",
+      "retry": "Retry"
+    }
+  },
+  "settings": {
+    "avatar": {
+      "title": "AVATAR",
+      "subtitle": "Choose the character that represents you in the arena.",
+      "current": "CURRENT",
+      "selectAvatar": "Select Avatar",
+      "avatarNavigation": "Avatar navigation",
+      "previous": "Previous Avatar",
+      "next": "Next Avatar",
+      "updated": "Avatar updated successfully!",
+      "updateFailed": "Failed to update avatar."
     }
   }
 }

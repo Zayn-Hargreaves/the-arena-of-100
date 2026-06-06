@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -28,38 +31,30 @@ jobs:
         node-version: [20, 22]
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a
         with:
           version: 9.15.4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'pnpm'
 
-      - name: Cache node_modules
-        id: node-modules-cache
-        uses: actions/cache@v4
-        with:
-          path: '**/node_modules'
-          key: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ matrix.node-version }}
-
       - name: Install dependencies
-        if: steps.node-modules-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Check for Prisma Cache
         id: prisma-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             node_modules/.prisma
             apps/api/node_modules/.prisma
-          key: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
+          key: prisma-${{ runner.os }}-${{ matrix.node-version }}-${{ hashFiles('pnpm-lock.yaml', 'apps/api/prisma/schema.prisma') }}
 
       - name: Generate Prisma Client
         if: steps.prisma-cache.outputs.cache-hit != 'true'
@@ -69,12 +64,12 @@ jobs:
 
       - name: Save Prisma Cache
         if: steps.prisma-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             node_modules/.prisma
             apps/api/node_modules/.prisma
-          key: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
+          key: prisma-${{ runner.os }}-${{ matrix.node-version }}-${{ hashFiles('pnpm-lock.yaml', 'apps/api/prisma/schema.prisma') }}
 
   lint:
     needs: install
@@ -84,38 +79,30 @@ jobs:
         node-version: [20, 22]
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a
         with:
           version: 9.15.4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'pnpm'
 
-      - name: Restore node_modules
-        id: node-modules-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: '**/node_modules'
-          key: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ matrix.node-version }}
-
       - name: Install dependencies
-        if: steps.node-modules-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Restore Prisma Client
         id: prisma-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             node_modules/.prisma
             apps/api/node_modules/.prisma
-          key: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
+          key: prisma-${{ runner.os }}-${{ matrix.node-version }}-${{ hashFiles('pnpm-lock.yaml', 'apps/api/prisma/schema.prisma') }}
 
       - name: Fallback Generate Prisma
         if: steps.prisma-cache.outputs.cache-hit != 'true'
@@ -160,38 +147,30 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a
         with:
           version: 9.15.4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'pnpm'
 
-      - name: Restore node_modules
-        id: node-modules-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: '**/node_modules'
-          key: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ matrix.node-version }}
-
       - name: Install dependencies
-        if: steps.node-modules-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Restore Prisma Client
         id: prisma-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             node_modules/.prisma
             apps/api/node_modules/.prisma
-          key: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
+          key: prisma-${{ runner.os }}-${{ matrix.node-version }}-${{ hashFiles('pnpm-lock.yaml', 'apps/api/prisma/schema.prisma') }}
 
       - name: Fallback Generate Prisma
         if: steps.prisma-cache.outputs.cache-hit != 'true'
@@ -208,13 +187,163 @@ jobs:
           NODE_ENV: test
 
       - name: Upload Coverage
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: |
             apps/api/coverage/lcov.info
             packages/game-core/coverage/lcov.info
           fail_ci_if_error: true
+          skip_validation: true
+
+  e2e:
+    needs: install
+    runs-on: ubuntu-latest
+    env:
+      CI_DB_E2E_USER: arena_test
+      CI_DB_E2E_PASSWORD: arena_test
+      CI_DB_E2E_NAME: arena_test
+    strategy:
+      matrix:
+        node-version: [20, 22]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: arena_test
+          POSTGRES_PASSWORD: arena_test
+          POSTGRES_DB: arena_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore Prisma Client
+        id: prisma-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            node_modules/.prisma
+            apps/api/node_modules/.prisma
+          key: prisma-${{ runner.os }}-${{ matrix.node-version }}-${{ hashFiles('pnpm-lock.yaml', 'apps/api/prisma/schema.prisma') }}
+
+      - name: Fallback Generate Prisma
+        if: steps.prisma-cache.outputs.cache-hit != 'true'
+        run: pnpm db:generate
+        env:
+          DATABASE_URL: postgresql://${{ env.CI_DB_E2E_USER }}:${{ env.CI_DB_E2E_PASSWORD }}@localhost:5432/${{ env.CI_DB_E2E_NAME }}
+
+      - name: Push Prisma schema to test DB
+        run: pnpm --filter @arena/api exec prisma db push
+        env:
+          DATABASE_URL: postgresql://${{ env.CI_DB_E2E_USER }}:${{ env.CI_DB_E2E_PASSWORD }}@localhost:5432/${{ env.CI_DB_E2E_NAME }}
+
+      - name: Seed questions (dev dataset)
+        run: pnpm --filter @arena/api prisma:seed:dev
+        env:
+          DATABASE_URL: postgresql://${{ env.CI_DB_E2E_USER }}:${{ env.CI_DB_E2E_PASSWORD }}@localhost:5432/${{ env.CI_DB_E2E_NAME }}
+
+      - name: Seed demo users + matches
+        run: pnpm --filter @arena/api prisma:seed:demo:unsafe
+        env:
+          DATABASE_URL: postgresql://${{ env.CI_DB_E2E_USER }}:${{ env.CI_DB_E2E_PASSWORD }}@localhost:5432/${{ env.CI_DB_E2E_NAME }}
+
+      - name: Run E2E tests
+        # Bypass the workspace `test:e2e` script because it hardcodes
+        # DATABASE_URL via cross-env, which would override the CI
+        # step-level env. We call vitest directly so the URL and
+        # Redis DB index configured above are honored.
+        run: pnpm --filter @arena/api exec vitest run --config test/vitest-e2e.config.ts
+        env:
+          DATABASE_URL: postgresql://${{ env.CI_DB_E2E_USER }}:${{ env.CI_DB_E2E_PASSWORD }}@localhost:5432/${{ env.CI_DB_E2E_NAME }}
+          REDIS_URL: redis://localhost:6379/1
+          NODE_ENV: test
+          JWT_SECRET: ${{ secrets.CI_JWT_SECRET || 'ci-test-secret-key' }}
+
+      - name: Publish E2E summary
+        if: always()
+        run: |
+          node <<'EOF'
+          const fs = require('node:fs')
+          const reportPath = 'apps/api/test-results/e2e-report.json'
+          const summaryPath = process.env.GITHUB_STEP_SUMMARY
+
+          if (!summaryPath || !fs.existsSync(reportPath)) {
+            process.exit(0)
+          }
+
+          const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'))
+          const startedAt = typeof report.startTime === 'number'
+            ? new Date(report.startTime).toISOString()
+            : 'n/a'
+
+          const lines = [
+            '## E2E Test Summary',
+            '',
+            `- Node: ${process.env.NODE_VERSION ?? 'unknown'}`,
+            `- Success: ${report.success ? '✅ yes' : '❌ no'}`,
+            `- Test suites: ${report.numPassedTestSuites ?? 0}/${report.numTotalTestSuites ?? 0} passed`,
+            `- Tests: ${report.numPassedTests ?? 0}/${report.numTotalTests ?? 0} passed`,
+            `- Failed: ${report.numFailedTests ?? 0}`,
+            `- Pending: ${report.numPendingTests ?? 0}`,
+            `- Todo: ${report.numTodoTests ?? 0}`,
+            `- Started: ${startedAt}`,
+          ]
+
+          const failedSuites = Array.isArray(report.testResults)
+            ? report.testResults.filter((suite) => suite.status === 'failed')
+            : []
+
+          if (failedSuites.length > 0) {
+            lines.push('', '### Failed suites')
+            for (const suite of failedSuites.slice(0, 10)) {
+              lines.push(`- ${suite.name}`)
+            }
+          }
+
+          fs.appendFileSync(summaryPath, `${lines.join('\n')}\n`)
+          EOF
+        env:
+          NODE_VERSION: ${{ matrix.node-version }}
+
+      - name: Upload E2E reports on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: e2e-reports-node-${{ matrix.node-version }}
+          path: apps/api/test-results
+          if-no-files-found: ignore
 
   build:
     needs: install
@@ -224,38 +353,30 @@ jobs:
         node-version: [20, 22]
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a
         with:
           version: 9.15.4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'pnpm'
 
-      - name: Restore node_modules
-        id: node-modules-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: '**/node_modules'
-          key: node-modules-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ matrix.node-version }}
-
       - name: Install dependencies
-        if: steps.node-modules-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Restore Prisma Client
         id: prisma-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             node_modules/.prisma
             apps/api/node_modules/.prisma
-          key: prisma-${{ runner.os }}-${{ hashFiles('apps/api/prisma/schema.prisma') }}
+          key: prisma-${{ runner.os }}-${{ matrix.node-version }}-${{ hashFiles('pnpm-lock.yaml', 'apps/api/prisma/schema.prisma') }}
 
       - name: Fallback Generate Prisma
         if: steps.prisma-cache.outputs.cache-hit != 'true'
@@ -267,7 +388,7 @@ jobs:
         run: pnpm build
 
       - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: build-artifacts
           path: |

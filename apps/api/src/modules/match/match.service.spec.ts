@@ -18,9 +18,19 @@ describe("MatchService", () => {
     prisma = {
       room: { findUnique: vi.fn(), update: vi.fn() },
       match: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
-      matchPlayer: { createMany: vi.fn() },
+      matchPlayer: {
+        createMany: vi.fn(),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
       matchRound: { create: vi.fn() },
       answer: { create: vi.fn(), createMany: vi.fn() },
+      $transaction: vi.fn(async (ops) => {
+        // Execute all operations sequentially for test fidelity
+        if (Array.isArray(ops)) {
+          return Promise.all(ops);
+        }
+        return ops(prisma);
+      }),
     } as unknown as PrismaService;
     redis = {
       set: vi.fn(),
@@ -316,6 +326,208 @@ describe("MatchService", () => {
       const result = await service.saveAnswers([]);
       expect(result.count).toBe(0);
       expect(prisma.answer.createMany).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
+  // B2: finishMatch persists accumulated scores to DB
+  // ============================================================
+  describe("finishMatch (B2 — score persistence)", () => {
+    /**
+     * Run a round where each player answers with the given correctness and responseTime.
+     * Uses the public state machine API to actually accumulate scores.
+     * `roundIndex` 0 = first round (transitions CREATED → COUNTDOWN → ROUND_ACTIVE).
+     * Subsequent rounds transition ROUND_RESULT → ROUND_ACTIVE.
+     */
+    const playRound = async (
+      matchId: string,
+      answers: Array<{
+        playerId: string;
+        answer: string;
+        isCorrect: boolean;
+        responseTimeMs: number;
+      }>,
+      roundIndex = 0,
+    ) => {
+      const sm = await service.getStateMachine(matchId);
+      if (!sm) throw new Error("State machine not found");
+
+      if (roundIndex === 0) {
+        sm.transition(MatchStatus.COUNTDOWN);
+      }
+      sm.transition(MatchStatus.ROUND_ACTIVE);
+      const round = sm.startRound({
+        id: `q-${matchId}-${roundIndex}`,
+        content: "?",
+        options: ["A", "B"],
+        correctAnswer: "A",
+      });
+      for (const a of answers) {
+        try {
+          sm.submitAnswer(
+            a.playerId,
+            a.answer,
+            round.startedAt + a.responseTimeMs,
+          );
+        } catch {
+          // ignore - might already be eliminated
+        }
+      }
+      sm.transition(MatchStatus.ROUND_EVALUATING);
+      sm.evaluateRound();
+      sm.transition(MatchStatus.ROUND_RESULT);
+    };
+
+    const setupMatch = async (
+      matchId: string,
+      roomId: string,
+      playerIds: string[],
+    ) => {
+      const room = {
+        id: roomId,
+        players: playerIds.map((id, i) => ({
+          user: { id, username: `User${i + 1}` },
+        })),
+      };
+      vi.mocked(prisma.room.findUnique).mockResolvedValue(room as any);
+      vi.mocked(prisma.match.create).mockResolvedValue({
+        id: matchId,
+        roomId,
+      } as any);
+      vi.mocked(prisma.matchPlayer.createMany).mockResolvedValue({
+        count: playerIds.length,
+      } as any);
+      vi.mocked(prisma.room.update).mockResolvedValue({} as any);
+      vi.mocked(prisma.match.update).mockResolvedValue({
+        id: matchId,
+        roomId,
+      } as any);
+
+      await service.createMatch(roomId);
+    };
+
+    it("persists accumulated scores to match_players for all players", async () => {
+      await setupMatch("m1", "r1", ["u1", "u2"]);
+
+      // Round 1: u1 correct fast (200ms → 149pts), u2 correct slow (8000ms → 100pts)
+      await playRound("m1", [
+        { playerId: "u1", answer: "A", isCorrect: true, responseTimeMs: 200 },
+        { playerId: "u2", answer: "A", isCorrect: true, responseTimeMs: 8000 },
+      ]);
+
+      await service.finishMatch("m1", "u1");
+
+      // Verify $transaction was invoked with an array of 2 updateMany operations
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      const txArg = vi.mocked(prisma.$transaction).mock.calls[0][0];
+      expect(Array.isArray(txArg)).toBe(true);
+      expect(txArg).toHaveLength(2);
+
+      // Inspect each updateMany call's args to verify scores
+      const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
+        .calls;
+      const u1Call = updateManyCalls.find((c) => c[0].where.userId === "u1");
+      const u2Call = updateManyCalls.find((c) => c[0].where.userId === "u2");
+      expect(u1Call).toBeDefined();
+      expect(u2Call).toBeDefined();
+      // u1: rt=200 → (10000-200)/200 = 49 → total=149
+      expect(u1Call![0].where.matchId).toBe("m1");
+      expect(u1Call![0].data.score).toBe(149);
+      // u2: rt=8000 → (10000-8000)/200 = 10 → total=110
+      expect(u2Call![0].data.score).toBe(110);
+    });
+
+    it("skips score persistence when state machine is no longer in memory", async () => {
+      await setupMatch("m1", "r1", ["u1", "u2"]);
+
+      // Manually evict state machine (simulating failure scenario)
+      const internalMap = (service as any).stateMachines as Map<
+        string,
+        unknown
+      >;
+      expect(internalMap.has("m1")).toBe(true);
+      internalMap.delete("m1");
+
+      await service.finishMatch("m1", "u1");
+
+      // Should NOT throw, should still update match+room
+      expect(prisma.match.update).toHaveBeenCalled();
+      // Should NOT have called $transaction for score persistence
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      // updateMany should not have been called
+      expect(prisma.matchPlayer.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("persists score 0 for players who never answered correctly", async () => {
+      await setupMatch("m1", "r1", ["u1", "u2"]);
+
+      // Round 1: u1 correct, u2 wrong
+      await playRound("m1", [
+        { playerId: "u1", answer: "A", isCorrect: true, responseTimeMs: 200 },
+        { playerId: "u2", answer: "B", isCorrect: false, responseTimeMs: 500 },
+      ]);
+
+      await service.finishMatch("m1", "u1");
+
+      const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
+        .calls;
+      const u2Call = updateManyCalls.find((c) => c[0].where.userId === "u2");
+      expect(u2Call).toBeDefined();
+      expect(u2Call![0].data.score).toBe(0);
+    });
+
+    it("continues to update match and room status even if score persistence fails", async () => {
+      await setupMatch("m1", "r1", ["u1", "u2"]);
+
+      // Make $transaction fail
+      vi.mocked(prisma.$transaction).mockRejectedValueOnce(
+        new Error("DB transaction failed"),
+      );
+
+      // Should NOT throw — score persistence failure is logged but non-fatal
+      await expect(service.finishMatch("m1", "u1")).resolves.toBeDefined();
+
+      // Match and room updates should still have happened
+      expect(prisma.match.update).toHaveBeenCalled();
+    });
+
+    it("accumulates score across multiple rounds correctly", async () => {
+      await setupMatch("m1", "r1", ["u1", "u2"]);
+
+      // Round 1: u1 correct fast (200ms → 149pts), u2 correct slow (4000ms → 130pts)
+      await playRound(
+        "m1",
+        [
+          { playerId: "u1", answer: "A", isCorrect: true, responseTimeMs: 200 },
+          {
+            playerId: "u2",
+            answer: "A",
+            isCorrect: true,
+            responseTimeMs: 4000,
+          },
+        ],
+        0,
+      );
+      // Round 2: u1 correct fast again (200ms → 149pts), u2 wrong (eliminated)
+      await playRound(
+        "m1",
+        [
+          { playerId: "u1", answer: "A", isCorrect: true, responseTimeMs: 200 },
+          // u2 already eliminated, can't submit
+        ],
+        1,
+      );
+
+      await service.finishMatch("m1", "u1");
+
+      const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
+        .calls;
+      const u1Call = updateManyCalls.find((c) => c[0].where.userId === "u1");
+      const u2Call = updateManyCalls.find((c) => c[0].where.userId === "u2");
+      // u1: 149 + 149 = 298
+      expect(u1Call![0].data.score).toBe(298);
+      // u2: only round 1 correct = 130
+      expect(u2Call![0].data.score).toBe(130);
     });
   });
 });

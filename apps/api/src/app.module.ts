@@ -15,6 +15,8 @@ import { RoomModule } from "./modules/room/room.module";
 import { MatchModule } from "./modules/match/match.module";
 import { QuestionModule } from "./modules/question/question.module";
 import { AdminModule } from "./modules/admin/admin.module";
+import { UsersModule } from "./modules/users/users.module";
+import { RankingsModule } from "./modules/rankings/rankings.module";
 import { GameGateway } from "./gateways/game.gateway";
 import { AuthHandler, RoomHandler, MatchHandler } from "./gateways/handlers";
 import { TransformInterceptor } from "./common/interceptors/transform.interceptor";
@@ -48,6 +50,8 @@ import { ThrottlerGuard } from "@nestjs/throttler";
     MatchModule,
     QuestionModule,
     AdminModule,
+    UsersModule,
+    RankingsModule,
   ],
   providers: [
     GameGateway,
