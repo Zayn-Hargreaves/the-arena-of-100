@@ -18,6 +18,8 @@ interface TestEnvState {
 }
 
 const stateByFile = new Map<string, TestEnvState>();
+const ORIGINAL_DATABASE_URL = process.env.DATABASE_URL ?? "";
+const ORIGINAL_REDIS_KEY_PREFIX = process.env.REDIS_KEY_PREFIX;
 
 function sanitizeId(value: string): string {
   return value
@@ -43,11 +45,28 @@ function maskConnectionString(value: string): string {
 }
 
 function baseDatabaseUrl(): string {
-  return process.env.DATABASE_URL ?? "";
+  return ORIGINAL_DATABASE_URL;
 }
 
 function baseRedisUrl(): string {
   return process.env.REDIS_URL ?? "";
+}
+
+function redisDbIndex(): number {
+  const pathname = new URL(baseRedisUrl()).pathname;
+  const parsed = Number(pathname.slice(1));
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function restoreBaseTestEnv(): void {
+  process.env.DATABASE_URL = ORIGINAL_DATABASE_URL;
+
+  if (ORIGINAL_REDIS_KEY_PREFIX === undefined) {
+    delete process.env.REDIS_KEY_PREFIX;
+    return;
+  }
+
+  process.env.REDIS_KEY_PREFIX = ORIGINAL_REDIS_KEY_PREFIX;
 }
 
 function assertBaseTestEnv(): void {
@@ -71,7 +90,7 @@ function assertBaseTestEnv(): void {
     );
   }
 
-  if (!baseRedisUrl().includes("/1")) {
+  if (redisDbIndex() !== 1) {
     throw new Error(
       "❌ E2E tests require REDIS_URL to target DB index 1. " +
         "Set REDIS_URL=redis://localhost:6379/1.",
@@ -176,9 +195,11 @@ export async function prepareE2ETestEnv(importMetaUrl: string): Promise<void> {
 export async function cleanupE2ETestEnv(importMetaUrl: string): Promise<void> {
   const state = stateByFile.get(importMetaUrl);
   if (!state) {
+    restoreBaseTestEnv();
     return;
   }
 
   await dropTestDatabase(state.databaseName);
   stateByFile.delete(importMetaUrl);
+  restoreBaseTestEnv();
 }

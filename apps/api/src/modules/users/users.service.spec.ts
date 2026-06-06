@@ -70,6 +70,31 @@ describe("UsersService", () => {
       });
     });
 
+    it("uses fallback aggregate rows when raw queries return empty arrays", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
+      vi.mocked(prisma.matchPlayer.groupBy).mockResolvedValue([]);
+      vi.mocked(prisma.match.count).mockResolvedValue(0);
+      vi.mocked(prisma.$queryRaw)
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+
+      const result = await service.getMyStats("u1");
+
+      expect(result).toEqual({
+        user: mockUser,
+        stats: {
+          matchesPlayed: 0,
+          wins: 0,
+          totalScore: 0,
+          avgResponseMs: 0,
+          accuracy: 0,
+          winRate: 0,
+          survivalRate: 0,
+          totalCorrectAnswers: 0,
+        },
+      });
+    });
+
     it("aggregates matchesPlayed, wins and totalScore from FINISHED matches only", async () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
       vi.mocked(prisma.matchPlayer.groupBy).mockResolvedValue([
@@ -210,7 +235,7 @@ describe("UsersService", () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
       vi.mocked(prisma.matchPlayer.groupBy).mockResolvedValue([]);
       vi.mocked(prisma.match.count).mockResolvedValue(0);
-      const opaque = { toString: () => "456" };
+      const opaque = { valueOf: undefined, toString: () => "456" };
       vi.mocked(prisma.$queryRaw)
         .mockResolvedValueOnce([
           {
@@ -226,6 +251,49 @@ describe("UsersService", () => {
       expect(result.stats.avgResponseMs).toBe(456);
       expect(result.stats.accuracy).toBe(456);
       expect(result.stats.survivalRate).toBe(456);
+    });
+
+    it("returns 0 for primitive values outside number/string/bigint", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
+      vi.mocked(prisma.matchPlayer.groupBy).mockResolvedValue([]);
+      vi.mocked(prisma.match.count).mockResolvedValue(0);
+      vi.mocked(prisma.$queryRaw)
+        .mockResolvedValueOnce([
+          {
+            avg_response_ms: true,
+            accuracy: false,
+            total_correct: 0,
+          },
+        ])
+        .mockResolvedValueOnce([{ survival_rate: true }]);
+
+      const result = await service.getMyStats("u1");
+
+      expect(result.stats.avgResponseMs).toBe(0);
+      expect(result.stats.accuracy).toBe(0);
+      expect(result.stats.survivalRate).toBe(0);
+    });
+
+    it("returns 0 when object fallback string is not numeric", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
+      vi.mocked(prisma.matchPlayer.groupBy).mockResolvedValue([]);
+      vi.mocked(prisma.match.count).mockResolvedValue(0);
+      const opaque = { valueOf: undefined, toString: () => "not-a-number" };
+      vi.mocked(prisma.$queryRaw)
+        .mockResolvedValueOnce([
+          {
+            avg_response_ms: opaque,
+            accuracy: opaque,
+            total_correct: 0,
+          },
+        ])
+        .mockResolvedValueOnce([{ survival_rate: opaque }]);
+
+      const result = await service.getMyStats("u1");
+
+      expect(result.stats.avgResponseMs).toBe(0);
+      expect(result.stats.accuracy).toBe(0);
+      expect(result.stats.survivalRate).toBe(0);
     });
   });
 
@@ -312,6 +380,76 @@ describe("UsersService", () => {
       expect(result.items[0].rank).toBe(3);
       expect(result.items[0].status).toBe("ELIMINATED");
       expect(result.items[0].roomCategory).toBe("SCIENCE");
+    });
+
+    it("marks abandoned matches, falls back playedAt to createdAt, and returns zero duration when endedAt is missing", async () => {
+      const createdAt = new Date("2026-05-30T10:00:00.000Z");
+      vi.mocked(prisma.matchPlayer.findMany).mockResolvedValueOnce([
+        {
+          id: "mp1",
+          userId: "u1",
+          matchId: "m1",
+          score: 450,
+          match: {
+            id: "m1",
+            roomId: "r1",
+            status: FINISHED,
+            winnerId: null,
+            startedAt: new Date("2026-05-30T09:55:00.000Z"),
+            endedAt: null,
+            createdAt,
+            room: { category: "HISTORY" },
+            _count: { players: 8 },
+          },
+        },
+      ]);
+      vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
+        { match_id: "m1", user_id: "u1", rank: 4 },
+      ]);
+
+      const result = await service.getMyHistory("u1", { limit: 20 });
+
+      expect(result.items[0]).toMatchObject({
+        matchId: "m1",
+        playedAt: createdAt.toISOString(),
+        roomCategory: "HISTORY",
+        playerCount: 8,
+        rank: 4,
+        score: 450,
+        status: "ABANDONED",
+        durationSec: 0,
+      });
+    });
+
+    it("returns zero duration when startedAt is missing", async () => {
+      const endedAt = new Date("2026-05-30T10:00:00.000Z");
+      vi.mocked(prisma.matchPlayer.findMany).mockResolvedValueOnce([
+        {
+          id: "mp1",
+          userId: "u1",
+          matchId: "m1",
+          score: 900,
+          match: {
+            id: "m1",
+            roomId: "r1",
+            status: FINISHED,
+            winnerId: "u1",
+            startedAt: null,
+            endedAt,
+            createdAt: endedAt,
+            room: { category: "ALL" },
+            _count: { players: 25 },
+          },
+        },
+      ]);
+      vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
+        { match_id: "m1", user_id: "u1", rank: 1 },
+      ]);
+
+      const result = await service.getMyHistory("u1", { limit: 20 });
+
+      expect(result.items[0].durationSec).toBe(0);
+      expect(result.items[0].playedAt).toBe(endedAt.toISOString());
     });
 
     it("supports cursor pagination: returns nextCursor and hasMore=true when more rows exist", async () => {

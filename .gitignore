@@ -43,6 +43,10 @@ npm-debug.log*
 # Coverage
 coverage/
 
+# Test artifacts
+apps/api/.vitest/
+apps/api/test-results/
+
 # Misc
 *.tsbuildinfo
 

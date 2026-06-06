@@ -10,6 +10,20 @@ import Redis from "ioredis";
 
 let client: Redis | null = null;
 
+function testRedisDbIndex(): number {
+  const envValue = process.env.REDIS_TEST_DB;
+  if (envValue) {
+    const parsed = Number(envValue);
+    if (Number.isInteger(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+
+  const pathname = new URL(redisUrl()).pathname;
+  const parsed = Number(pathname.slice(1));
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : 1;
+}
+
 function redisUrl(): string {
   return process.env.REDIS_URL ?? "redis://localhost:6379/1";
 }
@@ -43,6 +57,14 @@ export async function flushTestRedis(): Promise<void> {
       lazyConnect: false,
     });
     try {
+      const testDbIndex = testRedisDbIndex();
+      const selectedDb = await rawClient.select(testDbIndex);
+      if (selectedDb !== "OK") {
+        throw new Error(
+          `flushTestRedis: failed to select Redis test DB ${String(testDbIndex)}.`,
+        );
+      }
+
       let cursor = "0";
       do {
         const [nextCursor, keys] = await rawClient.scan(
