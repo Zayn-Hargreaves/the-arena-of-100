@@ -5,11 +5,13 @@ import { MatchStateMachine } from "@arena/game-core";
 import { MatchStatus, PlayerStatus } from "@arena/shared";
 import { Server } from "socket.io";
 import { vi, beforeEach, it, expect, describe } from "vitest";
+import { RoomService } from "../room/room.service";
 
 describe("GameLoopService Persistence", () => {
   let service: GameLoopService;
   let matchService: MatchService;
   let questionService: QuestionService;
+  let roomService: RoomService;
   let mockServer: Server;
   let stateMachine: MatchStateMachine;
 
@@ -55,11 +57,16 @@ describe("GameLoopService Persistence", () => {
       }),
     } as unknown as QuestionService;
 
+    roomService = {
+      updateRoomStatus: vi.fn().mockResolvedValue({}),
+      getRoom: vi.fn(),
+    } as unknown as RoomService;
+
     mockServer = {
       to: vi.fn().mockReturnValue({ emit: vi.fn() }),
     } as unknown as Server;
 
-    service = new GameLoopService(matchService, questionService);
+    service = new GameLoopService(matchService, questionService, roomService);
   });
 
   describe("endRound persistence", () => {

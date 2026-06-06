@@ -268,7 +268,7 @@ export default function ResultPage({ params }: ResultPageProps) {
           </div>
 
           <div className="relative shrink-0">
-            {winner.isAnimated ? (
+            {winner.isAnimated && winner.spritesheet ? (
               <div className="w-24 h-24 border-[3.5px] border-candy-ink rounded-2xl bg-candy-cloud overflow-hidden flex items-center justify-center relative shadow-[4px_4px_0_0_#2B2D42]">
                 <AnimatedSprite
                   src={winner.spritesheet}

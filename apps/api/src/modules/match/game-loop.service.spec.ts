@@ -5,16 +5,19 @@ import { MatchStateMachine } from "@arena/game-core";
 import {
   MatchStatus,
   PlayerStatus,
+  RoomStatus,
   ServerEvent,
   GAME_CONFIG,
 } from "@arena/shared";
 import { Server } from "socket.io";
 import { vi, beforeEach, it, expect, describe } from "vitest";
+import { RoomService } from "../room/room.service";
 
 describe("GameLoopService", () => {
   let service: GameLoopService;
   let matchService: MatchService;
   let questionService: QuestionService;
+  let roomService: RoomService;
   let mockServer: Server;
   let stateMachine: MatchStateMachine;
 
@@ -61,11 +64,22 @@ describe("GameLoopService", () => {
       }),
     } as unknown as QuestionService;
 
+    roomService = {
+      getRoom: vi.fn().mockResolvedValue({
+        id: "room-1",
+        type: "PUBLIC",
+        status: RoomStatus.WAITING,
+        currentMatchId: null,
+        players: [{ userId: "p1" }, { userId: "p2" }],
+      }),
+      updateRoomStatus: vi.fn().mockResolvedValue({}),
+    } as unknown as RoomService;
+
     mockServer = {
       to: vi.fn().mockReturnValue({ emit: vi.fn() }),
     } as unknown as Server;
 
-    service = new GameLoopService(matchService, questionService);
+    service = new GameLoopService(matchService, questionService, roomService);
   });
 
   // === TEST 1: startMatchLoop ===
@@ -86,6 +100,11 @@ describe("GameLoopService", () => {
       mockServer as unknown as Server,
     );
 
+    expect(vi.mocked(roomService.updateRoomStatus)).toHaveBeenCalledWith(
+      "room-1",
+      RoomStatus.IN_GAME,
+      "match-1",
+    );
     expect(stateMachine.getState().status).toBe(MatchStatus.COUNTDOWN);
     expect(matchService.persistStateMachine).toHaveBeenCalledWith("match-1");
     expect(emitSpy).toHaveBeenCalledWith(
@@ -126,6 +145,71 @@ describe("GameLoopService", () => {
       "match-1",
       "room-1",
       mockServer,
+    );
+
+    vi.useRealTimers();
+  });
+
+  it("starts public room countdown when enough players join", async () => {
+    vi.useFakeTimers();
+
+    const emitSpy = vi.fn();
+    (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+    const launchSpy = vi
+      .spyOn(service as any, "launchRoomMatch")
+      .mockResolvedValue({ id: "m1" });
+
+    const result = await service.maybeStartPublicCountdown(
+      "room-1",
+      mockServer,
+    );
+
+    expect(result).not.toBeNull();
+    expect(vi.mocked(roomService.updateRoomStatus)).toHaveBeenCalledWith(
+      "room-1",
+      RoomStatus.COUNTDOWN,
+    );
+
+    await vi.advanceTimersByTimeAsync(GAME_CONFIG.COUNTDOWN_DURATION_MS);
+
+    expect(launchSpy).toHaveBeenCalledWith("room-1", mockServer, {
+      isAutoStart: true,
+    });
+
+    vi.useRealTimers();
+  });
+
+  it("cancels room countdown when players drop below minimum", async () => {
+    vi.useFakeTimers();
+
+    const emitSpy = vi.fn();
+    (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+    vi.mocked(roomService.getRoom)
+      .mockResolvedValueOnce({
+        id: "room-1",
+        type: "PUBLIC",
+        status: RoomStatus.WAITING,
+        currentMatchId: null,
+        players: [{ userId: "p1" }, { userId: "p2" }],
+      } as any)
+      .mockResolvedValueOnce({
+        id: "room-1",
+        type: "PUBLIC",
+        status: RoomStatus.COUNTDOWN,
+        currentMatchId: null,
+        players: [{ userId: "p1" }],
+      } as any);
+
+    await service.maybeStartPublicCountdown("room-1", mockServer);
+    await service.handleRoomPlayerLeft("room-1", mockServer);
+
+    expect(vi.mocked(roomService.updateRoomStatus)).toHaveBeenCalledWith(
+      "room-1",
+      RoomStatus.WAITING,
+    );
+    expect(emitSpy).toHaveBeenCalledWith(
+      ServerEvent.ROOM_COUNTDOWN_CANCELLED,
+      expect.objectContaining({ reason: "PLAYER_LEFT" }),
     );
 
     vi.useRealTimers();

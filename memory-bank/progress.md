@@ -76,12 +76,20 @@
 
 #### Lobby lifecycle + graceful exit (PR kế tiếp đề xuất)
 
+- [x] Phase 1 contract baseline — tách rõ room lifecycle contract khỏi match lifecycle; thêm `STARTING`, room status/presence socket events, và payload room typed đầy đủ cho API/web consume
+- [x] Phase 2 backend baseline — public room auto-countdown khi đủ người, cancel countdown khi tụt dưới minimum, private room host force-start, và room status chuyển `WAITING -> COUNTDOWN -> STARTING -> IN_GAME` đồng bộ với match start
+- [x] Phase 3 transport/store baseline — `socket-store` consume room lifecycle events thật, lobby page đọc `room.status` / `countdownEndsAt` / `match.id` từ store, và bỏ giả định manual-start-only ở client
 - [ ] Auto-start countdown cho public room
 - [ ] Host controls tối thiểu cho private room (force-start, kick)
-- [ ] Heartbeat/presence validation (chống ghost player, sweep sau N round miss)
-- [ ] Lobby state machine: `WAITING → COUNTDOWN → STARTING → IN_GAME`
-- [ ] Frontend: countdown overlay, "leave" button đi kèm confirm modal, mobile-friendly leave flow
-- [ ] Test: room lifecycle + heartbeat + leave flow
+- [x] Heartbeat/presence validation (chống ghost player, sweep sau N round miss) — client gửi heartbeat 10s, server Redis TTL 20s, auto-sweep 5s, auto-disband private room nếu host stale
+- [x] Lobby state machine: `WAITING → COUNTDOWN → STARTING → IN_GAME` (backend + store wiring done)
+- [x] Frontend: countdown overlay, "leave" button đi kèm confirm modal, mobile-friendly leave flow, extracted lobby components (`LobbyHeader`, `RoomCodeCard`, `LobbyPlayerGrid`, `LeaveRoomModal`, `LobbyCountdownOverlay`) + visual stale indicator
+- [x] Test: room lifecycle + heartbeat + leave flow (tất cả 520 tests pass)
+- [x] **Phase 6: Graceful Exit And Result Navigation Cleanup** — auto-redirect to `/result/[matchId]` with 3s overlay when match finishes, added "Rời Trận Đấu" button in game screen with confirmation modal, removed stale TODO in socket-store.
+- [x] **Phase 7: Shell Cleanup Isolation** — verified and stabilized `AppShellLayout` and `Sidebar` (no legacy gradients found, already compliant with Candy 3D spec). Enhanced mobile UX by adding Escape key listener and backdrop click-to-close for the mobile navigation overlay, preserving robust skip-link accessibility. Zero page-level business logic changes.
+- [x] **Atomic Design Migration PoC** — successfully migrated `RoomCodeCard` to `components/atoms/` using GitNexus-guided impact analysis. Updated imports safely, removed legacy barrel export, and verified zero regressions. This establishes the standard workflow for future component restructuring.
+- [x] **Phase 8: Frontend Audit Sweep** — verified Home page a11y (htmlFor/id already correct, tap-targets >44px). Confirmed Not-Found surfaces have proper skip-links and consistent theming. Created reusable `AvatarFrame` component to deduplicate avatar/sprite framing logic across `LobbyPlayerGrid` and `GamePage` sidebar, reducing code duplication and enforcing design system consistency.
+- [x] **Phase 9 & 10: Tie-Break And Spectator Baseline** — Verified backend `MatchStateMachine` already implements robust tie-break logic (total response time → correct answers → random fallback). Confirmed `RoomService.joinRoom` already enforces "Hard Gate" for late joins (rejects `IN_GAME`/`FINISHED` rooms with `ROOM_ALREADY_STARTED`). Implemented client-side Spectator View: added `isEliminated` state to socket store, handled `PLAYER_ELIMINATED` event, and rendered a dedicated "Chế độ khán giả" UI in `GamePage` when a player is eliminated, allowing them to watch the rest of the match unfold.
 
 #### Product features phụ thuộc lobby hoàn thiện
 

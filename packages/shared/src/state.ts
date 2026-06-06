@@ -7,6 +7,7 @@
 export enum RoomStatus {
   WAITING = "WAITING",
   COUNTDOWN = "COUNTDOWN",
+  STARTING = "STARTING",
   IN_GAME = "IN_GAME",
   FINISHED = "FINISHED",
 }
@@ -107,6 +108,9 @@ export interface MatchSnapshot {
   lastEventSeqNo: number;
 }
 
+import { ErrorCode } from "./error-codes";
+import { RoomError } from "./errors";
+
 // Tie-break Result
 export interface TieBreakResult {
   winnerId: string;
@@ -116,4 +120,14 @@ export interface TieBreakResult {
     totalResponseTimeMs: Map<string, number>;
     earliestCorrectRound: Map<string, number>;
   };
+}
+
+export function asRoomType(value: string): "PUBLIC" | "PRIVATE" {
+  if (value === "PUBLIC") return "PUBLIC";
+  if (value === "PRIVATE") return "PRIVATE";
+  throw new RoomError(ErrorCode.INVALID_ROOM_TYPE);
+}
+
+export function asRoomTypeOrDefault(value: string): "PUBLIC" | "PRIVATE" {
+  return value === "PRIVATE" ? "PRIVATE" : "PUBLIC";
 }

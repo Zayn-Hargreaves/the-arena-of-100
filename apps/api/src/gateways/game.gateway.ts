@@ -18,9 +18,11 @@ import {
   type SubmitAnswerPayload,
   type RequestSnapshotPayload,
   type LeaveRoomPayload,
+  type HeartbeatPayload,
 } from "@arena/shared";
 import { AuthHandler, RoomHandler, MatchHandler } from "./handlers";
 import { AuthService } from "../modules/auth/auth.service";
+import { PresenceService } from "../modules/match/presence.service";
 
 @WebSocketGateway({
   cors: {
@@ -42,9 +44,11 @@ export class GameGateway
     private readonly roomHandler: RoomHandler,
     private readonly matchHandler: MatchHandler,
     private readonly authService: AuthService,
+    private readonly presenceService: PresenceService,
   ) {}
 
   afterInit(server: Server) {
+    this.presenceService.setServer(server);
     server.use((socket: Socket, next: (err?: Error) => void) => {
       let token = socket.handshake.auth?.token;
 
@@ -145,5 +149,16 @@ export class GameGateway
   @SubscribeMessage(ClientEvent.PING)
   handlePing(@ConnectedSocket() client: Socket) {
     client.emit(ServerEvent.PONG, { timestamp: Date.now() });
+  }
+
+  @SubscribeMessage(ClientEvent.HEARTBEAT)
+  async handleHeartbeat(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: HeartbeatPayload,
+  ) {
+    const userId = client.data.userId as string | undefined;
+    if (userId && payload.roomId) {
+      await this.presenceService.updatePresence(payload.roomId, userId);
+    }
   }
 }

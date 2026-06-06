@@ -324,8 +324,11 @@ export class MatchStateMachine {
   private tieBreak(playerIds: string[]): string {
     // Sort by total response time (ascending = faster is better)
     const sorted = [...playerIds].sort((a, b) => {
-      const playerA = this.state.players.get(a)!;
-      const playerB = this.state.players.get(b)!;
+      const playerA = this.state.players.get(a);
+      const playerB = this.state.players.get(b);
+
+      // Null safety fallback
+      if (!playerA || !playerB) return 0;
 
       // First: compare total response time
       if (playerA.totalResponseTimeMs !== playerB.totalResponseTimeMs) {
@@ -337,8 +340,8 @@ export class MatchStateMachine {
         return playerB.correctAnswers - playerA.correctAnswers;
       }
 
-      // Third: random (fallback)
-      return Math.random() - 0.5;
+      // Third: deterministic comparison (alphabetical by player ID) to satisfy strict weak ordering
+      return a < b ? -1 : a > b ? 1 : 0;
     });
 
     const winnerId = sorted[0];

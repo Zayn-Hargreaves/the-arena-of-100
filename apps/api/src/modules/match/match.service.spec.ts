@@ -2,12 +2,7 @@ import { MatchService } from "./match.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { NotFoundException } from "@nestjs/common";
-import {
-  MatchStatus,
-  RoomStatus,
-  PlayerStatus,
-  ErrorCode,
-} from "@arena/shared";
+import { MatchStatus, PlayerStatus, ErrorCode } from "@arena/shared";
 
 describe("MatchService", () => {
   let service: MatchService;
@@ -65,7 +60,7 @@ describe("MatchService", () => {
       expect(prisma.matchPlayer.createMany).toHaveBeenCalled();
       expect(prisma.room.update).toHaveBeenCalledWith({
         where: { id: "r1" },
-        data: { status: RoomStatus.IN_GAME, currentMatchId: "m1" },
+        data: { currentMatchId: "m1" },
       });
       expect(redis.set).toHaveBeenCalled(); // persistStateMachine
     });
@@ -425,7 +420,7 @@ describe("MatchService", () => {
 
       // Inspect each updateMany call's args to verify scores
       const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
-        .calls;
+        .calls as any[][];
       const u1Call = updateManyCalls.find((c) => c[0].where.userId === "u1");
       const u2Call = updateManyCalls.find((c) => c[0].where.userId === "u2");
       expect(u1Call).toBeDefined();
@@ -470,7 +465,7 @@ describe("MatchService", () => {
       await service.finishMatch("m1", "u1");
 
       const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
-        .calls;
+        .calls as any[][];
       const u2Call = updateManyCalls.find((c) => c[0].where.userId === "u2");
       expect(u2Call).toBeDefined();
       expect(u2Call![0].data.score).toBe(0);
@@ -521,7 +516,7 @@ describe("MatchService", () => {
       await service.finishMatch("m1", "u1");
 
       const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
-        .calls;
+        .calls as any[][];
       const u1Call = updateManyCalls.find((c) => c[0].where.userId === "u1");
       const u2Call = updateManyCalls.find((c) => c[0].where.userId === "u2");
       // u1: 149 + 149 = 298

@@ -5,12 +5,14 @@ import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import { Timer } from "@/components/game/timer";
 import { AnswerTile } from "@/components/game/answer-tile";
 import { Avatar } from "@/components/ui/avatar";
+import { AvatarFrame } from "@/components/ui/avatar-frame";
 import { AnimatedSprite } from "@/components/ui/animated-sprite";
+import { LeaveMatchModal } from "@/components/game/leave-match-modal";
 import { useSocketStore } from "@/stores/socket-store";
 import { useRouter } from "@/i18n/routing";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { Users, ShieldAlert, Swords } from "lucide-react";
+import { Users, ShieldAlert, Swords, LogOut, Trophy } from "lucide-react";
 import { avatars } from "@/lib/avatars";
 
 interface GamePageProps {
@@ -22,8 +24,15 @@ export default function GamePage({ params }: GamePageProps) {
   const { matchId, locale } = resolvedParams;
   const router = useRouter();
   const pathname = usePathname();
-  const { match, submitAnswer, userId, lastAnswerResult, remainingCount } =
-    useSocketStore();
+  const {
+    match,
+    submitAnswer,
+    userId,
+    lastAnswerResult,
+    remainingCount,
+    leaveRoom,
+    isEliminated,
+  } = useSocketStore();
   const t = useTranslations("Game");
 
   // Extract locale from pathname if not provided
@@ -36,6 +45,7 @@ export default function GamePage({ params }: GamePageProps) {
   const [revealedCorrectAnswer, setRevealedCorrectAnswer] = useState<
     string | null
   >(null);
+  const [showLeaveModal, setShowLeaveModal] = useState(false);
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -124,6 +134,17 @@ export default function GamePage({ params }: GamePageProps) {
     router,
   ]);
 
+  // Auto-redirect to results page when match finishes
+  useEffect(() => {
+    if (match?.status !== "FINISHED") return;
+
+    const redirectTimer = setTimeout(() => {
+      router.push(`/result/${matchId}`);
+    }, 3000); // Show "Match Finished" overlay for 3 seconds
+
+    return () => clearTimeout(redirectTimer);
+  }, [match?.status, matchId, router]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -182,6 +203,22 @@ export default function GamePage({ params }: GamePageProps) {
 
   return (
     <AppShellLayout>
+      {isEliminated && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-none">
+          <div className="jelly-card p-6 rounded-3xl border-[4px] border-candy-ink bg-white shadow-[8px_8px_0_0_#2B2D42] text-center space-y-3 animate-bounce-in pointer-events-auto">
+            <div className="flex justify-center">
+              <Trophy className="w-12 h-12 text-candy-yellow animate-bounce stroke-[2] fill-candy-ink/10" />
+            </div>
+            <h2 className="font-display font-black text-2xl tracking-wide uppercase text-candy-ink">
+              {t("eliminatedOverlay.title")}
+            </h2>
+            <p className="font-sans text-sm font-bold text-candy-ink/70">
+              {t("eliminatedOverlay.subtitle")}
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-6xl mx-auto w-full space-y-6 pt-2 select-none animate-slide-up">
         {/* Game State Ribbon */}
         <div className="border-[3.5px] border-candy-ink bg-white rounded-3xl shadow-[5px_5px_0_0_#2B2D42] p-5 flex flex-col md:flex-row gap-4 items-center justify-between relative overflow-hidden">
@@ -245,22 +282,34 @@ export default function GamePage({ params }: GamePageProps) {
               </h2>
             </div>
 
-            {/* Answer Options Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {options.map((option, idx) => {
-                const charCode = String.fromCharCode(65 + idx); // A, B, C, D
-                return (
-                  <AnswerTile
-                    key={charCode}
-                    option={charCode}
-                    content={option}
-                    variant={getTileVariant(charCode)}
-                    onClick={() => handleSelectAnswer(charCode)}
-                    disabled={roundCompleted}
-                  />
-                );
-              })}
-            </div>
+            {/* Answer Options Grid or Spectator View */}
+            {isEliminated ? (
+              <div className="p-8 rounded-3xl border-[3.5px] border-candy-ink bg-candy-cloud text-candy-ink shadow-[6px_6px_0_0_#2B2D42] flex flex-col items-center justify-center min-h-[220px] text-center space-y-4">
+                <Swords className="w-12 h-12 text-candy-red stroke-[2]" />
+                <h3 className="font-display font-black text-xl uppercase tracking-wide">
+                  {t("spectatorMode.title")}
+                </h3>
+                <p className="font-sans text-sm text-candy-ink/70">
+                  {t("spectatorMode.subtitle")}
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {options.map((option, idx) => {
+                  const charCode = String.fromCharCode(65 + idx); // A, B, C, D
+                  return (
+                    <AnswerTile
+                      key={charCode}
+                      option={charCode}
+                      content={option}
+                      variant={getTileVariant(charCode)}
+                      onClick={() => handleSelectAnswer(charCode)}
+                      disabled={roundCompleted}
+                    />
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Sidebar Panel: Live Feed & Eliminators */}
@@ -313,22 +362,23 @@ export default function GamePage({ params }: GamePageProps) {
                       className="flex items-center justify-between p-2.5 rounded-xl bg-candy-cloud border-[2px] border-candy-ink text-xs shadow-[2px_2px_0_0_#2B2D42]"
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        {avatarDetail.isAnimated ? (
-                          <div className="w-8 h-8 shrink-0 border-[1.5px] border-candy-ink rounded-lg bg-white overflow-hidden flex items-center justify-center relative shadow-[1px_1px_0_0_#2B2D42]">
+                        <AvatarFrame size="xs" className="bg-white">
+                          {avatarDetail.isAnimated &&
+                          avatarDetail.spritesheet ? (
                             <AnimatedSprite
-                              src={avatarDetail.spritesheet!}
+                              src={avatarDetail.spritesheet}
                               scale={1.8}
                               row={0}
                               speed={120}
                             />
-                          </div>
-                        ) : (
-                          <Avatar
-                            size="xs"
-                            fallback={avatarDetail.seed}
-                            className="border-[1.5px] border-candy-ink shadow-[1px_1px_0_0_#2B2D42]"
-                          />
-                        )}
+                          ) : (
+                            <Avatar
+                              size="xs"
+                              fallback={avatarDetail.seed}
+                              className="border-0 shadow-none"
+                            />
+                          )}
+                        </AvatarFrame>
                         <span className="font-display font-black text-candy-ink truncate max-w-[80px]">
                           {item.name}
                         </span>
@@ -357,9 +407,55 @@ export default function GamePage({ params }: GamePageProps) {
                 {t("antiHackDetails")}
               </p>
             </div>
+
+            {/* Leave Match Button */}
+            <button
+              onClick={() => setShowLeaveModal(true)}
+              className="w-full h-12 bg-candy-red text-white border-[3px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42] rounded-2xl hover:translate-y-[-1.5px] hover:shadow-[5px_5px_0_0_#2B2D42] active:translate-y-[2.5px] active:shadow-[1.5px_1.5px_0_0_#2B2D42] font-display font-black text-xs tracking-wider uppercase flex items-center justify-center cursor-pointer transition-all outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={roundCompleted || match?.status === "FINISHED"}
+            >
+              <LogOut className="w-4 h-4 mr-2 stroke-[2.5]" />
+              {t("leaveMatchButton")}
+            </button>
           </div>
         </div>
       </div>
+
+      {/* Match Finished Overlay */}
+      {match?.status === "FINISHED" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="jelly-card p-8 rounded-3xl border-[4px] border-candy-ink bg-white shadow-[8px_8px_0_0_#2B2D42] text-center space-y-4 animate-bounce-in">
+            <div className="flex justify-center">
+              <Trophy className="w-16 h-16 text-candy-yellow animate-bounce stroke-[2] fill-candy-ink/10" />
+            </div>
+            <h2 className="font-display font-black text-3xl tracking-wide uppercase text-candy-ink drop-shadow-[0_2px_0_rgba(0,0,0,0.05)]">
+              {t("matchFinishedOverlay.title")}
+            </h2>
+            <p className="font-sans text-sm font-bold text-candy-ink/70">
+              {t("matchFinishedOverlay.subtitle")}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Leave Match Modal */}
+      <LeaveMatchModal
+        open={showLeaveModal}
+        onOpenChange={setShowLeaveModal}
+        onConfirm={() => {
+          if (match?.id) {
+            // We need the roomId to leave. If we don't have it, we can try to get it from the store or just redirect.
+            // Actually, leaveRoom expects roomId. Let's check if we can get it.
+            // For now, we'll assume we can leave by roomId if available, or we can just redirect.
+            // Let's use the roomId from the store if available, otherwise just redirect.
+            const currentRoomId = useSocketStore.getState().room?.id;
+            if (currentRoomId) {
+              leaveRoom(currentRoomId);
+            }
+          }
+          router.push("/room/create");
+        }}
+      />
     </AppShellLayout>
   );
 }

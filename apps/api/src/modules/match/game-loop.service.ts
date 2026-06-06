@@ -4,16 +4,24 @@ import {
   GAME_CONFIG,
   MatchStatus,
   PlayerStatus,
+  RoomStatus,
   ServerEvent,
   getRoomChannel,
+  RoomError,
+  ErrorCode,
 } from "@arena/shared";
 import { MatchService } from "./match.service";
 import { QuestionService } from "../question/question.service";
+import { RoomService } from "../room/room.service";
 
 @Injectable()
 export class GameLoopService {
   private readonly logger = new Logger(GameLoopService.name);
   private activeTimers = new Map<string, Set<NodeJS.Timeout>>();
+  private lobbyCountdowns = new Map<
+    string,
+    { timer: NodeJS.Timeout; countdownEndsAt: number }
+  >();
   // F2: Track used question IDs per match to avoid repeats
   private usedQuestionIds = new Map<string, Set<string>>();
   // Add property for early termination (used by Task 7)
@@ -23,7 +31,158 @@ export class GameLoopService {
   constructor(
     private readonly matchService: MatchService,
     private readonly questionService: QuestionService,
+    private readonly roomService: RoomService,
   ) {}
+
+  async maybeStartPublicCountdown(roomId: string, server: Server) {
+    const room = await this.roomService.getRoom(roomId);
+    if (room.type !== "PUBLIC") return null;
+    if (room.status !== RoomStatus.WAITING) return null;
+    if (room.players.length < GAME_CONFIG.MIN_PLAYERS_TO_START) return null;
+    if (this.lobbyCountdowns.has(roomId)) {
+      return this.lobbyCountdowns.get(roomId) ?? null;
+    }
+
+    await this.roomService.updateRoomStatus(roomId, RoomStatus.COUNTDOWN);
+
+    const startedAt = Date.now();
+    const countdownEndsAt = startedAt + GAME_CONFIG.COUNTDOWN_DURATION_MS;
+    const channel = getRoomChannel(roomId);
+
+    server.to(channel).emit(ServerEvent.ROOM_STATUS_UPDATED, {
+      roomId,
+      roomStatus: RoomStatus.COUNTDOWN,
+      currentMatchId: null,
+      updatedAt: startedAt,
+    });
+
+    server.to(channel).emit(ServerEvent.ROOM_COUNTDOWN_STARTED, {
+      roomId,
+      roomStatus: RoomStatus.COUNTDOWN,
+      countdownEndsAt,
+      countdownMs: GAME_CONFIG.COUNTDOWN_DURATION_MS,
+      startedAt,
+    });
+
+    const timer = setTimeout(() => {
+      void this.launchRoomMatch(roomId, server, { isAutoStart: true }).catch(
+        (error) => {
+          this.logger.error(
+            `Failed to auto-start lobby countdown for room ${roomId}`,
+            error,
+          );
+        },
+      );
+    }, GAME_CONFIG.COUNTDOWN_DURATION_MS);
+
+    this.lobbyCountdowns.set(roomId, { timer, countdownEndsAt });
+    return { countdownEndsAt };
+  }
+
+  getCountdownEnd(roomId: string): number | null {
+    return this.lobbyCountdowns.get(roomId)?.countdownEndsAt ?? null;
+  }
+
+  async handleRoomPlayerLeft(roomId: string, server: Server) {
+    const countdown = this.lobbyCountdowns.get(roomId);
+    if (!countdown) return;
+
+    const room = await this.roomService.getRoom(roomId);
+    if (
+      room.status !== RoomStatus.COUNTDOWN ||
+      room.players.length >= GAME_CONFIG.MIN_PLAYERS_TO_START
+    ) {
+      return;
+    }
+
+    clearTimeout(countdown.timer);
+    this.lobbyCountdowns.delete(roomId);
+
+    await this.roomService.updateRoomStatus(roomId, RoomStatus.WAITING);
+
+    const updatedAt = Date.now();
+    const channel = getRoomChannel(roomId);
+
+    server.to(channel).emit(ServerEvent.ROOM_COUNTDOWN_CANCELLED, {
+      roomId,
+      roomStatus: RoomStatus.WAITING,
+      reason: "PLAYER_LEFT",
+      cancelledAt: updatedAt,
+    });
+
+    server.to(channel).emit(ServerEvent.ROOM_STATUS_UPDATED, {
+      roomId,
+      roomStatus: RoomStatus.WAITING,
+      currentMatchId: null,
+      updatedAt,
+    });
+  }
+
+  async forceStartRoomMatch(roomId: string, server: Server) {
+    return this.launchRoomMatch(roomId, server, { isAutoStart: false });
+  }
+
+  private async launchRoomMatch(
+    roomId: string,
+    server: Server,
+    options: { isAutoStart: boolean },
+  ) {
+    const room = await this.roomService.getRoom(roomId);
+    const countdown = this.lobbyCountdowns.get(roomId);
+
+    if (countdown) {
+      clearTimeout(countdown.timer);
+      this.lobbyCountdowns.delete(roomId);
+    }
+
+    if (room.players.length < GAME_CONFIG.MIN_PLAYERS_TO_START) {
+      if (room.status !== RoomStatus.WAITING) {
+        await this.roomService.updateRoomStatus(roomId, RoomStatus.WAITING);
+      }
+
+      if (options.isAutoStart) {
+        const updatedAt = Date.now();
+        server
+          .to(getRoomChannel(roomId))
+          .emit(ServerEvent.ROOM_COUNTDOWN_CANCELLED, {
+            roomId,
+            roomStatus: RoomStatus.WAITING,
+            reason: "NOT_ENOUGH_PLAYERS",
+            cancelledAt: updatedAt,
+          });
+        server
+          .to(getRoomChannel(roomId))
+          .emit(ServerEvent.ROOM_STATUS_UPDATED, {
+            roomId,
+            roomStatus: RoomStatus.WAITING,
+            currentMatchId: null,
+            updatedAt,
+          });
+      }
+
+      throw new RoomError(ErrorCode.NOT_ENOUGH_PLAYERS);
+    }
+
+    await this.roomService.updateRoomStatus(roomId, RoomStatus.STARTING);
+
+    const channel = getRoomChannel(roomId);
+    server.to(channel).emit(ServerEvent.ROOM_STATUS_UPDATED, {
+      roomId,
+      roomStatus: RoomStatus.STARTING,
+      currentMatchId: room.currentMatchId ?? null,
+      updatedAt: Date.now(),
+    });
+
+    const match = await this.matchService.createMatch(roomId);
+
+    server.to(channel).emit(ServerEvent.MATCH_STARTING, {
+      matchId: match.id,
+      countdown: GAME_CONFIG.COUNTDOWN_DURATION_MS / 1000,
+    });
+
+    await this.startMatchLoop(match.id, roomId, server);
+    return match;
+  }
 
   // ============================================================
   // ENTRY POINT
@@ -40,6 +199,19 @@ export class GameLoopService {
       this.logger.error(`State machine not found for match ${matchId}`);
       return;
     }
+
+    await this.roomService.updateRoomStatus(
+      roomId,
+      RoomStatus.IN_GAME,
+      matchId,
+    );
+
+    server.to(getRoomChannel(roomId)).emit(ServerEvent.ROOM_STATUS_UPDATED, {
+      roomId,
+      roomStatus: RoomStatus.IN_GAME,
+      currentMatchId: matchId,
+      updatedAt: Date.now(),
+    });
 
     // 2. Transition to COUNTDOWN
     stateMachine.transition(MatchStatus.COUNTDOWN);
@@ -293,6 +465,7 @@ export class GameLoopService {
         if (!player) continue;
         server.to(channel).emit(ServerEvent.PLAYER_ELIMINATED, {
           matchId,
+          roundNo: state.currentRoundNo,
           playerId,
           playerName: player.name,
           reason: currentRound.answers.has(playerId)

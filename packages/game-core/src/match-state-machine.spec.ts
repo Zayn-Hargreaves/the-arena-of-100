@@ -831,6 +831,45 @@ describe("MatchStateMachine guard branches", () => {
     expect(machine.getState().winnerId).toBe("p2");
   });
 
+  it("tieBreak uses alphabetical player ID as deterministic fallback", () => {
+    const players = [
+      {
+        id: "p2",
+        name: "Bob",
+        status: PlayerStatus.ACTIVE,
+        score: 0,
+        totalResponseTimeMs: 500,
+        correctAnswers: 2,
+        isOnline: true,
+      },
+      {
+        id: "p1",
+        name: "Alice",
+        status: PlayerStatus.ACTIVE,
+        score: 0,
+        totalResponseTimeMs: 500,
+        correctAnswers: 2,
+        isOnline: true,
+      },
+    ];
+    // Both players have identical responseTime (500) and correctAnswers (2)
+    // Alphabetically, "p1" is less than "p2", so "p1" should win deterministically
+    const machine = new MatchStateMachine("m1", "r1", players);
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    machine.startRound({
+      id: "q1",
+      content: "Q?",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound();
+    machine.transition(MatchStatus.FINISHED);
+    machine.finishMatch();
+    expect(machine.getState().winnerId).toBe("p1");
+  });
+
   it("uses custom roundDurationMs if provided in startRound", () => {
     const machine = new MatchStateMachine("m1", "r1", makePlayers());
     machine.transition(MatchStatus.COUNTDOWN);

@@ -112,7 +112,20 @@
     "aliveStatus": "SỐNG",
     "eliminatedStatus": "LOẠI",
     "antiHackDescription": "Hệ thống Chống Hack",
-    "antiHackDetails": "Thời gian phản hồi được máy chủ ghi nhận và so sánh độ lệch ping để đảm bảo tính công bằng tuyệt đối."
+    "antiHackDetails": "Thời gian phản hồi được máy chủ ghi nhận và so sánh độ lệch ping để đảm bảo tính công bằng tuyệt đối.",
+    "eliminatedOverlay": {
+      "title": "BẠN ĐÃ BỊ LOẠI!",
+      "subtitle": "Đang theo dõi những người chơi xuất sắc nhất..."
+    },
+    "spectatorMode": {
+      "title": "CHẾ ĐỘ KHÁN GIẢ",
+      "subtitle": "Bạn đã bị loại. Hãy theo dõi những người chơi còn lại để xem ai sẽ là quán quân!"
+    },
+    "leaveMatchButton": "RỜI TRẬN ĐẤU",
+    "matchFinishedOverlay": {
+      "title": "TRẬN ĐẤU KẾT THÚC!",
+      "subtitle": "Đang chuyển đến trang kết quả..."
+    }
   },
   "profile": {
     "registeredToday": "ĐĂNG KÝ: HÔM NAY",

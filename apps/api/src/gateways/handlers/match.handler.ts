@@ -3,7 +3,7 @@ import { Socket, Server } from "socket.io";
 import {
   ServerEvent,
   ErrorCode,
-  GAME_CONFIG,
+  RoomStatus,
   type SubmitAnswerPayload,
   type RequestSnapshotPayload,
   RoomError,
@@ -39,24 +39,20 @@ export class MatchHandler extends BaseHandler {
         throw new RoomError(ErrorCode.NOT_ROOM_HOST);
       }
 
-      const match = await this.matchService.createMatch(payload.roomId);
+      if (room.type !== "PRIVATE") {
+        throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
+      }
 
-      server.to(`room:${payload.roomId}`).emit(ServerEvent.MATCH_STARTING, {
-        matchId: match.id,
-        countdown: GAME_CONFIG.COUNTDOWN_DURATION_MS / 1000,
-      });
+      if (room.status !== RoomStatus.WAITING) {
+        throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
+      }
+
+      const match = await this.gameLoopService.forceStartRoomMatch(
+        payload.roomId,
+        server,
+      );
 
       this.logger.log(`Match starting: ${match.id}`);
-
-      // Start the match loop in background to not block the socket handler
-      this.gameLoopService
-        .startMatchLoop(match.id, payload.roomId, server)
-        .catch((err) => {
-          this.logger.error(
-            `Failed to start match loop for match ${match.id}:`,
-            err,
-          );
-        });
     } catch (error) {
       const code =
         error instanceof RoomError ? error.code : ErrorCode.INTERNAL_ERROR;

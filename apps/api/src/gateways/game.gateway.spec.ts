@@ -5,6 +5,7 @@ import { AuthHandler } from "./handlers/auth.handler";
 import { RoomHandler } from "./handlers/room.handler";
 import { MatchHandler } from "./handlers/match.handler";
 import { AuthService } from "../modules/auth/auth.service";
+import { PresenceService } from "../modules/match/presence.service";
 
 describe("GameGateway", () => {
   let gateway: GameGateway;
@@ -12,6 +13,7 @@ describe("GameGateway", () => {
   let roomHandler: RoomHandler;
   let matchHandler: MatchHandler;
   let authService: AuthService;
+  let presenceService: PresenceService;
   let client: Socket;
 
   beforeEach(() => {
@@ -32,12 +34,17 @@ describe("GameGateway", () => {
     authService = {
       verifyToken: vi.fn(),
     } as unknown as AuthService;
+    presenceService = {
+      setServer: vi.fn(),
+      updatePresence: vi.fn(),
+    } as unknown as PresenceService;
 
     gateway = new GameGateway(
       authHandler,
       roomHandler,
       matchHandler,
       authService,
+      presenceService,
     );
     // Set the private _server field
     (gateway as any)._server = {

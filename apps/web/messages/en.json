@@ -112,7 +112,20 @@
     "aliveStatus": "ALIVE",
     "eliminatedStatus": "ELIMINATED",
     "antiHackDescription": "Anti-Hack System",
-    "antiHackDetails": "Response time is recorded by the server and compared against ping deviation to ensure absolute fairness."
+    "antiHackDetails": "Response time is recorded by the server and compared against ping deviation to ensure absolute fairness.",
+    "eliminatedOverlay": {
+      "title": "YOU HAVE BEEN ELIMINATED!",
+      "subtitle": "Watching the best players..."
+    },
+    "spectatorMode": {
+      "title": "SPECTATOR MODE",
+      "subtitle": "You have been eliminated. Watch the remaining players to see who will be the champion!"
+    },
+    "leaveMatchButton": "LEAVE MATCH",
+    "matchFinishedOverlay": {
+      "title": "MATCH FINISHED!",
+      "subtitle": "Redirecting to results page..."
+    }
   },
   "profile": {
     "registeredToday": "REGISTERED: TODAY",

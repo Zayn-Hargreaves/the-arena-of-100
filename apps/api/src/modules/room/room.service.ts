@@ -60,6 +60,7 @@ export class RoomService {
         status: room.status,
         hostId: room.hostId,
         playerCount: 1,
+        currentMatchId: null,
         timeLimit: room.timeLimit,
         category: room.category,
       },
@@ -115,7 +116,12 @@ export class RoomService {
     }
 
     this.logger.log(`Player ${userId} joined room ${roomCode}`);
-    return room;
+
+    const updatedRoom = await this.getRoom(room.id);
+    return {
+      ...updatedRoom,
+      joined: !isAlreadyInRoom,
+    };
   }
 
   // Leave room
@@ -137,6 +143,8 @@ export class RoomService {
     }
 
     this.logger.log(`Player ${userId} left room ${roomId}`);
+
+    return this.getRoom(roomId);
   }
 
   // Get room details
@@ -191,10 +199,17 @@ export class RoomService {
   }
 
   // Update room status
-  async updateRoomStatus(roomId: string, status: RoomStatus) {
+  async updateRoomStatus(
+    roomId: string,
+    status: RoomStatus,
+    currentMatchId?: string | null,
+  ) {
     const room = await this.prisma.room.update({
       where: { id: roomId },
-      data: { status },
+      data: {
+        status,
+        ...(currentMatchId !== undefined ? { currentMatchId } : {}),
+      },
       include: { players: true },
     });
 
@@ -206,6 +221,7 @@ export class RoomService {
         status: room.status,
         hostId: room.hostId,
         playerCount: room.players.length,
+        currentMatchId: room.currentMatchId,
         timeLimit: room.timeLimit,
         category: room.category,
       },
@@ -248,5 +264,85 @@ export class RoomService {
         },
       },
     });
+  }
+
+  // ============================================================
+  // Presence & Stale Player Management
+  // ============================================================
+
+  async updatePresence(roomId: string, userId: string) {
+    await this.redis.set(`room:presence:${roomId}:${userId}`, "1", 20);
+  }
+
+  async clearPresence(roomId: string, userId: string) {
+    await this.redis.del(`room:presence:${roomId}:${userId}`);
+  }
+
+  async checkPresence(roomId: string, userId: string): Promise<boolean> {
+    return this.redis.exists(`room:presence:${roomId}:${userId}`);
+  }
+
+  async getActiveRooms() {
+    return this.prisma.room.findMany({
+      where: {
+        status: { in: [RoomStatus.WAITING, RoomStatus.COUNTDOWN] },
+      },
+      include: {
+        players: true,
+      },
+    });
+  }
+
+  async disbandRoom(roomId: string) {
+    await this.prisma.$transaction([
+      this.prisma.roomPlayer.deleteMany({ where: { roomId } }),
+      this.prisma.room.delete({ where: { id: roomId } }),
+    ]);
+
+    await Promise.all([
+      this.redis.del(`room:${roomId}:players`),
+      this.redis.del(`room:${roomId}`),
+    ]);
+  }
+
+  async removePlayer(roomId: string, userId: string) {
+    await this.prisma.roomPlayer.deleteMany({ where: { roomId, userId } });
+    await this.redis.srem(`room:${roomId}:players`, userId);
+    await this.clearPresence(roomId, userId);
+
+    const cached = await this.redis.getJSON<{ playerCount: number }>(
+      `room:${roomId}`,
+    );
+    if (cached) {
+      cached.playerCount = Math.max(0, cached.playerCount - 1);
+      await this.redis.setJSON(`room:${roomId}`, cached, 3600);
+    }
+  }
+
+  async removePlayerBatch(roomId: string, userIds: string[]) {
+    if (userIds.length === 0) return;
+
+    await this.prisma.roomPlayer.deleteMany({
+      where: {
+        roomId,
+        userId: { in: userIds },
+      },
+    });
+
+    const presenceKeys = userIds.map(
+      (userId) => `room:presence:${roomId}:${userId}`,
+    );
+    await Promise.all([
+      this.redis.srem(`room:${roomId}:players`, ...userIds),
+      ...presenceKeys.map((key) => this.redis.del(key)),
+    ]);
+
+    const cached = await this.redis.getJSON<{ playerCount: number }>(
+      `room:${roomId}`,
+    );
+    if (cached) {
+      cached.playerCount = Math.max(0, cached.playerCount - userIds.length);
+      await this.redis.setJSON(`room:${roomId}`, cached, 3600);
+    }
   }
 }
