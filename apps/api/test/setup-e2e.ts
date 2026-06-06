@@ -29,8 +29,8 @@ if (!looksLikeTestDb) {
 
 // Test uses Redis DB index 1 to keep cache isolated from dev (DB 0).
 if (!process.env.REDIS_URL?.includes("/1")) {
-  console.warn(
-    "⚠️  REDIS_URL does not target DB index 1; test runs may share " +
-      "the dev cache namespace. Set REDIS_URL=redis://localhost:6379/1.",
+  throw new Error(
+    "❌ E2E tests require REDIS_URL to target DB index 1 so flushdb() " +
+      "cannot wipe a non-test Redis. Set REDIS_URL=redis://localhost:6379/1.",
   );
 }

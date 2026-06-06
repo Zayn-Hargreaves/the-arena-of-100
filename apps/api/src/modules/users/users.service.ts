@@ -2,7 +2,12 @@
 // Users Service - Profile stats, history, avatar
 // ============================================================
 
-import { Injectable, NotFoundException } from "@nestjs/common";
+import {
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { MatchStatus, type AvatarSeed } from "@arena/shared";
 import type { HistoryItem, HistoryQuery, StatsResponse } from "./dto";
@@ -174,34 +179,39 @@ export class UsersService {
       return { items: [], nextCursor: null, hasMore: false };
     }
 
-    // Compute rank per (matchId, userId) by sorting all players in each match
-    // by score DESC, userId ASC (stable order matches the SQL in getMyStats).
+    // Compute rank per (matchId, userId) with a single raw SQL trip
+    // using a window function (RANK() OVER PARTITION BY matchId).
+    // Stable order: score DESC, userId ASC — matches getMyStats.
     const matchIds = page.map((r) => r.matchId);
-    const allPlayers = await this.prisma.matchPlayer.findMany({
-      where: { matchId: { in: matchIds } },
-      select: { matchId: true, userId: true, score: true },
-    });
-    const grouped = new Map<string, Array<{ userId: string; score: number }>>();
-    for (const p of allPlayers) {
-      const arr = grouped.get(p.matchId) ?? [];
-      arr.push({ userId: p.userId, score: p.score });
-      grouped.set(p.matchId, arr);
-    }
+    const rankRows = await this.prisma.$queryRaw<
+      Array<{ match_id: string; user_id: string; rank: number | bigint }>
+    >`
+      SELECT
+        "matchId" AS match_id,
+        "userId"  AS user_id,
+        CAST(RANK() OVER (
+          PARTITION BY "matchId"
+          ORDER BY score DESC, "userId" ASC
+        ) AS INTEGER) AS rank
+      FROM "match_players"
+      WHERE "matchId" IN (${Prisma.join(matchIds)})
+    `;
     const rankByMatchAndUser = new Map<string, Map<string, number>>();
-    for (const [mid, players] of grouped) {
-      players.sort((a, b) =>
-        b.score !== a.score
-          ? b.score - a.score
-          : a.userId.localeCompare(b.userId),
-      );
-      const m = new Map<string, number>();
-      players.forEach((p, idx) => m.set(p.userId, idx + 1));
-      rankByMatchAndUser.set(mid, m);
+    for (const row of rankRows) {
+      const inner =
+        rankByMatchAndUser.get(row.match_id) ?? new Map<string, number>();
+      inner.set(row.user_id, Number(row.rank));
+      rankByMatchAndUser.set(row.match_id, inner);
     }
 
     const items: HistoryItem[] = page.map((row) => {
       const m = row.match;
-      const rank = rankByMatchAndUser.get(m.id)?.get(userId) ?? 0;
+      const rank = rankByMatchAndUser.get(m.id)?.get(userId);
+      if (rank == null) {
+        throw new InternalServerErrorException(
+          `MATCH_HISTORY_RANK_MISSING:${m.id}:${userId}`,
+        );
+      }
       const startedAt = m.startedAt;
       const endedAt = m.endedAt;
       const durationSec =

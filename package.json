@@ -24,7 +24,7 @@
     "test:db:up": "bash infrastructure/scripts/test-db-up.sh",
     "test:db:down": "bash infrastructure/scripts/test-db-down.sh",
     "test:db:reset": "pnpm test:db:down && pnpm test:db:up",
-    "test:e2e": "pnpm test:db:up && pnpm --filter @arena/api test:e2e",
+    "test:e2e": "bash -euo pipefail -c \"trap 'pnpm test:db:down' EXIT; pnpm test:db:up && pnpm --filter @arena/api test:e2e\"",
     "prepare": "husky"
   },
   "devDependencies": {

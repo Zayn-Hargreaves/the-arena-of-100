@@ -141,6 +141,92 @@ describe("UsersService", () => {
       // Number(9007199254740993n) loses precision, but conversion must not throw
       expect(typeof result.stats.totalCorrectAnswers).toBe("number");
     });
+
+    it("treats non-finite numbers (Infinity, -Infinity, NaN) as 0", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
+      vi.mocked(prisma.matchPlayer.groupBy).mockResolvedValue([]);
+      vi.mocked(prisma.match.count).mockResolvedValue(0);
+      vi.mocked(prisma.$queryRaw)
+        .mockResolvedValueOnce([
+          {
+            avg_response_ms: Number.POSITIVE_INFINITY,
+            accuracy: Number.NaN,
+            total_correct: 0,
+          },
+        ])
+        .mockResolvedValueOnce([{ survival_rate: -0 }]);
+
+      const result = await service.getMyStats("u1");
+
+      expect(result.stats.avgResponseMs).toBe(0);
+      expect(result.stats.accuracy).toBe(0);
+    });
+
+    it("uses an object's toNumber() when present (Prisma Decimal-like)", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
+      vi.mocked(prisma.matchPlayer.groupBy).mockResolvedValue([]);
+      vi.mocked(prisma.match.count).mockResolvedValue(0);
+      const decimalLike = { toNumber: () => 0.81 };
+      vi.mocked(prisma.$queryRaw)
+        .mockResolvedValueOnce([
+          {
+            avg_response_ms: decimalLike,
+            accuracy: decimalLike,
+            total_correct: 7,
+          },
+        ])
+        .mockResolvedValueOnce([{ survival_rate: decimalLike }]);
+
+      const result = await service.getMyStats("u1");
+
+      expect(result.stats.avgResponseMs).toBe(0.81);
+      expect(result.stats.accuracy).toBe(0.81);
+      expect(result.stats.survivalRate).toBe(0.81);
+    });
+
+    it("uses an object's valueOf() when toNumber is absent", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
+      vi.mocked(prisma.matchPlayer.groupBy).mockResolvedValue([]);
+      vi.mocked(prisma.match.count).mockResolvedValue(0);
+      const valueOfOnly = { valueOf: () => 123 };
+      vi.mocked(prisma.$queryRaw)
+        .mockResolvedValueOnce([
+          {
+            avg_response_ms: valueOfOnly,
+            accuracy: valueOfOnly,
+            total_correct: 0,
+          },
+        ])
+        .mockResolvedValueOnce([{ survival_rate: valueOfOnly }]);
+
+      const result = await service.getMyStats("u1");
+
+      expect(result.stats.avgResponseMs).toBe(123);
+      expect(result.stats.accuracy).toBe(123);
+      expect(result.stats.survivalRate).toBe(123);
+    });
+
+    it("falls back to Number(String(value)) for objects with neither toNumber nor valueOf", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
+      vi.mocked(prisma.matchPlayer.groupBy).mockResolvedValue([]);
+      vi.mocked(prisma.match.count).mockResolvedValue(0);
+      const opaque = { toString: () => "456" };
+      vi.mocked(prisma.$queryRaw)
+        .mockResolvedValueOnce([
+          {
+            avg_response_ms: opaque,
+            accuracy: opaque,
+            total_correct: 0,
+          },
+        ])
+        .mockResolvedValueOnce([{ survival_rate: opaque }]);
+
+      const result = await service.getMyStats("u1");
+
+      expect(result.stats.avgResponseMs).toBe(456);
+      expect(result.stats.accuracy).toBe(456);
+      expect(result.stats.survivalRate).toBe(456);
+    });
   });
 
   describe("getMyHistory", () => {
@@ -155,27 +241,28 @@ describe("UsersService", () => {
     it("returns one page and sets hasMore=false when fewer rows than limit", async () => {
       const now = new Date("2026-05-30T10:00:00.000Z");
       const started = new Date("2026-05-30T09:55:00.000Z");
-      vi.mocked(prisma.matchPlayer.findMany)
-        .mockResolvedValueOnce([
-          {
-            id: "mp1",
-            userId: "u1",
-            matchId: "m1",
-            score: 3200,
-            match: {
-              id: "m1",
-              roomId: "r1",
-              status: FINISHED,
-              winnerId: "u1",
-              startedAt: started,
-              endedAt: now,
-              createdAt: now,
-              room: { category: "ALL" },
-              _count: { players: 50 },
-            },
+      vi.mocked(prisma.matchPlayer.findMany).mockResolvedValueOnce([
+        {
+          id: "mp1",
+          userId: "u1",
+          matchId: "m1",
+          score: 3200,
+          match: {
+            id: "m1",
+            roomId: "r1",
+            status: FINISHED,
+            winnerId: "u1",
+            startedAt: started,
+            endedAt: now,
+            createdAt: now,
+            room: { category: "ALL" },
+            _count: { players: 50 },
           },
-        ])
-        .mockResolvedValueOnce([{ matchId: "m1", userId: "u1", score: 3200 }]);
+        },
+      ]);
+      vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
+        { match_id: "m1", user_id: "u1", rank: 1 },
+      ]);
 
       const result = await service.getMyHistory("u1", { limit: 20 });
 
@@ -197,31 +284,28 @@ describe("UsersService", () => {
     it("computes correct rank and status (ELIMINATED) when user is not the winner", async () => {
       const endedAt = new Date("2026-05-30T10:00:00.000Z");
       const startedAt = new Date("2026-05-30T09:55:00.000Z");
-      vi.mocked(prisma.matchPlayer.findMany)
-        .mockResolvedValueOnce([
-          {
-            id: "mp1",
-            userId: "u1",
-            matchId: "m1",
-            score: 800,
-            match: {
-              id: "m1",
-              roomId: "r1",
-              status: FINISHED,
-              winnerId: "u2",
-              startedAt,
-              endedAt,
-              createdAt: endedAt,
-              room: { category: "SCIENCE" },
-              _count: { players: 3 },
-            },
+      vi.mocked(prisma.matchPlayer.findMany).mockResolvedValueOnce([
+        {
+          id: "mp1",
+          userId: "u1",
+          matchId: "m1",
+          score: 800,
+          match: {
+            id: "m1",
+            roomId: "r1",
+            status: FINISHED,
+            winnerId: "u2",
+            startedAt,
+            endedAt,
+            createdAt: endedAt,
+            room: { category: "SCIENCE" },
+            _count: { players: 3 },
           },
-        ])
-        .mockResolvedValueOnce([
-          { matchId: "m1", userId: "u1", score: 800 },
-          { matchId: "m1", userId: "u2", score: 1500 },
-          { matchId: "m1", userId: "u3", score: 1000 },
-        ]);
+        },
+      ]);
+      vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
+        { match_id: "m1", user_id: "u1", rank: 3 },
+      ]);
 
       const result = await service.getMyHistory("u1", { limit: 20 });
 
@@ -231,44 +315,45 @@ describe("UsersService", () => {
     });
 
     it("supports cursor pagination: returns nextCursor and hasMore=true when more rows exist", async () => {
-      vi.mocked(prisma.matchPlayer.findMany)
-        .mockResolvedValueOnce([
-          {
-            id: "mp-last",
-            userId: "u1",
-            matchId: "m3",
-            score: 100,
-            match: {
-              id: "m3",
-              roomId: "r3",
-              status: FINISHED,
-              winnerId: null,
-              startedAt: new Date("2026-05-28T10:00:00.000Z"),
-              endedAt: new Date("2026-05-28T10:05:00.000Z"),
-              createdAt: new Date("2026-05-28T10:00:00.000Z"),
-              room: { category: "TECHNOLOGY" },
-              _count: { players: 10 },
-            },
+      vi.mocked(prisma.matchPlayer.findMany).mockResolvedValueOnce([
+        {
+          id: "mp-last",
+          userId: "u1",
+          matchId: "m3",
+          score: 100,
+          match: {
+            id: "m3",
+            roomId: "r3",
+            status: FINISHED,
+            winnerId: null,
+            startedAt: new Date("2026-05-28T10:00:00.000Z"),
+            endedAt: new Date("2026-05-28T10:05:00.000Z"),
+            createdAt: new Date("2026-05-28T10:00:00.000Z"),
+            room: { category: "TECHNOLOGY" },
+            _count: { players: 10 },
           },
-          {
-            id: "mp-extra",
-            userId: "u1",
-            matchId: "m4",
-            score: 200,
-            match: {
-              id: "m4",
-              roomId: "r4",
-              status: FINISHED,
-              winnerId: "u1",
-              startedAt: new Date("2026-05-27T10:00:00.000Z"),
-              endedAt: new Date("2026-05-27T10:05:00.000Z"),
-              createdAt: new Date("2026-05-27T10:00:00.000Z"),
-              room: { category: "ALL" },
-              _count: { players: 5 },
-            },
+        },
+        {
+          id: "mp-extra",
+          userId: "u1",
+          matchId: "m4",
+          score: 200,
+          match: {
+            id: "m4",
+            roomId: "r4",
+            status: FINISHED,
+            winnerId: "u1",
+            startedAt: new Date("2026-05-27T10:00:00.000Z"),
+            endedAt: new Date("2026-05-27T10:05:00.000Z"),
+            createdAt: new Date("2026-05-27T10:00:00.000Z"),
+            room: { category: "ALL" },
+            _count: { players: 5 },
           },
-        ])
-        .mockResolvedValueOnce([{ matchId: "m3", userId: "u1", score: 100 }]);
+        },
+      ]);
+      vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
+        { match_id: "m3", user_id: "u1", rank: 1 },
+      ]);
 
       const result = await service.getMyHistory("u1", {
         limit: 1,
@@ -279,6 +364,35 @@ describe("UsersService", () => {
       expect(result.nextCursor).toBe("mp-last");
       expect(result.items).toHaveLength(1);
       expect(result.items[0].matchId).toBe("m3");
+    });
+
+    it("throws when rank lookup is unexpectedly missing", async () => {
+      const endedAt = new Date("2026-05-30T10:00:00.000Z");
+      const startedAt = new Date("2026-05-30T09:55:00.000Z");
+      vi.mocked(prisma.matchPlayer.findMany).mockResolvedValueOnce([
+        {
+          id: "mp1",
+          userId: "u1",
+          matchId: "m1",
+          score: 800,
+          match: {
+            id: "m1",
+            roomId: "r1",
+            status: FINISHED,
+            winnerId: "u2",
+            startedAt,
+            endedAt,
+            createdAt: endedAt,
+            room: { category: "SCIENCE" },
+            _count: { players: 3 },
+          },
+        },
+      ]);
+      vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([]);
+
+      await expect(service.getMyHistory("u1", { limit: 20 })).rejects.toThrow(
+        /MATCH_HISTORY_RANK_MISSING:m1:u1/,
+      );
     });
 
     it("applies cursor + skip 1 when cursor is provided", async () => {

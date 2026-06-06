@@ -21,6 +21,7 @@
 - [x] Memory bank documentation
 - [x] **Architecture assessment & review (2025-05-09)**
 - [x] **CI/CD Pipeline with GitHub Actions & Vitest setup (2026-05-12)**
+- [x] **CI E2E hardening follow-up (2026-06-06)** — bỏ cache `node_modules`, giữ pnpm store cache, thêm Prisma cache key an toàn hơn, và upload E2E reports khi fail
 - [x] **CSRF Protection — double-submit cookie pattern (2026-06-03)**
 - [x] **Rate Limiting — @nestjs/throttler global + admin-specific (2026-06-03)**
 - [x] **Hardcoded locale redirect fix (2026-06-03)**
@@ -132,8 +133,8 @@
 - [ ] `correctAnswer` có thể leak qua `stateMachine.startRound` (đã strip ở broadcast nhưng cần audit thêm)
 - [ ] `SocketNamespace` chưa có SPECTATOR entry
 - [ ] `packages/config` directory trống
-- [ ] **Profile + Rankings mock data** — cần backend endpoints trước khi gắn UI thật
-- [ ] **Design system Phase 5 chưa đóng** (shell templates, legacy CSS, visual audit)
+- [x] **Profile + Rankings mock data** — cần backend endpoints trước khi gắn UI thật ✅ Done (issue.md Step 3+4+5: backend + hooks + UI live)
+- [ ] **Design system Phase 5 chưa đóng** (shell templates, legacy CSS, visual audit) — **Follow-up**: Design system Phase 5 (shell templates/legacy CSS/visual audit) — owner: TBD, ticket: TBD
 - [ ] **Lobby mock players fallback** — cần real player events khi prod (debug only hiện tại)
 - [ ] **TODO còn trong code**: `socket-store.ts:304` ("Navigate to results page - this would be handled by the UI component") — đã có UI, cần xác minh và xoá TODO
 
@@ -155,17 +156,17 @@
 
 ## Architecture Assessment Scores (cập nhật 2026-06-06)
 
-| Dimension                | Score      | Notes                                                                              |
-| ------------------------ | ---------- | ---------------------------------------------------------------------------------- |
-| Monorepo Structure       | 10/10      | Turborepo + Remote Caching                                                         |
-| Package Boundaries       | 9/10       | Clean separation, đúng dependency flow                                             |
-| Domain Logic (game-core) | 9/10       | Có serialize/deserialize, immutability, persistence                                |
-| Backend Architecture     | 7/10       | Handlers rõ ràng; còn thiếu lobby lifecycle, use-case layer, kick-switch           |
-| Frontend Architecture    | 7/10       | Lobby/Game/Result xong, sidebar/app-shell đã có; Phase 5 + Profile/Rankings còn dở |
-| Infrastructure           | 7/10       | Docker + Redis + Throttler; chưa có multi-instance adapter                         |
-| DevOps/CI-CD             | 10/10      | GitHub Actions pipeline configured                                                 |
-| Testing                  | 7/10       | Có nhiều spec cho game-core, game-loop, handlers, admin, question                  |
-| **Overall**              | **8.0/10** | Foundation + core gameplay xong; cần lobby lifecycle + real data APIs              |
+| Dimension                | Score      | Notes                                                                                  |
+| ------------------------ | ---------- | -------------------------------------------------------------------------------------- |
+| Monorepo Structure       | 10/10      | Turborepo + Remote Caching                                                             |
+| Package Boundaries       | 9/10       | Clean separation, đúng dependency flow                                                 |
+| Domain Logic (game-core) | 9/10       | Có serialize/deserialize, immutability, persistence                                    |
+| Backend Architecture     | 7/10       | Handlers rõ ràng; còn thiếu lobby lifecycle, use-case layer, kick-switch               |
+| Frontend Architecture    | 7/10       | Lobby/Game/Result xong, sidebar/app-shell đã có; Phase 5 + Profile/Rankings còn dở     |
+| Infrastructure           | 7/10       | Docker + Redis + Throttler; chưa có multi-instance adapter                             |
+| DevOps/CI-CD             | 10/10      | GitHub Actions pipeline configured; E2E job có cache strategy gọn hơn + fail artifacts |
+| Testing                  | 7/10       | Có nhiều spec cho game-core, game-loop, handlers, admin, question                      |
+| **Overall**              | **8.0/10** | Foundation + core gameplay xong; cần lobby lifecycle + real data APIs                  |
 
 ## Milestones
 

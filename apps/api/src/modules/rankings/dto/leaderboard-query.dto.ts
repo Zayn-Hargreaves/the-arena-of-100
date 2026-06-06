@@ -1,10 +1,15 @@
 import { z } from "zod";
 import { ApiProperty } from "@nestjs/swagger";
+import { CACHE_TTL } from "../../../common/config/cache-ttl";
 
 export const leaderboardPeriodSchema = z.enum(["weekly", "all"]);
 export type LeaderboardPeriod = z.infer<typeof leaderboardPeriodSchema>;
 
-export const LEADERBOARD_CACHE_TTL_SEC = 60;
+/**
+ * @deprecated Import `CACHE_TTL.LEADERBOARD` from
+ * `apps/api/src/common/config/cache-ttl` instead.
+ */
+export const LEADERBOARD_CACHE_TTL_SEC = CACHE_TTL.LEADERBOARD;
 
 export const leaderboardQuerySchema = z.object({
   period: leaderboardPeriodSchema

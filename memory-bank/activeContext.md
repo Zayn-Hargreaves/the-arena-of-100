@@ -30,7 +30,9 @@
 - **Rate Limiting (2026-06-03)** — `@nestjs/throttler` global 100/min; admin 5/min sync, 2/5min reset
 - **Hardcoded locale redirect fix (2026-06-03)** — `routing.defaultLocale` thay vì `/vi`
 - **Admin UI (2026-06-03)** — toast cho migration check; `typecheck` script cho web
-- **E2E in CI (2026-06-06)** — thêm job `e2e` vào `.github/workflows/ci.yml`, chạy 11 vitest E2E tests trên mỗi PR + push main, matrix Node [20, 22], dùng `services: postgres/redis` (không cần Docker-in-Docker). Step-level `DATABASE_URL` override `postgresql://arena_test:arena_test@localhost:5432/arena_test` — gọi vitest trực tiếp thay vì qua script `test:e2e` vì `cross-env` trong script sẽ ghi đè env CI. Push schema + seed:dev + seed:demo trước khi run. Estimated +60–90s/pipeline.
+- **E2E in CI (2026-06-06)** — thêm job `e2e` vào `.github/workflows/ci.yml`, chạy 11 vitest E2E tests trên mỗi PR + push main, matrix Node [20, 22], dùng `services: postgres/redis` (không cần Docker-in-Docker). Step-level `DATABASE_URL` override `postgresql://arena_test:arena_test@localhost:5432/arena_test` — gọi vitest trực tiếp thay vì qua script `test:e2e` vì `cross-env` trong script sẽ ghi đè env CI. Push schema + seed:dev + seed:demo trước khi run. Follow-up hardening cùng ngày: bỏ cache `**/node_modules` để dựa vào pnpm store cache của `actions/setup-node`, tăng độ an toàn Prisma cache key bằng `node-version` + `pnpm-lock.yaml`, và bật `junit` + `json` reports để upload artifact khi E2E fail. Estimated **+120–180s/pipeline** — Docker services spin-up, schema push, hai seed steps, và runner load có thể kéo dài thời gian thực tế.
+
+- **CI/E2E scaling note (2026-06-06)** — giữ suite ở chế độ serial (`singleFork`, `fileParallelism: false`) vì tất cả spec vẫn share 1 PostgreSQL test DB + Redis DB 1. Đây là trade-off ưu tiên stability cho PR hiện tại. Hướng brainstorm nếu muốn scale sau này: (1) per-worker DB naming + global setup, (2) transaction rollback per test, hoặc (3) testcontainers per worker; chỉ khi đó mới nên bật parallelism để giảm wall-clock time.
 
 ## Architecture Assessment Summary
 

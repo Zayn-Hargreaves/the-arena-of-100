@@ -12,11 +12,18 @@ import { SpriteFrame } from "@/components/ui/sprite-frame";
 import { avatars, findAvatarBySeed } from "@/lib/avatars";
 import { isValidAvatarSeed } from "@arena/shared";
 import { formatPercent, formatResponseMs } from "@/lib/formatters";
+import { reportError } from "@/lib/report-error";
 import {
   type LeaderboardEntry,
   type LeaderboardPeriod,
   useLeaderboard,
 } from "@/hooks/use-leaderboard";
+
+// Threshold above which the leaderboard table switches to
+// row-virtualization. Below this, the DOM is small enough to
+// render all rows directly. Tune per-device via a config module
+// if mobile or low-end devices need a different cutoff.
+const VIRTUALIZE_ROW_THRESHOLD = 200;
 
 function PodiumCard({
   entry,
@@ -117,7 +124,7 @@ export default function RankingsPage() {
   const items = data?.items ?? [];
   const topThree = items.slice(0, 3);
   const remaining = items.slice(3);
-  const shouldVirtualizeRows = remaining.length > 200;
+  const shouldVirtualizeRows = remaining.length > VIRTUALIZE_ROW_THRESHOLD;
   const parentRef = React.useRef<HTMLDivElement>(null);
   const rowVirtualizer = useVirtualizer({
     count: remaining.length,
@@ -126,6 +133,7 @@ export default function RankingsPage() {
     overscan: 8,
     enabled: shouldVirtualizeRows,
   });
+  const virtualRows = rowVirtualizer.getVirtualItems();
 
   return (
     <AppShellLayout>
@@ -273,11 +281,37 @@ export default function RankingsPage() {
                         className="relative font-body text-sm text-candy-ink font-semibold"
                         style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
                       >
-                        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                        {virtualRows.map((virtualRow) => {
                           const item = remaining[virtualRow.index];
 
                           if (!item) {
-                            return null;
+                            const context = {
+                              index: virtualRow.index,
+                              remaining: remaining.length,
+                              virtualCount: virtualRows.length,
+                            };
+                            const error = new Error(
+                              "rankings: missing virtual row",
+                              { cause: context },
+                            );
+
+                            reportError(error);
+
+                            if (process.env.NODE_ENV === "development") {
+                              console.error(error.message, context);
+                            }
+
+                            return (
+                              <div
+                                key={virtualRow.key}
+                                className="absolute left-0 top-0 w-full border-b-[2px] border-candy-ink bg-candy-yellow/10 px-4 py-5 text-xs font-mono font-black text-candy-ink/70"
+                                style={{
+                                  transform: `translateY(${virtualRow.start}px)`,
+                                }}
+                              >
+                                {t("error.rowUnavailable")}
+                              </div>
+                            );
                           }
 
                           const avatar = isValidAvatarSeed(item.avatar)
@@ -307,9 +341,15 @@ export default function RankingsPage() {
                                       skeletonSize="28px"
                                     />
                                   </div>
-                                  <span className="font-display font-black truncate max-w-[120px] sm:max-w-none">
-                                    {item.username}
-                                  </span>
+                                  <div className="min-w-0">
+                                    <span className="font-display font-black truncate block max-w-[120px] sm:max-w-none">
+                                      {item.username}
+                                    </span>
+                                    <span className="text-[10px] font-mono font-black text-candy-ink/60 uppercase">
+                                      {item.wins} W • {t("accuracyShort")}{" "}
+                                      {formatPercent(item.accuracy)}
+                                    </span>
+                                  </div>
                                 </div>
                               </div>
                               <div className="p-4 text-right font-mono font-black text-candy-pink border-r-[2px] border-candy-ink shrink-0">

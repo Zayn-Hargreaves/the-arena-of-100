@@ -1,4 +1,7 @@
 {
+  "common": {
+    "skipToMainContent": "Chuyển đến nội dung chính"
+  },
   "HomePage": {
     "subtitle": "Đấu Trường Trí Tuệ Sinh Tử",
     "enterNickname": "Nhập Biệt Danh Chiến Đấu",
@@ -172,6 +175,7 @@
     "empty": "Chưa có dữ liệu xếp hạng.",
     "error": {
       "loadFailed": "Không tải được bảng xếp hạng.",
+      "rowUnavailable": "Không thể hiển thị hàng bảng xếp hạng.",
       "retry": "Thử lại"
     }
   },
@@ -181,6 +185,7 @@
       "subtitle": "Chọn nhân vật đại diện cho bạn trong đấu trường.",
       "current": "HIỆN TẠI",
       "selectAvatar": "Chọn Hình Đại Diện",
+      "avatarNavigation": "Điều hướng hình đại diện",
       "previous": "Avatar trước",
       "next": "Avatar tiếp theo",
       "updated": "Đã cập nhật hình đại diện!",

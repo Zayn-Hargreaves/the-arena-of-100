@@ -97,71 +97,88 @@ export async function createTestApp(): Promise<TestApp> {
 
   await app.init();
 
+  async function inject(
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+    url: string,
+    opts: { headers?: Record<string, string>; payload?: unknown } = {},
+  ) {
+    const fastify = app.getHttpAdapter().getInstance();
+    // When a payload is supplied, default to JSON Content-Type so
+    // the body parser is invoked. Callers can override.
+    const headers: Record<string, string> = { ...(opts.headers ?? {}) };
+    if (opts.payload !== undefined && !("content-type" in headers)) {
+      headers["content-type"] = "application/json";
+    }
+    const res = await fastify.inject({
+      method,
+      url,
+      headers,
+      ...(opts.payload !== undefined
+        ? { payload: JSON.stringify(opts.payload) }
+        : {}),
+    });
+    return {
+      statusCode: res.statusCode,
+      body: res.body,
+      headers: res.headers as Record<string, string | string[] | undefined>,
+      json: <T>() => res.json() as T,
+    };
+  }
+
+  function authedHeaders(userId: string, username: string) {
+    const payload: TokenPayload = { userId, username, role: "GUEST" };
+    const accessToken = jwt.sign(payload, jwtSecret(), { expiresIn: "1h" });
+    return { authorization: `Bearer ${accessToken}` };
+  }
+
+  async function mutatingHeaders(userId: string, username: string) {
+    // Get a CSRF token + cookie from the public endpoint.
+    const csrfRes = await inject("GET", "/api/v1/auth/csrf-token");
+    const csrfBody = csrfRes.json<{
+      success: boolean;
+      data: { csrfToken: string };
+    }>();
+    const csrfToken = csrfBody.data.csrfToken;
+
+    // Extract the CSRF cookie from Set-Cookie header. Fastify may
+    // emit one or more Set-Cookie headers (single string or array).
+    const setCookieRaw = csrfRes.headers["set-cookie"];
+    const setCookieList = Array.isArray(setCookieRaw)
+      ? setCookieRaw
+      : setCookieRaw
+        ? [setCookieRaw]
+        : [];
+    // Cookie name is the single source of truth in auth-cookie.ts.
+    const csrfCookieLine = setCookieList.find((c) =>
+      c.startsWith(`${CSRF_TOKEN_COOKIE}=`),
+    );
+    if (!csrfCookieLine) {
+      throw new Error(
+        `auth/csrf-token did not return a CSRF cookie. Got headers: ${JSON.stringify(csrfRes.headers)}`,
+      );
+    }
+    const firstSegment = csrfCookieLine.split(";")[0] ?? "";
+    const eqIdx = firstSegment.indexOf("=");
+    if (eqIdx < 0) {
+      throw new Error(
+        `auth/csrf-token returned a malformed Set-Cookie (no '='): ${csrfCookieLine}`,
+      );
+    }
+    const cookieValue = decodeURIComponent(firstSegment.slice(eqIdx + 1));
+
+    return {
+      ...authedHeaders(userId, username),
+      "x-csrf-token": csrfToken,
+      cookie: `${CSRF_TOKEN_COOKIE}=${cookieValue}`,
+    };
+  }
+
   return {
     app,
     module: moduleRef,
-    async inject(method, url, opts = {}) {
-      const fastify = app.getHttpAdapter().getInstance();
-      // When a payload is supplied, default to JSON Content-Type so
-      // the body parser is invoked. Callers can override.
-      const headers: Record<string, string> = { ...(opts.headers ?? {}) };
-      if (opts.payload !== undefined && !("content-type" in headers)) {
-        headers["content-type"] = "application/json";
-      }
-      const res = await fastify.inject({
-        method,
-        url,
-        headers,
-        ...(opts.payload !== undefined
-          ? { payload: JSON.stringify(opts.payload) }
-          : {}),
-      });
-      return {
-        statusCode: res.statusCode,
-        body: res.body,
-        headers: res.headers as Record<string, string | string[] | undefined>,
-        json: <T>() => res.json() as T,
-      };
-    },
-    authedHeaders(userId, username) {
-      const payload: TokenPayload = { userId, username, role: "GUEST" };
-      const accessToken = jwt.sign(payload, jwtSecret(), { expiresIn: "1h" });
-      return { authorization: `Bearer ${accessToken}` };
-    },
-    async mutatingHeaders(userId, username) {
-      // Get a CSRF token + cookie from the public endpoint.
-      const csrfRes = await this.inject("GET", "/api/v1/auth/csrf-token");
-      const csrfBody = csrfRes.json<{
-        success: boolean;
-        data: { csrfToken: string };
-      }>();
-      const csrfToken = csrfBody.data.csrfToken;
-
-      // Extract the CSRF cookie from Set-Cookie header. Fastify may
-      // emit one or more Set-Cookie headers (single string or array).
-      const setCookieRaw = csrfRes.headers["set-cookie"];
-      const setCookieList = Array.isArray(setCookieRaw)
-        ? setCookieRaw
-        : setCookieRaw
-          ? [setCookieRaw]
-          : [];
-      // Cookie name is the single source of truth in auth-cookie.ts.
-      const csrfCookieLine = setCookieList.find((c) =>
-        c.startsWith(`${CSRF_TOKEN_COOKIE}=`),
-      );
-      if (!csrfCookieLine) {
-        throw new Error(
-          `auth/csrf-token did not return a CSRF cookie. Got headers: ${JSON.stringify(csrfRes.headers)}`,
-        );
-      }
-      const cookieValue = csrfCookieLine.split(";")[0]!.split("=")[1]!;
-
-      return {
-        ...this.authedHeaders(userId, username),
-        "x-csrf-token": csrfToken,
-        cookie: `${CSRF_TOKEN_COOKIE}=${cookieValue}`,
-      };
-    },
+    inject,
+    authedHeaders,
+    mutatingHeaders,
     async close() {
       await app.close();
     },

@@ -9,8 +9,8 @@ import { MiniGlyph } from "@/components/ui/mini-glyph";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SpriteFrame } from "@/components/ui/sprite-frame";
 import { Spinner } from "@/components/ui/spinner";
-import { avatars, findAvatarBySeed } from "@/lib/avatars";
-import { isValidAvatarSeed } from "@arena/shared";
+import { avatars, findAvatarBySeed, type AvatarOption } from "@/lib/avatars";
+import { DEFAULT_AVATAR_SEED, isValidAvatarSeed } from "@arena/shared";
 import {
   formatDuration,
   formatPercent,
@@ -57,6 +57,24 @@ function HistorySkeleton() {
   );
 }
 
+// Resolves which avatar to render in the profile header.
+// Fallback order:
+//   1. profile.user.avatar (server-known selection)
+//   2. first avatar in the catalog (only reached when catalog is empty
+//      or the server value is invalid; ensures we always render something)
+// We never throw here because the avatar is purely cosmetic — the page
+// stays usable even if no avatar can be resolved.
+function getActiveAvatar(
+  profile: { user: { avatar: string } } | undefined,
+  catalog: AvatarOption[],
+): AvatarOption | undefined {
+  const seed = profile?.user.avatar;
+  if (seed && isValidAvatarSeed(seed)) {
+    return findAvatarBySeed(seed);
+  }
+  return catalog[0];
+}
+
 export default function ProfilePage() {
   const { username, accessToken } = useSocketStore();
   const locale = useLocale() as Locale;
@@ -66,11 +84,7 @@ export default function ProfilePage() {
 
   const profile = statsQuery.data;
   const activeName = profile?.user.username || username || "Khách_Đấu_Thủ";
-  const rawAvatar = profile?.user.avatar;
-  const activeAvatar =
-    rawAvatar && isValidAvatarSeed(rawAvatar)
-      ? findAvatarBySeed(rawAvatar)
-      : avatars[0];
+  const activeAvatar = getActiveAvatar(profile, avatars);
   const categoryLabels = {
     ALL: t("roomCategory.ALL"),
     SCIENCE: t("roomCategory.SCIENCE"),
@@ -112,7 +126,8 @@ export default function ProfilePage() {
                 {activeName}
               </h2>
               <span className="px-3.5 py-1 rounded-xl bg-candy-blue border-[2.5px] border-candy-ink text-white text-xs font-mono font-black tracking-wider uppercase w-fit mx-auto sm:mx-0 shadow-[2px_2px_0_0_#2B2D42]">
-                {activeAvatar?.name ?? "Jellyfrog"}
+                {activeAvatar?.name ??
+                  findAvatarBySeed(DEFAULT_AVATAR_SEED).name}
               </span>
             </div>
             <div className="flex justify-center sm:justify-start gap-4 text-xs font-mono font-black text-candy-ink/80">

@@ -108,6 +108,8 @@ model Match {
   answers   Answer[]
   eventLogs EventLog[]
 
+  // Speeds up the weekly-window filter in /rankings/leaderboard.
+  @@index([status, endedAt], map: "matches_status_ended_at_idx")
   @@map("matches")
 }
 
@@ -123,6 +125,8 @@ model MatchPlayer {
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([matchId, userId])
+  // Speeds up player_match_agg GROUP BY userId in /rankings/leaderboard.
+  @@index([matchId, userId], map: "match_players_match_id_user_id_idx")
   @@map("match_players")
 }
 
@@ -183,6 +187,8 @@ model Answer {
   user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([roundId, userId])
+  // Speeds up answer_agg in /rankings/leaderboard.
+  @@index([matchId, userId], map: "answers_match_id_user_id_idx")
   @@map("answers")
 }
 

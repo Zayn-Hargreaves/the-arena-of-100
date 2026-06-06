@@ -36,20 +36,6 @@ export const GAME_CONFIG = {
   SCORE_SPEED_BONUS_DIVISOR: 200,
 } as const;
 
-// Compute round score for a single correct answer.
-// Returns base, speedBonus, and total. Incorrect answers earn 0 (caller should not invoke).
-export function computeRoundScore(responseTimeMs: number): {
-  base: number;
-  speedBonus: number;
-  total: number;
-} {
-  const base = GAME_CONFIG.SCORE_BASE_CORRECT;
-  const clamped = Math.max(0, responseTimeMs);
-  const raw = Math.max(0, GAME_CONFIG.SCORE_SPEED_BONUS_WINDOW_MS - clamped);
-  const speedBonus = raw / GAME_CONFIG.SCORE_SPEED_BONUS_DIVISOR;
-  return { base, speedBonus, total: base + speedBonus };
-}
-
 export type RoomCategory =
   | "ALL"
   | "SCIENCE"

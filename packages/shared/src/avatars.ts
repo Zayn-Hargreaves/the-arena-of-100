@@ -54,6 +54,13 @@ export const AVATAR_SEEDS = [
 
 export type AvatarSeed = (typeof AVATAR_SEEDS)[number];
 
+/**
+ * Default avatar seed used when a user has no avatar assigned yet.
+ * Must stay in sync with the `User.avatar` Prisma default
+ * (see apps/api/prisma/schema.prisma) and any client-side fallbacks.
+ */
+export const DEFAULT_AVATAR_SEED: AvatarSeed = "jellyfrog";
+
 export function isValidAvatarSeed(seed: string): seed is AvatarSeed {
   return (AVATAR_SEEDS as readonly string[]).includes(seed);
 }

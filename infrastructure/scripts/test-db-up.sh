@@ -11,16 +11,18 @@ cd "$ROOT_DIR"
 
 COMPOSE_FILE="infrastructure/docker-compose.test.yml"
 TEST_DB_URL="postgresql://arena_test:arena_test@localhost:5434/arena_test"
+SERVICE_NAME="postgres-test"
+CONTAINER_NAME="arena-postgres-test"
 
 echo "🐳 Starting test PostgreSQL on :5434..."
 
 # Start the test container (idempotent; docker compose is a no-op if it's already up).
-docker compose -f "$COMPOSE_FILE" up -d arena-postgres-test
+docker compose -f "$COMPOSE_FILE" up -d "$SERVICE_NAME"
 
 # Wait for healthy
 echo "⏳ Waiting for postgres-test to become healthy..."
 for i in $(seq 1 30); do
-  status=$(docker inspect --format='{{.State.Health.Status}}' arena-postgres-test 2>/dev/null || echo "starting")
+  status=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo "starting")
   if [ "$status" = "healthy" ]; then
     echo "✅ postgres-test is healthy"
     break
@@ -41,8 +43,24 @@ pnpm --filter @arena/api exec prisma db push --url "$TEST_DB_URL"
 # Questions MUST exist before the demo seed (the demo seed asserts
 # questionCount > 0).
 echo "🌱 Seeding questions (dev dataset)..."
-DATABASE_URL="$TEST_DB_URL" \
-  pnpm --filter @arena/api run prisma:seed:dev
+if ! DATABASE_URL="$TEST_DB_URL" \
+  pnpm --filter @arena/api run prisma:seed:dev; then
+  echo "❌ prisma:seed:dev failed — aborting before demo seed." >&2
+  exit 1
+fi
+
+# Verify the dev seed produced the questions the demo seed depends on.
+echo "🔎 Verifying that questions exist in the test DB..."
+QUESTION_COUNT=$(PGPASSWORD="arena_test" \
+  psql -tA -h localhost -p 5434 -U arena_test -d arena_test -c \
+  'SELECT COUNT(*) FROM "questions" WHERE "active" = true;' 2>/dev/null \
+  || echo "0")
+if [ "${QUESTION_COUNT:-0}" -eq 0 ]; then
+  echo "❌ Expected at least one active question in $TEST_DB_URL after prisma:seed:dev, found 0." >&2
+  echo "   Aborting before prisma:seed:demo so we don't seed a broken baseline." >&2
+  exit 1
+fi
+echo "✅ Found $QUESTION_COUNT active question(s)"
 
 echo "🌱 Seeding demo users + matches..."
 DATABASE_URL="$TEST_DB_URL" \

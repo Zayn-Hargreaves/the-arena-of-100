@@ -22,7 +22,7 @@ export function getPrisma(): PrismaClient {
   if (!connectionString) {
     throw new Error("DATABASE_URL not set for e2e test");
   }
-  pool = new Pool({
+  const newPool = new Pool({
     connectionString,
     max: 3,
     ssl: buildSslConfig({
@@ -32,7 +32,14 @@ export function getPrisma(): PrismaClient {
       allowSelfSigned: process.env.PG_ALLOW_SELF_SIGNED === "true",
     }),
   });
-  prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
+  try {
+    prisma = new PrismaClient({ adapter: new PrismaPg(newPool) });
+  } catch (err) {
+    // Avoid leaking the pool if PrismaClient construction throws.
+    void newPool.end().catch(() => undefined);
+    throw err;
+  }
+  pool = newPool;
   return prisma;
 }
 

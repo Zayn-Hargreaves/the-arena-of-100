@@ -21,13 +21,29 @@ export function AvatarSelector({
 }: AvatarSelectorProps) {
   const t = useTranslations("settings.avatar");
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      onPrevious();
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      onNext();
+    }
+  };
+
   return (
     <div className="text-center">
       <label className="font-display text-sm text-candy-ink block mb-3 uppercase tracking-wider leading-5">
         {t("selectAvatar")}
       </label>
 
-      <div className="flex justify-center items-center gap-6">
+      <div
+        className="flex justify-center items-center gap-6"
+        onKeyDown={handleKeyDown}
+        tabIndex={0}
+        role="group"
+        aria-label={t("avatarNavigation")}
+      >
         <button
           type="button"
           onClick={onPrevious}
@@ -65,7 +81,10 @@ export function AvatarSelector({
               skeletonSize="86px"
             />
           </div>
-          <span className="mt-3 bg-candy-pink text-white font-hand text-2xl px-4 py-0.5 border-3 border-candy-ink rounded-full shadow-[2px_2px_0_0_#000] transform -rotate-1 inline-flex items-center gap-2 leading-none">
+          <span
+            aria-live="polite"
+            className="mt-3 bg-candy-pink text-white font-hand text-2xl px-4 py-0.5 border-3 border-candy-ink rounded-full shadow-[2px_2px_0_0_#000] transform -rotate-1 inline-flex items-center gap-2 leading-none"
+          >
             <MiniGlyph variant="avatar" className="w-4 h-4" />
             {avatar.name}
           </span>

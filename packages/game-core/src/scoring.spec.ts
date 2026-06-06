@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { computeRoundScore, GAME_CONFIG } from "./index";
+import { computeRoundScore } from "./scoring";
+import { GAME_CONFIG } from "@arena/shared";
 
 describe("computeRoundScore", () => {
   it("returns base + max bonus (50) when responseTime is 0", () => {

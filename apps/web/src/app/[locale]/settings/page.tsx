@@ -2,10 +2,11 @@
 
 import React, { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import type { AvatarSeed } from "@arena/shared";
+import { DEFAULT_AVATAR_SEED, type AvatarSeed } from "@arena/shared";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import { MiniGlyph } from "@/components/ui/mini-glyph";
 import { PanelSection } from "@/components/ui/panel-section";
+import { Skeleton } from "@/components/ui/skeleton";
 import { SpriteFrame } from "@/components/ui/sprite-frame";
 import { toast } from "@/hooks/use-toast";
 import { useProfileStats } from "@/hooks/use-profile-stats";
@@ -48,13 +49,21 @@ function syncLocalAvatar(seed: AvatarSeed) {
     return;
   }
 
-  localStorage.setItem("avatarSeed", seed);
-  localStorage.setItem("avatarName", avatar.name);
-  localStorage.setItem(
-    "avatarIsAnimated",
-    avatar.isAnimated ? "true" : "false",
-  );
-  localStorage.setItem("avatarSpritesheet", avatar.spritesheet ?? "");
+  // Wrap storage writes in try/catch: private-browsing / quota-exceeded
+  // / SecurityError shouldn't crash the page after a successful server
+  // update. We swallow the error (and log it) because the authoritative
+  // avatar lives on the server; the local mirror is just an optimization.
+  try {
+    localStorage.setItem("avatarSeed", seed);
+    localStorage.setItem("avatarName", avatar.name);
+    localStorage.setItem(
+      "avatarIsAnimated",
+      avatar.isAnimated ? "true" : "false",
+    );
+    localStorage.setItem("avatarSpritesheet", avatar.spritesheet ?? "");
+  } catch (err) {
+    console.warn("syncLocalAvatar: localStorage write failed", err);
+  }
 }
 
 export default function SettingsPage() {
@@ -81,8 +90,12 @@ export default function SettingsPage() {
   ); // Press 1-4 for answers
 
   const currentAvatarSeed = (profileQuery.data?.user.avatar ??
-    "jellyfrog") as AvatarSeed;
+    DEFAULT_AVATAR_SEED) as AvatarSeed;
   const currentAvatar = findAvatarBySeed(currentAvatarSeed);
+  // Track which avatar the user just submitted so the pending state
+  // only highlights that specific tile (rather than dimming every
+  // non-active avatar during a mutation).
+  const [submittingSeed, setSubmittingSeed] = useState<AvatarSeed | null>(null);
 
   useEffect(() => {
     try {
@@ -132,6 +145,7 @@ export default function SettingsPage() {
       return;
     }
 
+    setSubmittingSeed(seed);
     updateAvatar.mutate(seed, {
       onSuccess: () => {
         syncLocalAvatar(seed);
@@ -143,6 +157,9 @@ export default function SettingsPage() {
             error instanceof Error ? error.message : tAvatar("updateFailed"),
           variant: "error",
         });
+      },
+      onSettled: () => {
+        setSubmittingSeed(null);
       },
     });
   };
@@ -302,32 +319,49 @@ export default function SettingsPage() {
               </p>
 
               <div className="bg-white/70 border-[2px] border-candy-ink rounded-2xl p-4 shadow-[2px_2px_0_0_#2B2D42] flex items-center gap-4">
-                <SpriteFrame
-                  src={currentAvatar?.spritesheet}
-                  scale={0.35}
-                  width="64px"
-                  height="70px"
-                  frameClassName="w-20 h-20 rounded-2xl shrink-0"
-                  skeletonSize="54px"
-                />
-                <div className="min-w-0">
-                  <p className="font-mono text-[10px] text-candy-ink/60 font-black uppercase tracking-wider">
-                    {tAvatar("current")}
-                  </p>
-                  <p className="font-display font-black text-sm text-candy-ink uppercase truncate">
-                    {currentAvatar?.name ?? "Jellyfrog"}
-                  </p>
-                  <p className="font-mono text-[10px] text-candy-ink/60 font-black uppercase tracking-wider mt-1">
-                    {profileQuery.data?.user.username ?? "Guest"}
-                  </p>
-                </div>
+                {profileQuery.isLoading ? (
+                  <>
+                    <Skeleton
+                      width="80px"
+                      height="80px"
+                      className="rounded-2xl shrink-0"
+                    />
+                    <div className="min-w-0 space-y-2 flex-1">
+                      <Skeleton width="60px" height="10px" />
+                      <Skeleton width="140px" height="16px" />
+                      <Skeleton width="80px" height="10px" />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <SpriteFrame
+                      src={currentAvatar?.spritesheet}
+                      scale={0.35}
+                      width="64px"
+                      height="70px"
+                      frameClassName="w-20 h-20 rounded-2xl shrink-0"
+                      skeletonSize="54px"
+                    />
+                    <div className="min-w-0">
+                      <p className="font-mono text-[10px] text-candy-ink/60 font-black uppercase tracking-wider">
+                        {tAvatar("current")}
+                      </p>
+                      <p className="font-display font-black text-sm text-candy-ink uppercase truncate">
+                        {currentAvatar?.name ?? "Jellyfrog"}
+                      </p>
+                      <p className="font-mono text-[10px] text-candy-ink/60 font-black uppercase tracking-wider mt-1">
+                        {profileQuery.data?.user.username ?? "Guest"}
+                      </p>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-3 gap-3">
                 {avatars.map((avatar) => {
                   const isActive = avatar.seed === currentAvatarSeed;
                   const isPending =
-                    updateAvatar.isPending && avatar.seed !== currentAvatarSeed;
+                    updateAvatar.isPending && avatar.seed === submittingSeed;
 
                   return (
                     <button

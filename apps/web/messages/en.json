@@ -1,4 +1,7 @@
 {
+  "common": {
+    "skipToMainContent": "Skip to main content"
+  },
   "HomePage": {
     "subtitle": "Battle Royale Quiz",
     "enterNickname": "Enter Battle Nickname",
@@ -172,6 +175,7 @@
     "empty": "No leaderboard data yet.",
     "error": {
       "loadFailed": "Failed to load leaderboard.",
+      "rowUnavailable": "Leaderboard row unavailable.",
       "retry": "Retry"
     }
   },
@@ -181,6 +185,7 @@
       "subtitle": "Choose the character that represents you in the arena.",
       "current": "CURRENT",
       "selectAvatar": "Select Avatar",
+      "avatarNavigation": "Avatar navigation",
       "previous": "Previous Avatar",
       "next": "Next Avatar",
       "updated": "Avatar updated successfully!",

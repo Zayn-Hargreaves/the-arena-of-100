@@ -5,8 +5,8 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
+import { CACHE_TTL } from "../../common/config/cache-ttl";
 import {
-  LEADERBOARD_CACHE_TTL_SEC,
   type LeaderboardItem,
   type LeaderboardQuery,
   type LeaderboardResponse,
@@ -78,7 +78,7 @@ export class RankingsService {
     payload: Omit<LeaderboardResponse, "cached">,
   ): Promise<void> {
     try {
-      await this.redis.setJSON(key, payload, LEADERBOARD_CACHE_TTL_SEC);
+      await this.redis.setJSON(key, payload, CACHE_TTL.LEADERBOARD);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(`Redis SET failed for ${key}: ${message}`);
@@ -198,7 +198,7 @@ export class RankingsService {
       wins: Number(row.wins),
       matchesPlayed: Number(row.matches_played),
       accuracy: Number(row.accuracy),
-      avgResponseMs: Number(row.avg_response_ms ?? 0),
+      avgResponseMs: Number(row.avg_response_ms),
       totalScore: Number(row.total_score),
     }));
   }

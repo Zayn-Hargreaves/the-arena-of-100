@@ -14,7 +14,11 @@
 import "./../setup-e2e";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestApp, type TestApp } from "./../helpers/test-app.factory";
-import { disconnectPrisma, requireDemoUser } from "./../helpers/db-helpers";
+import {
+  disconnectPrisma,
+  getPrisma,
+  requireDemoUser,
+} from "./../helpers/db-helpers";
 import { AVATAR_SEEDS } from "@arena/shared";
 
 describe("E2E /users", () => {
@@ -120,7 +124,7 @@ describe("E2E /users", () => {
         expect(typeof item.matchId).toBe("string");
         expect(["WON", "ELIMINATED", "ABANDONED"]).toContain(item.status);
         expect(item.playerCount).toBeGreaterThan(0);
-        expect(item.rank).toBeGreaterThanOrEqual(0);
+        expect(item.rank).toBeGreaterThan(0);
         expect(item.score).toBeGreaterThanOrEqual(0);
       }
     });
@@ -138,25 +142,45 @@ describe("E2E /users", () => {
 
   describe("PATCH /api/v1/users/me/avatar", () => {
     it("updates the avatar when a valid seed is supplied", async () => {
+      // Capture the original avatar so the shared fixture can be
+      // restored to its baseline state after the test mutates it.
+      const original = await getPrisma().user.findUnique({
+        where: { id: demoUserId },
+        select: { avatar: true },
+      });
+      if (!original) {
+        throw new Error("Demo user vanished mid-test");
+      }
+      const originalAvatar = original.avatar;
+
       const headers = await testApp.mutatingHeaders(demoUserId, demoUsername);
       const targetSeed = AVATAR_SEEDS[3]!; // deterministic pick
-      const res = await testApp.inject("PATCH", "/api/v1/users/me/avatar", {
-        headers,
-        payload: { avatar: targetSeed },
-      });
+      try {
+        const res = await testApp.inject("PATCH", "/api/v1/users/me/avatar", {
+          headers,
+          payload: { avatar: targetSeed },
+        });
 
-      // Surface the response body on failure for easier debugging.
-      if (res.statusCode !== 200) {
-        console.log("PATCH failed:", res.statusCode, res.body);
+        // Surface the response body on failure for easier debugging.
+        if (res.statusCode !== 200) {
+          console.log("PATCH failed:", res.statusCode, res.body);
+        }
+        expect(res.statusCode).toBe(200);
+        const body = res.json<{
+          success: boolean;
+          data: { id: string; avatar: string };
+        }>();
+        expect(body.success).toBe(true);
+        expect(body.data.id).toBe(demoUserId);
+        expect(body.data.avatar).toBe(targetSeed);
+      } finally {
+        // Restore the original avatar so subsequent specs see the
+        // baseline fixture.
+        await getPrisma().user.update({
+          where: { id: demoUserId },
+          data: { avatar: originalAvatar },
+        });
       }
-      expect(res.statusCode).toBe(200);
-      const body = res.json<{
-        success: boolean;
-        data: { id: string; avatar: string };
-      }>();
-      expect(body.success).toBe(true);
-      expect(body.data.id).toBe(demoUserId);
-      expect(body.data.avatar).toBe(targetSeed);
     });
 
     it("rejects an unknown avatar seed with 400", async () => {

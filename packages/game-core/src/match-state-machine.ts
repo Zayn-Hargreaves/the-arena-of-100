@@ -12,8 +12,8 @@ import {
   type AnswerState,
   GAME_CONFIG,
   ErrorCode,
-  computeRoundScore,
 } from "@arena/shared";
+import { computeRoundScore } from "./scoring";
 interface DeserializedMatch {
   state: {
     id: string;

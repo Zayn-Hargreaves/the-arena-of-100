@@ -10,6 +10,18 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Distinct subclass so callers can `instanceof`-check JSON parse
+ * failures separately from genuine HTTP errors. Status is 0 to
+ * make the failure mode obvious in logs and match handlers.
+ */
+export class JsonParseError extends ApiError {
+  constructor(message: string) {
+    super(message, 0);
+    this.name = "JsonParseError";
+  }
+}
+
 function createHeaders(token?: string) {
   return {
     "Content-Type": "application/json",
@@ -28,6 +40,22 @@ async function parseError(response: Response) {
   }
 }
 
+/**
+ * Parses the body and throws a JsonParseError (status 0) if the
+ * body is unparseable. Otherwise returns the typed body. We use
+ * 0 — not the response status — because a successful HTTP
+ * response that fails to parse is not a 2xx success.
+ */
+async function parseJsonOrThrow<T>(response: Response): Promise<T> {
+  try {
+    return (await response.json()) as T;
+  } catch (e) {
+    throw new JsonParseError(
+      e instanceof Error ? e.message : "Failed to parse response",
+    );
+  }
+}
+
 export async function apiGetJson<T>(path: string, token?: string): Promise<T> {
   const response = await apiFetch(path, {
     headers: createHeaders(token),
@@ -37,14 +65,7 @@ export async function apiGetJson<T>(path: string, token?: string): Promise<T> {
     throw new ApiError(await parseError(response), response.status);
   }
 
-  try {
-    return (await response.json()) as T;
-  } catch (e) {
-    throw new ApiError(
-      e instanceof Error ? e.message : "Failed to parse response",
-      response.status,
-    );
-  }
+  return parseJsonOrThrow<T>(response);
 }
 
 export async function apiSendJson<T>(
@@ -63,12 +84,5 @@ export async function apiSendJson<T>(
     throw new ApiError(await parseError(response), response.status);
   }
 
-  try {
-    return (await response.json()) as T;
-  } catch (e) {
-    throw new ApiError(
-      e instanceof Error ? e.message : "Failed to parse response",
-      response.status,
-    );
-  }
+  return parseJsonOrThrow<T>(response);
 }

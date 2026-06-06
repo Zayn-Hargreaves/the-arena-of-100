@@ -18,7 +18,21 @@ export function getRedis(): Redis {
 }
 
 export async function flushTestRedis(): Promise<void> {
-  await getRedis().flushdb();
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error(
+      "flushTestRedis called outside of NODE_ENV=test — refusing to flushdb.",
+    );
+  }
+  const client = getRedis();
+  if (client.options.db !== 1) {
+    throw new Error(
+      `flushTestRedis: connected Redis DB is ${String(
+        client.options.db,
+      )}, expected 1. Refusing to flushdb. ` +
+        `Set REDIS_URL=redis://localhost:6379/1.`,
+    );
+  }
+  await client.flushdb();
 }
 
 export async function disconnectRedis(): Promise<void> {

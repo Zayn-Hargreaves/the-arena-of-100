@@ -18,7 +18,7 @@ import { PrismaClient, type Prisma } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { z } from "zod";
-import { AVATAR_SEEDS, type AvatarSeed } from "@arena/shared";
+import { AVATAR_SEEDS } from "@arena/shared";
 import { buildSslConfig } from "../src/common/database/ssl-config";
 
 // ---------- Environment guards ----------
@@ -124,11 +124,11 @@ function rangeInt(min: number, max: number): number {
   return Math.floor(rand() * (max - min + 1)) + min;
 }
 
-// ---------- Score formula (matches Bước 2) ----------
+// ---------- Score formula (matches in-game runtime) ----------
 
 function computeScore(isCorrect: boolean, responseTimeMs: number): number {
   if (!isCorrect) return 0;
-  return 100 + Math.max(0, (10000 - responseTimeMs) / 200);
+  return Math.floor(100 + Math.max(0, (10000 - responseTimeMs) / 200));
 }
 
 // ---------- Main ----------
@@ -159,7 +159,7 @@ async function main() {
   const userIds: string[] = [];
   for (let i = 1; i <= NUM_USERS; i++) {
     const username = `demo_player_${String(i).padStart(2, "0")}`;
-    const avatar = pick(AVATAR_SEEDS) as AvatarSeed;
+    const avatar = pick(AVATAR_SEEDS);
 
     const user = await prisma.user.upsert({
       where: { username },
@@ -170,6 +170,39 @@ async function main() {
     userIds.push(user.id);
   }
   console.log(`✅ Upserted ${userIds.length} demo users`);
+
+  // 2b. When DEMO_RESET=true, wipe ALL demo-related rows up-front
+  // so the seed produces a clean baseline. The :reset variant of
+  // the npm script sets this flag. Order matters: matches first
+  // (cascades to players/rounds/answers), then the room, then users.
+  if (process.env.DEMO_RESET === "true") {
+    const deletedMatches = await prisma.match.deleteMany({
+      where: { room: { code: DEMO_ROOM_CODE } },
+    });
+    const deletedRooms = await prisma.room.deleteMany({
+      where: { code: DEMO_ROOM_CODE },
+    });
+    const deletedUsers = await prisma.user.deleteMany({
+      where: { username: { startsWith: "demo_player_" } },
+    });
+    console.log(
+      `🗑️  DEMO_RESET: deleted ${deletedMatches.count} match(es), ` +
+        `${deletedRooms.count} room(s), ${deletedUsers.count} user(s)`,
+    );
+    // Re-create the users we just deleted (idempotent for the
+    // current run, but the baseline state is now clean).
+    userIds.length = 0;
+    for (let i = 1; i <= NUM_USERS; i++) {
+      const username = `demo_player_${String(i).padStart(2, "0")}`;
+      const avatar = pick(AVATAR_SEEDS);
+      const user = await prisma.user.create({
+        data: { username, avatar, role: "GUEST" },
+        select: { id: true, username: true, avatar: true },
+      });
+      userIds.push(user.id);
+    }
+    console.log(`✅ Re-created ${userIds.length} demo users after reset`);
+  }
 
   // 3. Re-pin the user matching DEMO_PIN_USER_ID (optional, for live UI testing).
   if (env.DEMO_PIN_USER_ID) {
@@ -223,13 +256,12 @@ async function main() {
       .sort(() => rand() - 0.5)
       .slice(0, PLAYERS_PER_MATCH);
 
-    const winnerId = playerIds[0]!; // deterministic winner (first in shuffled order)
-
+    // Create match without a pre-set winner; we'll derive it from
+    // the highest-scoring player after scores are aggregated.
     const match = await prisma.match.create({
       data: {
         roomId: room.id,
         status: "FINISHED",
-        winnerId,
         startedAt,
         endedAt,
       },
@@ -309,7 +341,25 @@ async function main() {
       const finalScore = scoreByUser.get(mp.userId) ?? 0;
       await prisma.matchPlayer.update({
         where: { id: mp.id },
-        data: { score: Math.round(finalScore) },
+        data: { score: finalScore },
+      });
+    }
+
+    // Determine the winner by the highest final score (tie-broken
+    // deterministically by the player order created above).
+    let winnerId: string | null = null;
+    let bestScore = -1;
+    for (const mp of matchPlayers) {
+      const finalScore = scoreByUser.get(mp.userId) ?? 0;
+      if (finalScore > bestScore) {
+        bestScore = finalScore;
+        winnerId = mp.userId;
+      }
+    }
+    if (winnerId) {
+      await prisma.match.update({
+        where: { id: match.id },
+        data: { winnerId },
       });
     }
   }

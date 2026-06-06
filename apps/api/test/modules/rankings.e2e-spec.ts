@@ -63,6 +63,7 @@ describe("E2E /rankings", () => {
       "GET",
       "/api/v1/rankings/leaderboard?period=all&limit=10",
     );
+    expect(res1.statusCode).toBe(200);
     const miss = res1.json<{ success: boolean; data: LeaderboardResponse }>()
       .data;
     expect(miss.cached).toBe(false);
@@ -71,6 +72,7 @@ describe("E2E /rankings", () => {
       "GET",
       "/api/v1/rankings/leaderboard?period=all&limit=10",
     );
+    expect(res2.statusCode).toBe(200);
     const hit = res2.json<{ success: boolean; data: LeaderboardResponse }>()
       .data;
     expect(hit.cached).toBe(true);
@@ -84,10 +86,12 @@ describe("E2E /rankings", () => {
       "GET",
       "/api/v1/rankings/leaderboard?period=weekly&limit=50",
     );
+    expect(weekly.statusCode).toBe(200);
     const all = await testApp.inject(
       "GET",
       "/api/v1/rankings/leaderboard?period=all&limit=50",
     );
+    expect(all.statusCode).toBe(200);
 
     const weeklyData = weekly.json<{
       success: boolean;

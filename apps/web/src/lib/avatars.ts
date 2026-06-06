@@ -64,5 +64,10 @@ export const avatars: AvatarOption[] = AVATAR_SEEDS.map((seed) => ({
 }));
 
 export function findAvatarBySeed(seed: AvatarSeed): AvatarOption {
+  if (avatars.length === 0) {
+    throw new Error(
+      "findAvatarBySeed: AVATAR_SEEDS yielded no entries; avatar catalog is empty.",
+    );
+  }
   return avatars.find((a) => a.seed === seed) ?? (avatars[0] as AvatarOption);
 }
