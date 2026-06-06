@@ -11,7 +11,6 @@
 //   - Token signing uses default JWT_SECRET
 // ============================================================
 
-import "./../setup-e2e";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestApp, type TestApp } from "./../helpers/test-app.factory";
 import {
@@ -19,6 +18,8 @@ import {
   getPrisma,
   requireDemoUser,
 } from "./../helpers/db-helpers";
+import { disconnectRedis } from "./../helpers/redis-helpers";
+import { cleanupE2ETestEnv, prepareE2ETestEnv } from "./../setup-e2e";
 import { AVATAR_SEEDS } from "@arena/shared";
 
 describe("E2E /users", () => {
@@ -27,6 +28,7 @@ describe("E2E /users", () => {
   const demoUsername = "demo_player_01";
 
   beforeAll(async () => {
+    await prepareE2ETestEnv(import.meta.url);
     testApp = await createTestApp();
     const user = await requireDemoUser(demoUsername);
     demoUserId = user.id;
@@ -35,6 +37,8 @@ describe("E2E /users", () => {
   afterAll(async () => {
     await testApp.close();
     await disconnectPrisma();
+    await disconnectRedis();
+    await cleanupE2ETestEnv(import.meta.url);
   });
 
   describe("GET /api/v1/users/me/stats", () => {

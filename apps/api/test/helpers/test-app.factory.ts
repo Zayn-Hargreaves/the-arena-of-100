@@ -106,7 +106,10 @@ export async function createTestApp(): Promise<TestApp> {
     // When a payload is supplied, default to JSON Content-Type so
     // the body parser is invoked. Callers can override.
     const headers: Record<string, string> = { ...(opts.headers ?? {}) };
-    if (opts.payload !== undefined && !("content-type" in headers)) {
+    const hasContentTypeHeader = Object.keys(headers).some(
+      (key) => key.toLowerCase() === "content-type",
+    );
+    if (opts.payload !== undefined && !hasContentTypeHeader) {
       headers["content-type"] = "application/json";
     }
     const res = await fastify.inject({

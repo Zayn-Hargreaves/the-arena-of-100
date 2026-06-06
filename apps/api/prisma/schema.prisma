@@ -125,8 +125,6 @@ model MatchPlayer {
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([matchId, userId])
-  // Speeds up player_match_agg GROUP BY userId in /rankings/leaderboard.
-  @@index([matchId, userId], map: "match_players_match_id_user_id_idx")
   @@map("match_players")
 }
 

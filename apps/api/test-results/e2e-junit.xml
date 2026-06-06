@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="11" failures="0" errors="0" time="1.657">
+    <testsuite name="test/modules/rankings.e2e-spec.ts" timestamp="2026-06-06T16:14:28.167Z" hostname="zayn-hargreaves-XiaoXinPro-14-AHP9" tests="4" failures="0" errors="0" skipped="0" time="0.440092156">
+        <testcase classname="test/modules/rankings.e2e-spec.ts" name="E2E /rankings &gt; returns all-time leaderboard sorted by wins desc, populated from the demo seed" time="0.05629806">
+        </testcase>
+        <testcase classname="test/modules/rankings.e2e-spec.ts" name="E2E /rankings &gt; returns the same items from cache on a subsequent call (cached=true)" time="0.008833344">
+        </testcase>
+        <testcase classname="test/modules/rankings.e2e-spec.ts" name="E2E /rankings &gt; filters weekly period to matches within the last 7 days only" time="0.092518708">
+        </testcase>
+        <testcase classname="test/modules/rankings.e2e-spec.ts" name="E2E /rankings &gt; rejects an invalid period with 400" time="0.002115814">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/modules/users.e2e-spec.ts" timestamp="2026-06-06T16:14:28.168Z" hostname="zayn-hargreaves-XiaoXinPro-14-AHP9" tests="7" failures="0" errors="0" skipped="0" time="0.432266545">
+        <testcase classname="test/modules/users.e2e-spec.ts" name="E2E /users &gt; GET /api/v1/users/me/stats &gt; returns 401 when the Authorization header is missing" time="0.009620009">
+        </testcase>
+        <testcase classname="test/modules/users.e2e-spec.ts" name="E2E /users &gt; GET /api/v1/users/me/stats &gt; returns 401 when the token is malformed" time="0.003689605">
+        </testcase>
+        <testcase classname="test/modules/users.e2e-spec.ts" name="E2E /users &gt; GET /api/v1/users/me/stats &gt; returns aggregate stats for a demo user with FINISHED matches" time="0.04305433">
+        </testcase>
+        <testcase classname="test/modules/users.e2e-spec.ts" name="E2E /users &gt; GET /api/v1/users/me/history &gt; returns paginated history with cursor" time="0.017626689">
+        </testcase>
+        <testcase classname="test/modules/users.e2e-spec.ts" name="E2E /users &gt; GET /api/v1/users/me/history &gt; rejects an invalid limit with 400" time="0.002181914">
+        </testcase>
+        <testcase classname="test/modules/users.e2e-spec.ts" name="E2E /users &gt; PATCH /api/v1/users/me/avatar &gt; updates the avatar when a valid seed is supplied" time="0.017274731">
+        </testcase>
+        <testcase classname="test/modules/users.e2e-spec.ts" name="E2E /users &gt; PATCH /api/v1/users/me/avatar &gt; rejects an unknown avatar seed with 400" time="0.004132298">
+        </testcase>
+    </testsuite>
+</testsuites>

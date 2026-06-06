@@ -6,17 +6,18 @@
 // the miss -> hit -> staleness flow deterministically.
 // ============================================================
 
-import "./../setup-e2e";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestApp, type TestApp } from "./../helpers/test-app.factory";
 import { disconnectPrisma, getPrisma } from "./../helpers/db-helpers";
 import { disconnectRedis, flushTestRedis } from "./../helpers/redis-helpers";
 import type { LeaderboardResponse } from "../../src/modules/rankings/dto";
+import { cleanupE2ETestEnv, prepareE2ETestEnv } from "./../setup-e2e";
 
 describe("E2E /rankings", () => {
   let testApp: TestApp;
 
   beforeAll(async () => {
+    await prepareE2ETestEnv(import.meta.url);
     testApp = await createTestApp();
     await flushTestRedis();
   });
@@ -25,6 +26,7 @@ describe("E2E /rankings", () => {
     await testApp.close();
     await disconnectPrisma();
     await disconnectRedis();
+    await cleanupE2ETestEnv(import.meta.url);
   });
 
   it("returns all-time leaderboard sorted by wins desc, populated from the demo seed", async () => {

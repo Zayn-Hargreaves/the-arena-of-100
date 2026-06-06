@@ -51,10 +51,16 @@ fi
 
 # Verify the dev seed produced the questions the demo seed depends on.
 echo "🔎 Verifying that questions exist in the test DB..."
-QUESTION_COUNT=$(PGPASSWORD="arena_test" \
+if ! QUESTION_COUNT=$(PGPASSWORD="arena_test" \
   psql -tA -h localhost -p 5434 -U arena_test -d arena_test -c \
-  'SELECT COUNT(*) FROM "questions" WHERE "active" = true;' 2>/dev/null \
-  || echo "0")
+  'SELECT COUNT(*) FROM "questions" WHERE "active" = true;'); then
+  echo "❌ Failed to query active questions from $TEST_DB_URL." >&2
+  exit 1
+fi
+
+if [ -z "$QUESTION_COUNT" ]; then
+  QUESTION_COUNT=0
+fi
 if [ "${QUESTION_COUNT:-0}" -eq 0 ]; then
   echo "❌ Expected at least one active question in $TEST_DB_URL after prisma:seed:dev, found 0." >&2
   echo "   Aborting before prisma:seed:demo so we don't seed a broken baseline." >&2

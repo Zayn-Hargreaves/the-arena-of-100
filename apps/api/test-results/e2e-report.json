@@ -1,0 +1,148 @@
+{
+  "numTotalTestSuites": 7,
+  "numPassedTestSuites": 7,
+  "numFailedTestSuites": 0,
+  "numPendingTestSuites": 0,
+  "numTotalTests": 11,
+  "numPassedTests": 11,
+  "numFailedTests": 0,
+  "numPendingTests": 0,
+  "numTodoTests": 0,
+  "snapshot": {
+    "added": 0,
+    "failure": false,
+    "filesAdded": 0,
+    "filesRemoved": 0,
+    "filesRemovedList": [],
+    "filesUnmatched": 0,
+    "filesUpdated": 0,
+    "matched": 0,
+    "total": 0,
+    "unchecked": 0,
+    "uncheckedKeysByFile": [],
+    "unmatched": 0,
+    "updated": 0,
+    "didUpdate": false
+  },
+  "startTime": 1780762466497,
+  "success": true,
+  "testResults": [
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": ["E2E /rankings"],
+          "fullName": "E2E /rankings returns all-time leaderboard sorted by wins desc, populated from the demo seed",
+          "status": "passed",
+          "title": "returns all-time leaderboard sorted by wins desc, populated from the demo seed",
+          "duration": 56.29806000000008,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["E2E /rankings"],
+          "fullName": "E2E /rankings returns the same items from cache on a subsequent call (cached=true)",
+          "status": "passed",
+          "title": "returns the same items from cache on a subsequent call (cached=true)",
+          "duration": 8.833343999999897,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["E2E /rankings"],
+          "fullName": "E2E /rankings filters weekly period to matches within the last 7 days only",
+          "status": "passed",
+          "title": "filters weekly period to matches within the last 7 days only",
+          "duration": 92.51870800000006,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["E2E /rankings"],
+          "fullName": "E2E /rankings rejects an invalid period with 400",
+          "status": "passed",
+          "title": "rejects an invalid period with 400",
+          "duration": 2.1158140000000003,
+          "failureMessages": [],
+          "meta": {}
+        }
+      ],
+      "startTime": 1780762467925,
+      "endTime": 1780762468085.1157,
+      "status": "passed",
+      "message": "",
+      "name": "/home/zayn-hargreaves/Documents/the-arena-of-100/apps/api/test/modules/rankings.e2e-spec.ts"
+    },
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": ["E2E /users", "GET /api/v1/users/me/stats"],
+          "fullName": "E2E /users GET /api/v1/users/me/stats returns 401 when the Authorization header is missing",
+          "status": "passed",
+          "title": "returns 401 when the Authorization header is missing",
+          "duration": 9.620008999999982,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["E2E /users", "GET /api/v1/users/me/stats"],
+          "fullName": "E2E /users GET /api/v1/users/me/stats returns 401 when the token is malformed",
+          "status": "passed",
+          "title": "returns 401 when the token is malformed",
+          "duration": 3.6896050000000287,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["E2E /users", "GET /api/v1/users/me/stats"],
+          "fullName": "E2E /users GET /api/v1/users/me/stats returns aggregate stats for a demo user with FINISHED matches",
+          "status": "passed",
+          "title": "returns aggregate stats for a demo user with FINISHED matches",
+          "duration": 43.054329999999936,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["E2E /users", "GET /api/v1/users/me/history"],
+          "fullName": "E2E /users GET /api/v1/users/me/history returns paginated history with cursor",
+          "status": "passed",
+          "title": "returns paginated history with cursor",
+          "duration": 17.626688999999942,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["E2E /users", "GET /api/v1/users/me/history"],
+          "fullName": "E2E /users GET /api/v1/users/me/history rejects an invalid limit with 400",
+          "status": "passed",
+          "title": "rejects an invalid limit with 400",
+          "duration": 2.181914000000006,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["E2E /users", "PATCH /api/v1/users/me/avatar"],
+          "fullName": "E2E /users PATCH /api/v1/users/me/avatar updates the avatar when a valid seed is supplied",
+          "status": "passed",
+          "title": "updates the avatar when a valid seed is supplied",
+          "duration": 17.2747310000002,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["E2E /users", "PATCH /api/v1/users/me/avatar"],
+          "fullName": "E2E /users PATCH /api/v1/users/me/avatar rejects an unknown avatar seed with 400",
+          "status": "passed",
+          "title": "rejects an unknown avatar seed with 400",
+          "duration": 4.132297999999992,
+          "failureMessages": [],
+          "meta": {}
+        }
+      ],
+      "startTime": 1780762467972,
+      "endTime": 1780762468070.1323,
+      "status": "passed",
+      "message": "",
+      "name": "/home/zayn-hargreaves/Documents/the-arena-of-100/apps/api/test/modules/users.e2e-spec.ts"
+    }
+  ]
+}

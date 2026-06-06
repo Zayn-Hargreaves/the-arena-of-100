@@ -49,24 +49,9 @@ export default defineConfig({
           json: "./test-results/e2e-report.json",
         }
       : undefined,
-    // Serial execution is required today: every spec shares the
-    // same test PostgreSQL + Redis DB index 1. The safe parallel
-    // strategies (per-worker DB names, transactional rollback,
-    // testcontainers) are deferred to a follow-up PR — see the
-    // TODO below.
     pool: "forks",
-    poolOptions: {
-      forks: {
-        singleFork: true,
-      },
-    },
     testTimeout: 30_000,
     hookTimeout: 30_000,
-    fileParallelism: false,
-    // TODO(e2e-parallel): pick one of
-    //   (a) per-worker DB naming (globalSetup + worker-id env),
-    //   (b) beforeEach transaction + afterEach rollback,
-    //   (c) testcontainers per worker,
-    // then flip `singleFork: false` + `fileParallelism: true`.
+    fileParallelism: true,
   },
 });

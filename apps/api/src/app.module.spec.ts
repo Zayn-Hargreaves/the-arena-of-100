@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import { APP_GUARD } from "@nestjs/core";
 import { describe, it, expect } from "vitest";
 import { AppModule } from "./app.module";
 import { UsersModule } from "./modules/users/users.module";
@@ -33,7 +34,11 @@ describe("AppModule", () => {
     const guardClasses = providers
       .filter(
         (p): p is { provide: unknown; useClass: unknown } =>
-          typeof p === "object" && p !== null && "useClass" in p,
+          typeof p === "object" &&
+          p !== null &&
+          "provide" in p &&
+          "useClass" in p &&
+          p.provide === APP_GUARD,
       )
       .map((p) => p.useClass);
     expect(guardClasses).toContain(JwtAuthGuard);
