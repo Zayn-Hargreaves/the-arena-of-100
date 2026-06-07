@@ -8,6 +8,7 @@ import {
   RoomStatus,
   ServerEvent,
   GAME_CONFIG,
+  ErrorCode,
 } from "@arena/shared";
 import { Server } from "socket.io";
 import { vi, beforeEach, it, expect, describe } from "vitest";
@@ -914,7 +915,7 @@ describe("GameLoopService", () => {
 
   describe("Missing Coverage (Null Guards & Optional Params)", () => {
     it("should return early in startMatchLoop if stateMachine is not found", async () => {
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(null);
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
       const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
 
       await service.startMatchLoop("match-nonexistent", "room-1", mockServer);
@@ -925,7 +926,7 @@ describe("GameLoopService", () => {
     });
 
     it("should return early in executeRound if stateMachine is not found", async () => {
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(null);
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
       const startRoundSpy = vi.spyOn(stateMachine, "startRound");
 
       await (service as any).executeRound(
@@ -938,7 +939,7 @@ describe("GameLoopService", () => {
     });
 
     it("should return early in endRound if stateMachine is not found", async () => {
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(null);
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
       const evaluateSpy = vi.spyOn(stateMachine, "evaluateRound");
 
       await (service as any).endRound(
@@ -951,7 +952,7 @@ describe("GameLoopService", () => {
     });
 
     it("should return early in checkMatchEnd if stateMachine is not found", async () => {
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(null);
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
       const shouldEndSpy = vi.spyOn(stateMachine, "shouldEndMatch");
 
       await (service as any).checkMatchEnd(
@@ -964,7 +965,7 @@ describe("GameLoopService", () => {
     });
 
     it("should return early in finishMatchLoop if stateMachine is not found", async () => {
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(null);
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
       const transitionSpy = vi.spyOn(stateMachine, "transition");
 
       await (service as any).finishMatchLoop(
@@ -977,7 +978,7 @@ describe("GameLoopService", () => {
     });
 
     it("should return early in handlePlayerDisconnect if stateMachine is not found", async () => {
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(null);
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
       const loggerWarnSpy = vi.spyOn((service as any).logger, "warn");
 
       await service.handlePlayerDisconnect(
@@ -990,7 +991,7 @@ describe("GameLoopService", () => {
     });
 
     it("should return early in checkEarlyTermination if stateMachine is not found", async () => {
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(null);
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
       const getRoundSpy = vi.spyOn(stateMachine, "getCurrentRound");
 
       await service.checkEarlyTermination(
@@ -1033,6 +1034,582 @@ describe("GameLoopService", () => {
           'finishMatchLoop called with context: {"customKey":"customValue"}',
         ),
       );
+    });
+  });
+
+  // ============================================================
+  // Lobby Countdown Recovery, Launch & Match Finish
+  // ============================================================
+  describe("Lobby Countdown Recovery, Launch & Match Finish", () => {
+    // The recovery / countdown-arm / launch paths are async + timer-heavy
+    // and manipulate Redis keys, so we build a fresh GameLoopService per
+    // test (matching how the service is wired once per Nest process).
+    function buildService(
+      redisOverrides: { smembers?: unknown; get?: unknown } = {},
+    ) {
+      const redis = createMockRedisService() as any;
+      // Wrap the plain-function `multi()` in a spy so tests can assert
+      // that the persistence/clear paths were taken.
+      const multiSpy = vi.fn(() => ({
+        set: () => ({ sadd: () => ({ exec: () => Promise.resolve([]) }) }),
+        del: () => ({ srem: () => ({ exec: () => Promise.resolve([]) }) }),
+        sadd: () => ({ exec: () => Promise.resolve([]) }),
+        srem: () => ({ exec: () => Promise.resolve([]) }),
+        exec: () => Promise.resolve([]),
+      }));
+      vi.spyOn(redis.getClient(), "multi").mockImplementation(
+        multiSpy as unknown as () => unknown,
+      );
+      // Allow per-test override of the smembers/get return values on the
+      // shared mock client (createMockRedisService reuses the same client
+      // across getClient() calls so the override is what recovery sees).
+      if (redisOverrides.smembers !== undefined) {
+        vi.mocked(redis.getClient().smembers).mockResolvedValueOnce(
+          redisOverrides.smembers as string[],
+        );
+      }
+      if (redisOverrides.get !== undefined) {
+        vi.mocked(redis.getClient().get).mockResolvedValueOnce(
+          redisOverrides.get as string | null,
+        );
+      }
+      const svc = new GameLoopService(
+        matchService,
+        questionService,
+        roomService,
+        redis,
+      );
+      return { svc, redis, multiSpy };
+    }
+
+    // ---- getCountdownEnd ----
+    describe("getCountdownEnd", () => {
+      it("returns null when no countdown is active for the room", () => {
+        expect(service.getCountdownEnd("r1")).toBeNull();
+      });
+
+      it("returns the recorded countdownEndsAt for an active countdown", () => {
+        const endsAt = Date.now() + 10_000;
+        (service as any).lobbyCountdowns.set("r1", {
+          timer: setTimeout(() => undefined, 100),
+          countdownEndsAt: endsAt,
+        });
+        expect(service.getCountdownEnd("r1")).toBe(endsAt);
+      });
+    });
+
+    // ---- armLobbyCountdownTimer (no server) ----
+    describe("armLobbyCountdownTimer (private)", () => {
+      it("deletes the in-memory slot and clears Redis when no server is available", async () => {
+        const { svc, multiSpy } = buildService();
+        // No setServer() call → server is undefined
+        (svc as any).lobbyCountdowns.set("r1", {
+          timer: setTimeout(() => undefined, 100),
+          countdownEndsAt: Date.now() + 5000,
+        });
+
+        (svc as any).armLobbyCountdownTimer("r1", Date.now() + 5000);
+
+        expect((svc as any).lobbyCountdowns.has("r1")).toBe(false);
+        // clearPersistedCountdown fires the multi() chain
+        expect(multiSpy).toHaveBeenCalled();
+      });
+
+      it("arms a timer that triggers launchRoomMatch when the caller supplies a server", async () => {
+        vi.useFakeTimers();
+        const { svc } = buildService();
+        const launchSpy = vi
+          .spyOn(svc as any, "launchRoomMatch")
+          .mockResolvedValue({ id: "m1" });
+
+        (svc as any).armLobbyCountdownTimer(
+          "r1",
+          Date.now() + 5000,
+          mockServer as unknown as Server,
+        );
+
+        expect((svc as any).lobbyCountdowns.has("r1")).toBe(true);
+
+        await vi.advanceTimersByTimeAsync(5000);
+
+        expect(launchSpy).toHaveBeenCalledWith("r1", mockServer, {
+          isAutoStart: true,
+        });
+        vi.useRealTimers();
+      });
+    });
+
+    // ---- handleRoomPlayerLeft ----
+    describe("handleRoomPlayerLeft", () => {
+      it("is a no-op when no countdown is active for the room", async () => {
+        await service.handleRoomPlayerLeft("r1", mockServer);
+        expect(roomService.updateRoomStatus).not.toHaveBeenCalled();
+        expect(mockServer.to).not.toHaveBeenCalled();
+      });
+
+      it("is a no-op when the room is not in COUNTDOWN status", async () => {
+        // Pre-arm a countdown so the entry exists
+        (service as any).lobbyCountdowns.set("r1", {
+          timer: setTimeout(() => undefined, 100),
+          countdownEndsAt: Date.now() + 5000,
+        });
+        vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+          id: "r1",
+          status: RoomStatus.WAITING,
+          players: [{ userId: "p1" }],
+        } as any);
+
+        await service.handleRoomPlayerLeft("r1", mockServer);
+
+        expect(roomService.updateRoomStatus).not.toHaveBeenCalled();
+        expect(mockServer.to).not.toHaveBeenCalled();
+      });
+
+      it("is a no-op when the room still has at least MIN_PLAYERS_TO_START players", async () => {
+        (service as any).lobbyCountdowns.set("r1", {
+          timer: setTimeout(() => undefined, 100),
+          countdownEndsAt: Date.now() + 5000,
+        });
+        vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+          id: "r1",
+          status: RoomStatus.COUNTDOWN,
+          players: [{ userId: "p1" }, { userId: "p2" }, { userId: "p3" }],
+        } as any);
+
+        await service.handleRoomPlayerLeft("r1", mockServer);
+
+        expect(roomService.updateRoomStatus).not.toHaveBeenCalled();
+        expect(mockServer.to).not.toHaveBeenCalled();
+      });
+
+      it("cancels the countdown, updates status, and emits ROOM_COUNTDOWN_CANCELLED + ROOM_STATUS_UPDATED", async () => {
+        const emitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+        (service as any).lobbyCountdowns.set("r1", {
+          timer: setTimeout(() => undefined, 100),
+          countdownEndsAt: Date.now() + 5000,
+        });
+        vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+          id: "r1",
+          status: RoomStatus.COUNTDOWN,
+          players: [{ userId: "p1" }], // below MIN
+        } as any);
+
+        await service.handleRoomPlayerLeft("r1", mockServer);
+
+        expect(roomService.updateRoomStatus).toHaveBeenCalledWith(
+          "r1",
+          RoomStatus.WAITING,
+        );
+        expect(emitSpy).toHaveBeenCalledWith(
+          ServerEvent.ROOM_COUNTDOWN_CANCELLED,
+          expect.objectContaining({
+            roomId: "r1",
+            roomStatus: RoomStatus.WAITING,
+            reason: "PLAYER_LEFT",
+          }),
+        );
+        expect(emitSpy).toHaveBeenCalledWith(
+          ServerEvent.ROOM_STATUS_UPDATED,
+          expect.objectContaining({
+            roomId: "r1",
+            roomStatus: RoomStatus.WAITING,
+          }),
+        );
+        expect((service as any).lobbyCountdowns.has("r1")).toBe(false);
+      });
+    });
+
+    // ---- forceStartRoomMatch ----
+    describe("forceStartRoomMatch", () => {
+      it("delegates to launchRoomMatch with isAutoStart=false", async () => {
+        const launchSpy = vi
+          .spyOn(service as any, "launchRoomMatch")
+          .mockResolvedValue({ id: "m1" });
+
+        const result = await service.forceStartRoomMatch("r1", mockServer);
+
+        expect(launchSpy).toHaveBeenCalledWith("r1", mockServer, {
+          isAutoStart: false,
+        });
+        expect(result).toEqual({ id: "m1" });
+      });
+    });
+
+    // ---- launchRoomMatch ----
+    describe("launchRoomMatch", () => {
+      it("throws ROOM_ALREADY_STARTED when the room is in a non-launchable status", async () => {
+        vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+          id: "r1",
+          status: RoomStatus.IN_GAME,
+          players: [{ userId: "p1" }, { userId: "p2" }],
+        } as any);
+
+        await expect(
+          (service as any).launchRoomMatch("r1", mockServer, {
+            isAutoStart: false,
+          }),
+        ).rejects.toMatchObject({ code: ErrorCode.ROOM_ALREADY_STARTED });
+      });
+
+      it("throws NOT_ENOUGH_PLAYERS and emits ROOM_COUNTDOWN_CANCELLED when autoStart && below MIN", async () => {
+        const emitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+        vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+          id: "r1",
+          status: RoomStatus.COUNTDOWN,
+          players: [{ userId: "p1" }], // below MIN
+        } as any);
+
+        await expect(
+          (service as any).launchRoomMatch("r1", mockServer, {
+            isAutoStart: true,
+          }),
+        ).rejects.toMatchObject({ code: ErrorCode.NOT_ENOUGH_PLAYERS });
+
+        expect(emitSpy).toHaveBeenCalledWith(
+          ServerEvent.ROOM_COUNTDOWN_CANCELLED,
+          expect.objectContaining({
+            roomId: "r1",
+            reason: "NOT_ENOUGH_PLAYERS",
+          }),
+        );
+        // room was reset to WAITING
+        expect(roomService.updateRoomStatus).toHaveBeenCalledWith(
+          "r1",
+          RoomStatus.WAITING,
+        );
+      });
+
+      it("throws NOT_ENOUGH_PLAYERS WITHOUT emitting a cancel event when NOT autoStart && below MIN", async () => {
+        const emitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+        vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+          id: "r1",
+          status: RoomStatus.WAITING,
+          players: [{ userId: "p1" }], // below MIN
+        } as any);
+
+        await expect(
+          (service as any).launchRoomMatch("r1", mockServer, {
+            isAutoStart: false,
+          }),
+        ).rejects.toMatchObject({ code: ErrorCode.NOT_ENOUGH_PLAYERS });
+
+        // No countdown cancelled event should be emitted on a manual
+        // forceStart with too few players (room was already WAITING)
+        const cancelEmits = emitSpy.mock.calls.filter(
+          (call) => call[0] === ServerEvent.ROOM_COUNTDOWN_CANCELLED,
+        );
+        expect(cancelEmits).toHaveLength(0);
+      });
+
+      it("clears an existing countdown from the lobby before proceeding", async () => {
+        const emitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+        // Seed an active countdown
+        (service as any).lobbyCountdowns.set("r1", {
+          timer: setTimeout(() => undefined, 100),
+          countdownEndsAt: Date.now() + 5000,
+        });
+        vi.mocked(roomService.getRoom)
+          .mockResolvedValueOnce({
+            id: "r1",
+            status: RoomStatus.COUNTDOWN,
+            currentMatchId: null,
+            players: [{ userId: "p1" }, { userId: "p2" }],
+          } as any)
+          .mockResolvedValueOnce({
+            id: "r1",
+            status: RoomStatus.COUNTDOWN,
+            currentMatchId: null,
+            players: [{ userId: "p1" }, { userId: "p2" }],
+          } as any);
+        (matchService.createMatch as any) = vi
+          .fn()
+          .mockResolvedValue({ id: "m1" });
+        // Stub startMatchLoop to avoid the full round loop
+        vi.spyOn(service as any, "startMatchLoop").mockResolvedValue(undefined);
+
+        await (service as any).launchRoomMatch("r1", mockServer, {
+          isAutoStart: true,
+        });
+
+        expect((service as any).lobbyCountdowns.has("r1")).toBe(false);
+      });
+
+      it("happy path: updates status to STARTING, creates the match, and starts the loop", async () => {
+        const emitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+        vi.mocked(roomService.getRoom)
+          .mockResolvedValueOnce({
+            id: "r1",
+            status: RoomStatus.WAITING,
+            currentMatchId: null,
+            players: [{ userId: "p1" }, { userId: "p2" }],
+          } as any)
+          .mockResolvedValueOnce({
+            id: "r1",
+            status: RoomStatus.WAITING,
+            currentMatchId: null,
+            players: [{ userId: "p1" }, { userId: "p2" }],
+          } as any);
+        (matchService.createMatch as any) = vi
+          .fn()
+          .mockResolvedValue({ id: "m1" });
+        const startLoopSpy = vi
+          .spyOn(service as any, "startMatchLoop")
+          .mockResolvedValue(undefined);
+
+        const match = await (service as any).launchRoomMatch("r1", mockServer, {
+          isAutoStart: false,
+        });
+
+        expect(match).toEqual({ id: "m1" });
+        expect(roomService.updateRoomStatus).toHaveBeenCalledWith(
+          "r1",
+          RoomStatus.STARTING,
+        );
+        expect(emitSpy).toHaveBeenCalledWith(
+          ServerEvent.MATCH_STARTING,
+          expect.objectContaining({ matchId: "m1" }),
+        );
+        expect(startLoopSpy).toHaveBeenCalledWith("m1", "r1", mockServer);
+      });
+
+      it("rolls back to WAITING and re-broadcasts ROOM_STATUS_UPDATED if createMatch throws", async () => {
+        const emitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+        vi.mocked(roomService.getRoom)
+          .mockResolvedValueOnce({
+            id: "r1",
+            status: RoomStatus.WAITING,
+            currentMatchId: null,
+            players: [{ userId: "p1" }, { userId: "p2" }],
+          } as any)
+          .mockResolvedValueOnce({
+            id: "r1",
+            status: RoomStatus.WAITING,
+            currentMatchId: null,
+            players: [{ userId: "p1" }, { userId: "p2" }],
+          } as any);
+        (matchService.createMatch as any) = vi
+          .fn()
+          .mockRejectedValue(new Error("db boom"));
+
+        await expect(
+          (service as any).launchRoomMatch("r1", mockServer, {
+            isAutoStart: false,
+          }),
+        ).rejects.toThrow("db boom");
+
+        expect(roomService.updateRoomStatus).toHaveBeenLastCalledWith(
+          "r1",
+          RoomStatus.WAITING,
+        );
+        const rollback = emitSpy.mock.calls.find(
+          (call) =>
+            call[0] === ServerEvent.ROOM_STATUS_UPDATED &&
+            (call[1] as { roomStatus: string }).roomStatus ===
+              RoomStatus.WAITING,
+        );
+        expect(rollback).toBeDefined();
+      });
+    });
+
+    // ---- onModuleInit recovery ----
+    describe("onModuleInit (lobby countdown recovery)", () => {
+      it("is a no-op when the countdowns set is empty", async () => {
+        const { svc } = buildService({ smembers: [] });
+        await svc.onModuleInit();
+        // No further calls into Redis beyond the initial SMEMBERS
+        expect(svc).toBeDefined();
+      });
+
+      it("removes a room from the index when its payload key is missing", async () => {
+        const { svc, redis } = buildService({
+          smembers: ["rMissing"],
+        });
+        // get() returns null by default → direct srem path (no multi needed)
+        const sremSpy = redis.getClient().srem;
+        await svc.onModuleInit();
+        expect(sremSpy).toHaveBeenCalledWith("room:countdowns", "rMissing");
+      });
+
+      it("clears the persisted entry when the stored countdownEndsAt is unparseable", async () => {
+        const { svc, multiSpy } = buildService({
+          smembers: ["rBad"],
+          get: "not-a-number",
+        });
+        await svc.onModuleInit();
+        // clearPersistedCountdown runs the multi() chain
+        expect(multiSpy).toHaveBeenCalled();
+      });
+
+      it("re-arms a timer for a future countdown (uses the injected server)", async () => {
+        vi.useFakeTimers();
+        const futureEnd = Date.now() + 60_000;
+        const { svc } = buildService({
+          smembers: ["rFuture"],
+          get: String(futureEnd),
+        });
+        // Inject a server so the arm path can use it
+        const launchSpy = vi
+          .spyOn(svc as any, "launchRoomMatch")
+          .mockResolvedValue({ id: "m1" });
+        (svc as any).setServer(mockServer as unknown as Server);
+
+        await svc.onModuleInit();
+
+        // Countdown is now armed in-memory
+        expect((svc as any).lobbyCountdowns.has("rFuture")).toBe(true);
+        // Advancing past the future end fires launchRoomMatch
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(launchSpy).toHaveBeenCalledWith("rFuture", mockServer, {
+          isAutoStart: true,
+        });
+        vi.useRealTimers();
+      });
+
+      it("launches immediately when the recovered countdown already expired and a server is set", async () => {
+        const pastEnd = Date.now() - 1000;
+        const { svc } = buildService({
+          smembers: ["rExpired"],
+          get: String(pastEnd),
+        });
+        const launchSpy = vi
+          .spyOn(svc as any, "launchRoomMatch")
+          .mockResolvedValue({ id: "m1" });
+        (svc as any).setServer(mockServer as unknown as Server);
+
+        await svc.onModuleInit();
+        // Give the void promise chain a microtask to flush
+        await Promise.resolve();
+
+        expect(launchSpy).toHaveBeenCalledWith("rExpired", mockServer, {
+          isAutoStart: true,
+        });
+      });
+
+      it("clears the persisted entry when the recovered countdown expired and no server is wired up", async () => {
+        const pastEnd = Date.now() - 1000;
+        const { svc, multiSpy } = buildService({
+          smembers: ["rExpiredNoServer"],
+          get: String(pastEnd),
+        });
+        // No setServer call → server is undefined
+
+        await svc.onModuleInit();
+        // Allow the fire-and-forget clearPersistedCountdown to run
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // The clear path used multi() (or directly .srem)
+        expect(multiSpy).toHaveBeenCalled();
+      });
+
+      it("logs and continues when a per-room recovery error is thrown", async () => {
+        const { svc, redis } = buildService({
+          smembers: ["rBoom"],
+        });
+        // Make the per-room get() throw
+        vi.mocked(redis.getClient().get).mockRejectedValueOnce(
+          new Error("redis timeout"),
+        );
+        const errorSpy = vi.spyOn((svc as any).logger, "error");
+
+        await svc.onModuleInit();
+
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining("rBoom"),
+          expect.any(Error),
+        );
+      });
+
+      it("resets the recoveryInFlight guard even if the top-level recovery throws", async () => {
+        const { svc, redis } = buildService();
+        // Make SMEMBERS itself reject
+        vi.mocked(redis.getClient().smembers).mockRejectedValueOnce(
+          new Error("top-level boom"),
+        );
+        const errorSpy = vi.spyOn((svc as any).logger, "error");
+
+        await svc.onModuleInit();
+
+        expect(errorSpy).toHaveBeenCalledWith(
+          "Lobby countdown recovery failed:",
+          expect.any(Error),
+        );
+        // Guard must be reset so a later invocation can run
+        expect((svc as any).recoveryInFlight).toBe(false);
+      });
+    });
+
+    // ---- maybeStartPublicCountdown additional paths ----
+    describe("maybeStartPublicCountdown (additional paths)", () => {
+      it("returns null for a PRIVATE room", async () => {
+        vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+          id: "r1",
+          type: "PRIVATE",
+          status: RoomStatus.WAITING,
+          players: [{ userId: "p1" }, { userId: "p2" }],
+        } as any);
+
+        const result = await service.maybeStartPublicCountdown(
+          "r1",
+          mockServer,
+        );
+        expect(result).toBeNull();
+      });
+
+      it("returns null when the room is not in WAITING status", async () => {
+        vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+          id: "r1",
+          type: "PUBLIC",
+          status: RoomStatus.IN_GAME,
+          players: [{ userId: "p1" }, { userId: "p2" }],
+        } as any);
+
+        const result = await service.maybeStartPublicCountdown(
+          "r1",
+          mockServer,
+        );
+        expect(result).toBeNull();
+      });
+
+      it("returns null when there are fewer than MIN_PLAYERS_TO_START players", async () => {
+        vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+          id: "r1",
+          type: "PUBLIC",
+          status: RoomStatus.WAITING,
+          players: [{ userId: "p1" }],
+        } as any);
+
+        const result = await service.maybeStartPublicCountdown(
+          "r1",
+          mockServer,
+        );
+        expect(result).toBeNull();
+      });
+
+      it("returns the existing countdown entry when one is already armed", async () => {
+        const endsAt = Date.now() + 30_000;
+        (service as any).lobbyCountdowns.set("r1", {
+          timer: setTimeout(() => undefined, 100),
+          countdownEndsAt: endsAt,
+        });
+
+        const result = await service.maybeStartPublicCountdown(
+          "r1",
+          mockServer,
+        );
+
+        // The service returns the whole entry (timer + countdownEndsAt);
+        // we only care that the endsAt we stored is what comes back.
+        expect(result?.countdownEndsAt).toBe(endsAt);
+        // updateRoomStatus must NOT be called a second time
+        expect(roomService.updateRoomStatus).not.toHaveBeenCalled();
+      });
     });
   });
 });

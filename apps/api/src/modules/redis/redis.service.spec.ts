@@ -163,10 +163,83 @@ describe("RedisService", () => {
     await expect(service.sismember("room:1", "u2")).resolves.toBe(false);
   });
 
+  it("passes key and member through to the underlying sismember call", async () => {
+    client.sismember.mockResolvedValueOnce(1);
+
+    await service.sismember("room:presence:r1", "u1");
+
+    expect(client.sismember).toHaveBeenCalledWith("room:presence:r1", "u1");
+  });
+
+  it("converts redis exists responses into booleans", async () => {
+    // `exists` is not in the default client mock — register it for this test
+    (client as unknown as { exists: ReturnType<typeof vi.fn> }).exists = vi
+      .fn()
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(0);
+
+    await expect(service.exists("room:presence:r1:u1")).resolves.toBe(true);
+    await expect(service.exists("room:missing")).resolves.toBe(false);
+  });
+
   it("publishes messages through the redis client", async () => {
     await expect(service.publish("room-events", "ready")).resolves.toBe(1);
 
     expect(client.publish).toHaveBeenCalledWith("room-events", "ready");
+  });
+
+  it("forwards sadd calls and returns the integer reply from the client", async () => {
+    client.sadd.mockResolvedValueOnce(3);
+
+    await expect(
+      service.sadd("room:r1:players", "u1", "u2", "u3"),
+    ).resolves.toBe(3);
+    expect(client.sadd).toHaveBeenCalledWith(
+      "room:r1:players",
+      "u1",
+      "u2",
+      "u3",
+    );
+  });
+
+  it("forwards srem calls and returns the integer reply from the client", async () => {
+    client.srem.mockResolvedValueOnce(2);
+
+    await expect(service.srem("room:r1:players", "u1", "u2")).resolves.toBe(2);
+    expect(client.srem).toHaveBeenCalledWith("room:r1:players", "u1", "u2");
+  });
+
+  it("forwards incr calls and returns the new value", async () => {
+    client.incr.mockResolvedValueOnce(42);
+
+    await expect(service.incr("counter:foo")).resolves.toBe(42);
+    expect(client.incr).toHaveBeenCalledWith("counter:foo");
+  });
+
+  it("forwards get calls and returns the raw string reply", async () => {
+    client.get.mockResolvedValueOnce("cached-value");
+
+    await expect(service.get("any:key")).resolves.toBe("cached-value");
+    expect(client.get).toHaveBeenCalledWith("any:key");
+  });
+
+  it("forwards del calls", async () => {
+    client.del.mockResolvedValueOnce(1);
+
+    await service.del("any:key");
+
+    expect(client.del).toHaveBeenCalledWith("any:key");
+  });
+
+  it("forwards smembers calls and returns the array of members", async () => {
+    client.smembers.mockResolvedValueOnce(["u1", "u2", "u3"]);
+
+    await expect(service.smembers("room:r1:players")).resolves.toEqual([
+      "u1",
+      "u2",
+      "u3",
+    ]);
+    expect(client.smembers).toHaveBeenCalledWith("room:r1:players");
   });
 
   it("executes lua scripts with key and arg counts", async () => {

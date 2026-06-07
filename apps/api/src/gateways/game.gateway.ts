@@ -22,6 +22,7 @@ import {
 } from "@arena/shared";
 import { AuthHandler, RoomHandler, MatchHandler } from "./handlers";
 import { AuthService } from "../modules/auth/auth.service";
+import { RoomService } from "../modules/room/room.service";
 import { PresenceService } from "../modules/match/presence.service";
 import { GameLoopService } from "../modules/match/game-loop.service";
 
@@ -45,6 +46,7 @@ export class GameGateway
     private readonly roomHandler: RoomHandler,
     private readonly matchHandler: MatchHandler,
     private readonly authService: AuthService,
+    private readonly roomService: RoomService,
     private readonly presenceService: PresenceService,
     private readonly gameLoopService: GameLoopService,
   ) {}
@@ -160,8 +162,25 @@ export class GameGateway
     @MessageBody() payload: HeartbeatPayload,
   ) {
     const userId = client.data.userId as string | undefined;
-    if (userId && payload.roomId) {
+    if (!userId || !payload.roomId) return;
+
+    try {
+      // Verify the user actually belongs to this room before touching presence.
+      // Without this check a client could spoof heartbeats against arbitrary
+      // roomIds and pollute Redis presence keys.
+      const userActiveRooms = await this.roomService.getUserActiveRooms(userId);
+      const isMember = userActiveRooms.some(
+        (rp) => rp.room.id === payload.roomId,
+      );
+      if (!isMember) return;
+
       await this.presenceService.updatePresence(payload.roomId, userId);
+    } catch (error) {
+      this.logger.warn(
+        `Heartbeat presence update failed for user ${userId} in room ${payload.roomId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
   }
 }

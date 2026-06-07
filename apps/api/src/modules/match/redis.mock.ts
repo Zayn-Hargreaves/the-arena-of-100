@@ -33,9 +33,14 @@ export function createMockRedisClient() {
  * Creates a minimal RedisService stub exposing only the `getClient()`
  * surface used by GameLoopService. Tests can obtain a `vi.fn` for any
  * individual method via `mock.getClient().get.mockReturnValueOnce(...)`.
+ *
+ * The mock client is created once and reused across `getClient()` calls
+ * so stubs applied to the returned client (e.g. `get.mockReturnValueOnce`)
+ * persist between calls.
  */
 export function createMockRedisService() {
+  const client = createMockRedisClient();
   return {
-    getClient: vi.fn(() => createMockRedisClient()),
+    getClient: vi.fn(() => client),
   };
 }

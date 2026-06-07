@@ -126,19 +126,20 @@ export class RoomService {
 
   // Leave room
   async leaveRoom(roomId: string, userId: string) {
-    await this.prisma.roomPlayer.deleteMany({
+    const result = await this.prisma.roomPlayer.deleteMany({
       where: { roomId, userId },
     });
 
     await this.redis.srem(`room:${roomId}:players`, userId);
 
-    // Update cache
+    // Update cache using the actual deleted row count instead of a hardcoded 1
+    // so the cache stays consistent when the row was already gone.
     const cached = await this.redis.getJSON<{
       playerCount: number;
       hostId: string;
     }>(`room:${roomId}`);
     if (cached) {
-      cached.playerCount--;
+      cached.playerCount = Math.max(0, cached.playerCount - result.count);
       await this.redis.setJSON(`room:${roomId}`, cached, 3600);
     }
 

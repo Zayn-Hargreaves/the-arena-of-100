@@ -206,7 +206,7 @@ describe("RoomHandler", () => {
           {
             playerId: "u1",
             playerName: "Alice",
-            isOnline: true,
+            isOnline: false,
           },
         ],
       });
@@ -261,6 +261,55 @@ describe("RoomHandler", () => {
     it("emits INTERNAL_ERROR for generic errors", async () => {
       vi.mocked(roomService.joinRoom).mockRejectedValue(new Error("db down"));
       await handler.handleJoinRoom(client, { roomCode: "ABC" });
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "Internal server error",
+        }),
+      );
+    });
+
+    it("logs and emits INTERNAL_ERROR when a room player is missing its user relation (data integrity guard)", async () => {
+      // Regression test: a Prisma include change must not silently produce
+      // empty playerNames in the lobby. The handler must fail fast and emit
+      // an INTERNAL_ERROR so the state-corruption bug is surfaced immediately
+      // instead of letting the client render a blank tile.
+      vi.mocked(roomService.joinRoom).mockResolvedValue({
+        id: "r1",
+        code: "ABC123",
+        hostId: "u9",
+        type: "PUBLIC",
+        status: RoomStatus.WAITING,
+        currentMatchId: null,
+        joined: true,
+        players: [
+          {
+            userId: "u1",
+            // user is undefined — state corruption
+            user: undefined,
+          },
+        ],
+      } as any);
+      const logger = (
+        handler as unknown as { logger: { error: ReturnType<typeof vi.fn> } }
+      ).logger;
+      const integritySpy = vi.spyOn(logger, "error");
+
+      // The handler catches the throw inside the try/catch and emits
+      // INTERNAL_ERROR (with the descriptive message swapped for the
+      // generic "Internal server error" since this isn't a RoomError).
+      await handler.handleJoinRoom(client, { roomCode: "ABC123" });
+
+      // The data-integrity error must have been logged with the descriptive
+      // message identifying the offending RoomPlayer
+      expect(integritySpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "RoomPlayer u1 in room r1 is missing its user relation",
+        ),
+      );
+      // The client must receive a generic INTERNAL_ERROR (not the raw
+      // message — we never leak server details over the socket)
       expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.ERROR,
         expect.objectContaining({

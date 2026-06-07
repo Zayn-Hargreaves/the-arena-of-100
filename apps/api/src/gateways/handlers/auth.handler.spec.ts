@@ -317,6 +317,17 @@ describe("AuthHandler", () => {
       await handler.handleAuthenticate(client, { token: "t" });
 
       expect(client.join).toHaveBeenCalledWith("room:r1");
+      expect(presenceService.updatePresence).toHaveBeenCalledWith("r1", "u1");
+      // updatePresence must run before the ROOM_JOINED emit so the player
+      // list sent to the client reflects the user as online.
+      const updatePresenceOrder =
+        presenceService.updatePresence.mock.invocationCallOrder[0];
+      const emitOrder = (client.emit as any).mock.invocationCallOrder.find(
+        (n: number) => n > updatePresenceOrder,
+      );
+      expect(updatePresenceOrder).toBeDefined();
+      expect(emitOrder).toBeDefined();
+      expect(updatePresenceOrder).toBeLessThan(emitOrder as number);
       expect(presenceService.isPresent).toHaveBeenCalledWith("r1", "u1");
       expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.ROOM_JOINED,

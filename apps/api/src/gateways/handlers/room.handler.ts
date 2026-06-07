@@ -115,7 +115,10 @@ export class RoomHandler extends BaseHandler {
               player.userId === userId
                 ? client.data.username
                 : player.user.username,
-            isOnline: true,
+            // No presence source on the player/room shape here, so fall back to
+            // false. The authoritative online status is computed by
+            // AuthHandler.syncReconnection via presenceService.isPresent.
+            isOnline: false,
           };
         }),
       } satisfies RoomJoinedPayload);

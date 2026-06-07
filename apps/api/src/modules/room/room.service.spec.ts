@@ -248,6 +248,36 @@ describe("RoomService", () => {
     });
   });
 
+  describe("getActiveRooms", () => {
+    it("returns rooms in WAITING, COUNTDOWN, or STARTING status with their players", async () => {
+      const mockRooms = [
+        { id: "r1", status: "WAITING", players: [{ userId: "u1" }] },
+        { id: "r2", status: "COUNTDOWN", players: [{ userId: "u2" }] },
+      ];
+      vi.mocked(prisma.room.findMany).mockResolvedValue(mockRooms as any);
+
+      const result = await service.getActiveRooms();
+
+      expect(prisma.room.findMany).toHaveBeenCalledWith({
+        where: {
+          status: {
+            in: [RoomStatus.WAITING, RoomStatus.COUNTDOWN, RoomStatus.STARTING],
+          },
+        },
+        include: { players: true },
+      });
+      expect(result).toEqual(mockRooms);
+    });
+
+    it("returns an empty array when no rooms are active", async () => {
+      vi.mocked(prisma.room.findMany).mockResolvedValue([]);
+
+      const result = await service.getActiveRooms();
+
+      expect(result).toEqual([]);
+    });
+  });
+
   describe("disbandRoom", () => {
     it("deletes room and players in db transaction, and deletes cache", async () => {
       await service.disbandRoom("r1");
