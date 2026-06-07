@@ -2,35 +2,40 @@
 
 import React, { useEffect, useState, use } from "react";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
-import { Avatar } from "@/components/ui/avatar";
-import { AnimatedSprite } from "@/components/ui/animated-sprite";
+import { Users, AlertCircle, Gamepad } from "lucide-react";
 import { useSocketStore } from "@/stores/socket-store";
 import { useRouter } from "@/i18n/routing";
-import { cn } from "@/lib/utils";
+import { RoomStatus } from "@arena/shared";
+import { RoomCodeCard } from "@/components/atoms/room-code-card";
 import {
-  Copy,
-  Check,
-  Users,
-  AlertCircle,
-  ArrowLeft,
-  Gamepad,
-} from "lucide-react";
+  LobbyHeader,
+  LobbyPlayerGrid,
+  LeaveRoomModal,
+  LobbyCountdownOverlay,
+} from "@/components/lobby";
 
 interface LobbyPageProps {
   params: Promise<{ roomCode: string }>;
 }
 
-import { avatars } from "@/lib/avatars";
-
 export default function LobbyPage({ params }: LobbyPageProps) {
   const { roomCode } = use(params);
   const router = useRouter();
-  const { room, userId, username, isConnected, joinRoom, startMatch, match } =
-    useSocketStore();
+  const {
+    room,
+    userId,
+    username,
+    isConnected,
+    joinRoom,
+    startMatch,
+    match,
+    leaveRoom,
+  } = useSocketStore();
 
-  const [copied, setCopied] = useState(false);
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [countdownNow, setCountdownNow] = useState(() => Date.now());
+  const [showLeaveModal, setShowLeaveModal] = useState(false);
 
   // Auto join room if not already in store
   useEffect(() => {
@@ -73,11 +78,20 @@ export default function LobbyPage({ params }: LobbyPageProps) {
     }
   }, [match, router]);
 
-  const handleCopyCode = () => {
-    navigator.clipboard.writeText(roomCode);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  useEffect(() => {
+    if (!room?.countdownEndsAt) {
+      return;
+    }
+
+    setCountdownNow(Date.now());
+    const interval = window.setInterval(() => {
+      setCountdownNow(Date.now());
+    }, 250);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [room?.countdownEndsAt]);
 
   const handleStartGame = () => {
     if (room?.id) {
@@ -85,10 +99,26 @@ export default function LobbyPage({ params }: LobbyPageProps) {
     }
   };
 
+  const handleLeaveRoom = () => {
+    if (room?.id) {
+      leaveRoom(room.id);
+      router.push("/room/create");
+    }
+  };
+
   const roomHostId = room?.hostId ?? null;
   const isHost = Boolean(userId && roomHostId && userId === roomHostId);
+  const isPrivateRoom = room?.roomType === "PRIVATE";
+  const roomStatus = room?.status ?? RoomStatus.WAITING;
+  const countdownRemainingMs = room?.countdownEndsAt
+    ? Math.max(room.countdownEndsAt - countdownNow, 0)
+    : 0;
+  const countdownRemainingSeconds = Math.ceil(countdownRemainingMs / 1000);
 
-  // Mock players only in local dev when the real players list is empty
+  const isStarting =
+    roomStatus === RoomStatus.COUNTDOWN || roomStatus === RoomStatus.STARTING;
+  const isInGame = roomStatus === RoomStatus.IN_GAME;
+
   const realPlayers = room?.players ?? [];
   const playersList =
     process.env.NODE_ENV === "development" && realPlayers.length === 0
@@ -98,93 +128,93 @@ export default function LobbyPage({ params }: LobbyPageProps) {
             name: username || "Bạn",
             status: "READY",
             score: 0,
+            isOnline: true,
           },
-          { id: "mock2", name: "Alpha_Net", status: "READY", score: 0 },
-          { id: "mock3", name: "Glitch_Runner", status: "READY", score: 0 },
-          { id: "mock4", name: "Neon_Ghost", status: "READY", score: 0 },
-          { id: "mock5", name: "Pixel_Hustler", status: "READY", score: 0 },
+          {
+            id: "mock2",
+            name: "Alpha_Net",
+            status: "READY",
+            score: 0,
+            isOnline: true,
+          },
+          {
+            id: "mock3",
+            name: "Glitch_Runner",
+            status: "READY",
+            score: 0,
+            isOnline: true,
+          },
+          {
+            id: "mock4",
+            name: "Neon_Ghost",
+            status: "READY",
+            score: 0,
+            isOnline: true,
+          },
+          {
+            id: "mock5",
+            name: "Pixel_Hustler",
+            status: "READY",
+            score: 0,
+            isOnline: true,
+          },
         ]
       : realPlayers;
 
-  // Get deterministic or local saved avatar details
-  const getPlayerAvatar = (player: { id: string; name: string }) => {
-    if (player.id === userId && typeof window !== "undefined") {
-      const seed = localStorage.getItem("avatarSeed") || "jellyfrog";
-      const name = localStorage.getItem("avatarName") || "Ếch Thạch (Jelly)";
-      const isAnimated = localStorage.getItem("avatarIsAnimated") === "true";
-      const spritesheet = localStorage.getItem("avatarSpritesheet") || "";
-      return { seed, name, isAnimated, spritesheet };
-    }
+  const canHostStart =
+    isHost &&
+    isPrivateRoom &&
+    roomStatus === RoomStatus.WAITING &&
+    playersList.length >= 2 &&
+    !joining;
 
-    const hash = player.name
-      .split("")
-      .reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    const index = hash % avatars.length;
-    const avatar = avatars[index];
-    // Normalize avatar data to ensure consistent shape
-    return {
-      seed: avatar.seed,
-      name: avatar.name,
-      isAnimated: Boolean(avatar.isAnimated),
-      spritesheet: avatar.spritesheet || "",
-    };
-  };
+  const roomStatusMessage =
+    roomStatus === RoomStatus.COUNTDOWN
+      ? `Trận đấu sẽ bắt đầu sau ${countdownRemainingSeconds}s`
+      : roomStatus === RoomStatus.STARTING
+        ? "Đang đồng bộ người chơi và câu hỏi..."
+        : roomStatus === RoomStatus.IN_GAME
+          ? "Đã có match, đang chuyển màn chơi..."
+          : isPrivateRoom
+            ? playersList.length < 2
+              ? "Cần ít nhất 2 người để host bắt đầu trận đấu"
+              : "Host có thể bắt đầu trận đấu bất cứ lúc nào"
+            : playersList.length < 2
+              ? "Cần thêm người chơi để tự động bắt đầu"
+              : "Đủ người chơi, server sẽ tự bắt đầu trận đấu";
 
   return (
     <AppShellLayout>
+      <LobbyCountdownOverlay
+        secondsRemaining={countdownRemainingSeconds}
+        isStarting={isStarting}
+        isInGame={isInGame}
+      />
+
+      <LeaveRoomModal
+        open={showLeaveModal}
+        onOpenChange={setShowLeaveModal}
+        onConfirm={handleLeaveRoom}
+        isHost={isHost}
+      />
+
       <div className="max-w-6xl mx-auto w-full space-y-6 pt-2 select-none animate-slide-up">
-        {/* Top bar back option */}
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => router.push("/room/create")}
-            className="flex items-center gap-2 px-4 py-2 border-[3px] border-candy-ink bg-white text-candy-ink font-display font-black text-xs uppercase rounded-xl hover:translate-y-[-1.5px] hover:shadow-[3px_3px_0_0_#2B2D42] active:translate-y-[1.5px] active:shadow-[1px_1px_0_0_#2B2D42] shadow-[2px_2px_0_0_#2B2D42] transition-all cursor-pointer outline-none"
-          >
-            <ArrowLeft className="w-4 h-4 mr-1 stroke-[2.5]" />
-            Quay lại cài đặt
-          </button>
-        </div>
+        <LobbyHeader
+          roomStatus={roomStatus}
+          onLeave={() => setShowLeaveModal(true)}
+        />
 
         {/* Grid Area */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left panel: Room Details & Actions */}
           <div className="lg:col-span-1 space-y-6">
             <div className="jelly-card p-6 space-y-6 rounded-3xl border-[3.5px] border-candy-ink bg-white shadow-[6px_6px_0_0_#2B2D42]">
-              <div className="space-y-1">
-                <span className="font-display font-black text-[10px] text-candy-pink uppercase tracking-wider">
-                  Đang Chờ Trận Đấu
-                </span>
-                <h2 className="font-display font-black text-2xl tracking-wide uppercase text-candy-ink drop-shadow-[0_2px_0_rgba(0,0,0,0.05)]">
-                  PHÒNG CHỜ
-                </h2>
-              </div>
-
-              {/* Room Code Card */}
-              <div className="p-4 bg-candy-cloud border-[3px] border-candy-ink rounded-2xl space-y-2 shadow-[4px_4px_0_0_#2B2D42]">
-                <span className="text-xs font-bold text-candy-ink/75 font-sans">
-                  Mã Phòng Đấu
-                </span>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-display font-black text-3xl text-candy-blue tracking-widest uppercase select-all">
-                    {roomCode}
-                  </span>
-                  <button
-                    onClick={handleCopyCode}
-                    className="p-2.5 rounded-xl border-[3px] border-candy-ink bg-white text-candy-ink hover:translate-y-[-1px] hover:shadow-[3px_3px_0_0_#2B2D42] active:translate-y-[1px] active:shadow-[1px_1px_0_0_#2B2D42] shadow-[2px_2px_0_0_#2B2D42] transition-all outline-none cursor-pointer"
-                    title="Sao chép mã"
-                  >
-                    {copied ? (
-                      <Check className="w-4.5 h-4.5 text-candy-mint stroke-[2.5]" />
-                    ) : (
-                      <Copy className="w-4.5 h-4.5 stroke-[2.5]" />
-                    )}
-                  </button>
-                </div>
-              </div>
+              <RoomCodeCard roomCode={roomCode} />
 
               {/* Stats / Player Counts */}
               <div className="flex items-center justify-between p-4 border-b-[3px] border-candy-ink/10">
                 <span className="text-sm font-bold text-candy-ink/80 flex items-center gap-2">
-                  <Users className="w-4.5 h-4.5 text-candy-pink stroke-[2.5]" />
+                  <Users className="w-4 h-4 text-candy-pink stroke-[2.5]" />
                   Đối thủ hiện tại
                 </span>
                 <span className="font-display font-black text-xl text-candy-pink">
@@ -203,19 +233,26 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                     : joining
                       ? "Đang vào phòng..."
                       : isConnected
-                        ? "Mạng Đấu Trường Ổn Định"
+                        ? roomStatusMessage
                         : "Đang kết nối lại..."}
                 </span>
               </div>
 
               {/* Giant Host Launch Action */}
-              {isHost && (
+              {isHost && isPrivateRoom && (
                 <button
                   onClick={handleStartGame}
-                  className="w-full h-14 bg-candy-mint text-candy-ink border-[3.5px] border-candy-ink shadow-[6px_6px_0_0_#2B2D42] rounded-2xl hover:translate-y-[-2px] hover:shadow-[8px_8px_0_0_#2B2D42] active:translate-y-[4px] active:shadow-[2px_2px_0_0_#2B2D42] font-display font-black text-sm tracking-widest uppercase flex items-center justify-center cursor-pointer transition-all select-none"
+                  disabled={!canHostStart}
+                  className="w-full h-14 bg-candy-mint text-candy-ink border-[3.5px] border-candy-ink shadow-[6px_6px_0_0_#2B2D42] rounded-2xl hover:translate-y-[-2px] hover:shadow-[8px_8px_0_0_#2B2D42] active:translate-y-[4px] active:shadow-[2px_2px_0_0_#2B2D42] font-display font-black text-sm tracking-widest uppercase flex items-center justify-center cursor-pointer transition-all select-none disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Gamepad className="w-5 h-5 mr-2 animate-bounce stroke-[2.5]" />
-                  BẮT ĐẦU TRẬN ĐẤU
+                  {roomStatus === RoomStatus.COUNTDOWN
+                    ? `ĐANG ĐẾM NGƯỢC ${countdownRemainingSeconds}s`
+                    : roomStatus === RoomStatus.STARTING
+                      ? "ĐANG KHỞI TẠO..."
+                      : roomStatus === RoomStatus.IN_GAME
+                        ? "ĐANG CHUYỂN TRẬN..."
+                        : "BẮT ĐẦU TRẬN ĐẤU"}
                 </button>
               )}
             </div>
@@ -238,91 +275,12 @@ export default function LobbyPage({ params }: LobbyPageProps) {
               ĐỐI THỦ TRONG PHÒNG
             </h3>
 
-            {/* Grid list of guests showcasing beautiful animations */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              {playersList.length === 0 ? (
-                <div className="col-span-full flex flex-col items-center justify-center py-16 px-4 rounded-2xl border-[3px] border-dashed border-candy-ink/20 bg-white/50">
-                  <Users className="w-10 h-10 text-candy-ink/20 stroke-[1.5] mb-3" />
-                  <p className="font-display font-black text-base text-candy-ink/30 uppercase tracking-wider text-center">
-                    Đang chờ người chơi tham gia...
-                  </p>
-                  <p className="font-sans text-xs text-candy-ink/20 mt-1">
-                    Chia sẻ mã phòng để bắt đầu
-                  </p>
-                </div>
-              ) : (
-                playersList
-                  .filter(
-                    (
-                      player,
-                    ): player is {
-                      id: string;
-                      name: string;
-                      status: string;
-                      score: number;
-                    } =>
-                      typeof player === "object" &&
-                      player !== null &&
-                      typeof player.id === "string" &&
-                      typeof player.name === "string" &&
-                      typeof player.status === "string" &&
-                      typeof player.score === "number",
-                  )
-                  .map((player) => {
-                    const playerAvatar = getPlayerAvatar(player);
-                    const isCurrent = player.id === userId;
-                    const isPlayerHost = player.id === roomHostId;
-
-                    return (
-                      <div
-                        key={player.id}
-                        className={`p-4 flex items-center gap-3 rounded-2xl border-[3px] border-candy-ink transition-all shadow-[4px_4px_0_0_#2B2D42] hover:translate-y-[-2px] hover:shadow-[6px_6px_0_0_#2B2D42] ${
-                          isCurrent
-                            ? "bg-candy-pink text-candy-ink"
-                            : "bg-white text-candy-ink"
-                        }`}
-                      >
-                        {playerAvatar.isAnimated ? (
-                          <div className="w-12 h-12 shrink-0 border-[2.5px] border-candy-ink rounded-xl bg-candy-cloud overflow-hidden flex items-center justify-center relative shadow-[2px_2px_0_0_#2B2D42]">
-                            <AnimatedSprite
-                              src={playerAvatar.spritesheet!}
-                              scale={2.2}
-                              row={0}
-                              speed={120}
-                            />
-                          </div>
-                        ) : (
-                          <Avatar
-                            size="md"
-                            fallback={playerAvatar.seed}
-                            status={isCurrent ? "online" : "offline"}
-                            className="border-[2.5px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42]"
-                          />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <p className="font-display text-sm truncate uppercase tracking-wide">
-                            {player.name}
-                          </p>
-                          <p
-                            className={cn(
-                              "font-mono text-[9px] uppercase tracking-widest font-black opacity-80",
-                              isCurrent ? "text-candy-ink" : "text-candy-pink",
-                            )}
-                          >
-                            {isCurrent && isPlayerHost
-                              ? "BẠN (HOST)"
-                              : isCurrent
-                                ? "BẠN"
-                                : isPlayerHost
-                                  ? "HOST"
-                                  : "ĐÃ SẴN SÀNG"}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })
-              )}
-            </div>
+            <LobbyPlayerGrid
+              players={playersList}
+              currentUserId={userId}
+              hostId={roomHostId}
+              emptyStateMessage="Đang chờ người chơi tham gia..."
+            />
           </div>
         </div>
       </div>

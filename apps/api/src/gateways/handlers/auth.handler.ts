@@ -5,11 +5,13 @@ import {
   ErrorCode,
   ERROR_MESSAGES,
   RoomJoinedPayload,
+  asRoomTypeOrDefault,
 } from "@arena/shared";
 import { AuthService } from "../../modules/auth/auth.service";
 import { RoomService } from "../../modules/room/room.service";
 import { MatchService } from "../../modules/match/match.service";
 import { GameLoopService } from "../../modules/match/game-loop.service";
+import { PresenceService } from "../../modules/match/presence.service";
 import { BaseHandler } from "./base.handler";
 
 @Injectable()
@@ -22,6 +24,7 @@ export class AuthHandler extends BaseHandler {
     private readonly roomService: RoomService,
     private readonly matchService: MatchService,
     private readonly gameLoopService: GameLoopService,
+    private readonly presenceService: PresenceService,
   ) {
     super();
   }
@@ -124,15 +127,38 @@ export class AuthHandler extends BaseHandler {
       const room = roomPlayer.room;
       client.join(`room:${room.id}`);
 
+      // Fetch the real countdown end time from GameLoopService
+      const countdownEndsAt = this.gameLoopService.getCountdownEnd(room.id);
+
+      // Update presence state for the reconnecting user first so the subsequent
+      // players list reflects the new online status immediately
+      await this.presenceService.updatePresence(room.id, userId);
+
+      // Map room players to check presence dynamically
+      const players = await Promise.all(
+        room.players.map(async (p) => {
+          const isOnline = await this.presenceService.isPresent(
+            room.id,
+            p.userId,
+          );
+          return {
+            playerId: p.userId,
+            playerName: p.user.username,
+            isOnline,
+          };
+        }),
+      );
+
       // Emit ROOM_JOINED with the list of players to avoid N+1 socket emits
       client.emit(ServerEvent.ROOM_JOINED, {
         roomId: room.id,
         code: room.code,
         hostId: room.hostId,
-        players: room.players.map((p) => ({
-          playerId: p.userId,
-          playerName: p.user.username,
-        })),
+        roomType: asRoomTypeOrDefault(room.type),
+        roomStatus: room.status as import("@arena/shared").RoomStatus,
+        currentMatchId: room.currentMatchId,
+        countdownEndsAt,
+        players,
       } satisfies RoomJoinedPayload);
 
       if (room.currentMatchId) {

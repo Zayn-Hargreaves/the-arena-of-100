@@ -3,6 +3,8 @@
 // Client-Server Communication Protocol
 // ============================================================
 
+import type { RoomStatus } from "./state";
+
 // Socket Namespaces
 export enum SocketNamespace {
   ROOM = "room",
@@ -23,6 +25,7 @@ export enum ClientEvent {
 
   // Connection Events
   AUTHENTICATE = "authenticate",
+  HEARTBEAT = "heartbeat",
   PING = "ping",
 }
 
@@ -33,6 +36,10 @@ export enum ServerEvent {
   ROOM_JOINED = "room_joined",
   PLAYER_JOINED = "player_joined",
   PLAYER_LEFT = "player_left",
+  ROOM_STATUS_UPDATED = "room_status_updated",
+  ROOM_COUNTDOWN_STARTED = "room_countdown_started",
+  ROOM_COUNTDOWN_CANCELLED = "room_countdown_cancelled",
+  ROOM_PRESENCE_UPDATED = "room_presence_updated",
   MATCH_STARTING = "match_starting",
 
   // Match Events
@@ -91,6 +98,12 @@ export interface AuthenticatePayload {
   token: string;
 }
 
+export interface HeartbeatPayload {
+  roomId?: string;
+  matchId?: string;
+  sentAt: number;
+}
+
 // Server Event Payloads
 export interface ErrorPayload {
   code: string;
@@ -134,19 +147,78 @@ export interface AnswerResultPayload {
   correctAnswer?: string;
 }
 
+export interface RoomPlayerSummary {
+  playerId: string;
+  playerName: string;
+  isOnline: boolean;
+}
+
+export interface RoomCreatedPayload {
+  roomId: string;
+  code: string;
+  hostId: string;
+  roomType: "PUBLIC" | "PRIVATE";
+  roomStatus: RoomStatus;
+  currentMatchId: string | null;
+  players: RoomPlayerSummary[];
+}
+
 export interface RoomJoinedPayload {
   roomId: string;
   code: string;
-  hostId?: string;
-  players?: Array<{
-    playerId: string;
-    playerName: string;
-  }>;
+  hostId: string;
+  roomType: "PUBLIC" | "PRIVATE";
+  roomStatus: RoomStatus;
+  currentMatchId: string | null;
+  countdownEndsAt: number | null;
+  players: RoomPlayerSummary[];
 }
 
 export interface RoomPlayerJoinedPayload {
+  roomId: string;
   playerId: string;
   playerName: string;
+  isOnline: boolean;
+}
+
+export interface RoomPlayerLeftPayload {
+  roomId: string;
+  playerId: string;
+  reason: "DISCONNECTED" | "KICKED" | "LEFT" | "STALE" | "HOST_STALE";
+}
+
+export interface RoomStatusUpdatedPayload {
+  roomId: string;
+  roomStatus: RoomStatus;
+  currentMatchId: string | null;
+  updatedAt: number;
+}
+
+export interface RoomCountdownStartedPayload {
+  roomId: string;
+  roomStatus: RoomStatus.COUNTDOWN | RoomStatus.STARTING;
+  countdownEndsAt: number;
+  countdownMs: number;
+  startedAt: number;
+}
+
+export interface RoomCountdownCancelledPayload {
+  roomId: string;
+  roomStatus: RoomStatus;
+  reason:
+    | "NOT_ENOUGH_PLAYERS"
+    | "HOST_CANCELLED"
+    | "PLAYER_LEFT"
+    | "HOST_STALE"
+    | "SYSTEM";
+  cancelledAt: number;
+}
+
+export interface RoomPresenceUpdatedPayload {
+  roomId: string;
+  playerId: string;
+  isOnline: boolean;
+  updatedAt: number;
 }
 
 // Socket Channel Helpers

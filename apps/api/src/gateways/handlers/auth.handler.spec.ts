@@ -5,6 +5,7 @@ import { AuthService } from "../../modules/auth/auth.service";
 import { RoomService } from "../../modules/room/room.service";
 import { MatchService } from "../../modules/match/match.service";
 import { GameLoopService } from "../../modules/match/game-loop.service";
+import { PresenceService } from "../../modules/match/presence.service";
 
 describe("AuthHandler", () => {
   let handler: AuthHandler;
@@ -12,6 +13,7 @@ describe("AuthHandler", () => {
   let roomService: RoomService;
   let matchService: MatchService;
   let gameLoopService: GameLoopService;
+  let presenceService: PresenceService;
   let client: Socket;
 
   let mockSockets: Map<string, any>;
@@ -27,12 +29,18 @@ describe("AuthHandler", () => {
     } as unknown as MatchService;
     gameLoopService = {
       handlePlayerDisconnect: vi.fn(),
+      getCountdownEnd: vi.fn().mockReturnValue(null),
     } as unknown as GameLoopService;
+    presenceService = {
+      isPresent: vi.fn().mockResolvedValue(true),
+      updatePresence: vi.fn().mockResolvedValue(undefined),
+    } as unknown as PresenceService;
     handler = new AuthHandler(
       authService,
       roomService,
       matchService,
       gameLoopService,
+      presenceService,
     );
     mockSockets = new Map();
     client = {
@@ -236,7 +244,7 @@ describe("AuthHandler", () => {
       });
       await handler.handleAuthenticate(client, { token: "t" });
 
-      client.nsp.server = { to: vi.fn() } as any;
+      (client.nsp as any).server = { to: vi.fn() } as any;
 
       vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
         {
@@ -297,6 +305,9 @@ describe("AuthHandler", () => {
           room: {
             id: "r1",
             code: "ABC",
+            type: "PUBLIC",
+            status: "WAITING",
+            hostId: "u1",
             currentMatchId: null,
             players: [{ userId: "u1", user: { username: "Alice" } }],
           },
@@ -306,12 +317,32 @@ describe("AuthHandler", () => {
       await handler.handleAuthenticate(client, { token: "t" });
 
       expect(client.join).toHaveBeenCalledWith("room:r1");
+      expect(presenceService.updatePresence).toHaveBeenCalledWith("r1", "u1");
+      // updatePresence must run before the ROOM_JOINED emit so the player
+      // list sent to the client reflects the user as online.
+      const updatePresenceOrder =
+        presenceService.updatePresence.mock.invocationCallOrder[0];
+      const emitOrder = (client.emit as any).mock.invocationCallOrder.find(
+        (n: number) => n > updatePresenceOrder,
+      );
+      expect(updatePresenceOrder).toBeDefined();
+      expect(emitOrder).toBeDefined();
+      expect(updatePresenceOrder).toBeLessThan(emitOrder as number);
+      expect(presenceService.isPresent).toHaveBeenCalledWith("r1", "u1");
       expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.ROOM_JOINED,
         expect.objectContaining({
           roomId: "r1",
           code: "ABC",
-          players: [{ playerId: "u1", playerName: "Alice" }],
+          roomType: "PUBLIC",
+          roomStatus: "WAITING",
+          players: expect.arrayContaining([
+            expect.objectContaining({
+              playerId: "u1",
+              playerName: "Alice",
+              isOnline: true,
+            }),
+          ]),
         }),
       );
     });

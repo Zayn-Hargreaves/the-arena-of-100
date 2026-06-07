@@ -3,19 +3,33 @@ import { Socket, Server } from "socket.io";
 import {
   ServerEvent,
   ErrorCode,
+  RoomStatus,
   type CreateRoomPayload,
   type JoinRoomPayload,
   type LeaveRoomPayload,
+  type RoomCreatedPayload,
+  type RoomJoinedPayload,
+  type RoomPlayerJoinedPayload,
+  type RoomPlayerLeftPayload,
   RoomError,
+  asRoomType,
 } from "@arena/shared";
 import { RoomService } from "../../modules/room/room.service";
+import { PresenceService } from "../../modules/match/presence.service";
+import { GameLoopService } from "../../modules/match/game-loop.service";
 import { BaseHandler } from "./base.handler";
+
+const asRoomStatus = (value: string): RoomStatus => value as RoomStatus;
 
 @Injectable()
 export class RoomHandler extends BaseHandler {
   private readonly logger = new Logger(RoomHandler.name);
 
-  constructor(private readonly roomService: RoomService) {
+  constructor(
+    private readonly roomService: RoomService,
+    private readonly gameLoopService: GameLoopService,
+    private readonly presenceService: PresenceService,
+  ) {
     super();
   }
 
@@ -34,8 +48,18 @@ export class RoomHandler extends BaseHandler {
       client.emit(ServerEvent.ROOM_CREATED, {
         roomId: room.id,
         code: room.code,
-        roomType: room.type,
-      });
+        hostId: room.hostId,
+        roomType: asRoomType(room.type),
+        roomStatus: RoomStatus.WAITING,
+        currentMatchId: null,
+        players: [
+          {
+            playerId: userId,
+            playerName: client.data.username,
+            isOnline: true,
+          },
+        ],
+      } satisfies RoomCreatedPayload);
 
       this.logger.log(`Room created via socket: ${room.code}`);
     } catch (error) {
@@ -59,14 +83,74 @@ export class RoomHandler extends BaseHandler {
       const room = await this.roomService.joinRoom(payload.roomCode, userId);
 
       client.join(`room:${room.id}`);
-      client.to(`room:${room.id}`).emit(ServerEvent.PLAYER_JOINED, {
-        playerId: userId,
-        playerName: client.data.username,
-      });
+      if (room.joined) {
+        client.to(`room:${room.id}`).emit(ServerEvent.PLAYER_JOINED, {
+          roomId: room.id,
+          playerId: userId,
+          playerName: client.data.username,
+          isOnline: true,
+        } satisfies RoomPlayerJoinedPayload);
+      }
       client.emit(ServerEvent.ROOM_JOINED, {
         roomId: room.id,
         code: room.code,
-      });
+        hostId: room.hostId,
+        roomType: asRoomType(room.type),
+        roomStatus: asRoomStatus(room.status),
+        currentMatchId: room.currentMatchId,
+        countdownEndsAt: this.gameLoopService.getCountdownEnd(room.id),
+        players: await Promise.all(
+          room.players.map(async (player) => {
+            // RoomService.getRoom() always joins the user relation, so
+            // `player.user` is guaranteed to be present. If it ever isn't, that
+            // is a state-corruption bug — fail fast so the caller gets a
+            // descriptive error and tests surface the regression immediately,
+            // rather than silently emitting an empty playerName that clients
+            // would render as a blank tile in the lobby.
+            if (!player.user) {
+              const message = `RoomPlayer ${player.userId} in room ${room.id} is missing its user relation; cannot resolve username`;
+              this.logger.error(message);
+              throw new Error(message);
+            }
+            return {
+              playerId: player.userId,
+              playerName:
+                player.userId === userId
+                  ? client.data.username
+                  : player.user.username,
+              // Resolve the authoritative online status from the presence
+              // service. The joining user is online by definition (we just
+              // accepted their socket) so we short-circuit that case. For
+              // other players, a presence lookup failure (e.g. Redis
+              // timeout) must not reject the whole ROOM_JOINED payload —
+              // we degrade to isOnline=false for that one player and log a
+              // warning so the operator can investigate.
+              isOnline:
+                player.userId === userId
+                  ? true
+                  : await this.presenceService
+                      .isPresent(room.id, player.userId)
+                      .catch((error) => {
+                        this.logger.warn(
+                          `Presence lookup failed for player ${player.userId} in room ${room.id}; defaulting isOnline=false: ${
+                            error instanceof Error
+                              ? error.message
+                              : String(error)
+                          }`,
+                        );
+                        return false;
+                      }),
+            };
+          }),
+        ),
+      } satisfies RoomJoinedPayload);
+
+      if (room.joined) {
+        await this.gameLoopService.maybeStartPublicCountdown(
+          room.id,
+          client.nsp.server,
+        );
+      }
 
       this.logger.log(`Player ${userId} joined room ${room.code} via socket`);
     } catch (error) {
@@ -93,9 +177,12 @@ export class RoomHandler extends BaseHandler {
       client.leave(`room:${payload.roomId}`);
 
       server.to(`room:${payload.roomId}`).emit(ServerEvent.PLAYER_LEFT, {
+        roomId: payload.roomId,
         playerId: userId,
         reason: "LEFT",
-      });
+      } satisfies RoomPlayerLeftPayload);
+
+      await this.gameLoopService.handleRoomPlayerLeft(payload.roomId, server);
     } catch (error) {
       const code =
         error instanceof RoomError ? error.code : ErrorCode.INTERNAL_ERROR;

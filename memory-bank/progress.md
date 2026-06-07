@@ -76,12 +76,21 @@
 
 #### Lobby lifecycle + graceful exit (PR kế tiếp đề xuất)
 
+- [x] Phase 1 contract baseline — tách rõ room lifecycle contract khỏi match lifecycle; thêm `STARTING`, room status/presence socket events, và payload room typed đầy đủ cho API/web consume
+- [x] Phase 2 backend baseline — public room auto-countdown khi đủ người, cancel countdown khi tụt dưới minimum, private room host force-start, và room status chuyển `WAITING -> COUNTDOWN -> STARTING -> IN_GAME` đồng bộ với match start
+- [x] Phase 3 transport/store baseline — `socket-store` consume room lifecycle events thật, lobby page đọc `room.status` / `countdownEndsAt` / `match.id` từ store, và bỏ giả định manual-start-only ở client
 - [ ] Auto-start countdown cho public room
 - [ ] Host controls tối thiểu cho private room (force-start, kick)
-- [ ] Heartbeat/presence validation (chống ghost player, sweep sau N round miss)
-- [ ] Lobby state machine: `WAITING → COUNTDOWN → STARTING → IN_GAME`
-- [ ] Frontend: countdown overlay, "leave" button đi kèm confirm modal, mobile-friendly leave flow
-- [ ] Test: room lifecycle + heartbeat + leave flow
+- [x] Heartbeat/presence validation (chống ghost player, sweep sau N round miss) — client gửi heartbeat 10s, server Redis TTL 20s, auto-sweep 5s, auto-disband private room nếu host stale
+- [x] Lobby state machine: `WAITING → COUNTDOWN → STARTING → IN_GAME` (backend + store wiring done)
+- [x] Frontend: countdown overlay, "leave" button đi kèm confirm modal, mobile-friendly leave flow, extracted lobby components (`LobbyHeader`, `RoomCodeCard`, `LobbyPlayerGrid`, `LeaveRoomModal`, `LobbyCountdownOverlay`) + visual stale indicator
+- [x] Test: room lifecycle + heartbeat + leave flow (582 tests passed: 55 in @arena/game-core, 527 in @arena/api, 0 in @arena/web)
+- [x] **Coverage cleanup for Codecov PR #38** — added 54 new tests to address the patch coverage gap (was 55.5% / 282 missing lines). Brought all 6 flagged files to ≥95% statements: `presence.service.ts` 18.62%→100%, `game-loop.service.ts` 71.94%→95.26%, `redis.service.ts` 78.75%→97.5%, `room.service.ts` 95.97%→100%, `room.handler.ts` 96.21%→99.24%, `game.gateway.ts` stays 100%. Overall API coverage 89.53%→94.98% (587 tests, 0 failures). See `memory-bank/coverage-cleanup.md` for the full diff.
+- [x] **Phase 6: Graceful Exit And Result Navigation Cleanup** — auto-redirect to `/result/[matchId]` with 3s overlay when match finishes, added "Rời Trận Đấu" button in game screen with confirmation modal, removed stale TODO in socket-store.
+- [x] **Phase 7: Shell Cleanup Isolation** — verified and stabilized `AppShellLayout` and `Sidebar`. Legacy gradients still remain at `app-shell-layout.tsx:34` and `sidebar.tsx:230` and are tracked under Phase 5 Step 5.1. Enhanced mobile UX by adding Escape key listener and backdrop click-to-close for the mobile navigation overlay, preserving robust skip-link accessibility. Zero page-level business logic changes.
+- [x] **Atomic Design Migration PoC** — successfully migrated `RoomCodeCard` to `components/atoms/` using GitNexus-guided impact analysis. Updated imports safely, removed legacy barrel export, and verified zero regressions. This establishes the standard workflow for future component restructuring.
+- [x] **Phase 8: Frontend Audit Sweep** — verified Home page a11y (htmlFor/id already correct, tap-targets >44px). Confirmed Not-Found surfaces have proper skip-links and consistent theming. Created reusable `AvatarFrame` component to deduplicate avatar/sprite framing logic across `LobbyPlayerGrid` and `GamePage` sidebar, reducing code duplication and enforcing design system consistency.
+- [x] **Phase 9 & 10: Tie-Break And Spectator Baseline** — Verified backend `MatchStateMachine` already implements robust tie-break logic (total response time → correct answers → random fallback). Confirmed `RoomService.joinRoom` already enforces "Hard Gate" for late joins (rejects `IN_GAME`/`FINISHED` rooms with `ROOM_ALREADY_STARTED`). Implemented client-side Spectator View: added `isEliminated` state to socket store, handled `PLAYER_ELIMINATED` event, and rendered a dedicated "Chế độ khán giả" UI in `GamePage` when a player is eliminated, allowing them to watch the rest of the match unfold.
 
 #### Product features phụ thuộc lobby hoàn thiện
 
@@ -136,7 +145,6 @@
 - [x] **Profile + Rankings mock data** — cần backend endpoints trước khi gắn UI thật ✅ Done (issue.md Step 3+4+5: backend + hooks + UI live)
 - [ ] **Design system Phase 5 chưa đóng** (shell templates, legacy CSS, visual audit) — **Follow-up**: Design system Phase 5 (shell templates/legacy CSS/visual audit) — owner: TBD, ticket: TBD
 - [ ] **Lobby mock players fallback** — cần real player events khi prod (debug only hiện tại)
-- [ ] **TODO còn trong code**: `socket-store.ts:304` ("Navigate to results page - this would be handled by the UI component") — đã có UI, cần xác minh và xoá TODO
 
 ### 🟢 Nice-to-Have
 

@@ -104,4 +104,10 @@ export class RedisService implements OnModuleDestroy {
   async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     return this.client.eval(script, keys.length, ...keys, ...args);
   }
+
+  // Check if a key exists
+  async exists(key: string): Promise<boolean> {
+    const result = await this.client.exists(key);
+    return result === 1;
+  }
 }

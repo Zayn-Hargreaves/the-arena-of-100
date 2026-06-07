@@ -9,13 +9,21 @@ import {
   ClientEvent,
   ServerEvent,
   RoomStatus,
+  type RoomCreatedPayload,
   type SnapshotPayload,
   type AnswerResultPayload,
   type ErrorPayload,
   type RoomJoinedPayload,
+  type RoomPlayerJoinedPayload,
+  type RoomPlayerLeftPayload,
+  type RoomCountdownStartedPayload,
+  type RoomCountdownCancelledPayload,
+  type RoomPresenceUpdatedPayload,
+  type RoomStatusUpdatedPayload,
   type RoundStartedPayload,
   type RoundEndedPayload,
   type MatchFinishedPayload,
+  type PlayerEliminatedPayload,
 } from "@arena/shared";
 import { API_URL } from "@/lib/api";
 
@@ -33,13 +41,17 @@ interface Player {
   name: string;
   status: string;
   score: number;
+  isOnline: boolean;
 }
 
 interface Room {
   id: string;
   code: string;
-  status: string;
-  hostId?: string | null;
+  status: RoomStatus;
+  hostId: string | null;
+  roomType?: "PUBLIC" | "PRIVATE";
+  currentMatchId?: string | null;
+  countdownEndsAt?: number | null;
   players: Player[];
 }
 
@@ -54,6 +66,12 @@ interface Match {
     options: string[];
   } | null;
   roundEndTime: number | null;
+}
+
+function mapRoomPlayersToMatchPlayers(players: Player[]): Player[] {
+  return players.map((player) => ({
+    ...player,
+  }));
 }
 
 interface LastAnswerResult {
@@ -80,6 +98,8 @@ interface SocketState extends ConnectionState {
   lastAnswerResult: LastAnswerResult | null;
   remainingCount: number | null;
   error: string | null;
+  heartbeatInterval: ReturnType<typeof setInterval> | null;
+  isEliminated: boolean;
 
   // Actions
   connect: () => Promise<void>;
@@ -113,6 +133,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   lastAnswerResult: null,
   remainingCount: null,
   error: null,
+  heartbeatInterval: null,
+  isEliminated: false,
 
   // Connect to WebSocket
   connect: async () => {
@@ -195,7 +217,18 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     });
 
     newSocket.on("disconnect", () => {
-      set({ isConnected: false, isAuthenticated: false });
+      // Clear heartbeat on unexpected socket disconnects (network drop, server
+      // restart) so we never leave orphaned intervals running. A reconnection
+      // (connect() called again) will create a fresh interval below.
+      const { heartbeatInterval: hb } = get();
+      if (hb) {
+        clearInterval(hb);
+      }
+      set({
+        isConnected: false,
+        isAuthenticated: false,
+        heartbeatInterval: null,
+      });
       console.log("🔌 Disconnected from game server");
     });
 
@@ -208,14 +241,23 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       console.log("✅ Authenticated:", data.username);
     });
 
-    newSocket.on(ServerEvent.ROOM_CREATED, (data) => {
+    newSocket.on(ServerEvent.ROOM_CREATED, (data: RoomCreatedPayload) => {
       set({
         room: {
           id: data.roomId,
           code: data.code,
-          status: RoomStatus.WAITING,
-          hostId: data.hostId ?? get().userId,
-          players: [],
+          status: data.roomStatus,
+          hostId: data.hostId,
+          roomType: data.roomType,
+          currentMatchId: data.currentMatchId,
+          countdownEndsAt: null,
+          players: data.players.map((player) => ({
+            id: player.playerId,
+            name: player.playerName,
+            status: "READY",
+            score: 0,
+            isOnline: player.isOnline,
+          })),
         },
       });
       console.log("🏠 Room created:", data.code);
@@ -223,35 +265,210 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
     newSocket.on(ServerEvent.ROOM_JOINED, (data: RoomJoinedPayload) => {
       set({
+        isEliminated: false,
         room: {
           id: data.roomId,
           code: data.code,
-          status: RoomStatus.WAITING,
-          hostId: data.hostId ?? null,
-          players: data.players
-            ? data.players.map((p) => ({
-                id: p.playerId,
-                name: p.playerName,
-                status: "READY",
-                score: 0,
-              }))
-            : [],
+          status: data.roomStatus,
+          hostId: data.hostId,
+          roomType: data.roomType,
+          currentMatchId: data.currentMatchId,
+          countdownEndsAt: data.countdownEndsAt,
+          players: data.players.map((player) => ({
+            id: player.playerId,
+            name: player.playerName,
+            status: "READY",
+            score: 0,
+            isOnline: player.isOnline,
+          })),
         },
       });
       console.log("🏠 Room joined:", data.code);
     });
 
-    newSocket.on(ServerEvent.PLAYER_JOINED, (data) => {
+    newSocket.on(ServerEvent.PLAYER_JOINED, (data: RoomPlayerJoinedPayload) => {
+      set((state) => {
+        if (!state.room || state.room.id !== data.roomId) {
+          return state;
+        }
+
+        const hasPlayer = state.room.players.some(
+          (player) => player.id === data.playerId,
+        );
+        if (hasPlayer) {
+          return {
+            room: {
+              ...state.room,
+              players: state.room.players.map((player) =>
+                player.id === data.playerId
+                  ? {
+                      ...player,
+                      name: data.playerName,
+                      isOnline: data.isOnline,
+                    }
+                  : player,
+              ),
+            },
+          };
+        }
+
+        return {
+          room: {
+            ...state.room,
+            players: [
+              ...state.room.players,
+              {
+                id: data.playerId,
+                name: data.playerName,
+                status: "READY",
+                score: 0,
+                isOnline: data.isOnline,
+              },
+            ],
+          },
+        };
+      });
       console.log("👤 Player joined:", data);
     });
 
-    newSocket.on(ServerEvent.PLAYER_LEFT, (data) => {
+    newSocket.on(ServerEvent.PLAYER_LEFT, (data: RoomPlayerLeftPayload) => {
+      set((state) => {
+        if (!state.room || state.room.id !== data.roomId) {
+          return state;
+        }
+
+        return {
+          room: {
+            ...state.room,
+            players: state.room.players.filter(
+              (player) => player.id !== data.playerId,
+            ),
+          },
+        };
+      });
       console.log("👤 Player left:", data);
     });
 
+    newSocket.on(
+      ServerEvent.ROOM_STATUS_UPDATED,
+      (data: RoomStatusUpdatedPayload) => {
+        set((state) => {
+          if (!state.room || state.room.id !== data.roomId) {
+            return state;
+          }
+
+          return {
+            room: {
+              ...state.room,
+              status: data.roomStatus,
+              currentMatchId: data.currentMatchId,
+              countdownEndsAt:
+                data.roomStatus === RoomStatus.COUNTDOWN
+                  ? (state.room.countdownEndsAt ?? null)
+                  : null,
+            },
+          };
+        });
+      },
+    );
+
+    newSocket.on(
+      ServerEvent.ROOM_COUNTDOWN_STARTED,
+      (data: RoomCountdownStartedPayload) => {
+        set((state) => {
+          if (!state.room || state.room.id !== data.roomId) {
+            return state;
+          }
+
+          return {
+            room: {
+              ...state.room,
+              status: data.roomStatus,
+              countdownEndsAt: data.countdownEndsAt,
+            },
+          };
+        });
+      },
+    );
+
+    newSocket.on(
+      ServerEvent.ROOM_COUNTDOWN_CANCELLED,
+      (data: RoomCountdownCancelledPayload) => {
+        set((state) => {
+          if (!state.room || state.room.id !== data.roomId) {
+            return state;
+          }
+
+          return {
+            room: {
+              ...state.room,
+              status: data.roomStatus,
+              countdownEndsAt: null,
+            },
+          };
+        });
+      },
+    );
+
+    newSocket.on(
+      ServerEvent.ROOM_PRESENCE_UPDATED,
+      (data: RoomPresenceUpdatedPayload) => {
+        set((state) => {
+          if (!state.room || state.room.id !== data.roomId) {
+            return state;
+          }
+
+          return {
+            room: {
+              ...state.room,
+              players: state.room.players.map((player) =>
+                player.id === data.playerId
+                  ? { ...player, isOnline: data.isOnline }
+                  : player,
+              ),
+            },
+          };
+        });
+      },
+    );
+
     newSocket.on(ServerEvent.MATCH_STARTING, (data) => {
-      set({ remainingCount: null, lastAnswerResult: null });
+      set((state) => ({
+        remainingCount: null,
+        lastAnswerResult: null,
+        room: state.room
+          ? {
+              ...state.room,
+              status: RoomStatus.STARTING,
+              currentMatchId: data.matchId,
+              countdownEndsAt: null,
+            }
+          : null,
+      }));
       console.log("⚔️ Match starting:", data);
+    });
+
+    newSocket.on(ServerEvent.MATCH_STARTED, (data) => {
+      set((state) => ({
+        isEliminated: false,
+        room: state.room
+          ? {
+              ...state.room,
+              status: RoomStatus.IN_GAME,
+              currentMatchId: data.matchId,
+              countdownEndsAt: null,
+            }
+          : null,
+        match: {
+          id: data.matchId,
+          status: data.status,
+          currentRoundNo: 0,
+          players: mapRoomPlayersToMatchPlayers(state.room?.players ?? []),
+          currentQuestion: null,
+          roundEndTime: null,
+        },
+      }));
+      console.log("🚀 Match started:", data);
     });
 
     newSocket.on(ServerEvent.ROUND_STARTED, (data: RoundStartedPayload) => {
@@ -259,11 +476,19 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         match: state.match
           ? {
               ...state.match,
+              status: "ROUND_ACTIVE",
               currentRoundNo: data.roundNo,
               currentQuestion: data.question,
               roundEndTime: data.endsAt,
             }
-          : null,
+          : {
+              id: data.matchId,
+              status: "ROUND_ACTIVE",
+              currentRoundNo: data.roundNo,
+              players: mapRoomPlayersToMatchPlayers(state.room?.players ?? []),
+              currentQuestion: data.question,
+              roundEndTime: data.endsAt,
+            },
         lastAnswerResult: null,
       }));
       console.log("⏱️ Round started:", data);
@@ -280,6 +505,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         match: state.match
           ? {
               ...state.match,
+              status: "ROUND_RESULT",
               roundEndTime: null, // Reset round end time
             }
           : null,
@@ -299,24 +525,60 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       console.log("🏁 Round ended:", data);
     });
 
+    newSocket.on(
+      ServerEvent.PLAYER_ELIMINATED,
+      (data: PlayerEliminatedPayload) => {
+        const currentState = get();
+        if (data.playerId === currentState.userId) {
+          set({ isEliminated: true });
+        }
+        console.log("💀 Player eliminated:", data);
+      },
+    );
+
     newSocket.on(ServerEvent.MATCH_FINISHED, (data: MatchFinishedPayload) => {
+      set((state) => ({
+        room: state.room
+          ? {
+              ...state.room,
+              status: RoomStatus.FINISHED,
+              countdownEndsAt: null,
+            }
+          : null,
+        match: state.match
+          ? {
+              ...state.match,
+              status: "FINISHED",
+            }
+          : state.match,
+      }));
       console.log("🏆 Match finished:", data);
-      // TODO: Navigate to results page - this would be handled by the UI component
     });
 
     newSocket.on(ServerEvent.SNAPSHOT, (data: SnapshotPayload) => {
-      set({
+      set((state) => ({
+        room: state.room
+          ? {
+              ...state.room,
+              status: RoomStatus.IN_GAME,
+              currentMatchId: data.matchId,
+              countdownEndsAt: null,
+            }
+          : null,
         match: {
           id: data.matchId,
           status: data.status,
           currentRoundNo: data.currentRoundNo,
-          players: data.players as Player[],
+          players: (data.players as Player[]).map((player) => ({
+            ...player,
+            isOnline: player.isOnline ?? true,
+          })),
           currentQuestion: data.currentQuestion,
           roundEndTime: data.roundEndTime,
         },
         remainingCount: null,
         lastAnswerResult: null,
-      });
+      }));
       console.log("📸 Snapshot received");
     });
 
@@ -351,11 +613,31 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     set({ socket: newSocket });
 
     await authPromise;
+
+    // Start heartbeat interval (every 10 seconds)
+    const currentState = get();
+    if (currentState.heartbeatInterval) {
+      clearInterval(currentState.heartbeatInterval);
+    }
+    const interval = setInterval(() => {
+      const state = get();
+      if (state.socket?.connected && state.room?.id) {
+        state.socket.emit(ClientEvent.HEARTBEAT, {
+          roomId: state.room.id,
+          sentAt: Date.now(),
+        });
+      }
+    }, 10000);
+
+    set({ heartbeatInterval: interval });
   },
 
   // Disconnect
   disconnect: () => {
-    const { socket } = get();
+    const { socket, heartbeatInterval } = get();
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+    }
     if (socket) {
       socket.disconnect();
       set({
@@ -370,6 +652,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         match: null,
         remainingCount: null,
         lastAnswerResult: null,
+        heartbeatInterval: null,
       });
     }
   },
@@ -502,21 +785,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         reject(new Error("Create room timed out"));
       }, 8000);
 
-      const onCreated = (data: {
-        roomId: string;
-        code: string;
-        hostId?: string;
-      }) => {
+      const onCreated = (data: { roomId: string; code: string }) => {
         cleanup();
-        set({
-          room: {
-            id: data.roomId,
-            code: data.code,
-            status: RoomStatus.WAITING,
-            hostId: data.hostId ?? get().userId,
-            players: [],
-          },
-        });
         resolve(data.code);
       };
 

@@ -2,8 +2,9 @@ import { Socket, Server } from "socket.io";
 import {
   ServerEvent,
   ErrorCode,
-  GAME_CONFIG,
   ERROR_MESSAGES,
+  RoomStatus,
+  RoomError,
 } from "@arena/shared";
 import { MatchHandler } from "./match.handler";
 import { RoomService } from "../../modules/room/room.service";
@@ -16,7 +17,7 @@ describe("MatchHandler", () => {
   let matchService: MatchService;
   let gameLoopService: {
     checkEarlyTermination: ReturnType<typeof vi.fn>;
-    startMatchLoop: ReturnType<typeof vi.fn>;
+    forceStartRoomMatch: ReturnType<typeof vi.fn>;
   };
   let client: Socket;
   let server: Server;
@@ -24,13 +25,12 @@ describe("MatchHandler", () => {
   beforeEach(() => {
     roomService = { getRoom: vi.fn() } as unknown as RoomService;
     matchService = {
-      createMatch: vi.fn(),
       getStateMachine: vi.fn(),
       persistStateMachine: vi.fn(),
     } as unknown as MatchService;
     gameLoopService = {
       checkEarlyTermination: vi.fn().mockResolvedValue(undefined),
-      startMatchLoop: vi.fn().mockResolvedValue(undefined),
+      forceStartRoomMatch: vi.fn().mockResolvedValue({ id: "m1" }),
     };
     handler = new MatchHandler(
       roomService,
@@ -51,25 +51,48 @@ describe("MatchHandler", () => {
 
   describe("handleStartMatch", () => {
     it("starts match when user is host", async () => {
-      vi.mocked(roomService.getRoom).mockResolvedValue({ hostId: "u1" } as any);
-      vi.mocked(matchService.createMatch).mockResolvedValue({
-        id: "m1",
+      vi.mocked(roomService.getRoom).mockResolvedValue({
+        hostId: "u1",
+        type: "PRIVATE",
+        status: RoomStatus.WAITING,
       } as any);
 
       await handler.handleStartMatch(client, server, { roomId: "r1" });
 
-      expect(matchService.createMatch).toHaveBeenCalledWith("r1");
-      expect(server.to).toHaveBeenCalledWith("room:r1");
-      const emitFn = (server.to as any).mock.results[0].value.emit;
-      expect(emitFn).toHaveBeenCalledWith(ServerEvent.MATCH_STARTING, {
-        matchId: "m1",
-        countdown: GAME_CONFIG.COUNTDOWN_DURATION_MS / 1000,
-      });
-      expect(gameLoopService.startMatchLoop).toHaveBeenCalledWith(
-        "m1",
+      expect(gameLoopService.forceStartRoomMatch).toHaveBeenCalledWith(
         "r1",
         server,
       );
+    });
+
+    it("emits error when room is public", async () => {
+      vi.mocked(roomService.getRoom).mockResolvedValue({
+        hostId: "u1",
+        type: "PUBLIC",
+        status: RoomStatus.WAITING,
+      } as any);
+
+      await handler.handleStartMatch(client, server, { roomId: "r1" });
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.INVALID_ROOM_TYPE,
+        message: ERROR_MESSAGES[ErrorCode.INVALID_ROOM_TYPE],
+      });
+    });
+
+    it("emits error when room status is not WAITING", async () => {
+      vi.mocked(roomService.getRoom).mockResolvedValue({
+        hostId: "u1",
+        type: "PRIVATE",
+        status: RoomStatus.IN_GAME,
+      } as any);
+
+      await handler.handleStartMatch(client, server, { roomId: "r1" });
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.ROOM_ALREADY_STARTED,
+        message: ERROR_MESSAGES[ErrorCode.ROOM_ALREADY_STARTED],
+      });
     });
 
     it("emits error when user is not host", async () => {
@@ -112,26 +135,22 @@ describe("MatchHandler", () => {
       });
     });
 
-    it("handles startMatchLoop rejection gracefully and logs error", async () => {
-      vi.mocked(roomService.getRoom).mockResolvedValue({ hostId: "u1" } as any);
-      vi.mocked(matchService.createMatch).mockResolvedValue({
-        id: "m1",
+    it("emits not-enough-players when force start preconditions fail", async () => {
+      vi.mocked(roomService.getRoom).mockResolvedValue({
+        hostId: "u1",
+        type: "PRIVATE",
+        status: RoomStatus.WAITING,
       } as any);
-
-      const loopError = new Error("start loop failed");
-      gameLoopService.startMatchLoop.mockRejectedValue(loopError);
-
-      const loggerErrorSpy = vi.spyOn(handler["logger"], "error");
+      gameLoopService.forceStartRoomMatch.mockRejectedValue(
+        new RoomError(ErrorCode.NOT_ENOUGH_PLAYERS),
+      );
 
       await handler.handleStartMatch(client, server, { roomId: "r1" });
 
-      // Wait for promise resolution since it's fire-and-forget
-      await new Promise((resolve) => process.nextTick(resolve));
-
-      expect(loggerErrorSpy).toHaveBeenCalledWith(
-        "Failed to start match loop for match m1:",
-        loopError,
-      );
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.NOT_ENOUGH_PLAYERS,
+        message: ERROR_MESSAGES[ErrorCode.NOT_ENOUGH_PLAYERS],
+      });
     });
   });
 

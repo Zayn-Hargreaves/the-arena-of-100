@@ -5,6 +5,8 @@ import { AuthHandler } from "./handlers/auth.handler";
 import { RoomHandler } from "./handlers/room.handler";
 import { MatchHandler } from "./handlers/match.handler";
 import { AuthService } from "../modules/auth/auth.service";
+import { PresenceService } from "../modules/match/presence.service";
+import { GameLoopService } from "../modules/match/game-loop.service";
 
 describe("GameGateway", () => {
   let gateway: GameGateway;
@@ -12,6 +14,8 @@ describe("GameGateway", () => {
   let roomHandler: RoomHandler;
   let matchHandler: MatchHandler;
   let authService: AuthService;
+  let presenceService: PresenceService;
+  let gameLoopService: GameLoopService;
   let client: Socket;
 
   beforeEach(() => {
@@ -32,12 +36,21 @@ describe("GameGateway", () => {
     authService = {
       verifyToken: vi.fn(),
     } as unknown as AuthService;
+    presenceService = {
+      setServer: vi.fn(),
+      updatePresence: vi.fn().mockResolvedValue(undefined),
+    } as unknown as PresenceService;
+    gameLoopService = {
+      setServer: vi.fn(),
+    } as unknown as GameLoopService;
 
     gateway = new GameGateway(
       authHandler,
       roomHandler,
       matchHandler,
       authService,
+      presenceService,
+      gameLoopService,
     );
     // Set the private _server field
     (gateway as any)._server = {
@@ -49,6 +62,7 @@ describe("GameGateway", () => {
       emit: vi.fn(),
       join: vi.fn(),
       data: {},
+      rooms: new Set<string>(),
     } as unknown as Socket;
   });
 
@@ -72,9 +86,11 @@ describe("GameGateway", () => {
       gateway.afterInit(mockServer);
     });
 
-    it("registers a middleware", () => {
+    it("registers a middleware and sets server on presence service", () => {
       expect(mockServer.use).toHaveBeenCalled();
       expect(middleware).toBeTypeOf("function");
+      expect(presenceService.setServer).toHaveBeenCalledWith(mockServer);
+      expect(gameLoopService.setServer).toHaveBeenCalledWith(mockServer);
     });
 
     it("successfully authenticates with auth.token", () => {
@@ -261,6 +277,55 @@ describe("GameGateway", () => {
       gateway.handlePing(client);
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.PONG, {
         timestamp: expect.any(Number),
+      });
+    });
+
+    describe("handleHeartbeat", () => {
+      it("updates presence when user is a member of the heartbeat room", async () => {
+        client.data.userId = "u1";
+        (client.rooms as Set<string>).add("room:r1");
+
+        await gateway.handleHeartbeat(client, { roomId: "r1" });
+
+        expect(presenceService.updatePresence).toHaveBeenCalledWith("r1", "u1");
+      });
+
+      it("skips presence update when the user is not a member of the heartbeat room", async () => {
+        client.data.userId = "u1";
+        (client.rooms as Set<string>).add("room:r2");
+
+        await gateway.handleHeartbeat(client, { roomId: "r1" });
+
+        expect(presenceService.updatePresence).not.toHaveBeenCalled();
+      });
+
+      it("ignores the event when userId is missing", async () => {
+        client.data = {};
+        await gateway.handleHeartbeat(client, { roomId: "r1" });
+
+        expect(presenceService.updatePresence).not.toHaveBeenCalled();
+      });
+
+      it("ignores the event when roomId is missing", async () => {
+        client.data.userId = "u1";
+        await gateway.handleHeartbeat(client, { roomId: "" });
+
+        expect(presenceService.updatePresence).not.toHaveBeenCalled();
+      });
+
+      it("catches presence update errors and warns without throwing", async () => {
+        client.data.userId = "u1";
+        (client.rooms as Set<string>).add("room:r1");
+        vi.mocked(presenceService.updatePresence).mockRejectedValueOnce(
+          new Error("redis down"),
+        );
+        const warnSpy = vi.spyOn(gateway["logger"], "warn");
+
+        await expect(
+          gateway.handleHeartbeat(client, { roomId: "r1" }),
+        ).resolves.not.toThrow();
+
+        expect(warnSpy.mock.calls[0][0]).toMatch(/u1.*r1/);
       });
     });
   });

@@ -3,11 +3,17 @@
 // Event Sourcing Pattern: All game actions are events
 // ============================================================
 
+import { RoomStatus } from "./state";
+
 // Room Events
 export enum RoomEventType {
   ROOM_CREATED = "ROOM_CREATED",
   PLAYER_JOINED = "PLAYER_JOINED",
   PLAYER_LEFT = "PLAYER_LEFT",
+  ROOM_STATUS_UPDATED = "ROOM_STATUS_UPDATED",
+  ROOM_COUNTDOWN_STARTED = "ROOM_COUNTDOWN_STARTED",
+  ROOM_COUNTDOWN_CANCELLED = "ROOM_COUNTDOWN_CANCELLED",
+  PLAYER_PRESENCE_UPDATED = "PLAYER_PRESENCE_UPDATED",
   ROOM_SETTINGS_UPDATED = "ROOM_SETTINGS_UPDATED",
   MATCH_STARTED = "MATCH_STARTED",
 }
@@ -35,7 +41,7 @@ export interface BaseEvent<T = unknown> {
 }
 
 // Room Event Payloads
-export interface RoomCreatedPayload {
+export interface RoomCreatedEventPayload {
   roomId: string;
   roomCode: string;
   hostId: string;
@@ -54,6 +60,40 @@ export interface PlayerLeftPayload {
   roomId: string;
   playerId: string;
   reason: "DISCONNECTED" | "KICKED" | "LEFT";
+}
+
+export interface RoomStatusUpdatedEventPayload {
+  roomId: string;
+  roomStatus: RoomStatus;
+  currentMatchId: string | null;
+  updatedAt: number;
+}
+
+export interface RoomCountdownStartedEventPayload {
+  roomId: string;
+  roomStatus: RoomStatus.COUNTDOWN | RoomStatus.STARTING;
+  countdownEndsAt: number;
+  countdownMs: number;
+  startedAt: number;
+}
+
+export interface RoomCountdownCancelledEventPayload {
+  roomId: string;
+  roomStatus: RoomStatus;
+  reason:
+    | "NOT_ENOUGH_PLAYERS"
+    | "HOST_CANCELLED"
+    | "PLAYER_LEFT"
+    | "HOST_STALE"
+    | "SYSTEM";
+  cancelledAt: number;
+}
+
+export interface PlayerPresenceUpdatedEventPayload {
+  roomId: string;
+  playerId: string;
+  isOnline: boolean;
+  updatedAt: number;
 }
 
 // Match Event Payloads
@@ -99,6 +139,7 @@ export interface PlayerEliminatedPayload {
   matchId: string;
   roundNo: number;
   playerId: string;
+  playerName?: string;
   reason: "WRONG_ANSWER" | "TIMEOUT";
 }
 
@@ -126,9 +167,13 @@ export interface QuestionSnapshot {
 
 // Union types for type safety
 export type RoomEvent =
-  | BaseEvent<RoomCreatedPayload>
+  | BaseEvent<RoomCreatedEventPayload>
   | BaseEvent<PlayerJoinedPayload>
-  | BaseEvent<PlayerLeftPayload>;
+  | BaseEvent<PlayerLeftPayload>
+  | BaseEvent<RoomStatusUpdatedEventPayload>
+  | BaseEvent<RoomCountdownStartedEventPayload>
+  | BaseEvent<RoomCountdownCancelledEventPayload>
+  | BaseEvent<PlayerPresenceUpdatedEventPayload>;
 
 export type MatchEvent =
   | BaseEvent<MatchCreatedPayload>
