@@ -316,7 +316,7 @@ export default function GamePage({ params }: GamePageProps) {
           <div className="lg:col-span-1 space-y-6">
             <div className="p-5 rounded-3xl border-[3.5px] border-candy-ink bg-white shadow-[5px_5px_0_0_#2B2D42] space-y-4">
               <h3 className="font-display font-black text-sm text-candy-ink uppercase tracking-wider flex items-center gap-2 border-b-[3px] border-candy-ink pb-2">
-                <Swords className="w-4.5 h-4.5 text-candy-red stroke-[2.5]" />
+                <Swords className="w-4 h-4 text-candy-red stroke-[2.5]" />
                 {t("opponentsTitle")}
               </h3>
 
@@ -443,15 +443,9 @@ export default function GamePage({ params }: GamePageProps) {
         open={showLeaveModal}
         onOpenChange={setShowLeaveModal}
         onConfirm={() => {
-          if (match?.id) {
-            // We need the roomId to leave. If we don't have it, we can try to get it from the store or just redirect.
-            // Actually, leaveRoom expects roomId. Let's check if we can get it.
-            // For now, we'll assume we can leave by roomId if available, or we can just redirect.
-            // Let's use the roomId from the store if available, otherwise just redirect.
-            const currentRoomId = useSocketStore.getState().room?.id;
-            if (currentRoomId) {
-              leaveRoom(currentRoomId);
-            }
+          const currentRoomId = useSocketStore.getState().room?.id;
+          if (currentRoomId) {
+            leaveRoom(currentRoomId);
           }
           router.push("/room/create");
         }}

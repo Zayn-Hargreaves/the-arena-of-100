@@ -6,6 +6,7 @@ import { RoomHandler } from "./handlers/room.handler";
 import { MatchHandler } from "./handlers/match.handler";
 import { AuthService } from "../modules/auth/auth.service";
 import { PresenceService } from "../modules/match/presence.service";
+import { GameLoopService } from "../modules/match/game-loop.service";
 
 describe("GameGateway", () => {
   let gateway: GameGateway;
@@ -14,6 +15,7 @@ describe("GameGateway", () => {
   let matchHandler: MatchHandler;
   let authService: AuthService;
   let presenceService: PresenceService;
+  let gameLoopService: GameLoopService;
   let client: Socket;
 
   beforeEach(() => {
@@ -38,6 +40,9 @@ describe("GameGateway", () => {
       setServer: vi.fn(),
       updatePresence: vi.fn(),
     } as unknown as PresenceService;
+    gameLoopService = {
+      setServer: vi.fn(),
+    } as unknown as GameLoopService;
 
     gateway = new GameGateway(
       authHandler,
@@ -45,6 +50,7 @@ describe("GameGateway", () => {
       matchHandler,
       authService,
       presenceService,
+      gameLoopService,
     );
     // Set the private _server field
     (gateway as any)._server = {
@@ -79,9 +85,11 @@ describe("GameGateway", () => {
       gateway.afterInit(mockServer);
     });
 
-    it("registers a middleware", () => {
+    it("registers a middleware and sets server on presence service", () => {
       expect(mockServer.use).toHaveBeenCalled();
       expect(middleware).toBeTypeOf("function");
+      expect(presenceService.setServer).toHaveBeenCalledWith(mockServer);
+      expect(gameLoopService.setServer).toHaveBeenCalledWith(mockServer);
     });
 
     it("successfully authenticates with auth.token", () => {

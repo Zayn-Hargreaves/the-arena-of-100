@@ -205,7 +205,12 @@ export interface RoomCountdownStartedPayload {
 export interface RoomCountdownCancelledPayload {
   roomId: string;
   roomStatus: RoomStatus;
-  reason: "NOT_ENOUGH_PLAYERS" | "HOST_CANCELLED" | "PLAYER_LEFT" | "SYSTEM";
+  reason:
+    | "NOT_ENOUGH_PLAYERS"
+    | "HOST_CANCELLED"
+    | "PLAYER_LEFT"
+    | "HOST_STALE"
+    | "SYSTEM";
   cancelledAt: number;
 }
 

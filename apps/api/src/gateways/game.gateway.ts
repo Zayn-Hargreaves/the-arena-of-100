@@ -23,6 +23,7 @@ import {
 import { AuthHandler, RoomHandler, MatchHandler } from "./handlers";
 import { AuthService } from "../modules/auth/auth.service";
 import { PresenceService } from "../modules/match/presence.service";
+import { GameLoopService } from "../modules/match/game-loop.service";
 
 @WebSocketGateway({
   cors: {
@@ -45,10 +46,12 @@ export class GameGateway
     private readonly matchHandler: MatchHandler,
     private readonly authService: AuthService,
     private readonly presenceService: PresenceService,
+    private readonly gameLoopService: GameLoopService,
   ) {}
 
   afterInit(server: Server) {
     this.presenceService.setServer(server);
+    this.gameLoopService.setServer(server);
     server.use((socket: Socket, next: (err?: Error) => void) => {
       let token = socket.handshake.auth?.token;
 

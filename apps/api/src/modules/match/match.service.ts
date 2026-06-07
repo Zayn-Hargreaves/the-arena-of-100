@@ -79,7 +79,10 @@ export class MatchService {
     // Update room status
     await this.prisma.room.update({
       where: { id: roomId },
-      data: { currentMatchId: match.id },
+      data: {
+        status: RoomStatus.STARTING,
+        currentMatchId: match.id,
+      },
     });
 
     // Persist state machine to Redis for crash recovery

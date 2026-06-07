@@ -1,13 +1,13 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { useRouter } from "@/i18n/routing";
 import { RoomStatus } from "@arena/shared";
 
 interface LobbyHeaderProps {
   roomStatus: RoomStatus;
-  onLeave: () => void;
+  onLeave: () => Promise<void> | void;
 }
 
 export const LobbyHeader: React.FC<LobbyHeaderProps> = ({
@@ -15,6 +15,7 @@ export const LobbyHeader: React.FC<LobbyHeaderProps> = ({
   onLeave,
 }) => {
   const router = useRouter();
+  const [isLeaving, setIsLeaving] = useState(false);
 
   const lobbyHeading =
     roomStatus === RoomStatus.COUNTDOWN
@@ -34,14 +35,27 @@ export const LobbyHeader: React.FC<LobbyHeaderProps> = ({
           ? "Đang chuyển vào game"
           : "Đang chờ trận đấu";
 
+  const handleBack = async () => {
+    setIsLeaving(true);
+    try {
+      await onLeave();
+      router.push("/room/create");
+    } catch (error) {
+      console.error("Failed to leave room:", error);
+    } finally {
+      setIsLeaving(false);
+    }
+  };
+
   return (
     <div className="flex items-center justify-between gap-4">
       <button
-        onClick={() => router.push("/room/create")}
-        className="flex items-center gap-2 px-4 py-2 border-[3px] border-candy-ink bg-white text-candy-ink font-display font-black text-xs uppercase rounded-xl hover:translate-y-[-1.5px] hover:shadow-[3px_3px_0_0_#2B2D42] active:translate-y-[1.5px] active:shadow-[1px_1px_0_0_#2B2D42] shadow-[2px_2px_0_0_#2B2D42] transition-all cursor-pointer outline-none"
+        onClick={handleBack}
+        disabled={isLeaving}
+        className="flex items-center gap-2 px-4 py-2 border-[3px] border-candy-ink bg-white text-candy-ink font-display font-black text-xs uppercase rounded-xl hover:translate-y-[-1.5px] hover:shadow-[3px_3px_0_0_#2B2D42] active:translate-y-[1.5px] active:shadow-[1px_1px_0_0_#2B2D42] shadow-[2px_2px_0_0_#2B2D42] transition-all cursor-pointer outline-none disabled:opacity-50 disabled:cursor-not-allowed"
       >
         <ArrowLeft className="w-4 h-4 mr-1 stroke-[2.5]" />
-        Quay lại cài đặt
+        {isLeaving ? "Đang rời..." : "Quay lại cài đặt"}
       </button>
 
       <div className="flex items-center gap-3">

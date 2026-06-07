@@ -217,7 +217,18 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     });
 
     newSocket.on("disconnect", () => {
-      set({ isConnected: false, isAuthenticated: false });
+      // Clear heartbeat on unexpected socket disconnects (network drop, server
+      // restart) so we never leave orphaned intervals running. A reconnection
+      // (connect() called again) will create a fresh interval below.
+      const { heartbeatInterval: hb } = get();
+      if (hb) {
+        clearInterval(hb);
+      }
+      set({
+        isConnected: false,
+        isAuthenticated: false,
+        heartbeatInterval: null,
+      });
       console.log("🔌 Disconnected from game server");
     });
 
@@ -604,11 +615,15 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     await authPromise;
 
     // Start heartbeat interval (every 10 seconds)
+    const currentState = get();
+    if (currentState.heartbeatInterval) {
+      clearInterval(currentState.heartbeatInterval);
+    }
     const interval = setInterval(() => {
-      const currentState = get();
-      if (currentState.socket?.connected && currentState.room?.id) {
-        currentState.socket.emit(ClientEvent.HEARTBEAT, {
-          roomId: currentState.room.id,
+      const state = get();
+      if (state.socket?.connected && state.room?.id) {
+        state.socket.emit(ClientEvent.HEARTBEAT, {
+          roomId: state.room.id,
           sentAt: Date.now(),
         });
       }

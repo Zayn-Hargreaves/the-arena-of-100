@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { Server } from "socket.io";
 import {
   GAME_CONFIG,
@@ -13,9 +13,18 @@ import {
 import { MatchService } from "./match.service";
 import { QuestionService } from "../question/question.service";
 import { RoomService } from "../room/room.service";
+import { RedisService } from "../redis/redis.service";
+
+const COUNTDOWN_KEY_PREFIX = "room:countdown:";
+const COUNTDOWN_INDEX_KEY = "room:countdowns";
+// TTL longer than the longest possible countdown so a stale entry still
+// exists for a small recovery window after a process restart.
+const COUNTDOWN_REDIS_TTL_SEC = Math.ceil(
+  (GAME_CONFIG.COUNTDOWN_DURATION_MS * 2) / 1000,
+);
 
 @Injectable()
-export class GameLoopService {
+export class GameLoopService implements OnModuleInit {
   private readonly logger = new Logger(GameLoopService.name);
   private activeTimers = new Map<string, Set<NodeJS.Timeout>>();
   private lobbyCountdowns = new Map<
@@ -27,12 +36,102 @@ export class GameLoopService {
   // Add property for early termination (used by Task 7)
   private expectedAnswers = new Map<string, number>();
   private endingRounds = new Set<string>();
+  private server?: Server;
+  private recoveryInFlight = false;
 
   constructor(
     private readonly matchService: MatchService,
     private readonly questionService: QuestionService,
     private readonly roomService: RoomService,
+    private readonly redis: RedisService,
   ) {}
+
+  /**
+   * Inject the Socket.io server so we can recover lobby countdowns on boot
+   * (the in-memory timer map does not survive a process restart, but the
+   * persisted Redis state does). Called once during application bootstrap.
+   */
+  setServer(server: Server) {
+    this.server = server;
+  }
+
+  /**
+   * On startup, scan Redis for any rooms that were in COUNTDOWN when the
+   * previous process died. For each one whose `countdownEndsAt` is still in
+   * the future, re-arm a timer to launch the match. For those that have
+   * already expired, immediately launch the match (best-effort). This
+   * prevents rooms being stuck in COUNTDOWN indefinitely with no live timer.
+   */
+  async onModuleInit() {
+    if (this.recoveryInFlight) return;
+    this.recoveryInFlight = true;
+    try {
+      const client = this.redis.getClient();
+      const roomIds = await client.smembers(COUNTDOWN_INDEX_KEY);
+      if (roomIds.length === 0) return;
+
+      this.logger.log(
+        `Recovering ${roomIds.length} lobby countdown(s) from Redis...`,
+      );
+      const now = Date.now();
+
+      for (const roomId of roomIds) {
+        try {
+          const raw = await client.get(`${COUNTDOWN_KEY_PREFIX}${roomId}`);
+          if (!raw) {
+            await client.srem(COUNTDOWN_INDEX_KEY, roomId);
+            continue;
+          }
+          const countdownEndsAt = Number.parseInt(raw, 10);
+          if (!Number.isFinite(countdownEndsAt)) {
+            await this.clearPersistedCountdown(roomId);
+            continue;
+          }
+          const remaining = Math.max(countdownEndsAt - now, 0);
+          if (remaining === 0) {
+            // Countdown already expired while the process was down — launch
+            // the match immediately (if the server is wired up).
+            if (this.server) {
+              void this.launchRoomMatch(roomId, this.server, {
+                isAutoStart: true,
+              }).catch((error) => {
+                this.logger.error(
+                  `Recovery launch failed for room ${roomId}:`,
+                  error,
+                );
+              });
+            } else {
+              this.logger.warn(
+                `Cannot launch recovered match for room ${roomId}: server not ready`,
+              );
+              // Server is not yet wired up and the countdown has already
+              // expired — drop the persisted entry so the next restart
+              // does not re-issue the same warning, and so the room is not
+              // stuck in COUNTDOWN indefinitely waiting for a recovery
+              // launch that we can never perform from this process.
+              void this.clearPersistedCountdown(roomId).catch((error) => {
+                this.logger.error(
+                  `Failed to clear persisted countdown for room ${roomId}:`,
+                  error,
+                );
+              });
+            }
+          } else {
+            this.armLobbyCountdownTimer(roomId, countdownEndsAt);
+          }
+        } catch (error) {
+          this.logger.error(
+            `Failed to recover countdown for room ${roomId}:`,
+            error,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.error("Lobby countdown recovery failed:", error);
+    } finally {
+      this.recoveryInFlight = false;
+    }
+  }
 
   async maybeStartPublicCountdown(roomId: string, server: Server) {
     const room = await this.roomService.getRoom(roomId);
@@ -43,40 +142,129 @@ export class GameLoopService {
       return this.lobbyCountdowns.get(roomId) ?? null;
     }
 
-    await this.roomService.updateRoomStatus(roomId, RoomStatus.COUNTDOWN);
-
+    // Reserve the slot atomically before any await to prevent race conditions
     const startedAt = Date.now();
     const countdownEndsAt = startedAt + GAME_CONFIG.COUNTDOWN_DURATION_MS;
-    const channel = getRoomChannel(roomId);
-
-    server.to(channel).emit(ServerEvent.ROOM_STATUS_UPDATED, {
-      roomId,
-      roomStatus: RoomStatus.COUNTDOWN,
-      currentMatchId: null,
-      updatedAt: startedAt,
-    });
-
-    server.to(channel).emit(ServerEvent.ROOM_COUNTDOWN_STARTED, {
-      roomId,
-      roomStatus: RoomStatus.COUNTDOWN,
+    this.lobbyCountdowns.set(roomId, {
+      // Placeholder; replaced by the real timer below before any await.
+      timer: setTimeout(() => undefined, 0) as unknown as NodeJS.Timeout,
       countdownEndsAt,
-      countdownMs: GAME_CONFIG.COUNTDOWN_DURATION_MS,
-      startedAt,
     });
 
-    const timer = setTimeout(() => {
-      void this.launchRoomMatch(roomId, server, { isAutoStart: true }).catch(
-        (error) => {
-          this.logger.error(
-            `Failed to auto-start lobby countdown for room ${roomId}`,
-            error,
-          );
-        },
+    try {
+      await this.roomService.updateRoomStatus(roomId, RoomStatus.COUNTDOWN);
+
+      const channel = getRoomChannel(roomId);
+
+      server.to(channel).emit(ServerEvent.ROOM_STATUS_UPDATED, {
+        roomId,
+        roomStatus: RoomStatus.COUNTDOWN,
+        currentMatchId: null,
+        updatedAt: startedAt,
+      });
+
+      server.to(channel).emit(ServerEvent.ROOM_COUNTDOWN_STARTED, {
+        roomId,
+        roomStatus: RoomStatus.COUNTDOWN,
+        countdownEndsAt,
+        countdownMs: GAME_CONFIG.COUNTDOWN_DURATION_MS,
+        startedAt,
+      });
+
+      this.armLobbyCountdownTimer(roomId, countdownEndsAt, server);
+      // Persist to Redis so a process restart can recover and re-arm the
+      // timer (or launch the match if it expired while we were down).
+      await this.persistLobbyCountdown(roomId, countdownEndsAt);
+      return { countdownEndsAt };
+    } catch (error) {
+      this.lobbyCountdowns.delete(roomId);
+      void this.clearPersistedCountdown(roomId);
+      throw error;
+    }
+  }
+
+  /**
+   * Re-arms the in-memory timer that fires `launchRoomMatch` when the lobby
+   * countdown ends. Used by both the live `maybeStartPublicCountdown` path
+   * (where the caller passes the active `server`) and the boot-time
+   * `onModuleInit` recovery path (where `server` is omitted and we fall back
+   * to the gateway's stored server reference).
+   *
+   * If no server is resolvable (gateway hasn't wired us up yet, and no
+   * caller-provided `server` is available) we cannot fire `launchRoomMatch`,
+   * so we log the error, drop any pending `lobbyCountdowns` entry, and clear
+   * the persisted Redis entry. This prevents the same broken countdown from
+   * being re-introduced on the next process restart.
+   */
+  private armLobbyCountdownTimer(
+    roomId: string,
+    countdownEndsAt: number,
+    server?: Server,
+  ) {
+    const targetServer = server ?? this.server;
+    if (!targetServer) {
+      this.logger.error(
+        `Cannot arm lobby countdown for room ${roomId}: server not set`,
       );
-    }, GAME_CONFIG.COUNTDOWN_DURATION_MS);
+      this.lobbyCountdowns.delete(roomId);
+      void this.clearPersistedCountdown(roomId);
+      return;
+    }
+
+    const remaining = Math.max(countdownEndsAt - Date.now(), 0);
+    const timer = setTimeout(() => {
+      void this.launchRoomMatch(roomId, targetServer, {
+        isAutoStart: true,
+      }).catch((error) => {
+        this.logger.error(
+          `Failed to auto-start lobby countdown for room ${roomId}`,
+          error,
+        );
+      });
+    }, remaining);
 
     this.lobbyCountdowns.set(roomId, { timer, countdownEndsAt });
-    return { countdownEndsAt };
+  }
+
+  private async persistLobbyCountdown(
+    roomId: string,
+    countdownEndsAt: number,
+  ): Promise<void> {
+    try {
+      const client = this.redis.getClient();
+      await client
+        .multi()
+        .set(
+          `${COUNTDOWN_KEY_PREFIX}${roomId}`,
+          countdownEndsAt.toString(),
+          "EX",
+          COUNTDOWN_REDIS_TTL_SEC,
+        )
+        .sadd(COUNTDOWN_INDEX_KEY, roomId)
+        .exec();
+    } catch (error) {
+      this.logger.error(
+        `Failed to persist lobby countdown for room ${roomId}:`,
+        error,
+      );
+    }
+  }
+
+  private async clearPersistedCountdown(roomId: string): Promise<void> {
+    try {
+      const client = this.redis.getClient();
+      await client
+        .multi()
+        .del(`${COUNTDOWN_KEY_PREFIX}${roomId}`)
+        .srem(COUNTDOWN_INDEX_KEY, roomId)
+        .exec();
+    } catch (error) {
+      this.logger.warn(
+        `Failed to clear persisted countdown for room ${roomId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   getCountdownEnd(roomId: string): number | null {
@@ -97,6 +285,7 @@ export class GameLoopService {
 
     clearTimeout(countdown.timer);
     this.lobbyCountdowns.delete(roomId);
+    await this.clearPersistedCountdown(roomId);
 
     await this.roomService.updateRoomStatus(roomId, RoomStatus.WAITING);
 
@@ -127,12 +316,20 @@ export class GameLoopService {
     server: Server,
     options: { isAutoStart: boolean },
   ) {
-    const room = await this.roomService.getRoom(roomId);
-    const countdown = this.lobbyCountdowns.get(roomId);
+    let room = await this.roomService.getRoom(roomId);
 
+    if (
+      room.status !== RoomStatus.WAITING &&
+      room.status !== RoomStatus.COUNTDOWN
+    ) {
+      throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
+    }
+
+    const countdown = this.lobbyCountdowns.get(roomId);
     if (countdown) {
       clearTimeout(countdown.timer);
       this.lobbyCountdowns.delete(roomId);
+      await this.clearPersistedCountdown(roomId);
     }
 
     if (room.players.length < GAME_CONFIG.MIN_PLAYERS_TO_START) {
@@ -163,25 +360,46 @@ export class GameLoopService {
       throw new RoomError(ErrorCode.NOT_ENOUGH_PLAYERS);
     }
 
-    await this.roomService.updateRoomStatus(roomId, RoomStatus.STARTING);
+    try {
+      // Re-fetch room state just before calling updateRoomStatus to handle races
+      room = await this.roomService.getRoom(roomId);
+      if (
+        room.status !== RoomStatus.WAITING &&
+        room.status !== RoomStatus.COUNTDOWN
+      ) {
+        throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
+      }
 
-    const channel = getRoomChannel(roomId);
-    server.to(channel).emit(ServerEvent.ROOM_STATUS_UPDATED, {
-      roomId,
-      roomStatus: RoomStatus.STARTING,
-      currentMatchId: room.currentMatchId ?? null,
-      updatedAt: Date.now(),
-    });
+      await this.roomService.updateRoomStatus(roomId, RoomStatus.STARTING);
 
-    const match = await this.matchService.createMatch(roomId);
+      const channel = getRoomChannel(roomId);
+      server.to(channel).emit(ServerEvent.ROOM_STATUS_UPDATED, {
+        roomId,
+        roomStatus: RoomStatus.STARTING,
+        currentMatchId: room.currentMatchId ?? null,
+        updatedAt: Date.now(),
+      });
 
-    server.to(channel).emit(ServerEvent.MATCH_STARTING, {
-      matchId: match.id,
-      countdown: GAME_CONFIG.COUNTDOWN_DURATION_MS / 1000,
-    });
+      const match = await this.matchService.createMatch(roomId);
 
-    await this.startMatchLoop(match.id, roomId, server);
-    return match;
+      server.to(channel).emit(ServerEvent.MATCH_STARTING, {
+        matchId: match.id,
+        countdown: GAME_CONFIG.COUNTDOWN_DURATION_MS / 1000,
+      });
+
+      await this.startMatchLoop(match.id, roomId, server);
+      return match;
+    } catch (error) {
+      // Rollback on error
+      await this.roomService.updateRoomStatus(roomId, RoomStatus.WAITING);
+      server.to(getRoomChannel(roomId)).emit(ServerEvent.ROOM_STATUS_UPDATED, {
+        roomId,
+        roomStatus: RoomStatus.WAITING,
+        currentMatchId: null,
+        updatedAt: Date.now(),
+      });
+      throw error;
+    }
   }
 
   // ============================================================

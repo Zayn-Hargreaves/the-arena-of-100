@@ -75,6 +75,21 @@ describe("MatchHandler", () => {
       await handler.handleStartMatch(client, server, { roomId: "r1" });
 
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.INVALID_ROOM_TYPE,
+        message: ERROR_MESSAGES[ErrorCode.INVALID_ROOM_TYPE],
+      });
+    });
+
+    it("emits error when room status is not WAITING", async () => {
+      vi.mocked(roomService.getRoom).mockResolvedValue({
+        hostId: "u1",
+        type: "PRIVATE",
+        status: RoomStatus.IN_GAME,
+      } as any);
+
+      await handler.handleStartMatch(client, server, { roomId: "r1" });
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.ROOM_ALREADY_STARTED,
         message: ERROR_MESSAGES[ErrorCode.ROOM_ALREADY_STARTED],
       });

@@ -66,9 +66,9 @@ export const RoomCodeCard: React.FC<RoomCodeCardProps> = ({ roomCode }) => {
           title="Sao chép mã"
         >
           {copied ? (
-            <Check className="w-4.5 h-4.5 text-candy-mint stroke-[2.5]" />
+            <Check className="w-4 h-4 text-candy-mint stroke-[2.5]" />
           ) : (
-            <Copy className="w-4.5 h-4.5 stroke-[2.5]" />
+            <Copy className="w-4 h-4 stroke-[2.5]" />
           )}
         </button>
       </div>

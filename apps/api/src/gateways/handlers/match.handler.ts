@@ -40,7 +40,7 @@ export class MatchHandler extends BaseHandler {
       }
 
       if (room.type !== "PRIVATE") {
-        throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
+        throw new RoomError(ErrorCode.INVALID_ROOM_TYPE);
       }
 
       if (room.status !== RoomStatus.WAITING) {

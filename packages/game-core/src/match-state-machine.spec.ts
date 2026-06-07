@@ -1020,4 +1020,34 @@ describe("MatchStateMachine score accumulation (B2)", () => {
     const p1 = scores.find((s) => s.userId === "p1")!;
     expect(p1.score).toBe(100); // 100 base + 0 bonus
   });
+
+  it("tieBreak ranks missing players last (never lets them win)", () => {
+    // Simulate state corruption: one of the playerIds passed to tieBreak
+    // does not exist in state.players (e.g. desync). The existing valid
+    // player must still win regardless of input order.
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    machine.startRound({
+      id: "q1",
+      content: "Q?",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound();
+    machine.transition(MatchStatus.FINISHED);
+
+    // Cast to access private tieBreak for this corruption test
+    const tieBreak = (
+      machine as unknown as {
+        tieBreak: (ids: string[]) => string;
+      }
+    ).tieBreak.bind(machine);
+
+    expect(tieBreak(["p1", "ghost"])).toBe("p1");
+    expect(tieBreak(["ghost", "p1"])).toBe("p1");
+    expect(tieBreak(["ghost", "p2"])).toBe("p2");
+    expect(tieBreak(["p1", "ghost", "p2"])).not.toBe("ghost");
+  });
 });

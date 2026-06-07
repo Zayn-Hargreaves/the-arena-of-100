@@ -130,6 +130,10 @@ export class AuthHandler extends BaseHandler {
       // Fetch the real countdown end time from GameLoopService
       const countdownEndsAt = this.gameLoopService.getCountdownEnd(room.id);
 
+      // Update presence state for the reconnecting user first so the subsequent
+      // players list reflects the new online status immediately
+      await this.presenceService.updatePresence(room.id, userId);
+
       // Map room players to check presence dynamically
       const players = await Promise.all(
         room.players.map(async (p) => {

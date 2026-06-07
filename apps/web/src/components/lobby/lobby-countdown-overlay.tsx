@@ -27,7 +27,7 @@ export const LobbyCountdownOverlay: React.FC<LobbyCountdownOverlayProps> = ({
         <h2 className="font-display font-black text-3xl tracking-wide uppercase text-candy-ink drop-shadow-[0_2px_0_rgba(0,0,0,0.05)]">
           {isInGame ? "ĐANG CHUYỂN TRẬN..." : "CHUẨN BỊ VÀO TRẬN!"}
         </h2>
-        {isStarting && (
+        {isStarting && secondsRemaining > 0 && (
           <div className="flex items-center justify-center gap-2">
             <span className="font-mono text-5xl font-black text-candy-pink tabular-nums">
               {secondsRemaining}

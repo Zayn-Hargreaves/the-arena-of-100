@@ -322,13 +322,18 @@ export class MatchStateMachine {
 
   // Tie-break Logic (Strategy Pattern)
   private tieBreak(playerIds: string[]): string {
-    // Sort by total response time (ascending = faster is better)
+    // Sort by total response time (ascending = faster is better).
+    // Missing players (state corruption / desync) are always ranked last so
+    // they can never win a tie-break, while still yielding a deterministic
+    // ordering that satisfies the strict weak ordering contract of Array#sort.
     const sorted = [...playerIds].sort((a, b) => {
       const playerA = this.state.players.get(a);
       const playerB = this.state.players.get(b);
 
-      // Null safety fallback
-      if (!playerA || !playerB) return 0;
+      // Missing players always sort last (positive number = `a` goes after `b`).
+      if (!playerA && !playerB) return a < b ? -1 : a > b ? 1 : 0;
+      if (!playerA) return 1;
+      if (!playerB) return -1;
 
       // First: compare total response time
       if (playerA.totalResponseTimeMs !== playerB.totalResponseTimeMs) {

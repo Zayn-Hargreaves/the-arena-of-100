@@ -14,6 +14,7 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PresenceService.name);
   private sweepInterval?: NodeJS.Timeout;
   private server?: Server;
+  private isSweeping = false;
 
   constructor(
     private readonly roomService: RoomService,
@@ -25,13 +26,19 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit() {
-    this.sweepInterval = setInterval(() => {
-      this.sweep().catch((error) => {
+    this.sweepInterval = setInterval(async () => {
+      if (this.isSweeping) return;
+      this.isSweeping = true;
+      try {
+        await this.sweep();
+      } catch (error) {
         this.logger.error(
-          `Error during presence sweep: ${error.message}`,
-          error.stack,
+          `Error during presence sweep: ${error instanceof Error ? error.message : String(error)}`,
+          error instanceof Error ? error.stack : undefined,
         );
-      });
+      } finally {
+        this.isSweeping = false;
+      }
     }, 5000);
   }
 
@@ -58,14 +65,20 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
 
     const activeRooms = await this.roomService.getActiveRooms();
     for (const room of activeRooms) {
+      // Check all players' presence in parallel (single round-trip per player
+      // to Redis, but no longer N+1 sequential awaits per room). The N+1
+      // pattern was making the 5s sweep scale linearly with room size.
+      const presenceFlags = await Promise.all(
+        room.players.map((rp) =>
+          this.roomService
+            .checkPresence(room.id, rp.userId)
+            .then((isPresent) => ({ rp, isPresent })),
+        ),
+      );
+
       const stalePlayerIds: string[] = [];
       let isHostStale = false;
-
-      for (const rp of room.players) {
-        const isPresent = await this.roomService.checkPresence(
-          room.id,
-          rp.userId,
-        );
+      for (const { rp, isPresent } of presenceFlags) {
         if (!isPresent) {
           stalePlayerIds.push(rp.userId);
           if (rp.userId === room.hostId) {

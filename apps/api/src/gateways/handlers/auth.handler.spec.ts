@@ -33,6 +33,7 @@ describe("AuthHandler", () => {
     } as unknown as GameLoopService;
     presenceService = {
       isPresent: vi.fn().mockResolvedValue(true),
+      updatePresence: vi.fn().mockResolvedValue(undefined),
     } as unknown as PresenceService;
     handler = new AuthHandler(
       authService,
@@ -316,6 +317,7 @@ describe("AuthHandler", () => {
       await handler.handleAuthenticate(client, { token: "t" });
 
       expect(client.join).toHaveBeenCalledWith("room:r1");
+      expect(presenceService.isPresent).toHaveBeenCalledWith("r1", "u1");
       expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.ROOM_JOINED,
         expect.objectContaining({

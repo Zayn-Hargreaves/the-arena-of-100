@@ -60,7 +60,7 @@ describe("MatchService", () => {
       expect(prisma.matchPlayer.createMany).toHaveBeenCalled();
       expect(prisma.room.update).toHaveBeenCalledWith({
         where: { id: "r1" },
-        data: { currentMatchId: "m1" },
+        data: { currentMatchId: "m1", status: "STARTING" },
       });
       expect(redis.set).toHaveBeenCalled(); // persistStateMachine
     });

@@ -236,6 +236,7 @@ describe("RoomHandler", () => {
       await handler.handleJoinRoom(client, { roomCode: "ABC123" });
 
       expect(client.to).not.toHaveBeenCalled();
+      expect(gameLoopService.maybeStartPublicCountdown).not.toHaveBeenCalled();
     });
 
     it("emits error when roomCode is missing", async () => {

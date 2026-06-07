@@ -214,7 +214,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
               {/* Stats / Player Counts */}
               <div className="flex items-center justify-between p-4 border-b-[3px] border-candy-ink/10">
                 <span className="text-sm font-bold text-candy-ink/80 flex items-center gap-2">
-                  <Users className="w-4.5 h-4.5 text-candy-pink stroke-[2.5]" />
+                  <Users className="w-4 h-4 text-candy-pink stroke-[2.5]" />
                   Đối thủ hiện tại
                 </span>
                 <span className="font-display font-black text-xl text-candy-pink">

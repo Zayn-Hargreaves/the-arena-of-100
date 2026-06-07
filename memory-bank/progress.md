@@ -84,7 +84,7 @@
 - [x] Heartbeat/presence validation (chống ghost player, sweep sau N round miss) — client gửi heartbeat 10s, server Redis TTL 20s, auto-sweep 5s, auto-disband private room nếu host stale
 - [x] Lobby state machine: `WAITING → COUNTDOWN → STARTING → IN_GAME` (backend + store wiring done)
 - [x] Frontend: countdown overlay, "leave" button đi kèm confirm modal, mobile-friendly leave flow, extracted lobby components (`LobbyHeader`, `RoomCodeCard`, `LobbyPlayerGrid`, `LeaveRoomModal`, `LobbyCountdownOverlay`) + visual stale indicator
-- [x] Test: room lifecycle + heartbeat + leave flow (tất cả 520 tests pass)
+- [x] Test: room lifecycle + heartbeat + leave flow (582 tests passed: 55 in @arena/game-core, 527 in @arena/api, 0 in @arena/web)
 - [x] **Phase 6: Graceful Exit And Result Navigation Cleanup** — auto-redirect to `/result/[matchId]` with 3s overlay when match finishes, added "Rời Trận Đấu" button in game screen with confirmation modal, removed stale TODO in socket-store.
 - [x] **Phase 7: Shell Cleanup Isolation** — verified and stabilized `AppShellLayout` and `Sidebar` (no legacy gradients found, already compliant with Candy 3D spec). Enhanced mobile UX by adding Escape key listener and backdrop click-to-close for the mobile navigation overlay, preserving robust skip-link accessibility. Zero page-level business logic changes.
 - [x] **Atomic Design Migration PoC** — successfully migrated `RoomCodeCard` to `components/atoms/` using GitNexus-guided impact analysis. Updated imports safely, removed legacy barrel export, and verified zero regressions. This establishes the standard workflow for future component restructuring.
@@ -144,7 +144,6 @@
 - [x] **Profile + Rankings mock data** — cần backend endpoints trước khi gắn UI thật ✅ Done (issue.md Step 3+4+5: backend + hooks + UI live)
 - [ ] **Design system Phase 5 chưa đóng** (shell templates, legacy CSS, visual audit) — **Follow-up**: Design system Phase 5 (shell templates/legacy CSS/visual audit) — owner: TBD, ticket: TBD
 - [ ] **Lobby mock players fallback** — cần real player events khi prod (debug only hiện tại)
-- [ ] **TODO còn trong code**: `socket-store.ts:304` ("Navigate to results page - this would be handled by the UI component") — đã có UI, cần xác minh và xoá TODO
 
 ### 🟢 Nice-to-Have
 

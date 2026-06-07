@@ -13,7 +13,7 @@ export interface LobbyPlayer {
   name: string;
   status: string;
   score: number;
-  isOnline?: boolean;
+  isOnline: boolean;
 }
 
 interface LobbyPlayerGridProps {
@@ -80,7 +80,7 @@ export const LobbyPlayerGrid: React.FC<LobbyPlayerGridProps> = ({
               isCurrent
                 ? "bg-candy-pink text-candy-ink"
                 : "bg-white text-candy-ink",
-              !player.isOnline && "opacity-60 grayscale",
+              player.isOnline === false && "opacity-60 grayscale",
             )}
           >
             <AvatarFrame size="md">
@@ -95,7 +95,7 @@ export const LobbyPlayerGrid: React.FC<LobbyPlayerGridProps> = ({
                 <Avatar
                   size="md"
                   fallback={playerAvatar.seed}
-                  status={isCurrent ? "online" : "offline"}
+                  status={player.isOnline === false ? "offline" : "online"}
                   className="border-0 shadow-none"
                 />
               )}
@@ -103,7 +103,7 @@ export const LobbyPlayerGrid: React.FC<LobbyPlayerGridProps> = ({
             <div className="flex-1 min-w-0">
               <p className="font-display text-sm truncate uppercase tracking-wide flex items-center gap-2">
                 {player.name}
-                {!player.isOnline && (
+                {player.isOnline === false && (
                   <span className="text-[8px] font-black uppercase tracking-wider text-candy-red bg-candy-red/10 px-1.5 py-0.5 rounded-md border border-candy-red/30">
                     Mất kết nối
                   </span>

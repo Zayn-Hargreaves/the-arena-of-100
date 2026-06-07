@@ -12,6 +12,7 @@ import {
 import { Server } from "socket.io";
 import { vi, beforeEach, it, expect, describe } from "vitest";
 import { RoomService } from "../room/room.service";
+import { createMockRedisService } from "./redis.mock";
 
 describe("GameLoopService", () => {
   let service: GameLoopService;
@@ -79,7 +80,12 @@ describe("GameLoopService", () => {
       to: vi.fn().mockReturnValue({ emit: vi.fn() }),
     } as unknown as Server;
 
-    service = new GameLoopService(matchService, questionService, roomService);
+    service = new GameLoopService(
+      matchService,
+      questionService,
+      roomService,
+      createMockRedisService() as any,
+    );
   });
 
   // === TEST 1: startMatchLoop ===

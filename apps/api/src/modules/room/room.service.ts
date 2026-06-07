@@ -285,7 +285,9 @@ export class RoomService {
   async getActiveRooms() {
     return this.prisma.room.findMany({
       where: {
-        status: { in: [RoomStatus.WAITING, RoomStatus.COUNTDOWN] },
+        status: {
+          in: [RoomStatus.WAITING, RoomStatus.COUNTDOWN, RoomStatus.STARTING],
+        },
       },
       include: {
         players: true,
@@ -306,7 +308,9 @@ export class RoomService {
   }
 
   async removePlayer(roomId: string, userId: string) {
-    await this.prisma.roomPlayer.deleteMany({ where: { roomId, userId } });
+    const result = await this.prisma.roomPlayer.deleteMany({
+      where: { roomId, userId },
+    });
     await this.redis.srem(`room:${roomId}:players`, userId);
     await this.clearPresence(roomId, userId);
 
@@ -314,7 +318,7 @@ export class RoomService {
       `room:${roomId}`,
     );
     if (cached) {
-      cached.playerCount = Math.max(0, cached.playerCount - 1);
+      cached.playerCount = Math.max(0, cached.playerCount - result.count);
       await this.redis.setJSON(`room:${roomId}`, cached, 3600);
     }
   }
@@ -322,7 +326,7 @@ export class RoomService {
   async removePlayerBatch(roomId: string, userIds: string[]) {
     if (userIds.length === 0) return;
 
-    await this.prisma.roomPlayer.deleteMany({
+    const result = await this.prisma.roomPlayer.deleteMany({
       where: {
         roomId,
         userId: { in: userIds },
@@ -341,7 +345,7 @@ export class RoomService {
       `room:${roomId}`,
     );
     if (cached) {
-      cached.playerCount = Math.max(0, cached.playerCount - userIds.length);
+      cached.playerCount = Math.max(0, cached.playerCount - result.count);
       await this.redis.setJSON(`room:${roomId}`, cached, 3600);
     }
   }

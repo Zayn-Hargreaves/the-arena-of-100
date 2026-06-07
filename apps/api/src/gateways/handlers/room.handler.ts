@@ -97,12 +97,27 @@ export class RoomHandler extends BaseHandler {
         roomStatus: asRoomStatus(room.status),
         currentMatchId: room.currentMatchId,
         countdownEndsAt: this.gameLoopService.getCountdownEnd(room.id),
-        players: room.players.map((player) => ({
-          playerId: player.userId,
-          playerName:
-            player.userId === userId ? client.data.username : "Unknown Player",
-          isOnline: true,
-        })),
+        players: room.players.map((player) => {
+          // RoomService.getRoom() always joins the user relation, so
+          // `player.user` is guaranteed to be present. If it ever isn't, that
+          // is a state-corruption bug — fail fast so the caller gets a
+          // descriptive error and tests surface the regression immediately,
+          // rather than silently emitting an empty playerName that clients
+          // would render as a blank tile in the lobby.
+          if (!player.user) {
+            const message = `RoomPlayer ${player.userId} in room ${room.id} is missing its user relation; cannot resolve username`;
+            this.logger.error(message);
+            throw new Error(message);
+          }
+          return {
+            playerId: player.userId,
+            playerName:
+              player.userId === userId
+                ? client.data.username
+                : player.user.username,
+            isOnline: true,
+          };
+        }),
       } satisfies RoomJoinedPayload);
 
       if (room.joined) {

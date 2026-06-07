@@ -6,6 +6,7 @@ import { MatchStatus, PlayerStatus } from "@arena/shared";
 import { Server } from "socket.io";
 import { vi, beforeEach, it, expect, describe } from "vitest";
 import { RoomService } from "../room/room.service";
+import { createMockRedisService } from "./redis.mock";
 
 describe("GameLoopService Persistence", () => {
   let service: GameLoopService;
@@ -66,7 +67,12 @@ describe("GameLoopService Persistence", () => {
       to: vi.fn().mockReturnValue({ emit: vi.fn() }),
     } as unknown as Server;
 
-    service = new GameLoopService(matchService, questionService, roomService);
+    service = new GameLoopService(
+      matchService,
+      questionService,
+      roomService,
+      createMockRedisService() as any,
+    );
   });
 
   describe("endRound persistence", () => {
