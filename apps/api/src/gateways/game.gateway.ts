@@ -22,7 +22,6 @@ import {
 } from "@arena/shared";
 import { AuthHandler, RoomHandler, MatchHandler } from "./handlers";
 import { AuthService } from "../modules/auth/auth.service";
-import { RoomService } from "../modules/room/room.service";
 import { PresenceService } from "../modules/match/presence.service";
 import { GameLoopService } from "../modules/match/game-loop.service";
 
@@ -46,7 +45,6 @@ export class GameGateway
     private readonly roomHandler: RoomHandler,
     private readonly matchHandler: MatchHandler,
     private readonly authService: AuthService,
-    private readonly roomService: RoomService,
     private readonly presenceService: PresenceService,
     private readonly gameLoopService: GameLoopService,
   ) {}
@@ -166,13 +164,13 @@ export class GameGateway
 
     try {
       // Verify the user actually belongs to this room before touching presence.
-      // Without this check a client could spoof heartbeats against arbitrary
-      // roomIds and pollute Redis presence keys.
-      const userActiveRooms = await this.roomService.getUserActiveRooms(userId);
-      const isMember = userActiveRooms.some(
-        (rp) => rp.room.id === payload.roomId,
-      );
-      if (!isMember) return;
+      // We use the socket's own `rooms` set (kept in sync by Socket.IO on
+      // join/leave) instead of querying the DB via getUserActiveRooms, which
+      // would overwhelm DB/CPU at scale when heartbeats fire every few seconds
+      // per player. The handler that joined the room already gated membership
+      // server-side, so this client.rooms.has() check is authoritative for
+      // the lifetime of the socket.
+      if (!client.rooms.has(`room:${payload.roomId}`)) return;
 
       await this.presenceService.updatePresence(payload.roomId, userId);
     } catch (error) {

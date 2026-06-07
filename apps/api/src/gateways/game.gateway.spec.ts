@@ -5,7 +5,6 @@ import { AuthHandler } from "./handlers/auth.handler";
 import { RoomHandler } from "./handlers/room.handler";
 import { MatchHandler } from "./handlers/match.handler";
 import { AuthService } from "../modules/auth/auth.service";
-import { RoomService } from "../modules/room/room.service";
 import { PresenceService } from "../modules/match/presence.service";
 import { GameLoopService } from "../modules/match/game-loop.service";
 
@@ -15,7 +14,6 @@ describe("GameGateway", () => {
   let roomHandler: RoomHandler;
   let matchHandler: MatchHandler;
   let authService: AuthService;
-  let roomService: RoomService;
   let presenceService: PresenceService;
   let gameLoopService: GameLoopService;
   let client: Socket;
@@ -38,9 +36,6 @@ describe("GameGateway", () => {
     authService = {
       verifyToken: vi.fn(),
     } as unknown as AuthService;
-    roomService = {
-      getUserActiveRooms: vi.fn().mockResolvedValue([]),
-    } as unknown as RoomService;
     presenceService = {
       setServer: vi.fn(),
       updatePresence: vi.fn().mockResolvedValue(undefined),
@@ -54,7 +49,6 @@ describe("GameGateway", () => {
       roomHandler,
       matchHandler,
       authService,
-      roomService,
       presenceService,
       gameLoopService,
     );
@@ -68,6 +62,7 @@ describe("GameGateway", () => {
       emit: vi.fn(),
       join: vi.fn(),
       data: {},
+      rooms: new Set<string>(),
     } as unknown as Socket;
   });
 
@@ -288,31 +283,19 @@ describe("GameGateway", () => {
     describe("handleHeartbeat", () => {
       it("updates presence when user is a member of the heartbeat room", async () => {
         client.data.userId = "u1";
-        vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
-          {
-            joinedAt: new Date(),
-            room: { id: "r1" } as any,
-          },
-        ] as any);
+        (client.rooms as Set<string>).add("room:r1");
 
         await gateway.handleHeartbeat(client, { roomId: "r1" });
 
-        expect(roomService.getUserActiveRooms).toHaveBeenCalledWith("u1");
         expect(presenceService.updatePresence).toHaveBeenCalledWith("r1", "u1");
       });
 
       it("skips presence update when the user is not a member of the heartbeat room", async () => {
         client.data.userId = "u1";
-        vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
-          {
-            joinedAt: new Date(),
-            room: { id: "r2" } as any,
-          },
-        ] as any);
+        (client.rooms as Set<string>).add("room:r2");
 
         await gateway.handleHeartbeat(client, { roomId: "r1" });
 
-        expect(roomService.getUserActiveRooms).toHaveBeenCalledWith("u1");
         expect(presenceService.updatePresence).not.toHaveBeenCalled();
       });
 
@@ -320,7 +303,6 @@ describe("GameGateway", () => {
         client.data = {};
         await gateway.handleHeartbeat(client, { roomId: "r1" });
 
-        expect(roomService.getUserActiveRooms).not.toHaveBeenCalled();
         expect(presenceService.updatePresence).not.toHaveBeenCalled();
       });
 
@@ -328,18 +310,12 @@ describe("GameGateway", () => {
         client.data.userId = "u1";
         await gateway.handleHeartbeat(client, { roomId: "" });
 
-        expect(roomService.getUserActiveRooms).not.toHaveBeenCalled();
         expect(presenceService.updatePresence).not.toHaveBeenCalled();
       });
 
       it("catches presence update errors and warns without throwing", async () => {
         client.data.userId = "u1";
-        vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
-          {
-            joinedAt: new Date(),
-            room: { id: "r1" } as any,
-          },
-        ] as any);
+        (client.rooms as Set<string>).add("room:r1");
         vi.mocked(presenceService.updatePresence).mockRejectedValueOnce(
           new Error("redis down"),
         );
@@ -349,8 +325,7 @@ describe("GameGateway", () => {
           gateway.handleHeartbeat(client, { roomId: "r1" }),
         ).resolves.not.toThrow();
 
-        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("u1"));
-        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("r1"));
+        expect(warnSpy.mock.calls[0][0]).toMatch(/u1.*r1/);
       });
     });
   });

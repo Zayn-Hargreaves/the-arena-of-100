@@ -18,6 +18,7 @@ type RedisClientMock = {
   srem: ReturnType<typeof vi.fn>;
   smembers: ReturnType<typeof vi.fn>;
   sismember: ReturnType<typeof vi.fn>;
+  exists: ReturnType<typeof vi.fn>;
   incr: ReturnType<typeof vi.fn>;
   publish: ReturnType<typeof vi.fn>;
   eval: ReturnType<typeof vi.fn>;
@@ -48,6 +49,7 @@ describe("RedisService", () => {
       srem: vi.fn().mockResolvedValue(1),
       smembers: vi.fn().mockResolvedValue([]),
       sismember: vi.fn(),
+      exists: vi.fn(),
       incr: vi.fn().mockResolvedValue(1),
       publish: vi.fn().mockResolvedValue(1),
       eval: vi.fn(),
@@ -172,11 +174,7 @@ describe("RedisService", () => {
   });
 
   it("converts redis exists responses into booleans", async () => {
-    // `exists` is not in the default client mock — register it for this test
-    (client as unknown as { exists: ReturnType<typeof vi.fn> }).exists = vi
-      .fn()
-      .mockResolvedValueOnce(1)
-      .mockResolvedValueOnce(0);
+    client.exists.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
 
     await expect(service.exists("room:presence:r1:u1")).resolves.toBe(true);
     await expect(service.exists("room:missing")).resolves.toBe(false);

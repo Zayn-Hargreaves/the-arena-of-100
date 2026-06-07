@@ -1,4 +1,4 @@
-import { GameLoopService } from "./game-loop.service";
+import { GameLoopService, COUNTDOWN_INDEX_KEY } from "./game-loop.service";
 import { MatchService } from "./match.service";
 import { QuestionService } from "../question/question.service";
 import { MatchStateMachine } from "@arena/game-core";
@@ -1433,7 +1433,7 @@ describe("GameLoopService", () => {
         // get() returns null by default → direct srem path (no multi needed)
         const sremSpy = redis.getClient().srem;
         await svc.onModuleInit();
-        expect(sremSpy).toHaveBeenCalledWith("room:countdowns", "rMissing");
+        expect(sremSpy).toHaveBeenCalledWith(COUNTDOWN_INDEX_KEY, "rMissing");
       });
 
       it("clears the persisted entry when the stored countdownEndsAt is unparseable", async () => {
@@ -1609,6 +1609,229 @@ describe("GameLoopService", () => {
         expect(result?.countdownEndsAt).toBe(endsAt);
         // updateRoomStatus must NOT be called a second time
         expect(roomService.updateRoomStatus).not.toHaveBeenCalled();
+      });
+    });
+
+    // ============================================================
+    // Error & edge-case paths in lobby countdown persistence
+    // (coverage gaps flagged by Codecov on PR #38)
+    // ============================================================
+    describe("Lobby countdown error & edge-case paths", () => {
+      // Helper: build a service whose redis client throws on the next
+      // `multi()` invocation. Used to exercise the `catch` blocks in
+      // `persistLobbyCountdown` and `clearPersistedCountdown` without
+      // needing a real Redis.
+      function buildServiceWithFailingMulti(throwFrom: "set" | "del") {
+        const redis = createMockRedisService() as any;
+        const failingExec = vi.fn().mockRejectedValue(new Error("redis down"));
+        const multiSpy = vi.fn(() => {
+          const mockMulti: any = {};
+          mockMulti.set = vi.fn().mockReturnValue(mockMulti);
+          mockMulti.del = vi.fn().mockReturnValue(mockMulti);
+          mockMulti.sadd = vi.fn().mockReturnValue(mockMulti);
+          mockMulti.srem = vi.fn().mockReturnValue(mockMulti);
+          mockMulti.exec = vi.fn().mockImplementation(() => {
+            if (throwFrom === "set" && mockMulti.set.mock.calls.length > 0) {
+              return failingExec();
+            }
+            if (throwFrom === "del" && mockMulti.del.mock.calls.length > 0) {
+              return failingExec();
+            }
+            return Promise.resolve([]);
+          });
+          return mockMulti;
+        });
+        vi.spyOn(redis.getClient(), "multi").mockImplementation(
+          multiSpy as unknown as () => unknown,
+        );
+        const svc = new GameLoopService(
+          matchService,
+          questionService,
+          roomService,
+          redis,
+        );
+        return { svc, redis, failingExec, multiSpy };
+      }
+
+      it("logs and swallows errors thrown by persistLobbyCountdown (redis SET chain fails)", async () => {
+        const { svc, multiSpy } = buildServiceWithFailingMulti("set");
+        const errorSpy = vi.spyOn((svc as any).logger, "error");
+
+        await (svc as any).persistLobbyCountdown("r1", Date.now() + 5000);
+
+        expect(multiSpy).toHaveBeenCalled();
+        expect(errorSpy).toHaveBeenCalledWith(
+          "Failed to persist lobby countdown for room r1:",
+          expect.any(Error),
+        );
+      });
+
+      it("logs and swallows errors thrown by clearPersistedCountdown (redis DEL chain fails)", async () => {
+        const { svc, multiSpy } = buildServiceWithFailingMulti("del");
+        const warnSpy = vi.spyOn((svc as any).logger, "warn");
+
+        await (svc as any).clearPersistedCountdown("r1");
+
+        expect(multiSpy).toHaveBeenCalled();
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "Failed to clear persisted countdown for room r1: redis down",
+          ),
+        );
+      });
+
+      it("maybeStartPublicCountdown rolls back the in-memory slot, fires clearPersistedCountdown, and rethrows when updateRoomStatus fails", async () => {
+        vi.useFakeTimers();
+        const emitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+        vi.mocked(roomService.updateRoomStatus).mockRejectedValueOnce(
+          new Error("db write failed"),
+        );
+        const errorSpy = vi.spyOn((service as any).logger, "error");
+        // The catch block fires void this.clearPersistedCountdown(roomId) —
+        // spy on the redis client's multi() so we can assert the cleanup
+        // pipeline runs (and therefore the dead persisted entry is wiped
+        // so a retry can re-arm cleanly).
+        const multiSpy = vi.spyOn((service as any).redis.getClient(), "multi");
+
+        await expect(
+          service.maybeStartPublicCountdown("r1", mockServer),
+        ).rejects.toThrow("db write failed");
+
+        // In-memory countdown slot must be cleared so a retry can re-arm
+        expect((service as any).lobbyCountdowns.has("r1")).toBe(false);
+        // The cleanup pipeline (DEL + SREM) must have been queued to wipe
+        // the persisted entry. multi() is called at least twice: once for
+        // the initial persist attempt, once for the cleanup in the catch.
+        expect(multiSpy).toHaveBeenCalled();
+        // No error is logged by the service itself — the catch only
+        // re-throws; the caller is expected to surface/log the failure.
+        expect(errorSpy).not.toHaveBeenCalled();
+        vi.useRealTimers();
+      });
+
+      it("armLobbyCountdownTimer's setTimeout callback logs and swallows launchRoomMatch failures", async () => {
+        vi.useFakeTimers();
+        const { svc } = buildService();
+        const launchError = new Error("launch boom");
+        vi.spyOn(svc as any, "launchRoomMatch").mockRejectedValue(launchError);
+        const errorSpy = vi.spyOn((svc as any).logger, "error");
+
+        (svc as any).armLobbyCountdownTimer(
+          "r1",
+          Date.now() + 5000,
+          mockServer as unknown as Server,
+        );
+
+        // Advance past the countdown; the timer callback's .catch() runs
+        await vi.advanceTimersByTimeAsync(5000);
+        // Flush the void promise chain
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(errorSpy).toHaveBeenCalledWith(
+          "Failed to auto-start lobby countdown for room r1",
+          launchError,
+        );
+        vi.useRealTimers();
+      });
+
+      it("onModuleInit logs and swallows errors from the recovery launchRoomMatch (server wired up)", async () => {
+        // The countdown is already past expiry, a server IS wired up, and
+        // launchRoomMatch rejects — the .catch() on the fire-and-forget
+        // promise must log the failure instead of crashing the process.
+        const pastEnd = Date.now() - 1000;
+        const { svc } = buildService({
+          smembers: ["rExpired"],
+          get: String(pastEnd),
+        });
+        const launchError = new Error("recovery launch boom");
+        vi.spyOn(svc as any, "launchRoomMatch").mockRejectedValue(launchError);
+        (svc as any).setServer(mockServer as unknown as Server);
+        const errorSpy = vi.spyOn((svc as any).logger, "error");
+
+        await svc.onModuleInit();
+        // Flush the void promise chain
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(errorSpy).toHaveBeenCalledWith(
+          "Recovery launch failed for room rExpired:",
+          launchError,
+        );
+      });
+
+      it("onModuleInit logs when clearPersistedCountdown itself fails during the no-server recovery path", async () => {
+        // The countdown is past expiry AND no server is wired up, so the
+        // service falls into the `else` branch and tries to clear the
+        // persisted entry. If that clear call also rejects, the
+        // .catch() on the fire-and-forget promise must log the failure
+        // — otherwise an unhandled rejection would crash the process.
+        const pastEnd = Date.now() - 1000;
+        const { svc } = buildService({
+          smembers: ["rExpiredNoServer"],
+          get: String(pastEnd),
+        });
+        // No setServer() call → server is undefined → else branch
+        vi.spyOn(svc as any, "clearPersistedCountdown").mockRejectedValue(
+          new Error("clear boom"),
+        );
+        const errorSpy = vi.spyOn((svc as any).logger, "error");
+
+        await svc.onModuleInit();
+        // Flush the void promise chain
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(errorSpy).toHaveBeenCalledWith(
+          "Failed to clear persisted countdown for room rExpiredNoServer:",
+          expect.any(Error),
+        );
+      });
+
+      it("launchRoomMatch throws ROOM_ALREADY_STARTED when the re-fetched room is no longer launchable (race)", async () => {
+        // First getRoom returns a launchable state (COUNTDOWN). Between
+        // that call and the inner re-fetch, the room's status changes
+        // (e.g. another caller launched it). The second getRoom now
+        // returns IN_GAME, and the service must throw ROOM_ALREADY_STARTED
+        // instead of double-starting the match.
+        const emitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+        vi.mocked(roomService.getRoom)
+          .mockResolvedValueOnce({
+            id: "r1",
+            status: RoomStatus.COUNTDOWN,
+            currentMatchId: null,
+            players: [{ userId: "p1" }, { userId: "p2" }],
+          } as any)
+          .mockResolvedValueOnce({
+            id: "r1",
+            status: RoomStatus.IN_GAME, // race: someone else already started it
+            currentMatchId: "m-existing",
+            players: [{ userId: "p1" }, { userId: "p2" }],
+          } as any);
+        // Make sure no stale countdown is in the in-memory map so we hit
+        // the post-re-fetch race branch (otherwise the test would short-
+        // circuit before the re-fetch).
+        (service as any).lobbyCountdowns.delete("r1");
+        (matchService.createMatch as any) = vi.fn();
+
+        await expect(
+          (service as any).launchRoomMatch("r1", mockServer, {
+            isAutoStart: false,
+          }),
+        ).rejects.toMatchObject({ code: ErrorCode.ROOM_ALREADY_STARTED });
+
+        // createMatch must NOT be called — the re-fetch guard prevents a
+        // double-start.
+        expect(matchService.createMatch).not.toHaveBeenCalled();
+        // Room must be rolled back to WAITING and a status event emitted
+        expect(roomService.updateRoomStatus).toHaveBeenLastCalledWith(
+          "r1",
+          RoomStatus.WAITING,
+        );
       });
     });
   });

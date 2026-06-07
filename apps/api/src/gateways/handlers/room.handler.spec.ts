@@ -2,11 +2,13 @@ import { Socket, Server } from "socket.io";
 import { ServerEvent, ErrorCode, RoomError, RoomStatus } from "@arena/shared";
 import { RoomHandler } from "./room.handler";
 import { RoomService } from "../../modules/room/room.service";
+import { PresenceService } from "../../modules/match/presence.service";
 import { GameLoopService } from "../../modules/match/game-loop.service";
 
 describe("RoomHandler", () => {
   let handler: RoomHandler;
   let roomService: RoomService;
+  let presenceService: PresenceService;
   let gameLoopService: {
     maybeStartPublicCountdown: ReturnType<typeof vi.fn>;
     handleRoomPlayerLeft: ReturnType<typeof vi.fn>;
@@ -21,6 +23,9 @@ describe("RoomHandler", () => {
       joinRoom: vi.fn(),
       leaveRoom: vi.fn(),
     } as unknown as RoomService;
+    presenceService = {
+      isPresent: vi.fn().mockResolvedValue(false),
+    } as unknown as PresenceService;
     gameLoopService = {
       maybeStartPublicCountdown: vi.fn().mockResolvedValue(null),
       handleRoomPlayerLeft: vi.fn().mockResolvedValue(undefined),
@@ -29,6 +34,7 @@ describe("RoomHandler", () => {
     handler = new RoomHandler(
       roomService,
       gameLoopService as unknown as GameLoopService,
+      presenceService,
     );
     client = {
       emit: vi.fn(),
@@ -206,7 +212,9 @@ describe("RoomHandler", () => {
           {
             playerId: "u1",
             playerName: "Alice",
-            isOnline: false,
+            // The joining user is online by definition — they just
+            // connected via this socket.
+            isOnline: true,
           },
         ],
       });
@@ -266,6 +274,46 @@ describe("RoomHandler", () => {
         expect.objectContaining({
           code: ErrorCode.INTERNAL_ERROR,
           message: "Internal server error",
+        }),
+      );
+    });
+
+    it("uses the persisted user.username (not client.data.username) when rendering another player's tile", async () => {
+      // u1 joins a room that already contains u2. The handler must look up
+      // u2's username from the persisted user relation (the source of truth
+      // for the lobby roster) rather than reusing client.data.username from
+      // the joining socket — that would silently rename every existing
+      // player to "Alice" and corrupt the lobby display.
+      vi.mocked(roomService.joinRoom).mockResolvedValue({
+        id: "r1",
+        code: "ABC123",
+        hostId: "u9",
+        type: "PUBLIC",
+        status: RoomStatus.WAITING,
+        currentMatchId: null,
+        joined: true,
+        players: [
+          // u2 is the pre-existing player — the joining user is u1, so the
+          // handler must use player.user.username for this row.
+          {
+            userId: "u2",
+            user: { username: "Bob" },
+          },
+        ],
+      } as any);
+
+      await handler.handleJoinRoom(client, { roomCode: "ABC123" });
+
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ROOM_JOINED,
+        expect.objectContaining({
+          players: [
+            {
+              playerId: "u2",
+              playerName: "Bob",
+              isOnline: false,
+            },
+          ],
         }),
       );
     });

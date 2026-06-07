@@ -204,5 +204,23 @@
       "updated": "Avatar updated successfully!",
       "updateFailed": "Failed to update avatar."
     }
+  },
+  "lobby": {
+    "heading": {
+      "countdown": "COUNTDOWN IN PROGRESS",
+      "starting": "INITIALIZING MATCH",
+      "in_game": "MATCH IS LIVE",
+      "waiting": "WAITING ROOM"
+    },
+    "sublabel": {
+      "countdown": "Get ready to fight",
+      "starting": "Server is creating the match",
+      "in_game": "Entering the game",
+      "waiting": "Waiting for the match to start"
+    },
+    "actions": {
+      "back": "Back to settings",
+      "leave": "Leave room"
+    }
   }
 }

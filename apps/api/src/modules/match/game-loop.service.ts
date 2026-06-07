@@ -16,7 +16,7 @@ import { RoomService } from "../room/room.service";
 import { RedisService } from "../redis/redis.service";
 
 const COUNTDOWN_KEY_PREFIX = "room:countdown:";
-const COUNTDOWN_INDEX_KEY = "room:countdowns";
+export const COUNTDOWN_INDEX_KEY = "room:countdowns";
 // TTL longer than the longest possible countdown so a stale entry still
 // exists for a small recovery window after a process restart.
 const COUNTDOWN_REDIS_TTL_SEC = Math.ceil(

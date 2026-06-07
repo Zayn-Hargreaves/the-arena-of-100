@@ -29,6 +29,8 @@ describe("RoomService", () => {
       set: vi.fn(),
       del: vi.fn(),
       exists: vi.fn(),
+      incr: vi.fn().mockResolvedValue(1),
+      eval: vi.fn().mockResolvedValue(0),
     } as unknown as RedisService;
     service = new RoomService(prisma, redis);
   });
@@ -307,10 +309,12 @@ describe("RoomService", () => {
   });
 
   describe("removePlayer", () => {
-    it("removes player, clears presence, and updates cache", async () => {
+    it("removes player, clears presence, and updates cache via atomic counter", async () => {
       vi.mocked(prisma.roomPlayer.deleteMany).mockResolvedValue({
         count: 1,
       } as any);
+      // eval() runs the atomic Lua script and returns the new clamped count
+      vi.mocked(redis.eval).mockResolvedValue(1);
       vi.mocked(redis.getJSON).mockResolvedValue({ playerCount: 2 });
 
       await service.removePlayer("r1", "u2");
@@ -320,6 +324,11 @@ describe("RoomService", () => {
       });
       expect(redis.srem).toHaveBeenCalledWith("room:r1:players", "u2");
       expect(redis.del).toHaveBeenCalledWith("room:presence:r1:u2");
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("redis.call"),
+        ["room:r1:playerCount"],
+        ["1"],
+      );
       expect(redis.setJSON).toHaveBeenCalledWith(
         "room:r1",
         { playerCount: 1 },
@@ -335,10 +344,11 @@ describe("RoomService", () => {
       expect(redis.srem).not.toHaveBeenCalled();
     });
 
-    it("removes multiple players, clears presence, and updates cache in one go", async () => {
+    it("removes multiple players, clears presence, and updates cache in one go via atomic counter", async () => {
       vi.mocked(prisma.roomPlayer.deleteMany).mockResolvedValue({
         count: 2,
       } as any);
+      vi.mocked(redis.eval).mockResolvedValue(3);
       vi.mocked(redis.getJSON).mockResolvedValue({ playerCount: 5 });
 
       await service.removePlayerBatch("r1", ["u2", "u3"]);
@@ -349,6 +359,11 @@ describe("RoomService", () => {
       expect(redis.srem).toHaveBeenCalledWith("room:r1:players", "u2", "u3");
       expect(redis.del).toHaveBeenCalledWith("room:presence:r1:u2");
       expect(redis.del).toHaveBeenCalledWith("room:presence:r1:u3");
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("redis.call"),
+        ["room:r1:playerCount"],
+        ["2"],
+      );
       expect(redis.setJSON).toHaveBeenCalledWith(
         "room:r1",
         { playerCount: 3 },

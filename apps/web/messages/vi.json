@@ -204,5 +204,23 @@
       "updated": "Đã cập nhật hình đại diện!",
       "updateFailed": "Không thể cập nhật hình đại diện."
     }
+  },
+  "lobby": {
+    "heading": {
+      "countdown": "ĐANG ĐẾM NGƯỢC",
+      "starting": "ĐANG KHỞI TẠO TRẬN",
+      "in_game": "TRẬN ĐẤU ĐANG DIỄN RA",
+      "waiting": "PHÒNG CHỜ"
+    },
+    "sublabel": {
+      "countdown": "Chuẩn bị vào trận",
+      "starting": "Server đang tạo match",
+      "in_game": "Đang chuyển vào game",
+      "waiting": "Đang chờ trận đấu"
+    },
+    "actions": {
+      "back": "Quay lại cài đặt",
+      "leave": "Rời phòng"
+    }
   }
 }

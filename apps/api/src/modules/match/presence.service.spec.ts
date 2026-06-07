@@ -327,7 +327,9 @@ describe("PresenceService", () => {
       vi.mocked(roomService.getActiveRooms).mockRejectedValueOnce(
         new Error("redis down"),
       );
-      const errorSpy = vi.spyOn((service as any).logger, "error");
+      const errorSpy = vi
+        .spyOn((service as any).logger, "error")
+        .mockImplementation(() => {});
 
       service.onModuleInit();
       await vi.advanceTimersByTimeAsync(5000);

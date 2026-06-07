@@ -15,6 +15,7 @@ import {
   asRoomType,
 } from "@arena/shared";
 import { RoomService } from "../../modules/room/room.service";
+import { PresenceService } from "../../modules/match/presence.service";
 import { GameLoopService } from "../../modules/match/game-loop.service";
 import { BaseHandler } from "./base.handler";
 
@@ -27,6 +28,7 @@ export class RoomHandler extends BaseHandler {
   constructor(
     private readonly roomService: RoomService,
     private readonly gameLoopService: GameLoopService,
+    private readonly presenceService: PresenceService,
   ) {
     super();
   }
@@ -97,30 +99,38 @@ export class RoomHandler extends BaseHandler {
         roomStatus: asRoomStatus(room.status),
         currentMatchId: room.currentMatchId,
         countdownEndsAt: this.gameLoopService.getCountdownEnd(room.id),
-        players: room.players.map((player) => {
-          // RoomService.getRoom() always joins the user relation, so
-          // `player.user` is guaranteed to be present. If it ever isn't, that
-          // is a state-corruption bug — fail fast so the caller gets a
-          // descriptive error and tests surface the regression immediately,
-          // rather than silently emitting an empty playerName that clients
-          // would render as a blank tile in the lobby.
-          if (!player.user) {
-            const message = `RoomPlayer ${player.userId} in room ${room.id} is missing its user relation; cannot resolve username`;
-            this.logger.error(message);
-            throw new Error(message);
-          }
-          return {
-            playerId: player.userId,
-            playerName:
-              player.userId === userId
-                ? client.data.username
-                : player.user.username,
-            // No presence source on the player/room shape here, so fall back to
-            // false. The authoritative online status is computed by
-            // AuthHandler.syncReconnection via presenceService.isPresent.
-            isOnline: false,
-          };
-        }),
+        players: await Promise.all(
+          room.players.map(async (player) => {
+            // RoomService.getRoom() always joins the user relation, so
+            // `player.user` is guaranteed to be present. If it ever isn't, that
+            // is a state-corruption bug — fail fast so the caller gets a
+            // descriptive error and tests surface the regression immediately,
+            // rather than silently emitting an empty playerName that clients
+            // would render as a blank tile in the lobby.
+            if (!player.user) {
+              const message = `RoomPlayer ${player.userId} in room ${room.id} is missing its user relation; cannot resolve username`;
+              this.logger.error(message);
+              throw new Error(message);
+            }
+            return {
+              playerId: player.userId,
+              playerName:
+                player.userId === userId
+                  ? client.data.username
+                  : player.user.username,
+              // Resolve the authoritative online status from the presence
+              // service. The joining user is online by definition (we just
+              // accepted their socket) so we short-circuit that case.
+              isOnline:
+                player.userId === userId
+                  ? true
+                  : await this.presenceService.isPresent(
+                      room.id,
+                      player.userId,
+                    ),
+            };
+          }),
+        ),
       } satisfies RoomJoinedPayload);
 
       if (room.joined) {

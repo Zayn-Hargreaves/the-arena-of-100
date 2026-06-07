@@ -153,7 +153,7 @@ Add a new top-level `describe("Lobby Countdown Recovery & Launch", ...)` block c
   - `handleHeartbeat` `Error` branch in the try/catch warn (line 181)
   - `afterInit` `Authorization` branch already covered; verify the `else` branch in middleware (line 80) — the "Bearer " without actual token
 
-## Verification
+## Verification Plan
 
 ```bash
 cd apps/api && pnpm test:coverage
