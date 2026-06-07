@@ -120,14 +120,26 @@ export class RoomHandler extends BaseHandler {
                   : player.user.username,
               // Resolve the authoritative online status from the presence
               // service. The joining user is online by definition (we just
-              // accepted their socket) so we short-circuit that case.
+              // accepted their socket) so we short-circuit that case. For
+              // other players, a presence lookup failure (e.g. Redis
+              // timeout) must not reject the whole ROOM_JOINED payload —
+              // we degrade to isOnline=false for that one player and log a
+              // warning so the operator can investigate.
               isOnline:
                 player.userId === userId
                   ? true
-                  : await this.presenceService.isPresent(
-                      room.id,
-                      player.userId,
-                    ),
+                  : await this.presenceService
+                      .isPresent(room.id, player.userId)
+                      .catch((error) => {
+                        this.logger.warn(
+                          `Presence lookup failed for player ${player.userId} in room ${room.id}; defaulting isOnline=false: ${
+                            error instanceof Error
+                              ? error.message
+                              : String(error)
+                          }`,
+                        );
+                        return false;
+                      }),
             };
           }),
         ),

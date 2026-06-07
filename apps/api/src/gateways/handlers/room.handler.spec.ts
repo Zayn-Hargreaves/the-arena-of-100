@@ -318,6 +318,59 @@ describe("RoomHandler", () => {
       );
     });
 
+    it("defaults isOnline to false and warns when presence lookup throws (e.g. Redis timeout) instead of failing the whole ROOM_JOINED", async () => {
+      // Regression test: a single failed presence check must not poison the
+      // whole lobby payload. The handler must degrade gracefully so the
+      // joining user can still see the room.
+      vi.mocked(roomService.joinRoom).mockResolvedValue({
+        id: "r1",
+        code: "ABC123",
+        hostId: "u9",
+        type: "PUBLIC",
+        status: RoomStatus.WAITING,
+        currentMatchId: null,
+        joined: true,
+        players: [
+          {
+            userId: "u2",
+            user: { username: "Bob" },
+          },
+        ],
+      } as any);
+      vi.mocked(presenceService.isPresent).mockRejectedValueOnce(
+        new Error("Redis connection timeout"),
+      );
+      const logger = (
+        handler as unknown as { logger: { warn: ReturnType<typeof vi.fn> } }
+      ).logger;
+      const warnSpy = vi.spyOn(logger, "warn");
+
+      await handler.handleJoinRoom(client, { roomCode: "ABC123" });
+
+      // Lobby payload still emitted with the affected player marked offline
+      // (conservative default — better to show "offline" than to drop the
+      // whole roster over a transient Redis blip).
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ROOM_JOINED,
+        expect.objectContaining({
+          players: [
+            {
+              playerId: "u2",
+              playerName: "Bob",
+              isOnline: false,
+            },
+          ],
+        }),
+      );
+      // Operator-facing warning must include the player and room ids so the
+      // failure is diagnosable from the logs.
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /Presence lookup failed for player u2 in room r1[\s\S]*Redis connection timeout/,
+        ),
+      );
+    });
+
     it("logs and emits INTERNAL_ERROR when a room player is missing its user relation (data integrity guard)", async () => {
       // Regression test: a Prisma include change must not silently produce
       // empty playerNames in the lobby. The handler must fail fast and emit
