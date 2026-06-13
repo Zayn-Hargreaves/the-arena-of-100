@@ -592,5 +592,35 @@ describe("AdminService", () => {
         message: undefined,
       });
     });
+
+    it("still calls disbandRoom when cleanupRoomRedisKeys throws (Redis unreachable)", async () => {
+      // Reproduces the orchestrator pattern gap: if Redis is down at step 5,
+      // a non-defensive call would skip the DB disband at step 6 and leave
+      // the admin UI without the { partial } signal. PR #47 review.
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r7",
+        currentMatchId: null,
+      });
+      // Make SCAN throw — represents Redis being unreachable mid-termination.
+      redisClient.scan.mockImplementationOnce(() => {
+        throw new Error("Redis connection lost");
+      });
+
+      // Must NOT throw — the kill-switch is best-effort per step.
+      const result = await service.terminateRoom("r7");
+
+      // DB disband MUST still run (the whole point of the defensive wrap).
+      expect(roomService.disbandRoom).toHaveBeenCalledWith("r7");
+      // Steps 3 & 4 still ran before the Redis failure.
+      expect(gameLoopService.stopRoomRuntime).toHaveBeenCalledWith("r7", null);
+      expect(gameLoopService.emitRoomTerminated).toHaveBeenCalledWith("r7", {
+        matchId: null,
+        message: undefined,
+      });
+      // Disband succeeded, so the response is a clean success.
+      expect(result.success).toBe(true);
+      expect(result.partial).toBe(false);
+      expect(result.cleanupError).toBeUndefined();
+    });
   });
 });

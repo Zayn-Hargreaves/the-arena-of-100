@@ -297,8 +297,23 @@ export class AdminService {
       );
     }
 
-    // 5. Clean Redis keys explicitly
-    await this.cleanupRoomRedisKeys(roomId, matchId);
+    // 5. Clean Redis keys explicitly. `cleanupRoomRedisKeys` performs
+    // SCAN + DEL against the room/match prefixes; if Redis is unreachable
+    // here, the connection error must not abort the kill-switch before
+    // step 6 (DB disband). The room channel has already been notified
+    // (step 4) and timers already stopped (step 3), so the players are
+    // already kicked — we still need the DB record cleaned up and the
+    // admin UI informed via the `{ partial: true, cleanupError }`
+    // response contract (see apps/web/src/app/[locale]/admin/page.tsx).
+    try {
+      await this.cleanupRoomRedisKeys(roomId, matchId);
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `cleanupRoomRedisKeys failed during admin termination of room ${roomId}${matchId ? ` (match ${matchId})` : ""}: ${errMsg}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
 
     // 6. Disband room (DB). Surface partial-failure to the caller instead
     // of silently swallowing it: the room channel has been notified and

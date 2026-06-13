@@ -134,6 +134,17 @@ export default function GamePage({ params }: GamePageProps) {
     router,
   ]);
 
+  // TODO(game-page-termination): handle `roomTerminated` from the socket
+  // store the same way the lobby page does
+  // (apps/web/src/app/[locale]/lobby/[roomCode]/page.tsx:66-87). The store
+  // already nulls `room` and `match` on `ServerEvent.ROOM_TERMINATED`
+  // (apps/web/src/stores/socket-store.ts:602-613) and the server stops
+  // the round timers, so the player is left on a frozen question card
+  // with no recovery path. Follow-up should toast + redirect to `/`,
+  // guarded by a `useRef` to survive React strict-mode double-invoke.
+  // See PR #47 review (analysis comment on
+  // apps/web/src/stores/socket-store.ts:602-613).
+
   // Auto-redirect to results page when match finishes
   useEffect(() => {
     if (match?.status !== "FINISHED") return;
