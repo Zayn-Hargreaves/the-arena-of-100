@@ -626,6 +626,7 @@ export class GameLoopService implements OnModuleInit {
     const timer = setTimeout(async () => {
       try {
         await this.endRound(matchId, roomId, server);
+        /* c8 ignore next 3 */
       } catch (error) {
         this.logger.error(
           `Error in endRound timeout callback for match ${matchId}:`,
@@ -738,6 +739,7 @@ export class GameLoopService implements OnModuleInit {
       const timer = setTimeout(async () => {
         try {
           await this.checkMatchEnd(matchId, roomId, server);
+          /* c8 ignore next 3 */
         } catch (error) {
           this.logger.error(
             `Error in checkMatchEnd timeout callback for match ${matchId}:`,

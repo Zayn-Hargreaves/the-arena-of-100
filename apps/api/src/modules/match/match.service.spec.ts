@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { NotFoundException } from "@nestjs/common";
 import { MatchStatus, PlayerStatus, ErrorCode } from "@arena/shared";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 describe("MatchService", () => {
   let service: MatchService;
@@ -304,6 +305,118 @@ describe("MatchService", () => {
       // No score persistence ($transaction NOT called for null-winner path)
       expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(prisma.matchPlayer.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("swallows non-Error Redis delete failures when finishing a match", async () => {
+      // Create match first to populate stateMachines map
+      const room = {
+        id: "r2",
+        players: [
+          { user: { id: "u1", username: "A" } },
+          { user: { id: "u2", username: "B" } },
+        ],
+      };
+      vi.mocked(prisma.room.findUnique).mockResolvedValue(room as any);
+      vi.mocked(prisma.match.create).mockResolvedValue({
+        id: "m2",
+        roomId: "r2",
+      } as any);
+      vi.mocked(prisma.matchPlayer.createMany).mockResolvedValue({
+        count: 2,
+      } as any);
+      vi.mocked(prisma.room.update).mockResolvedValue({} as any);
+      await service.createMatch("r2");
+
+      vi.mocked(prisma.match.update).mockResolvedValue({
+        id: "m2",
+        roomId: "r2",
+      } as any);
+      // Non-Error rejection to cover `String(error)` in the warning path.
+      vi.mocked(redis.del).mockRejectedValueOnce("redis del boom (string)");
+
+      await service.finishMatch("m2", "u1");
+
+      expect(redis.del).toHaveBeenCalledWith("match:state:m2");
+      expect(prisma.match.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "m2" },
+          data: expect.objectContaining({ winnerId: "u1" }),
+        }),
+      );
+    });
+
+    it("swallows Error Redis delete failures when finishing a match", async () => {
+      const loggerWarnSpy = vi.spyOn((service as any).logger, "warn");
+
+      const room = {
+        id: "r2b",
+        players: [
+          { user: { id: "u1", username: "A" } },
+          { user: { id: "u2", username: "B" } },
+        ],
+      };
+      vi.mocked(prisma.room.findUnique).mockResolvedValue(room as any);
+      vi.mocked(prisma.match.create).mockResolvedValue({
+        id: "m2b",
+        roomId: "r2b",
+      } as any);
+      vi.mocked(prisma.matchPlayer.createMany).mockResolvedValue({
+        count: 2,
+      } as any);
+      vi.mocked(prisma.room.update).mockResolvedValue({} as any);
+      await service.createMatch("r2b");
+
+      vi.mocked(prisma.match.update).mockResolvedValue({
+        id: "m2b",
+        roomId: "r2b",
+      } as any);
+      vi.mocked(redis.del).mockRejectedValueOnce(new Error("redis del boom"));
+
+      await service.finishMatch("m2b", "u1");
+
+      expect(loggerWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Failed to delete Redis state for match m2b:"),
+      );
+    });
+
+    it("swallows score persistence failures before finishing a match", async () => {
+      const room = {
+        id: "r3",
+        players: [
+          { user: { id: "u1", username: "A" } },
+          { user: { id: "u2", username: "B" } },
+        ],
+      };
+      vi.mocked(prisma.room.findUnique).mockResolvedValue(room as any);
+      vi.mocked(prisma.match.create).mockResolvedValue({
+        id: "m3",
+        roomId: "r3",
+      } as any);
+      vi.mocked(prisma.matchPlayer.createMany).mockResolvedValue({
+        count: 2,
+      } as any);
+      vi.mocked(prisma.room.update).mockResolvedValue({} as any);
+      await service.createMatch("r3");
+
+      vi.mocked(prisma.match.update).mockResolvedValue({
+        id: "m3",
+        roomId: "r3",
+      } as any);
+      // Throw a string to cover the non-Error branch in the score
+      // persistence catch.
+      vi.mocked(prisma.$transaction).mockRejectedValueOnce(
+        "score tx boom (string)",
+      );
+
+      await service.finishMatch("m3", "u1");
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(prisma.match.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "m3" },
+          data: expect.objectContaining({ winnerId: "u1" }),
+        }),
+      );
     });
   });
 

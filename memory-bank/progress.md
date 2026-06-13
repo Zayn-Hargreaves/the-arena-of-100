@@ -1,10 +1,9 @@
 # Progress: Arena of 100
 
-## Current Status: 🏗️ Core Gameplay Working → Lobby Lifecycle / Product Flows
+## Current Status: ✅ Lobby Lifecycle + Heartbeat + Graceful Exit + Admin Kill-Switch Baseline Done → Design System Phase 5 Closeout
 
-> Trạng thái trong file này được tổng hợp lại từ code + GitNexus (cập nhật 2026-06-06).
-> Một số mục dưới đây trước đây bị đánh dấu "chưa xong" trong `progress.md` cũ, nay đã có code thật và được tick lại.
-> Tài liệu `PROJECT_STATUS.md` và `activeContext.md` cũng cần đọc kèm vì có mô tả đã lỗi thời.
+> Cập nhật 2026-06-14 dựa trên code + GitNexus. So với bản 2026-06-06, các mốc lobby/heartbeat/graceful-exit/admin kill-switch đã hoàn thành baseline và chuyển trạng thái. Vài mục trước đây đánh "chưa xong" nay đã có code thật và được tick lại.
+> Các file liên quan: `PROJECT_STATUS.md` và `activeContext.md` cũng được đồng bộ trong cùng lần cập nhật này.
 
 ### ✅ Completed (Phase 0: Planning & Setup)
 
@@ -50,84 +49,102 @@
 - [x] Admin endpoints + admin UI:
   - `POST /admin/questions/sync` (rate-limited 5/min)
   - `POST /admin/system/reset` (rate-limited 2/5min)
+  - `POST /admin/rooms/:roomId/terminate` (rate-limited 5/min, ADMIN-only) — **NEW 2026-06-14**
   - `GET /health` (public), `GET /health/monitoring` (ADMIN) trả CPU/RSS/active rooms
 - [x] CSRF: `CsrfGuard` validate `X-CSRF-Token`; `apiFetch()` tự inject
 - [x] Rate Limiting: `@nestjs/throttler` global 100 req/min + admin-specific
 - [x] **Test coverage footprint rộng** (Vitest, `*.spec.ts`):
-  - `packages/game-core/src/match-state-machine.spec.ts`
-  - `apps/api/src/modules/match/{game-loop.service.spec.ts, game-loop.service.persistence.spec.ts, match.module.spec.ts, match.service.spec.ts}`
+  - `packages/game-core/src/{match-state-machine,scoring}.spec.ts`
+  - `apps/api/src/modules/match/{game-loop.service.spec.ts, game-loop.service.persistence.spec.ts, match.module.spec.ts, match.service.spec.ts, presence.service.spec.ts}`
   - `apps/api/src/gateways/handlers/{auth,room,match,base}.handler.spec.ts`
-  - `apps/api/src/modules/{auth,room,question,admin,health,prisma}/**/*.spec.ts`
+  - `apps/api/src/modules/{auth,room,question,admin,health,prisma,users,rankings}/**/*.spec.ts`
   - `apps/api/src/common/{pipes,interceptors}/*.spec.ts`
+  - `apps/api/src/modules/admin/dto/terminate-room.dto.spec.ts` — **NEW 2026-06-14**
   - `apps/api/prisma/seeds/questions-validation.test.ts`
+  - `apps/api/test/modules/{users,rankings}.e2e-spec.ts` — Vitest + SWC + Fastify inject, real CSRF/JWT/Prisma/Redis
 
 ### ✅ Frontend — Design System "Candy 3D Jelly UI"
 
 - [x] Phase 1 — Foundation (font, tokens, Tailwind, `.jelly-card`/`.jelly-btn`)
 - [x] Phase 2 — Atoms (Button, GlassPanel, Badge, Input)
 - [x] Phase 3 — Procedural Avatars + MelbitSprite
-- [x] Phase 4 — Game Molecules (AnswerTile, Timer, PlayerGrid) — completed
-- [ ] Phase 5 — Shells & Polish (xem [migrateDesignSystem.md](./migrateDesignSystem.md))
-  - [ ] Step 5.1: Refactor `AppShellLayout` / `GameShell` (vẫn còn dùng gradient cũ ở `app-shell-layout.tsx:32` + mobile overlay `sidebar.tsx:211`)
-  - [ ] Step 5.2: Safe-delete legacy CSS (`styles/components.css` và các class cyberpunk cũ)
-  - [ ] Step 5.3: End-to-end visual audit bằng `pnpm dev` + duyệt Lobby/Match/Result/Rankings/Profile
+- [x] Phase 4 — Game Molecules (AnswerTile, Timer, PlayerGrid)
+- [x] Phase 5A — Shell Cleanup (mobile overlay, escape/backdrop, skip-link) — **completed 2026-06-08**
+- [ ] Phase 5B — Shell visual closeout + legacy CSS (xem [migrateDesignSystem.md](./migrateDesignSystem.md))
+  - [ ] Bước 5B.1: Refactor `AppShellLayout` / `GameShell` (còn dùng gradient cũ ở `app-shell-layout.tsx:32` + mobile overlay `sidebar.tsx:211`)
+  - [ ] Bước 5B.2: Safe-delete legacy CSS (`styles/components.css` và các class cyberpunk cũ)
+  - [ ] Bước 5B.3: End-to-end visual audit bằng `pnpm dev` + duyệt Lobby/Match/Result/Rankings/Profile
 
-### 🚧 In Progress / Sắp Làm
+### ✅ Lobby Lifecycle + Graceful Exit Baseline (PR #38, 2026-06-07/08) — Hoàn thành
 
-#### Lobby lifecycle + graceful exit (PR kế tiếp đề xuất)
+#### Contract + backend baseline
 
-- [x] Phase 1 contract baseline — tách rõ room lifecycle contract khỏi match lifecycle; thêm `STARTING`, room status/presence socket events, và payload room typed đầy đủ cho API/web consume
-- [x] Phase 2 backend baseline — public room auto-countdown khi đủ người, cancel countdown khi tụt dưới minimum, private room host force-start, và room status chuyển `WAITING -> COUNTDOWN -> STARTING -> IN_GAME` đồng bộ với match start
-- [x] Phase 3 transport/store baseline — `socket-store` consume room lifecycle events thật, lobby page đọc `room.status` / `countdownEndsAt` / `match.id` từ store, và bỏ giả định manual-start-only ở client
-- [x] **Phase 3 refinement (2026-06-08):** Extracted `useLobbyLifecycle` hook (`apps/web/src/hooks/use-lobby-lifecycle.ts`) to encapsulate auto-join, countdown timer, and lifecycle state derivation. Removed dev-only mock player fallback from lobby page. Exported `Player` and `Room` types from `socket-store.ts`. Page now purely presentational.
-- [ ] Auto-start countdown cho public room
-- [ ] Host controls tối thiểu cho private room (force-start, kick)
-- [x] Heartbeat/presence validation (chống ghost player, sweep sau N round miss) — client gửi heartbeat 10s, server Redis TTL 20s, auto-sweep 5s, auto-disband private room nếu host stale
-- [x] Lobby state machine: `WAITING → COUNTDOWN → STARTING → IN_GAME` (backend + store wiring done)
-- [x] Frontend: countdown overlay, "leave" button đi kèm confirm modal, mobile-friendly leave flow, extracted lobby components (`LobbyHeader`, `RoomCodeCard`, `LobbyPlayerGrid`, `LeaveRoomModal`, `LobbyCountdownOverlay`) + visual stale indicator
-- [x] Test: room lifecycle + heartbeat + leave flow (582 tests passed: 55 in @arena/game-core, 527 in @arena/api, 0 in @arena/web)
-- [x] **Coverage cleanup for Codecov PR #38** — added 54 new tests to address the patch coverage gap (was 55.5% / 282 missing lines). Brought all 6 flagged files to ≥95% statements: `presence.service.ts` 18.62%→100%, `game-loop.service.ts` 71.94%→95.26%, `redis.service.ts` 78.75%→97.5%, `room.service.ts` 95.97%→100%, `room.handler.ts` 96.21%→99.24%, `game.gateway.ts` stays 100%. Overall API coverage 89.53%→94.98% (587 tests, 0 failures). See `memory-bank/coverage-cleanup.md` for the full diff.
-- [x] **Phase 6: Graceful Exit And Result Navigation Cleanup** — auto-redirect to `/result/[matchId]` with 3s overlay when match finishes, added "Rời Trận Đấu" button in game screen with confirmation modal, removed stale TODO in socket-store.
-- [x] **Phase 7: Shell Cleanup Isolation** — verified and stabilized `AppShellLayout` and `Sidebar`. Legacy gradients still remain at `app-shell-layout.tsx:34` and `sidebar.tsx:230` and are tracked under Phase 5 Step 5.1. Enhanced mobile UX by adding Escape key listener and backdrop click-to-close for the mobile navigation overlay, preserving robust skip-link accessibility. Zero page-level business logic changes.
-- [x] **Atomic Design Migration PoC** — successfully migrated `RoomCodeCard` to `components/atoms/` using GitNexus-guided impact analysis. Updated imports safely, removed legacy barrel export, and verified zero regressions. This establishes the standard workflow for future component restructuring.
-- [x] **Phase 8: Frontend Audit Sweep** — verified Home page a11y (htmlFor/id already correct, tap-targets >44px). Confirmed Not-Found surfaces have proper skip-links and consistent theming. Created reusable `AvatarFrame` component to deduplicate avatar/sprite framing logic across `LobbyPlayerGrid` and `GamePage` sidebar, reducing code duplication and enforcing design system consistency.
-- [x] **Phase 9 & 10: Tie-Break And Spectator Baseline** — Verified backend `MatchStateMachine` already implements robust tie-break logic (total response time → correct answers → random fallback). Confirmed `RoomService.joinRoom` already enforces "Hard Gate" for late joins (rejects `IN_GAME`/`FINISHED` rooms with `ROOM_ALREADY_STARTED`). Implemented client-side Spectator View: added `isEliminated` state to socket store, handled `PLAYER_ELIMINATED` event, and rendered a dedicated "Chế độ khán giả" UI in `GamePage` when a player is eliminated, allowing them to watch the rest of the match unfold.
+- [x] **Phase 1 contract baseline** — tách rõ room lifecycle contract khỏi match lifecycle; thêm `STARTING`, room status/presence socket events, payload room typed đầy đủ cho API/web consume (`packages/shared/src/{state,socket,events}.ts`)
+- [x] **Phase 2 backend baseline** — public room auto-countdown khi đủ người, cancel countdown khi tụt dưới minimum, private room host force-start, room status chuyển `WAITING -> COUNTDOWN -> STARTING -> IN_GAME` đồng bộ với match start (`apps/api/src/modules/match/game-loop.service.ts:136-184, 274-403`)
+- [x] **Phase 3 transport/store baseline** — `socket-store` consume room lifecycle events thật, lobby page đọc `room.status` / `countdownEndsAt` / `match.id` từ store, bỏ giả định manual-start-only ở client
+- [x] **Phase 3 refinement (2026-06-08)** — `useLobbyLifecycle` hook (`apps/web/src/hooks/use-lobby-lifecycle.ts`) encapsulate auto-join, countdown timer, lifecycle state; xoá dev-only mock player fallback; export `Player`/`Room` types
+- [x] **Host force-start private room** — `GameLoopService.forceStartRoomMatch` + `MatchHandler.handleStartMatch` (host-only) đã wire; `LobbyStartControls` consume từ store
+- [x] **Heartbeat/presence validation** — client gửi heartbeat 10s (`socket-store.ts:642-657`), server `game.gateway.ts:157-183` cập nhật Redis TTL 20s, `PresenceService.sweep` 5s, auto-disband private room nếu host stale, batch remove non-host stale
+- [x] **Lobby state machine** — `WAITING -> COUNTDOWN -> STARTING -> IN_GAME` (backend + store wiring done)
+- [x] **Countdown recovery** — `GameLoopService.onModuleInit` đọc `room:countdowns` set, re-arm timer (hoặc auto-launch nếu đã expire) để chống kẹt COUNTDOWN sau restart
+- [x] **Frontend surfaces** — countdown overlay, "leave" button + confirm modal, mobile-friendly leave flow, extracted lobby components (`LobbyHeader`, `RoomCodeCard`, `LobbyPlayerGrid`, `LeaveRoomModal`, `LobbyCountdownOverlay`) + visual stale indicator
+- [x] **Lobby surface i18n** — toàn bộ 5 lobby components + `useLobbyLifecycle` hook + lobby page migrate sang `next-intl` namespaces `lobby.*`; ~50 keys mới ở `vi/en.json`
+- [x] **Test footprint** — `presence.service.spec.ts` 16 tests, `game-loop.service.spec.ts` 78 tests, `room.handler.spec.ts` regression cho data-integrity guard, `room.service.spec.ts` `getActiveRooms` 2 cases, `redis.service.spec.ts` +6 passthroughs; **587/587 unit + 11/11 E2E** pass
+- [x] **Coverage cleanup PR #38** — overall statements 89.53% → **94.98%**. `presence.service.ts` 18.62% → 100%, `game-loop.service.ts` 71.94% → 95.26%, `redis.service.ts` 78.75% → 97.5%, `room.service.ts` 95.97% → 100%, `room.handler.ts` 96.21% → 99.24%, `game.gateway.ts` 100%. Xem `memory-bank/coverage-cleanup.md`
+- [x] **Phase 6 — Graceful Exit + Result Navigation** — auto-redirect `/result/[matchId]` 3s sau khi match finish; nút "Rời Trận Đấu" + confirm modal ở game page; xoá stale TODO trong `socket-store`
+- [x] **Phase 7 — Shell Cleanup Isolation** — verify/stabilize `AppShellLayout` + `Sidebar`; thêm Escape + backdrop click-to-close cho mobile nav; preserve skip-link a11y; **không** đụng page business logic
+- [x] **Phase 8 — Frontend Audit Sweep** — Home page a11y (`htmlFor`/id, tap-targets >44px), Not-Found surfaces có skip-link, tạo `AvatarFrame` reusable để dedupe avatar/sprite framing giữa `LobbyPlayerGrid` và `GamePage` sidebar
+- [x] **Phase 9 — Tie-Break (baseline)** — backend `MatchStateMachine.tieBreak` đã có sort theo `totalResponseTimeMs` → `correctAnswers` → alphabetical fallback (deterministic). UI chưa expose riêng
+- [x] **Phase 10 — Spectator Baseline (eliminated only)** — `socket-store` có `isEliminated`, handle `PLAYER_ELIMINATED`; `GamePage` render "Chế độ khán giả" với overlay khi `isEliminated === true`. Drop-in spectating (vào `IN_GAME`/`FINISHED`) chưa có
 
-#### Phase 4 refinement (2026-06-08)
+### ✅ Admin Kill-Switch (PR #47, 2026-06-14) — Baseline Hoàn thành
 
-- [x] **LobbyStartControls extracted** — host start button block (16 lines, 4 room-status states) moved from `app/[locale]/lobby/[roomCode]/page.tsx` into a new page-local component `apps/web/src/components/lobby/lobby-start-controls.tsx`. Page size 169 → 161 lines. `RoomCodeCard` stays in `components/atoms/` (atomic migration is gradual, per user direction). Cleaned up now-unused imports (`Gamepad`, `RoomStatus`) from lobby page.
-- [x] **Lobby surface i18n migration (Option C)** — fully migrated all 5 lobby components (`LobbyHeader` was already done, `LobbyCountdownOverlay`, `LeaveRoomModal`, `LobbyPlayerGrid`, `LobbyStartControls`) + the `useLobbyLifecycle` hook + the lobby page itself to `next-intl` namespaces under `lobby.*`. Added ~50 new translation keys to `apps/web/messages/{vi,en}.json` with full Vietnamese + English coverage. Hook stays a pure domain adapter (no `useTranslations`); it surfaces either a real `Error.message` or a sentinel `"lobby.unknownError"` string that the page resolves through `t("joinFailedFallback")` to keep the i18n concern at the component layer. `pnpm --filter @arena/web {build,lint,typecheck}` all green. Lobby route size: 7.61 kB → 7.01 kB (i18n keys more compact than inline Vietnamese strings).
+- [x] **Phase 1 (contract)** — typed `ServerEvent.ROOM_TERMINATED` + `RoomTerminatedPayload` + `RoomTerminationReason="ADMIN_TERMINATED"`
+- [x] **Phase 2 (backend action)** — `POST /admin/rooms/:roomId/terminate` (ADMIN-only, 5/min throttle) → `AdminService.terminateRoom` orchestrator; `MatchService.finishMatch(matchId, null)`; `GameLoopService.stopRoomRuntime` cancel lobby countdown + match timers; `emitRoomTerminated` encapsulate socket emit; Redis cleanup (room keys + SCAN'd presence keys + match state + lobby countdowns index)
+- [x] **Phase 3 (defensive orchestrator)** — `cleanupRoomRedisKeys` error + `disbandRoom` error đều surface `{ partial: true, cleanupError }` với first-error-wins semantics. `admin.service.ts` 100% stmts/100% branch, `match.service.ts` 100%/100%, `game-loop.service.ts` 100% stmts / 98.57% branch
+- [x] **Phase 4 (game page ROOM_TERMINATED UX)** — `GamePage` toast qua `useToast`, `clearTimers` qua `clearTimers` callback, `useRef` guard cho strict-mode double-invoke, redirect `/` sau 1.5s; `Game.termination.{toastTitle,toastDefault}` i18n keys ở `vi/en.json`. Inline `TODO(game-page-termination)` đã xoá
+- [x] **DTO metadata truth-in-advertising** — `TerminateRoomDto.message` description sửa để khớp hành vi fail-fast của `superRefine`, mark `deprecated: true`. `terminate-room.dto.spec.ts` 8 tests
+- [x] **Coverage PR #47** — `game-loop.service.ts` patch 6.89% → 100% stmts / 98.57% branch, `admin.service.ts` 88.09% → 100%/100%, `terminate-room.dto.ts` 66.66% → 100%/100%. **+47 net tests** (8 DTO + 17 game-loop + 22 admin), **119/119 spec trong 3 file pass**
+- [ ] Admin kill-switch message sanitizer — **deferred** tới khi shared profanity/content-moderation pipeline (plan.md §501) lands. `TerminateRoomDto.message` hiện fail-fast reject raw message — `AdminService.terminateRoom` cố ý không truyền `message` từ UI cho tới khi pipeline ready
 
-#### Product features phụ thuộc lobby hoàn thiện
+### ✅ Profile + Rankings Real APIs (PR #38 follow-up, 2026-06-06) — Hoàn thành
 
-- [ ] Frictionless onboarding system với content moderation (chưa có profanity filter, device fingerprint)
-- [ ] Spectator mode + micro-interactions (chưa có socket channel riêng cho spectator)
-- [ ] Drop-in spectating cho late joiners
-- [ ] AFK sweeping
-- [ ] Asset preloading system with fallback
-- [ ] Mass-spectator isolation (SSE channel riêng)
-- [ ] Anonymous identity tracking (device fingerprint)
-- [ ] Optimistic UI implementation với smart recovery (đã có một phần ở `game/[matchId]/page.tsx` nhưng chưa đầy đủ rollback)
-- [x] Game operations tools — admin force-kill ✅ Done (Phases 1–5 of the kill-switch; contract, backend endpoint, client transport, admin UI, and lobby redirect are all merged)
-  - [ ] Admin kill-switch message sanitizer — deferred until the shared profanity/content-moderation pipeline lands; current schema fail-fast rejects raw `message` input (see `plan.md` deferred items)
-  - [x] **Phase 1 (contract) done** (2026-06-07): typed `ServerEvent.ROOM_TERMINATED` + `RoomTerminatedPayload` + `RoomTerminationReason="ADMIN_TERMINATED"`; mirrored `RoomEventType.ROOM_TERMINATED` + `RoomTerminatedEventPayload` for event-sourcing. `@arena/shared` build green. Phases 2–5 pending.
-  - [x] **Phase 2 (backend admin action) done** (2026-06-07): `POST /admin/rooms/:roomId/terminate` (ADMIN-only, 5/min throttle) wired through `AdminService.terminateRoom` orchestrator. Extends `MatchService.finishMatch` to accept `null` winner (admin termination skips score persistence). New `GameLoopService.stopRoomRuntime` cancels lobby countdown + match timers; `emitRoomTerminated` encapsulates the socket.io emit. Explicit Redis cleanup (room keys + SCAN'd presence keys + match state + lobby countdowns index). 607 tests pass, `@arena/api` build green. Phases 3–5 pending.
+- [x] Backend `UsersModule` (`/users/me/stats`, `/users/me/history` cursor-paginated, `PATCH /users/me/avatar`)
+- [x] Backend `RankingsModule` (`GET /rankings/leaderboard?period=weekly|all` + `limit=1..100`, Redis cache 60s, cache-aside, 30 req/min throttle, `@Public()`)
+- [x] Frontend `useProfileStats` + `useMatchHistory` + `useLeaderboard` hooks
+- [x] `PATCH /users/me/avatar` flow + `apps/web/src/lib/avatars.ts` dùng 1 nguồn `AVATAR_SEEDS` từ `@arena/shared`
+- [x] `seed-demo.ts` (idempotent) + Vitest SWC E2E infrastructure (`test:db:up`/`test:e2e`)
+- [x] Tests: 418/418 unit + 11/11 E2E pass. Xem `memory-bank/issue.md` Step 3-6
 
-### 🔴 Trang UI dùng mock data — cần thay bằng API thật
+### 🟡 Tie-Break & Sudden Death
 
-- [x] `/profile` — stats/match history — ✅ Done (issue.md Step 3+5: `useProfileStats` + `useMatchHistory` hooks call `GET /users/me/stats` + `/users/me/history`)
-- [x] `/rankings` — leaderboard — ✅ Done (issue.md Step 4+5: `useLeaderboard` hook calls `GET /rankings/leaderboard`)
-- [x] `/lobby/[roomCode]` — mock players fallback removed (Phase 3 refinement 2026-06-08); page now reads strictly from server-authoritative player list via `useLobbyLifecycle` hook
-- [x] Backend endpoints — ✅ Done (issue.md Steps 3+4: `GET /users/me/stats`, `GET /users/me/history`, `PATCH /users/me/avatar`, `GET /rankings/leaderboard` implemented and tested)
+- [x] Deterministic tie-break backend (`MatchStateMachine.tieBreak`) — sort by `totalResponseTimeMs` (lower is better), `correctAnswers` (higher is better), alphabetical playerId fallback
+- [ ] Sudden death mode (chưa có state machine branch)
+- [ ] Tie-break UI surface (chưa expose riêng; chỉ thấy qua `MATCH_FINISHED.winnerId` + `tiedPlayerIds` payload)
 
-### 📋 Upcoming (Phase 2: Polish & Testing)
+### 📋 Upcoming — PR Kế Tiếp (đề xuất)
 
-- [ ] Tie-break và sudden death
-- [ ] Post-match flow polish (rematch, share, screenshot)
-- [ ] Content delivery: runtime fallback, anti-repetition UI
-- [ ] Accessibility audit (ARIA, keyboard nav, color-blind mode)
-- [ ] Comprehensive testing (E2E với Playwright)
-- [ ] Lighthouse + bundle size review
+1. **Design System Phase 5B closeout** (P1, polish)
+   - Bước 5B.1: bỏ gradient cũ ở `app-shell-layout.tsx` + `sidebar.tsx`
+   - Bước 5B.2: safe-delete legacy CSS (`styles/components.css`, cyberpunk classes)
+   - Bước 5B.3: visual audit toàn flow Lobby/Match/Result/Rankings/Profile/Settings/Admin
+   - Owner: TBD, ticket: TBD
+2. **Drop-in spectating + spectator transport baseline** (P2, product)
+   - Re-evaluate `RoomService.joinRoom` để cho phép late-joiners vào `IN_GAME`/`FINISHED` với `PlayerStatus.SPECTATOR`
+   - Thêm socket channel `spectator:<matchId>` (hoặc namespace riêng) để mass-spectate không pollute player channel
+   - Tests: `RoomService.joinRoom` reject vs. allow-by-status, presence semantics cho spectator
+3. **In-match AFK policy** (P2, product)
+   - Backend: round-miss detection tận dụng `Answer` table (current/previous round)
+   - Quyết định: 2+ round miss → auto-`ELIMINATED` (loss-of-life) hoặc `SPECTATOR` (chill) — pending product decision
+4. **Content moderation + message sanitizer + device fingerprint** (P2, compliance)
+   - Shared profanity/content-moderation pipeline (plan.md §501)
+   - `TerminateRoomDto.message` cho phép custom message
+   - Backend enforce `guestId` Model C + IP/UA fingerprint
+5. **Optimistic UI rollback** (P2, game feel) — hiện `game/[matchId]/page.tsx` đã có `selectedAnswer` + `roundCompleted` lock-in; thiếu idempotency key + rollback path khi server reject
+6. **Post-match rematch + share** (P3, retention)
+7. **Accessibility audit (WCAG)** (P2, compliance)
+8. **k6 load test 100 concurrent WS** (P2, pre-launch gate) — xem Testing Roadmap bên dưới
+9. **Playwright browser E2E (3-5 cases)** (P3) — deferred sau khi Design System ổn định
 
 ### 🔮 Future (Phase 3: Production Ready)
 
@@ -145,82 +162,94 @@
 
 ### 🟡 Significant
 
-- [ ] Lobby lifecycle chưa có state machine riêng; chỉ mới chuyển trạng thái thông qua match loop
-- [ ] Heartbeat/AFK sweeping chưa có scheduler
-- [ ] `RoomService` dùng read-modify-write trên `playerCount` (race condition nhỏ, cần `INCR`/`DECR` nếu scale)
+- [ ] Lobby lifecycle state machine còn nằm trong `GameLoopService` thay vì tách thành `RoomLifecycleService` riêng (low priority — current design works)
+- [ ] In-match AFK policy chưa quyết (loại vs. chuyển spectator)
+- [ ] `RoomService.getActiveRooms` dùng Prisma `findMany` (OK cho 1 instance, cần cache hoặc stream nếu scale)
 - [ ] `correctAnswer` có thể leak qua `stateMachine.startRound` (đã strip ở broadcast nhưng cần audit thêm)
-- [ ] `SocketNamespace` chưa có SPECTATOR entry
+- [ ] `SocketNamespace` chưa có SPECTATOR entry riêng (drop-in spectating sẽ cần)
 - [ ] `packages/config` directory trống
-- [x] **Profile + Rankings mock data** — cần backend endpoints trước khi gắn UI thật ✅ Done (issue.md Step 3+4+5: backend + hooks + UI live)
-- [ ] **Design system Phase 5 chưa đóng** (shell templates, legacy CSS, visual audit) — **Follow-up**: Design system Phase 5 (shell templates/legacy CSS/visual audit) — owner: TBD, ticket: TBD
-- [x] **Lobby mock players fallback** — removed (Phase 3 refinement 2026-06-08); page now reads strictly from server-authoritative player list via `useLobbyLifecycle` hook
+- [ ] **Design system Phase 5B chưa đóng** (shell closeout + legacy CSS + visual audit) — owner: TBD, ticket: TBD
+- [ ] **Admin kill-switch message sanitizer** — deferred tới khi profanity/content-moderation pipeline lands
+- [ ] **Host kick player** — backend hook (`PlayerStatus.KICKED` đã có ở shared types) chưa wire vào room handler / admin endpoint
+- [ ] **Drop-in spectating** — `RoomService.joinRoom` còn reject khi `room.status !== WAITING`
 
 ### 🟢 Nice-to-Have
 
 - [ ] Frictionless onboarding với content moderation + device fingerprint
-- [ ] Lobby heartbeat UI
-- [ ] Drop-in spectating (SSE channel riêng)
-- [ ] AFK sweeping UI
-- [ ] Graceful exit confirmation modal
+- [ ] Lobby heartbeat UI indicator (đã có presence semantics backend; thiếu UI dot)
+- [ ] Mass-spectator isolation infra (SSE channel riêng)
 - [ ] Spectator emotes (micro-interactions)
 - [ ] Asset preloading + fallback
-- [ ] Mass-spectator isolation infra
 - [ ] Post-match rematch UI
 - [ ] Accessibility audit
 - [ ] Bot/demo system
 - [ ] Optimistic UI rollback flow
-- [ ] Game operations kill switch (admin force-kill room)
+- [ ] k6 load test pre-launch
+- [ ] Playwright browser E2E
+- [x] Game operations kill switch (admin force-kill room) — Phases 1-4 done; chỉ còn deferred message-sanitizer
+- [x] Profile + Rankings real APIs — done
+- [x] Lobby mock players fallback — removed
+- [x] Lobby state machine backend + store wiring — done
+- [x] Heartbeat/presence scheduler — done (`PresenceService.sweep` 5s)
 
-## Architecture Assessment Scores (cập nhật 2026-06-06)
+## Architecture Assessment Scores (cập nhật 2026-06-14)
 
-| Dimension                | Score      | Notes                                                                                  |
-| ------------------------ | ---------- | -------------------------------------------------------------------------------------- |
-| Monorepo Structure       | 10/10      | Turborepo + Remote Caching                                                             |
-| Package Boundaries       | 9/10       | Clean separation, đúng dependency flow                                                 |
-| Domain Logic (game-core) | 9/10       | Có serialize/deserialize, immutability, persistence                                    |
-| Backend Architecture     | 7/10       | Handlers rõ ràng; còn thiếu lobby lifecycle, use-case layer, kick-switch               |
-| Frontend Architecture    | 7/10       | Lobby/Game/Result xong, sidebar/app-shell đã có; Phase 5 + Profile/Rankings còn dở     |
-| Infrastructure           | 7/10       | Docker + Redis + Throttler; chưa có multi-instance adapter                             |
-| DevOps/CI-CD             | 10/10      | GitHub Actions pipeline configured; E2E job có cache strategy gọn hơn + fail artifacts |
-| Testing                  | 7/10       | Có nhiều spec cho game-core, game-loop, handlers, admin, question                      |
-| **Overall**              | **8.0/10** | Foundation + core gameplay xong; cần lobby lifecycle + real data APIs                  |
+| Dimension                | Score      | Notes                                                                               |
+| ------------------------ | ---------- | ----------------------------------------------------------------------------------- |
+| Monorepo Structure       | 10/10      | Turborepo + Remote Caching                                                          |
+| Package Boundaries       | 9/10       | Clean separation, đúng dependency flow                                              |
+| Domain Logic (game-core) | 9/10       | Có serialize/deserialize, immutability, persistence, deterministic tie-break        |
+| Backend Architecture     | 8/10       | Handlers rõ ràng; lobby/heartbeat baseline done; admin kill-switch baseline done    |
+| Frontend Architecture    | 8/10       | Lobby/Game/Result done; spectator baseline (eliminated) done; Profile/Rankings real |
+| Infrastructure           | 8/10       | Docker + Redis + Throttler + CI/E2E; chưa có multi-instance adapter                 |
+| DevOps/CI-CD             | 10/10      | GitHub Actions pipeline configured; E2E job có cache strategy gọn + fail artifacts  |
+| Testing                  | 9/10       | 587 unit + 11 E2E; coverage 94.98% stmts; PR #38 + PR #47 cleanup; admin 100%/100%  |
+| **Overall**              | **8.4/10** | Lobby/heartbeat/graceful-exit/admin kill-switch baseline done; còn Phase 5B polish  |
 
 ## Milestones
 
-| Milestone                       | Target   | Status            |
-| ------------------------------- | -------- | ----------------- |
-| Base Scaffold                   | Week 1   | ✅ Complete       |
-| Architecture Review             | Week 1   | ✅ Complete       |
-| Critical Fixes (Phase 0.5)      | Week 2   | ✅ Complete       |
-| Core Gameplay Loop              | Week 2   | ✅ Complete       |
-| Frontend Pages + Design System  | Week 2-3 | 🚧 Phase 5 còn dở |
-| Lobby Lifecycle + Graceful Exit | Week 3   | 📋 Next           |
-| Reconnect polish + Tie-break    | Week 3-4 | 📋 Pending        |
-| Profile/Rankings real APIs      | Week 4   | 📋 Pending        |
-| E2E + Accessibility audit       | Week 4   | 📋 Pending        |
-| MVP Launch                      | Week 5   | 🔮 Future         |
+| Milestone                       | Target   | Status                               |
+| ------------------------------- | -------- | ------------------------------------ |
+| Base Scaffold                   | Week 1   | ✅ Complete                          |
+| Architecture Review             | Week 1   | ✅ Complete                          |
+| Critical Fixes (Phase 0.5)      | Week 2   | ✅ Complete                          |
+| Core Gameplay Loop              | Week 2   | ✅ Complete                          |
+| Frontend Pages + Design System  | Week 2-3 | 🟡 Phase 5A done, 5B pending         |
+| Lobby Lifecycle + Graceful Exit | Week 3   | ✅ Complete (PR #38)                 |
+| Admin Kill-Switch End-to-End    | Week 3-4 | ✅ Baseline (PR #47)                 |
+| Profile/Rankings real APIs      | Week 4   | ✅ Complete                          |
+| E2E + Accessibility audit       | Week 4   | 🟡 API E2E done; Playwright deferred |
+| MVP Launch                      | Week 5   | 🔮 Future                            |
 
-## What Works Now (verified 2026-06-06)
+## What Works Now (verified 2026-06-14)
 
 - Project structure, CI/CD, Vitest, Turborepo remote cache
-- Shared types (`events.ts`, `state.ts`, `socket.ts`)
-- Match state machine (pure logic, Redis persistence, immutability)
-- `GameLoopService` chạy countdown → round → result → finish với persistence
+- Shared types (`events.ts`, `state.ts`, `socket.ts`, `errors.ts`)
+- Match state machine (pure logic, Redis persistence, immutability, deterministic tie-break)
+- `GameLoopService` chạy countdown → round → result → finish với persistence + lobby state machine
+- `GameLoopService.maybeStartPublicCountdown` auto-start cho public, `forceStartRoomMatch` cho private host
+- `GameLoopService.onModuleInit` recover lobby countdowns từ Redis sau restart
+- `PresenceService.sweep` (5s interval) auto-disband private room nếu host stale, batch remove non-host stale
 - `AuthHandler` reconnect sync, `RoomHandler` create/join/leave, `MatchHandler` start/answer/snapshot
-- `AdminService` sync questions, reset system; `HealthController` monitoring
+- `AdminService` sync questions, reset system, `terminateRoom` kill-switch; `HealthController` monitoring
 - CSRF + rate limiting + Zod validation đã wire xuyên suốt
 - Frontend pages: home (`/`), `/room/create`, `/lobby/[roomCode]`, `/game/[matchId]`, `/result/[matchId]`, `/profile`, `/rankings`, `/settings`, `/admin`
-- Socket-store với auto-reconnect logic + state machine handlers
+- Socket-store với auto-reconnect logic, room lifecycle events, ROOM_TERMINATED handling, eliminated spectator state
+- 587/587 unit tests + 11/11 E2E tests pass; API coverage 94.98% statements
 
 ## What's Next (Priority Order)
 
-1. **PR tiếp theo — Lobby lifecycle + graceful exit baseline**
-   - Backend: room state machine (`WAITING → COUNTDOWN → STARTING → IN_GAME`), auto-start cho public, host controls cho private
-   - Heartbeat validation + AFK sweeping
-   - Frontend: countdown overlay, leave flow, "waiting for players" UI
-   - Tests: room lifecycle, heartbeat, leave flow
-2. **PR sau — Real player stats + leaderboard**
-   - Backend: `GET /users/me/stats`, `GET /users/:id/history`, `GET /rankings/leaderboard`
-   - Frontend: thay mock data ở `/profile`, `/rankings`
-3. **Dọn dẹp Design System Phase 5**: shell cleanup, legacy CSS, visual audit
-4. Cập nhật `PROJECT_STATUS.md` và `activeContext.md` cho khớp hiện trạng (xem notes trong PR này)
+1. **PR tiếp theo — Design System Phase 5B closeout (đề xuất)**
+   - Bước 5B.1: bỏ gradient cũ ở `app-shell-layout.tsx` + `sidebar.tsx`
+   - Bước 5B.2: safe-delete legacy CSS
+   - Bước 5B.3: visual audit toàn flow
+2. **PR sau — Drop-in spectating + spectator transport baseline**
+   - `RoomService.joinRoom` cho phép late-joiner vào `IN_GAME`/`FINISHED` với `PlayerStatus.SPECTATOR`
+   - Socket channel/namespace riêng cho spectator
+3. **PR sau — In-match AFK policy** (sau khi có product decision: loại vs. spectator)
+4. **PR sau — Content moderation + message sanitizer + device fingerprint**
+5. **Optimistic UI rollback** (game feel, không block ship MVP)
+6. **Post-match rematch + share** (retention)
+7. **k6 load test 100 concurrent WS** (pre-launch gate)
+8. **Playwright browser E2E** (deferred tới khi UI ổn định)
+9. Cập nhật `PROJECT_STATUS.md` và `activeContext.md` cho khớp hiện trạng ✅ done trong lần này

@@ -146,6 +146,10 @@
     "matchFinishedOverlay": {
       "title": "TRẬN ĐẤU KẾT THÚC!",
       "subtitle": "Đang chuyển đến trang kết quả..."
+    },
+    "termination": {
+      "toastTitle": "Phòng đã bị đóng",
+      "toastDefault": "Phòng đã bị quản trị viên đóng. Bạn sẽ được đưa về trang chủ."
     }
   },
   "profile": {

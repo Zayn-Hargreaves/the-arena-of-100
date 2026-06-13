@@ -2,7 +2,11 @@ import { QuestionController } from "./question.controller";
 import { QuestionService } from "./question.service";
 import { CreateQuestionDto } from "./dto/create-question.dto";
 import { UpdateQuestionDto } from "./dto/update-question.dto";
-import { GetQuestionsDto, QuestionDifficulty } from "./dto/get-questions.dto";
+import {
+  GetQuestionsDto,
+  QuestionDifficulty,
+  QuestionCategory,
+} from "./dto/get-questions.dto";
 import { Question } from "./entities/question.entity";
 import { NotFoundException, BadRequestException } from "@nestjs/common";
 import { BulkImportDto } from "./dto/bulk-import.dto";
@@ -18,6 +22,7 @@ describe("QuestionController", () => {
     options: ["Paris", "London", "Berlin", "Madrid"],
     correctAnswer: "Paris",
     difficulty: QuestionDifficulty.EASY,
+    category: QuestionCategory.GEOGRAPHY,
     active: true,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -31,6 +36,7 @@ describe("QuestionController", () => {
       options: ["3", "4", "5", "6"],
       correctAnswer: "4",
       difficulty: QuestionDifficulty.EASY,
+      category: QuestionCategory.LOGIC,
       active: true,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -76,6 +82,7 @@ describe("QuestionController", () => {
       options: ["Paris", "London", "Berlin", "Madrid"],
       correctAnswer: "Paris",
       difficulty: QuestionDifficulty.EASY,
+      category: QuestionCategory.GEOGRAPHY,
       active: true,
     };
 
@@ -265,6 +272,7 @@ describe("QuestionController", () => {
           options: ["Paris", "London", "Berlin", "Madrid"],
           correctAnswer: "Paris",
           difficulty: QuestionDifficulty.EASY,
+          category: QuestionCategory.GEOGRAPHY,
           active: true,
         },
       ],

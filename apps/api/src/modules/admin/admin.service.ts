@@ -305,12 +305,19 @@ export class AdminService {
     // already kicked — we still need the DB record cleaned up and the
     // admin UI informed via the `{ partial: true, cleanupError }`
     // response contract (see apps/web/src/app/[locale]/admin/page.tsx).
+    // The error is also surfaced to the caller (not just logged) so the
+    // admin UI can report a partial result and trigger a follow-up sweep
+    // if needed.
+    let partial = false;
+    let cleanupError: string | undefined;
     try {
       await this.cleanupRoomRedisKeys(roomId, matchId);
     } catch (error) {
+      partial = true;
       const errMsg = error instanceof Error ? error.message : String(error);
+      cleanupError = errMsg;
       this.logger.error(
-        `cleanupRoomRedisKeys failed during admin termination of room ${roomId}${matchId ? ` (match ${matchId})` : ""}: ${errMsg}`,
+        `Partial termination: failed to cleanup Redis keys for room ${roomId}${matchId ? ` (match ${matchId})` : ""}: ${errMsg}`,
         error instanceof Error ? error.stack : undefined,
       );
     }
@@ -318,16 +325,19 @@ export class AdminService {
     // 6. Disband room (DB). Surface partial-failure to the caller instead
     // of silently swallowing it: the room channel has been notified and
     // timers/Redis have been cleaned, so we cannot roll back, but the
-    // admin UI still needs to know the DB record is stale.
-    let partial = false;
-    let cleanupError: string | undefined;
+    // admin UI still needs to know the DB record is stale. Errors here
+    // are merged into the same `partial`/`cleanupError` flags so the
+    // caller sees a single consistent partial-success signal regardless
+    // of which step failed.
     try {
       await this.roomService.disbandRoom(roomId);
     } catch (error) {
       partial = true;
       const errMsg = error instanceof Error ? error.message : String(error);
       const errStack = error instanceof Error ? error.stack : undefined;
-      cleanupError = errMsg;
+      // Prefer the first error encountered so the caller can act on a
+      // stable field; the most recent error is still logged.
+      if (!cleanupError) cleanupError = errMsg;
       this.logger.error(
         `Partial termination: failed to disband room ${roomId} during admin termination${matchId ? ` (match ${matchId})` : ""}: ${errMsg}`,
         errStack,
@@ -336,7 +346,7 @@ export class AdminService {
 
     const terminatedAt = Date.now();
     this.logger.warn(
-      `Room ${roomId} terminated by admin${matchId ? ` (match ${matchId})` : ""}${partial ? " (partial: DB cleanup failed)" : ""}`,
+      `Room ${roomId} terminated by admin${matchId ? ` (match ${matchId})` : ""}${partial ? " (partial: cleanup failed)" : ""}`,
     );
 
     return {
@@ -345,7 +355,7 @@ export class AdminService {
       roomId,
       matchId,
       message: partial
-        ? "Room terminated by admin (partial: DB cleanup failed)"
+        ? "Room terminated by admin (partial: cleanup failed)"
         : "Room terminated by admin",
       terminatedAt,
       ...(cleanupError ? { cleanupError } : {}),

@@ -12,6 +12,7 @@ import { useSocketStore } from "@/stores/socket-store";
 import { useRouter } from "@/i18n/routing";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
+import { useToast } from "@/hooks/use-toast";
 import { Users, ShieldAlert, Swords, LogOut, Trophy } from "lucide-react";
 import { avatars } from "@/lib/avatars";
 
@@ -24,6 +25,7 @@ export default function GamePage({ params }: GamePageProps) {
   const { matchId, locale } = resolvedParams;
   const router = useRouter();
   const pathname = usePathname();
+  const { toast } = useToast();
   const {
     match,
     submitAnswer,
@@ -32,8 +34,11 @@ export default function GamePage({ params }: GamePageProps) {
     remainingCount,
     leaveRoom,
     isEliminated,
+    roomTerminated,
+    roomTerminationMessage,
   } = useSocketStore();
   const t = useTranslations("Game");
+  const tTermination = useTranslations("Game.termination");
 
   // Extract locale from pathname if not provided
   const currentLocale = locale || pathname.split("/")[1] || "vi";
@@ -134,16 +139,43 @@ export default function GamePage({ params }: GamePageProps) {
     router,
   ]);
 
-  // TODO(game-page-termination): handle `roomTerminated` from the socket
-  // store the same way the lobby page does
-  // (apps/web/src/app/[locale]/lobby/[roomCode]/page.tsx:66-87). The store
-  // already nulls `room` and `match` on `ServerEvent.ROOM_TERMINATED`
-  // (apps/web/src/stores/socket-store.ts:602-613) and the server stops
-  // the round timers, so the player is left on a frozen question card
-  // with no recovery path. Follow-up should toast + redirect to `/`,
-  // guarded by a `useRef` to survive React strict-mode double-invoke.
-  // See PR #47 review (analysis comment on
-  // apps/web/src/stores/socket-store.ts:602-613).
+  // Server has force-terminated this room (admin kill-switch). Toast once
+  // and bounce the user back to the home page. useRef guards against
+  // React strict-mode double-invoke and any future re-renders. We also
+  // clear the component-level timers/intervals so the question card does
+  // not keep ticking against a dead match.
+  // Mirrors apps/web/src/app/[locale]/lobby/[roomCode]/page.tsx (lobby
+  // termination handler) so the same UX fires from both surfaces.
+  const terminationNotifiedRef = useRef(false);
+  useEffect(() => {
+    if (!roomTerminated || terminationNotifiedRef.current) return;
+    terminationNotifiedRef.current = true;
+
+    // Stop the round timer / interval so the frozen question card does
+    // not keep counting down after the room is gone.
+    clearTimers();
+
+    toast({
+      title: tTermination("toastTitle"),
+      description: roomTerminationMessage ?? tTermination("toastDefault"),
+      variant: "error",
+    });
+
+    const redirectTimer = window.setTimeout(() => {
+      router.push("/");
+    }, 1500);
+
+    return () => {
+      window.clearTimeout(redirectTimer);
+    };
+  }, [
+    roomTerminated,
+    roomTerminationMessage,
+    router,
+    toast,
+    tTermination,
+    clearTimers,
+  ]);
 
   // Auto-redirect to results page when match finishes
   useEffect(() => {

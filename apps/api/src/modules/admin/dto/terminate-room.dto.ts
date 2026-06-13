@@ -35,9 +35,11 @@ export type TerminateRoomInput = z.input<typeof terminateRoomSchema>;
 export class TerminateRoomDto implements TerminateRoomInput {
   @ApiProperty({
     example: "Abandoned by host — terminating for triage",
-    description: "Optional human-readable reason shown to affected players",
+    description:
+      "Optional human-readable reason. Currently REJECTED at the schema boundary (superRefine fail-fast) until the shared content-sanitizer pipeline (plan.md §501) lands; once it does, this field will be delivered verbatim to affected players via ROOM_TERMINATED. Submitting a value today returns a validation error.",
     required: false,
     maxLength: 200,
+    deprecated: true,
   })
   message?: string;
 }

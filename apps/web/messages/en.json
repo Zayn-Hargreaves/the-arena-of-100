@@ -146,6 +146,10 @@
     "matchFinishedOverlay": {
       "title": "MATCH FINISHED!",
       "subtitle": "Redirecting to results page..."
+    },
+    "termination": {
+      "toastTitle": "Room was closed",
+      "toastDefault": "The room was closed by an administrator. You will be returned to the home page."
     }
   },
   "profile": {

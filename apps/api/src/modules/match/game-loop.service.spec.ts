@@ -911,6 +911,299 @@ describe("GameLoopService", () => {
 
       vi.useRealTimers();
     });
+
+    it("should log string rejections in the endRound timeout callback", async () => {
+      const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
+      (service as any).usedQuestionIds.set("match-endround-string", new Set());
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+      let capturedTimeout: (() => Promise<void>) | undefined;
+      setTimeoutSpy.mockImplementation(((handler: () => Promise<void>) => {
+        capturedTimeout = handler;
+        return 1 as any;
+      }) as any);
+
+      const fakeStateMachine = {
+        getState: () => ({
+          status: MatchStatus.ROUND_ACTIVE,
+          currentRoundNo: 1,
+          survivingPlayerIds: ["p1", "p2"],
+          players: new Map([
+            ["p1", { id: "p1", name: "Player 1" }],
+            ["p2", { id: "p2", name: "Player 2" }],
+          ]),
+        }),
+        getCurrentRound: () => ({
+          status: "ACTIVE",
+          question: { id: "q1" },
+          answers: new Map([
+            ["p1", { answer: "A", isCorrect: true, responseTimeMs: 100 }],
+            ["p2", { answer: "A", isCorrect: true, responseTimeMs: 120 }],
+          ]),
+          endsAt: Date.now() + 1000,
+        }),
+        transition: vi.fn(),
+        startRound: vi.fn().mockReturnValue({
+          status: "ACTIVE",
+          question: { id: "q1" },
+          answers: new Map([
+            ["p1", { answer: "A", isCorrect: true, responseTimeMs: 100 }],
+            ["p2", { answer: "A", isCorrect: true, responseTimeMs: 120 }],
+          ]),
+          endsAt: Date.now() + 1000,
+        }),
+        evaluateRound: vi.fn().mockReturnValue({
+          survivingIds: ["p1", "p2"],
+          eliminatedIds: [],
+          correctAnswer: "A",
+        }),
+      } as any;
+
+      vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(
+        fakeStateMachine,
+      );
+      // Throw a string so the timer catch logs via String(error).
+      vi.spyOn(service as any, "endRound").mockImplementationOnce(() => {
+        throw "endRound failure (string)";
+      });
+
+      await (service as any).executeRound(
+        "match-endround-string",
+        "room-1",
+        mockServer,
+      );
+      await capturedTimeout?.();
+
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Error in endRound timeout callback for match match-endround-string:",
+        ),
+        expect.any(String),
+      );
+
+      setTimeoutSpy.mockRestore();
+    });
+  });
+
+  describe("Branch coverage follow-ups", () => {
+    it("bypasses endRound when the round exists but is not ACTIVE", async () => {
+      const inactiveRound = {
+        status: "WAITING",
+        question: { id: "q1" },
+        answers: new Map(),
+      };
+      const fakeStateMachine = {
+        getState: () => ({
+          status: MatchStatus.ROUND_ACTIVE,
+          currentRoundNo: 2,
+          players: new Map(),
+        }),
+        getCurrentRound: () => inactiveRound,
+        transition: vi.fn(),
+        evaluateRound: vi.fn(),
+      } as any;
+      vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(
+        fakeStateMachine,
+      );
+
+      await (service as any).endRound("match-bypass", "room-1", mockServer);
+
+      expect(fakeStateMachine.transition).not.toHaveBeenCalled();
+      expect(fakeStateMachine.evaluateRound).not.toHaveBeenCalled();
+    });
+
+    it("bypasses endRound when the match is not ROUND_ACTIVE even if the current round is ACTIVE", async () => {
+      const activeRound = {
+        status: "ACTIVE",
+        question: { id: "q1" },
+        answers: new Map(),
+      };
+      const fakeStateMachine = {
+        getState: () => ({
+          status: MatchStatus.FINISHED,
+          currentRoundNo: 2,
+          players: new Map(),
+        }),
+        getCurrentRound: () => activeRound,
+        transition: vi.fn(),
+        evaluateRound: vi.fn(),
+      } as any;
+      vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(
+        fakeStateMachine,
+      );
+
+      await (service as any).endRound("match-bypass-2", "room-1", mockServer);
+
+      expect(fakeStateMachine.transition).not.toHaveBeenCalled();
+      expect(fakeStateMachine.evaluateRound).not.toHaveBeenCalled();
+    });
+
+    it("passes an empty exclude list when no used questions are tracked yet", async () => {
+      const getRandomSpy = vi
+        .spyOn(questionService, "getRandom")
+        .mockResolvedValueOnce({
+          id: "q-unused",
+          content: "Question",
+          options: ["A", "B"],
+          correctAnswer: "A",
+          difficulty: "MEDIUM",
+        } as any);
+
+      const usedQuestionIds = (service as any).usedQuestionIds as Map<
+        string,
+        Set<string>
+      >;
+      const getSpy = vi.spyOn(usedQuestionIds, "get");
+      getSpy.mockImplementationOnce(() => undefined);
+      getSpy.mockImplementationOnce(() => new Set());
+
+      stateMachine.transition(MatchStatus.COUNTDOWN);
+      await (service as any).executeRound("match-unique", "room-1", mockServer);
+
+      expect(getRandomSpy).toHaveBeenCalledWith(undefined, []);
+    });
+
+    it("skips eliminated players missing from state when broadcasting PLAYER_ELIMINATED", async () => {
+      const players = [
+        {
+          id: "p1",
+          name: "Player 1",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+      ];
+      const testStateMachine = new MatchStateMachine(
+        "match-missing-player",
+        "room-1",
+        players,
+      );
+      testStateMachine.transition(MatchStatus.COUNTDOWN);
+      testStateMachine.transition(MatchStatus.ROUND_ACTIVE);
+      testStateMachine.startRound({
+        id: "q1",
+        content: "Test question",
+        options: ["A", "B"],
+        correctAnswer: "A",
+        difficulty: "MEDIUM",
+      });
+      testStateMachine.submitAnswer("p1", "B", Date.now());
+
+      vi.spyOn(testStateMachine, "evaluateRound").mockReturnValue({
+        survivingIds: [],
+        eliminatedIds: ["ghost-player"],
+        correctAnswer: "A",
+      } as any);
+
+      vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(
+        testStateMachine,
+      );
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+      await (service as any).endRound(
+        "match-missing-player",
+        "room-1",
+        mockServer,
+      );
+
+      // No PLAYER_ELIMINATED event for a missing player; the branch is
+      // the `continue` path in the loop.
+      expect(
+        emitSpy.mock.calls.some(
+          (call) => call[0] === ServerEvent.PLAYER_ELIMINATED,
+        ),
+      ).toBe(false);
+    });
+
+    it("logs timeout callback failures when checkMatchEnd rejects with a non-Error", async () => {
+      const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+      let capturedTimeout: (() => Promise<void>) | undefined;
+      setTimeoutSpy.mockImplementation(((handler: () => Promise<void>) => {
+        capturedTimeout = handler;
+        return 1 as any;
+      }) as any);
+
+      const players = [
+        {
+          id: "p1",
+          name: "Player 1",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+      ];
+      const testStateMachine = new MatchStateMachine(
+        "match-string-error",
+        "room-1",
+        players,
+      );
+      testStateMachine.transition(MatchStatus.COUNTDOWN);
+      testStateMachine.transition(MatchStatus.ROUND_ACTIVE);
+      testStateMachine.startRound({
+        id: "q1",
+        content: "Test question",
+        options: ["A", "B"],
+        correctAnswer: "A",
+        difficulty: "MEDIUM",
+      });
+      testStateMachine.submitAnswer("p1", "A", Date.now());
+
+      vi.spyOn(testStateMachine, "evaluateRound").mockReturnValue({
+        survivingIds: ["p1"],
+        eliminatedIds: [],
+        correctAnswer: "A",
+      } as any);
+
+      vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(
+        testStateMachine,
+      );
+      vi.spyOn(service as any, "checkMatchEnd").mockImplementationOnce(() => {
+        throw "boom-string";
+      });
+
+      await (service as any).endRound(
+        "match-string-error",
+        "room-1",
+        mockServer,
+      );
+      await capturedTimeout?.();
+
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Error in checkMatchEnd timeout callback for match match-string-error:",
+        ),
+        expect.any(String),
+      );
+
+      setTimeoutSpy.mockRestore();
+    });
+
+    it("reads the expectedAnswers fallback of 0 when none exists", async () => {
+      const testStateMachine = {
+        getState: () => ({ status: MatchStatus.ROUND_ACTIVE }),
+        getCurrentRound: () => null,
+      } as any;
+      vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(
+        testStateMachine,
+      );
+      const endRoundSpy = vi
+        .spyOn(service as any, "endRound")
+        .mockResolvedValue(undefined);
+
+      await service.checkEarlyTermination(
+        "match-expected-0",
+        "room-1",
+        mockServer,
+      );
+
+      expect(endRoundSpy).not.toHaveBeenCalled();
+      vi.useRealTimers();
+    });
   });
 
   describe("Missing Coverage (Null Guards & Optional Params)", () => {
@@ -1419,6 +1712,19 @@ describe("GameLoopService", () => {
 
     // ---- onModuleInit recovery ----
     describe("onModuleInit (lobby countdown recovery)", () => {
+      it("returns immediately when recovery is already in flight", async () => {
+        (service as any).recoveryInFlight = true;
+        const smembersSpy = vi.spyOn(
+          (service as any).redis.getClient(),
+          "smembers",
+        );
+
+        await service.onModuleInit();
+
+        expect(smembersSpy).not.toHaveBeenCalled();
+        (service as any).recoveryInFlight = false;
+      });
+
       it("is a no-op when the countdowns set is empty", async () => {
         const { svc } = buildService({ smembers: [] });
         await svc.onModuleInit();
@@ -1577,6 +1883,28 @@ describe("GameLoopService", () => {
         expect(result).toBeNull();
       });
 
+      it("returns null when a countdown slot exists but the stored entry vanished", async () => {
+        const countdowns = (service as any).lobbyCountdowns as Map<
+          string,
+          { timer: NodeJS.Timeout; countdownEndsAt: number }
+        >;
+        countdowns.set("r1", {
+          timer: setTimeout(() => undefined, 100),
+          countdownEndsAt: Date.now() + 5000,
+        });
+        const getSpy = vi
+          .spyOn(countdowns, "get")
+          .mockReturnValueOnce(undefined);
+
+        const result = await service.maybeStartPublicCountdown(
+          "r1",
+          mockServer,
+        );
+
+        expect(result).toBeNull();
+        expect(getSpy).toHaveBeenCalledWith("r1");
+      });
+
       it("returns null when there are fewer than MIN_PLAYERS_TO_START players", async () => {
         vi.mocked(roomService.getRoom).mockResolvedValueOnce({
           id: "r1",
@@ -1676,6 +2004,38 @@ describe("GameLoopService", () => {
         expect(warnSpy).toHaveBeenCalledWith(
           expect.stringContaining(
             "Failed to clear persisted countdown for room r1: redis down",
+          ),
+        );
+      });
+
+      it("logs and swallows non-Error rejections thrown by clearPersistedCountdown (string DEL chain fail)", async () => {
+        const redis = createMockRedisService() as any;
+        const multiSpy = vi.fn(() => {
+          const mockMulti: any = {};
+          mockMulti.set = vi.fn().mockReturnValue(mockMulti);
+          mockMulti.del = vi.fn().mockReturnValue(mockMulti);
+          mockMulti.sadd = vi.fn().mockReturnValue(mockMulti);
+          mockMulti.srem = vi.fn().mockReturnValue(mockMulti);
+          mockMulti.exec = vi.fn().mockRejectedValueOnce("redis down (string)");
+          return mockMulti;
+        });
+        vi.spyOn(redis.getClient(), "multi").mockImplementation(
+          multiSpy as unknown as () => unknown,
+        );
+        const svc = new GameLoopService(
+          matchService,
+          questionService,
+          roomService,
+          redis,
+        );
+        const warnSpy = vi.spyOn((svc as any).logger, "warn");
+
+        await (svc as any).clearPersistedCountdown("r1");
+
+        expect(multiSpy).toHaveBeenCalled();
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "Failed to clear persisted countdown for room r1: redis down (string)",
           ),
         );
       });
@@ -1832,6 +2192,137 @@ describe("GameLoopService", () => {
           "r1",
           RoomStatus.WAITING,
         );
+      });
+    });
+
+    // ============================================================
+    // Admin kill-switch: stopRoomRuntime + emitRoomTerminated (PR #47)
+    // ============================================================
+    describe("Admin kill-switch helpers (PR #47)", () => {
+      // ---- stopRoomRuntime ----
+      describe("stopRoomRuntime", () => {
+        it("clears the lobby countdown timer, removes the in-memory slot, and runs clearPersistedCountdown", async () => {
+          const { svc, multiSpy } = buildService();
+          // Seed an active lobby countdown
+          (svc as any).lobbyCountdowns.set("r1", {
+            timer: setTimeout(() => undefined, 100),
+            countdownEndsAt: Date.now() + 5000,
+          });
+
+          await svc.stopRoomRuntime("r1", null);
+
+          // In-memory slot cleared
+          expect((svc as any).lobbyCountdowns.has("r1")).toBe(false);
+          // clearPersistedCountdown fires the multi() chain
+          expect(multiSpy).toHaveBeenCalled();
+        });
+
+        it("calls cancelMatchLoop when a matchId is provided (no countdown active)", async () => {
+          const { svc } = buildService();
+          // Seed match-level state so we can assert cancellation
+          (svc as any).usedQuestionIds.set("m1", new Set(["q1"]));
+          (svc as any).activeTimers.set(
+            "m1",
+            new Set([setTimeout(() => undefined, 100)]),
+          );
+
+          await svc.stopRoomRuntime("r2", "m1");
+
+          // match-level state was cleared
+          expect((svc as any).usedQuestionIds.has("m1")).toBe(false);
+          expect((svc as any).activeTimers.has("m1")).toBe(false);
+        });
+
+        it("is a no-op for runtime state when neither countdown nor matchId are present", async () => {
+          const { svc } = buildService();
+
+          // Should not throw
+          await expect(
+            svc.stopRoomRuntime("r3", null),
+          ).resolves.toBeUndefined();
+        });
+
+        it("cancels match state when matchId is provided even with an active countdown", async () => {
+          const { svc } = buildService();
+          (svc as any).lobbyCountdowns.set("r4", {
+            timer: setTimeout(() => undefined, 100),
+            countdownEndsAt: Date.now() + 5000,
+          });
+          (svc as any).usedQuestionIds.set("m4", new Set(["q1"]));
+
+          await svc.stopRoomRuntime("r4", "m4");
+
+          // Both layers cleaned
+          expect((svc as any).lobbyCountdowns.has("r4")).toBe(false);
+          expect((svc as any).usedQuestionIds.has("m4")).toBe(false);
+        });
+      });
+
+      // ---- emitRoomTerminated ----
+      describe("emitRoomTerminated", () => {
+        it("emits ROOM_TERMINATED to the room channel when server is wired up", () => {
+          const { svc } = buildService();
+          const emitSpy = vi.fn();
+          const toSpy = vi.fn().mockReturnValue({ emit: emitSpy });
+          (svc as any).setServer({ to: toSpy } as unknown as Server);
+
+          svc.emitRoomTerminated("r1", {
+            matchId: "m1",
+            message: "Abandoned by host",
+          });
+
+          expect(toSpy).toHaveBeenCalledWith(expect.stringContaining("r1"));
+          expect(emitSpy).toHaveBeenCalledWith(
+            ServerEvent.ROOM_TERMINATED,
+            expect.objectContaining({
+              roomId: "r1",
+              reason: "ADMIN_TERMINATED",
+              matchId: "m1",
+              message: "Abandoned by host",
+            }),
+          );
+          // terminatedAt is a number
+          const payload = emitSpy.mock.calls[0][1] as {
+            terminatedAt: number;
+          };
+          expect(typeof payload.terminatedAt).toBe("number");
+        });
+
+        it("emits ROOM_TERMINATED with null matchId and undefined message when only the room is provided", () => {
+          const { svc } = buildService();
+          const emitSpy = vi.fn();
+          const toSpy = vi.fn().mockReturnValue({ emit: emitSpy });
+          (svc as any).setServer({ to: toSpy } as unknown as Server);
+
+          svc.emitRoomTerminated("r2", { matchId: null });
+
+          expect(emitSpy).toHaveBeenCalledWith(
+            ServerEvent.ROOM_TERMINATED,
+            expect.objectContaining({
+              roomId: "r2",
+              reason: "ADMIN_TERMINATED",
+              matchId: null,
+              message: undefined,
+            }),
+          );
+        });
+
+        it("logs a warning and does NOT emit when server has not been wired up", () => {
+          // No setServer() call → server is undefined
+          const { svc } = buildService();
+          const warnSpy = vi.spyOn((svc as any).logger, "warn");
+
+          // Should not throw
+          expect(() =>
+            svc.emitRoomTerminated("r3", { matchId: null }),
+          ).not.toThrow();
+
+          expect(warnSpy).toHaveBeenCalledWith(
+            expect.stringContaining(
+              "emitRoomTerminated: server not set, cannot emit for room r3",
+            ),
+          );
+        });
       });
     });
   });
