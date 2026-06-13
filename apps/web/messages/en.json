@@ -70,6 +70,27 @@
       "resetConfirm": "Warning: You are about to clear all active lobbies and Redis game sessions. Continue?",
       "resetSuccess": "Redis cache cleared and Socket.io server reset!",
       "migrationsUpToDate": "Prisma migrations are already synchronized to the latest version!"
+    },
+    "terminateRoom": {
+      "title": "KILL SWITCH — TERMINATE SINGLE ROOM",
+      "label": "ENTER ROOM CODE OR ID",
+      "roomIdPlaceholder": "E.g. 6-char room code or UUID",
+      "messageLabel": "REASON (OPTIONAL, MAX 200 CHARS)",
+      "messagePlaceholder": "E.g. abandoned, policy violation, maintenance...",
+      "submit": "TERMINATE ROOM NOW",
+      "submitting": "TERMINATING ROOM...",
+      "warning": "WARNING: This action will kick all players out of the room, cancel the running match, and remove the room from database and Redis. Cannot be undone.",
+      "modal": {
+        "title": "Confirm Kill Switch?",
+        "description": "You are about to permanently close this room. All players will be kicked out immediately."
+      },
+      "errors": {
+        "roomIdRequired": "Please enter a room code or ID.",
+        "rateLimited": "You are acting too fast. Please wait 1 minute and try again."
+      },
+      "success": "Room terminated successfully. Players have been notified.",
+      "partialTitle": "Partial termination",
+      "partialDescription": "The room was disconnected from runtime and players were notified, but the database cleanup failed. A system reset may be required: {error}"
     }
   },
   "Sidebar": {
@@ -221,6 +242,62 @@
     "actions": {
       "back": "Back to settings",
       "leave": "Leave room"
+    },
+    "startControls": {
+      "countdown": "COUNTING DOWN {seconds}s",
+      "starting": "INITIALIZING...",
+      "inGame": "LOADING MATCH...",
+      "waiting": "START THE MATCH"
+    },
+    "countdownOverlay": {
+      "starting": "GET READY TO FIGHT!",
+      "inGame": "LOADING MATCH...",
+      "startingHint": "Please do not leave this screen",
+      "inGameHint": "Server is synchronizing the match state...",
+      "secondsUnit": "seconds"
+    },
+    "leaveModal": {
+      "title": "Leave room?",
+      "hostDescription": "You are the Host. If you leave, the room will be disbanded and all players will be kicked out.",
+      "memberDescription": "Are you sure you want to leave this room? You will need to re-enter the room code to come back.",
+      "hostWarning": "This action cannot be undone. The room will be permanently deleted.",
+      "memberWarning": "Your progress in this room will be lost.",
+      "close": "Close",
+      "cancel": "Cancel",
+      "confirm": "Confirm leave"
+    },
+    "playerGrid": {
+      "empty": "Waiting for players to join...",
+      "emptyHint": "Share the room code to get started",
+      "youHost": "YOU (HOST)",
+      "you": "YOU",
+      "host": "HOST",
+      "ready": "READY",
+      "offline": "Offline"
+    },
+    "page": {
+      "opponentsCount": "Current opponents",
+      "opponentsSection": "OPPONENTS IN ROOM",
+      "joining": "Joining room...",
+      "reconnecting": "Reconnecting...",
+      "joinError": "Cannot join room: {message}",
+      "joinFailedFallback": "Could not join the room. Please try again.",
+      "tipsTitle": "Tip:",
+      "tipsBody": "Share the Room Code with friends so they can join the battle. Only the fastest and most accurate answers survive through 100 rounds!"
+    },
+    "status": {
+      "countdown": "Match will start in {seconds}s",
+      "starting": "Synchronizing players and questions...",
+      "inGame": "Match is ready, switching screens...",
+      "privateNeedPlayers": "At least 2 players are required for the host to start",
+      "privateCanStart": "The host can start the match at any time",
+      "publicNeedPlayers": "Waiting for more players to auto-start",
+      "publicCanStart": "Enough players, the server will auto-start the match"
+    },
+    "termination": {
+      "toastTitle": "Room was closed",
+      "toastDefault": "The room was closed by an administrator. You will be returned to the home page.",
+      "redirecting": "Returning you to the home page..."
     }
   }
 }

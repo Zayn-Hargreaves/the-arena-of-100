@@ -54,6 +54,9 @@ export enum ServerEvent {
   SNAPSHOT = "snapshot",
   EVENT_BATCH = "event_batch",
 
+  // Operator Events
+  ROOM_TERMINATED = "room_terminated",
+
   // Connection Events
   AUTHENTICATED = "authenticated",
   ERROR = "error",
@@ -219,6 +222,16 @@ export interface RoomPresenceUpdatedPayload {
   playerId: string;
   isOnline: boolean;
   updatedAt: number;
+}
+
+export type RoomTerminationReason = "ADMIN_TERMINATED";
+
+export interface RoomTerminatedPayload {
+  roomId: string;
+  reason: RoomTerminationReason;
+  matchId: string | null;
+  message?: string;
+  terminatedAt: number;
 }
 
 // Socket Channel Helpers

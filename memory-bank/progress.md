@@ -79,6 +79,7 @@
 - [x] Phase 1 contract baseline — tách rõ room lifecycle contract khỏi match lifecycle; thêm `STARTING`, room status/presence socket events, và payload room typed đầy đủ cho API/web consume
 - [x] Phase 2 backend baseline — public room auto-countdown khi đủ người, cancel countdown khi tụt dưới minimum, private room host force-start, và room status chuyển `WAITING -> COUNTDOWN -> STARTING -> IN_GAME` đồng bộ với match start
 - [x] Phase 3 transport/store baseline — `socket-store` consume room lifecycle events thật, lobby page đọc `room.status` / `countdownEndsAt` / `match.id` từ store, và bỏ giả định manual-start-only ở client
+- [x] **Phase 3 refinement (2026-06-08):** Extracted `useLobbyLifecycle` hook (`apps/web/src/hooks/use-lobby-lifecycle.ts`) to encapsulate auto-join, countdown timer, and lifecycle state derivation. Removed dev-only mock player fallback from lobby page. Exported `Player` and `Room` types from `socket-store.ts`. Page now purely presentational.
 - [ ] Auto-start countdown cho public room
 - [ ] Host controls tối thiểu cho private room (force-start, kick)
 - [x] Heartbeat/presence validation (chống ghost player, sweep sau N round miss) — client gửi heartbeat 10s, server Redis TTL 20s, auto-sweep 5s, auto-disband private room nếu host stale
@@ -92,6 +93,11 @@
 - [x] **Phase 8: Frontend Audit Sweep** — verified Home page a11y (htmlFor/id already correct, tap-targets >44px). Confirmed Not-Found surfaces have proper skip-links and consistent theming. Created reusable `AvatarFrame` component to deduplicate avatar/sprite framing logic across `LobbyPlayerGrid` and `GamePage` sidebar, reducing code duplication and enforcing design system consistency.
 - [x] **Phase 9 & 10: Tie-Break And Spectator Baseline** — Verified backend `MatchStateMachine` already implements robust tie-break logic (total response time → correct answers → random fallback). Confirmed `RoomService.joinRoom` already enforces "Hard Gate" for late joins (rejects `IN_GAME`/`FINISHED` rooms with `ROOM_ALREADY_STARTED`). Implemented client-side Spectator View: added `isEliminated` state to socket store, handled `PLAYER_ELIMINATED` event, and rendered a dedicated "Chế độ khán giả" UI in `GamePage` when a player is eliminated, allowing them to watch the rest of the match unfold.
 
+#### Phase 4 refinement (2026-06-08)
+
+- [x] **LobbyStartControls extracted** — host start button block (16 lines, 4 room-status states) moved from `app/[locale]/lobby/[roomCode]/page.tsx` into a new page-local component `apps/web/src/components/lobby/lobby-start-controls.tsx`. Page size 169 → 161 lines. `RoomCodeCard` stays in `components/atoms/` (atomic migration is gradual, per user direction). Cleaned up now-unused imports (`Gamepad`, `RoomStatus`) from lobby page.
+- [x] **Lobby surface i18n migration (Option C)** — fully migrated all 5 lobby components (`LobbyHeader` was already done, `LobbyCountdownOverlay`, `LeaveRoomModal`, `LobbyPlayerGrid`, `LobbyStartControls`) + the `useLobbyLifecycle` hook + the lobby page itself to `next-intl` namespaces under `lobby.*`. Added ~50 new translation keys to `apps/web/messages/{vi,en}.json` with full Vietnamese + English coverage. Hook stays a pure domain adapter (no `useTranslations`); it surfaces either a real `Error.message` or a sentinel `"lobby.unknownError"` string that the page resolves through `t("joinFailedFallback")` to keep the i18n concern at the component layer. `pnpm --filter @arena/web {build,lint,typecheck}` all green. Lobby route size: 7.61 kB → 7.01 kB (i18n keys more compact than inline Vietnamese strings).
+
 #### Product features phụ thuộc lobby hoàn thiện
 
 - [ ] Frictionless onboarding system với content moderation (chưa có profanity filter, device fingerprint)
@@ -103,12 +109,14 @@
 - [ ] Anonymous identity tracking (device fingerprint)
 - [ ] Optimistic UI implementation với smart recovery (đã có một phần ở `game/[matchId]/page.tsx` nhưng chưa đầy đủ rollback)
 - [ ] Game operations tools (admin force-kill chưa có, hiện chỉ có `system/reset` thô)
+  - [x] **Phase 1 (contract) done** (2026-06-07): typed `ServerEvent.ROOM_TERMINATED` + `RoomTerminatedPayload` + `RoomTerminationReason="ADMIN_TERMINATED"`; mirrored `RoomEventType.ROOM_TERMINATED` + `RoomTerminatedEventPayload` for event-sourcing. `@arena/shared` build green. Phases 2–5 pending.
+  - [x] **Phase 2 (backend admin action) done** (2026-06-07): `POST /admin/rooms/:roomId/terminate` (ADMIN-only, 5/min throttle) wired through `AdminService.terminateRoom` orchestrator. Extends `MatchService.finishMatch` to accept `null` winner (admin termination skips score persistence). New `GameLoopService.stopRoomRuntime` cancels lobby countdown + match timers; `emitRoomTerminated` encapsulates the socket.io emit. Explicit Redis cleanup (room keys + SCAN'd presence keys + match state + lobby countdowns index). 607 tests pass, `@arena/api` build green. Phases 3–5 pending.
 
 ### 🔴 Trang UI dùng mock data — cần thay bằng API thật
 
 - [x] `/profile` — stats/match history — ✅ Done (issue.md Step 3+5: `useProfileStats` + `useMatchHistory` hooks call `GET /users/me/stats` + `/users/me/history`)
 - [x] `/rankings` — leaderboard — ✅ Done (issue.md Step 4+5: `useLeaderboard` hook calls `GET /rankings/leaderboard`)
-- [ ] `/lobby/[roomCode]` — mock players fallback chỉ dùng trong dev (`lobby/[roomCode]/page.tsx:91`); trong prod cần server-driven player list thật
+- [x] `/lobby/[roomCode]` — mock players fallback removed (Phase 3 refinement 2026-06-08); page now reads strictly from server-authoritative player list via `useLobbyLifecycle` hook
 - [x] Backend endpoints — ✅ Done (issue.md Steps 3+4: `GET /users/me/stats`, `GET /users/me/history`, `PATCH /users/me/avatar`, `GET /rankings/leaderboard` implemented and tested)
 
 ### 📋 Upcoming (Phase 2: Polish & Testing)

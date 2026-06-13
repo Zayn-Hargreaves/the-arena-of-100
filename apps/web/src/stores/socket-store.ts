@@ -20,6 +20,7 @@ import {
   type RoomCountdownCancelledPayload,
   type RoomPresenceUpdatedPayload,
   type RoomStatusUpdatedPayload,
+  type RoomTerminatedPayload,
   type RoundStartedPayload,
   type RoundEndedPayload,
   type MatchFinishedPayload,
@@ -36,7 +37,7 @@ interface AuthResponse {
   };
 }
 
-interface Player {
+export interface Player {
   id: string;
   name: string;
   status: string;
@@ -44,7 +45,7 @@ interface Player {
   isOnline: boolean;
 }
 
-interface Room {
+export interface Room {
   id: string;
   code: string;
   status: RoomStatus;
@@ -100,6 +101,8 @@ interface SocketState extends ConnectionState {
   error: string | null;
   heartbeatInterval: ReturnType<typeof setInterval> | null;
   isEliminated: boolean;
+  roomTerminated: boolean;
+  roomTerminationMessage: string | null;
 
   // Actions
   connect: () => Promise<void>;
@@ -135,6 +138,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   error: null,
   heartbeatInterval: null,
   isEliminated: false,
+  roomTerminated: false,
+  roomTerminationMessage: null,
 
   // Connect to WebSocket
   connect: async () => {
@@ -587,6 +592,22 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       console.log("✅ Answer result:", data);
     });
 
+    // Admin kill-switch: server has force-terminated this room (and any
+    // active match in it). Clear local room/match state and surface a
+    // termination flag so the lobby page can redirect + toast. We do NOT
+    // auto-redirect here — page-level navigation needs the i18n router.
+    newSocket.on(ServerEvent.ROOM_TERMINATED, (data: RoomTerminatedPayload) => {
+      set({
+        room: null,
+        match: null,
+        remainingCount: null,
+        lastAnswerResult: null,
+        roomTerminated: true,
+        roomTerminationMessage: data.message ?? null,
+      });
+      console.warn("🛑 Room terminated by server:", data);
+    });
+
     newSocket.on(ServerEvent.ERROR, (data) => {
       // If unauthorized or invalid token, clear local auth state and
       // null the socket so the next connect() can reinitialize
@@ -653,6 +674,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         remainingCount: null,
         lastAnswerResult: null,
         heartbeatInterval: null,
+        roomTerminated: false,
+        roomTerminationMessage: null,
       });
     }
   },
@@ -787,6 +810,11 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
       const onCreated = (data: { roomId: string; code: string }) => {
         cleanup();
+        // Clear stale termination flag — user is now in a fresh room.
+        const { roomTerminated, roomTerminationMessage } = get();
+        if (roomTerminated || roomTerminationMessage) {
+          set({ roomTerminated: false, roomTerminationMessage: null });
+        }
         resolve(data.code);
       };
 
@@ -829,6 +857,11 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       const onJoined = (data: RoomJoinedPayload) => {
         if (data.code !== roomCode) return;
         cleanup();
+        // Clear stale termination flag — user is now in a fresh room.
+        const { roomTerminated, roomTerminationMessage } = get();
+        if (roomTerminated || roomTerminationMessage) {
+          set({ roomTerminated: false, roomTerminationMessage: null });
+        }
         resolve();
       };
 

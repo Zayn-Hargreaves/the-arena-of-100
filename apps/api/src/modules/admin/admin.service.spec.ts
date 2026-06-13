@@ -3,6 +3,10 @@ import { Logger } from "@nestjs/common";
 import { AdminService } from "./admin.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
+import { RoomService } from "../room/room.service";
+import { MatchService } from "../match/match.service";
+import { GameLoopService } from "../match/game-loop.service";
+import { ErrorCode, RoomError } from "@arena/shared";
 import { Role } from "@prisma/client";
 import type { Question } from "../../prisma-seeds/questions";
 
@@ -69,6 +73,18 @@ describe("AdminService", () => {
   let redisClient: {
     scan: ReturnType<typeof vi.fn>;
     del: ReturnType<typeof vi.fn>;
+    srem: ReturnType<typeof vi.fn>;
+  };
+  let roomService: {
+    getRoom: ReturnType<typeof vi.fn>;
+    disbandRoom: ReturnType<typeof vi.fn>;
+  };
+  let matchService: {
+    finishMatch: ReturnType<typeof vi.fn>;
+  };
+  let gameLoopService: {
+    stopRoomRuntime: ReturnType<typeof vi.fn>;
+    emitRoomTerminated: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -116,14 +132,30 @@ describe("AdminService", () => {
     redisClient = {
       scan: vi.fn().mockResolvedValue(["0", []]),
       del: vi.fn().mockResolvedValue(0),
+      srem: vi.fn().mockResolvedValue(0),
     };
     redis = {
       getClient: vi.fn().mockReturnValue(redisClient),
     };
 
+    roomService = {
+      getRoom: vi.fn(),
+      disbandRoom: vi.fn().mockResolvedValue(undefined),
+    };
+    matchService = {
+      finishMatch: vi.fn().mockResolvedValue({}),
+    };
+    gameLoopService = {
+      stopRoomRuntime: vi.fn().mockResolvedValue(undefined),
+      emitRoomTerminated: vi.fn(),
+    };
+
     service = new AdminService(
       prisma as unknown as PrismaService,
       redis as unknown as RedisService,
+      roomService as unknown as RoomService,
+      matchService as unknown as MatchService,
+      gameLoopService as unknown as GameLoopService,
     );
     // Silence logger output during tests
     (service as unknown as ServiceInternals).logger = new Logger(
@@ -199,6 +231,9 @@ describe("AdminService", () => {
         const fresh = new FreshAdminService(
           prisma as unknown as PrismaService,
           redis as unknown as RedisService,
+          roomService as unknown as RoomService,
+          matchService as unknown as MatchService,
+          gameLoopService as unknown as GameLoopService,
         );
 
         const result = await fresh.syncQuestions(false);
@@ -375,6 +410,187 @@ describe("AdminService", () => {
       expect(redisClient.del).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
       expect(result.message).toContain("System reset complete");
+    });
+  });
+
+  describe("terminateRoom", () => {
+    it("throws ROOM_NOT_FOUND when room does not exist", async () => {
+      roomService.getRoom.mockRejectedValueOnce(
+        new RoomError(ErrorCode.ROOM_NOT_FOUND),
+      );
+
+      await expect(service.terminateRoom("r-missing")).rejects.toMatchObject({
+        code: ErrorCode.ROOM_NOT_FOUND,
+      });
+
+      // No cleanup should have run on a missing room
+      expect(matchService.finishMatch).not.toHaveBeenCalled();
+      expect(gameLoopService.stopRoomRuntime).not.toHaveBeenCalled();
+      expect(gameLoopService.emitRoomTerminated).not.toHaveBeenCalled();
+      expect(roomService.disbandRoom).not.toHaveBeenCalled();
+    });
+
+    it("terminates a room with no active match", async () => {
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r1",
+        currentMatchId: null,
+      });
+
+      const result = await service.terminateRoom("r1", "abandoned by host");
+
+      expect(result.success).toBe(true);
+      expect(result.roomId).toBe("r1");
+      expect(result.matchId).toBeNull();
+      expect(result.message).toBe("Room terminated by admin");
+      expect(typeof result.terminatedAt).toBe("number");
+
+      // No match to finish
+      expect(matchService.finishMatch).not.toHaveBeenCalled();
+      // But room runtime still stopped (no match, no countdown expected)
+      expect(gameLoopService.stopRoomRuntime).toHaveBeenCalledWith("r1", null);
+      // Emit still fires
+      expect(gameLoopService.emitRoomTerminated).toHaveBeenCalledWith("r1", {
+        matchId: null,
+        message: "abandoned by host",
+      });
+      // Room disbanded
+      expect(roomService.disbandRoom).toHaveBeenCalledWith("r1");
+    });
+
+    it("terminates a room with an active match (passes null winner)", async () => {
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r2",
+        currentMatchId: "m2",
+      });
+      matchService.finishMatch.mockResolvedValueOnce({ id: "m2" } as any);
+
+      const result = await service.terminateRoom("r2");
+
+      expect(result.success).toBe(true);
+      expect(result.matchId).toBe("m2");
+
+      // finishMatch called with null winner (admin termination)
+      expect(matchService.finishMatch).toHaveBeenCalledWith("m2", null);
+      // stopRoomRuntime called with the active matchId
+      expect(gameLoopService.stopRoomRuntime).toHaveBeenCalledWith("r2", "m2");
+      // Emit carries the matchId
+      expect(gameLoopService.emitRoomTerminated).toHaveBeenCalledWith("r2", {
+        matchId: "m2",
+        message: undefined,
+      });
+    });
+
+    it("continues cleanup when match finish throws (non-fatal)", async () => {
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r3",
+        currentMatchId: "m3",
+      });
+      matchService.finishMatch.mockRejectedValueOnce(
+        new Error("DB transaction failed"),
+      );
+
+      // Should NOT throw — match finish failure is logged but non-fatal
+      const result = await service.terminateRoom("r3");
+
+      expect(result.success).toBe(true);
+      expect(result.matchId).toBe("m3");
+      // Runtime + emit + disband still run
+      expect(gameLoopService.stopRoomRuntime).toHaveBeenCalledWith("r3", "m3");
+      expect(gameLoopService.emitRoomTerminated).toHaveBeenCalled();
+      expect(roomService.disbandRoom).toHaveBeenCalledWith("r3");
+    });
+
+    it("cleans explicit Redis keys including SCAN'd presence keys", async () => {
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r4",
+        currentMatchId: "m4",
+      });
+      matchService.finishMatch.mockResolvedValueOnce({ id: "m4" } as any);
+      // SCAN returns 2 presence keys, then terminates
+      redisClient.scan.mockResolvedValueOnce([
+        "0",
+        ["room:presence:r4:u1", "room:presence:r4:u2"],
+      ]);
+
+      await service.terminateRoom("r4");
+
+      expect(redisClient.scan).toHaveBeenCalledWith(
+        "0",
+        "MATCH",
+        "room:presence:r4:*",
+        "COUNT",
+        1000,
+      );
+      // DEL is called once with the full key set spread as separate args
+      expect(redisClient.del).toHaveBeenCalledTimes(1);
+      const delCallArgs = vi.mocked(redisClient.del).mock.calls[0];
+      expect(delCallArgs).toEqual(
+        expect.arrayContaining([
+          "room:r4",
+          "room:r4:players",
+          "room:r4:playerCount",
+          "room:countdown:r4",
+          "room:presence:r4:u1",
+          "room:presence:r4:u2",
+          "match:state:m4",
+        ]),
+      );
+      // Lobby countdowns index SREM runs unconditionally
+      expect(redisClient.srem).toHaveBeenCalledWith("room:countdowns", "r4");
+    });
+
+    it("skips DEL when no keys to remove but still SREMs the index", async () => {
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r5",
+        currentMatchId: null,
+      });
+      // No presence keys, no match keys
+      redisClient.scan.mockResolvedValueOnce(["0", []]);
+
+      await service.terminateRoom("r5");
+
+      // Presence SCAN was called
+      expect(redisClient.scan).toHaveBeenCalledWith(
+        "0",
+        "MATCH",
+        "room:presence:r5:*",
+        "COUNT",
+        1000,
+      );
+      // The base keys ARE still deleted (room:r5, room:r5:players, etc.)
+      expect(redisClient.del).toHaveBeenCalledTimes(1);
+      // SREM still runs
+      expect(redisClient.srem).toHaveBeenCalledWith("room:countdowns", "r5");
+    });
+
+    it("returns partial result when disbandRoom throws (DB cleanup failed)", async () => {
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r6",
+        currentMatchId: null,
+      });
+      // Disband fails — represents a DB inconsistency: room channel already
+      // notified, timers stopped, Redis cleaned, but DB record remains.
+      roomService.disbandRoom.mockRejectedValueOnce(
+        new Error("FK constraint violation"),
+      );
+
+      // Must NOT throw — caller still needs the partial result.
+      const result = await service.terminateRoom("r6");
+
+      // Partial-success signaling
+      expect(result.success).toBe(false);
+      expect(result.partial).toBe(true);
+      expect(result.roomId).toBe("r6");
+      expect(result.message).toContain("partial");
+      expect(result.cleanupError).toBe("FK constraint violation");
+      expect(typeof result.terminatedAt).toBe("number");
+
+      // Cleanup steps still ran (they run BEFORE disband in the orchestrator)
+      expect(gameLoopService.stopRoomRuntime).toHaveBeenCalledWith("r6", null);
+      expect(gameLoopService.emitRoomTerminated).toHaveBeenCalledWith("r6", {
+        matchId: null,
+        message: undefined,
+      });
     });
   });
 });

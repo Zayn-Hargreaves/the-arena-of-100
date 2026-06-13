@@ -1,6 +1,7 @@
 "use client";
 
-import React from "react";
+import type { FC } from "react";
+import { useTranslations } from "next-intl";
 import { Gamepad } from "lucide-react";
 
 interface LobbyCountdownOverlayProps {
@@ -9,11 +10,13 @@ interface LobbyCountdownOverlayProps {
   isInGame: boolean;
 }
 
-export const LobbyCountdownOverlay: React.FC<LobbyCountdownOverlayProps> = ({
+export const LobbyCountdownOverlay: FC<LobbyCountdownOverlayProps> = ({
   secondsRemaining,
   isStarting,
   isInGame,
 }) => {
+  const t = useTranslations("lobby.countdownOverlay");
+
   if (!isStarting && !isInGame) {
     return null;
   }
@@ -25,7 +28,7 @@ export const LobbyCountdownOverlay: React.FC<LobbyCountdownOverlayProps> = ({
           <Gamepad className="w-16 h-16 text-candy-mint animate-bounce stroke-[2]" />
         </div>
         <h2 className="font-display font-black text-3xl tracking-wide uppercase text-candy-ink drop-shadow-[0_2px_0_rgba(0,0,0,0.05)]">
-          {isInGame ? "ĐANG CHUYỂN TRẬN..." : "CHUẨN BỊ VÀO TRẬN!"}
+          {isInGame ? t("inGame") : t("starting")}
         </h2>
         {isStarting && secondsRemaining > 0 && (
           <div className="flex items-center justify-center gap-2">
@@ -33,14 +36,12 @@ export const LobbyCountdownOverlay: React.FC<LobbyCountdownOverlayProps> = ({
               {secondsRemaining}
             </span>
             <span className="font-display font-black text-xl text-candy-ink uppercase">
-              giây
+              {t("secondsUnit")}
             </span>
           </div>
         )}
         <p className="font-sans text-sm font-bold text-candy-ink/70">
-          {isInGame
-            ? "Server đang đồng bộ trạng thái trận đấu..."
-            : "Vui lòng không rời khỏi màn hình này"}
+          {isInGame ? t("inGameHint") : t("startingHint")}
         </p>
       </div>
     </div>

@@ -256,6 +256,55 @@ describe("MatchService", () => {
       });
       expect(redis.del).toHaveBeenCalledWith("match:state:m1");
     });
+
+    it("records null winner for admin termination and skips score persistence", async () => {
+      // Create match first to populate stateMachines map
+      const room = {
+        id: "r1",
+        players: [
+          { user: { id: "u1", username: "A" } },
+          { user: { id: "u2", username: "B" } },
+        ],
+      };
+      vi.mocked(prisma.room.findUnique).mockResolvedValue(room as any);
+      vi.mocked(prisma.match.create).mockResolvedValue({
+        id: "m1",
+        roomId: "r1",
+      } as any);
+      vi.mocked(prisma.matchPlayer.createMany).mockResolvedValue({
+        count: 2,
+      } as any);
+      vi.mocked(prisma.room.update).mockResolvedValue({} as any);
+      await service.createMatch("r1");
+
+      vi.mocked(prisma.match.update).mockResolvedValue({
+        id: "m1",
+        roomId: "r1",
+      } as any);
+
+      // Admin termination path: winnerId === null
+      await service.finishMatch("m1", null);
+
+      // Match update records null winner
+      expect(prisma.match.update).toHaveBeenCalledWith({
+        where: { id: "m1" },
+        data: {
+          status: MatchStatus.FINISHED,
+          winnerId: null,
+          endedAt: expect.any(Date),
+        },
+      });
+      // Room status still updated
+      expect(prisma.room.update).toHaveBeenCalledWith({
+        where: { id: "r1" },
+        data: { status: "FINISHED" },
+      });
+      // Redis state cleaned
+      expect(redis.del).toHaveBeenCalledWith("match:state:m1");
+      // No score persistence ($transaction NOT called for null-winner path)
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(prisma.matchPlayer.updateMany).not.toHaveBeenCalled();
+    });
   });
 
   describe("saveRound", () => {

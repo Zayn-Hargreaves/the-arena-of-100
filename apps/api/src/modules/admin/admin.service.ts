@@ -5,6 +5,9 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
+import { RoomService } from "../room/room.service";
+import { MatchService } from "../match/match.service";
+import { GameLoopService } from "../match/game-loop.service";
 import { normalizeString, questionSeeds } from "../../prisma-seeds/questions";
 
 @Injectable()
@@ -14,6 +17,9 @@ export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly roomService: RoomService,
+    private readonly matchService: MatchService,
+    private readonly gameLoopService: GameLoopService,
   ) {}
 
   /**
@@ -185,30 +191,38 @@ export class AdminService {
 
     // Helper function to scan and delete keys in batches
     const scanAndDelete = async (pattern: string): Promise<number> => {
-      let cursor = '0';
+      let cursor = "0";
       let deletedCount = 0;
-      
+
       do {
-        const result = await client.scan(cursor, 'MATCH', pattern, 'COUNT', 1000);
+        const result = await client.scan(
+          cursor,
+          "MATCH",
+          pattern,
+          "COUNT",
+          1000,
+        );
         cursor = result[0];
         const keys = result[1];
-        
+
         if (keys.length > 0) {
           const deleted = await client.del(...keys);
           deletedCount += deleted;
         }
-      } while (cursor !== '0');
-      
+      } while (cursor !== "0");
+
       return deletedCount;
     };
 
     // Scan and delete both room and match keys
-    const roomDeleted = await scanAndDelete('room:*');
-    const matchDeleted = await scanAndDelete('match:*');
+    const roomDeleted = await scanAndDelete("room:*");
+    const matchDeleted = await scanAndDelete("match:*");
     totalDeleted = roomDeleted + matchDeleted;
 
     if (totalDeleted > 0) {
-      this.logger.log(`Purged ${totalDeleted} Redis keys from cache (${roomDeleted} room keys, ${matchDeleted} match keys).`);
+      this.logger.log(
+        `Purged ${totalDeleted} Redis keys from cache (${roomDeleted} room keys, ${matchDeleted} match keys).`,
+      );
     }
 
     return {
@@ -216,5 +230,137 @@ export class AdminService {
       message:
         "System reset complete. All active rooms, players, matches, and Redis cache cleared successfully.",
     };
+  }
+
+  /**
+   * Force-terminates one room and any active match in it. Stops in-process
+   * timers, notifies connected clients via ROOM_TERMINATED, cleans Redis
+   * keys, and deletes the room from the database. Does not affect other
+   * rooms. Used by the admin kill switch (POST /admin/rooms/:roomId/terminate).
+   *
+   * Throws RoomError(ROOM_NOT_FOUND) when the room does not exist.
+   *
+   * Returns a result object that distinguishes full success from partial
+   * success: if the final DB `disbandRoom` step fails, `partial: true` is
+   * set and `cleanupError` carries the underlying message. The room
+   * channel has already been notified and timers/Redis have already been
+   * cleaned by that point, so we cannot roll back — but the caller should
+   * still know the DB record is stale and may need a follow-up sweep.
+   */
+  async terminateRoom(roomId: string, message?: string) {
+    // 1. Resolve room — throws RoomError(ROOM_NOT_FOUND) → 404
+    const room = await this.roomService.getRoom(roomId);
+    const matchId = room.currentMatchId;
+
+    // 2. Persist match finish in DB (no winner on admin termination).
+    // Failure here is logged but non-fatal — we still want to clean up
+    // the room and its runtime state.
+    if (matchId) {
+      try {
+        await this.matchService.finishMatch(matchId, null);
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Failed to finish match ${matchId} during admin termination of room ${roomId}: ${errMsg}`,
+          error instanceof Error ? error.stack : undefined,
+        );
+      }
+    }
+
+    // 3. Stop in-memory timers + lobby countdown
+    await this.gameLoopService.stopRoomRuntime(roomId, matchId);
+
+    // 4. Emit ROOM_TERMINATED to the room channel
+    this.gameLoopService.emitRoomTerminated(roomId, { matchId, message });
+
+    // 5. Clean Redis keys explicitly
+    await this.cleanupRoomRedisKeys(roomId, matchId);
+
+    // 6. Disband room (DB). Surface partial-failure to the caller instead
+    // of silently swallowing it: the room channel has been notified and
+    // timers/Redis have been cleaned, so we cannot roll back, but the
+    // admin UI still needs to know the DB record is stale.
+    let partial = false;
+    let cleanupError: string | undefined;
+    try {
+      await this.roomService.disbandRoom(roomId);
+    } catch (error) {
+      partial = true;
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const errStack = error instanceof Error ? error.stack : undefined;
+      cleanupError = errMsg;
+      this.logger.error(
+        `Partial termination: failed to disband room ${roomId} during admin termination${matchId ? ` (match ${matchId})` : ""}: ${errMsg}`,
+        errStack,
+      );
+    }
+
+    const terminatedAt = Date.now();
+    this.logger.warn(
+      `Room ${roomId} terminated by admin${matchId ? ` (match ${matchId})` : ""}${partial ? " (partial: DB cleanup failed)" : ""}`,
+    );
+
+    return {
+      success: !partial,
+      partial,
+      roomId,
+      matchId,
+      message: partial
+        ? "Room terminated by admin (partial: DB cleanup failed)"
+        : "Room terminated by admin",
+      terminatedAt,
+      ...(cleanupError ? { cleanupError } : {}),
+    };
+  }
+
+  /**
+   * Deletes the Redis keys associated with one room and (optionally) its
+   * active match state. Mirrors the explicit, key-by-key approach used by
+   * resetSystem rather than wildcard SCAN, so we never over-delete.
+   */
+  private async cleanupRoomRedisKeys(
+    roomId: string,
+    matchId: string | null,
+  ): Promise<void> {
+    const client = this.redis.getClient();
+    const keysToDelete: string[] = [
+      `room:${roomId}`,
+      `room:${roomId}:players`,
+      `room:${roomId}:playerCount`,
+      `room:countdown:${roomId}`,
+    ];
+
+    // SCAN+collect presence keys for this room (presence keys are per-user,
+    // so we cannot enumerate them statically)
+    let cursor = "0";
+    do {
+      const [next, keys] = await client.scan(
+        cursor,
+        "MATCH",
+        `room:presence:${roomId}:*`,
+        "COUNT",
+        1000,
+      );
+      cursor = next;
+      if (keys.length) keysToDelete.push(...keys);
+    } while (cursor !== "0");
+
+    if (matchId) {
+      keysToDelete.push(`match:state:${matchId}`);
+    }
+
+    if (keysToDelete.length > 0) {
+      await client.del(...keysToDelete);
+    }
+
+    // Remove from lobby countdowns index set (best-effort; key may not exist)
+    try {
+      await client.srem("room:countdowns", roomId);
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Failed to SREM room:countdowns for ${roomId}: ${errMsg}`,
+      );
+    }
   }
 }

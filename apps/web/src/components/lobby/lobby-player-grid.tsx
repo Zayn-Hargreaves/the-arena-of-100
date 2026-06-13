@@ -1,6 +1,7 @@
 "use client";
 
-import React from "react";
+import type { FC } from "react";
+import { useTranslations } from "next-intl";
 import { Users } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { AvatarFrame } from "@/components/ui/avatar-frame";
@@ -23,12 +24,14 @@ interface LobbyPlayerGridProps {
   emptyStateMessage?: string;
 }
 
-export const LobbyPlayerGrid: React.FC<LobbyPlayerGridProps> = ({
+export const LobbyPlayerGrid: FC<LobbyPlayerGridProps> = ({
   players,
   currentUserId,
   hostId,
-  emptyStateMessage = "Đang chờ người chơi tham gia...",
+  emptyStateMessage,
 }) => {
+  const t = useTranslations("lobby.playerGrid");
+
   const getPlayerAvatar = (player: LobbyPlayer) => {
     if (player.id === currentUserId && typeof window !== "undefined") {
       const seed = localStorage.getItem("avatarSeed") || "jellyfrog";
@@ -56,10 +59,10 @@ export const LobbyPlayerGrid: React.FC<LobbyPlayerGridProps> = ({
       <div className="col-span-full flex flex-col items-center justify-center py-16 px-4 rounded-2xl border-[3px] border-dashed border-candy-ink/20 bg-white/50">
         <Users className="w-10 h-10 text-candy-ink/20 stroke-[1.5] mb-3" />
         <p className="font-display font-black text-base text-candy-ink/30 uppercase tracking-wider text-center">
-          {emptyStateMessage}
+          {emptyStateMessage ?? t("empty")}
         </p>
         <p className="font-sans text-xs text-candy-ink/20 mt-1">
-          Chia sẻ mã phòng để bắt đầu
+          {t("emptyHint")}
         </p>
       </div>
     );
@@ -105,7 +108,7 @@ export const LobbyPlayerGrid: React.FC<LobbyPlayerGridProps> = ({
                 {player.name}
                 {player.isOnline === false && (
                   <span className="text-[8px] font-black uppercase tracking-wider text-candy-red bg-candy-red/10 px-1.5 py-0.5 rounded-md border border-candy-red/30">
-                    Mất kết nối
+                    {t("offline")}
                   </span>
                 )}
               </p>
@@ -116,12 +119,12 @@ export const LobbyPlayerGrid: React.FC<LobbyPlayerGridProps> = ({
                 )}
               >
                 {isCurrent && isPlayerHost
-                  ? "BẠN (HOST)"
+                  ? t("youHost")
                   : isCurrent
-                    ? "BẠN"
+                    ? t("you")
                     : isPlayerHost
-                      ? "HOST"
-                      : "ĐÃ SẴN SÀNG"}
+                      ? t("host")
+                      : t("ready")}
               </p>
             </div>
           </div>
