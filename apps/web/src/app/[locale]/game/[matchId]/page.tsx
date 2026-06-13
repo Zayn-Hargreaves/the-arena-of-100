@@ -167,6 +167,10 @@ export default function GamePage({ params }: GamePageProps) {
 
     return () => {
       window.clearTimeout(redirectTimer);
+      useSocketStore.setState({
+        roomTerminated: false,
+        roomTerminationMessage: null,
+      });
     };
   }, [
     roomTerminated,

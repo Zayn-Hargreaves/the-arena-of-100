@@ -267,6 +267,9 @@ export class AdminService {
       }
     }
 
+    let partial = false;
+    let cleanupError: string | undefined;
+
     // 3. Stop in-memory timers + lobby countdown. `stopRoomRuntime` reaches
     // Redis via `clearPersistedCountdown`, which can throw. We do not want
     // that to abort the rest of the kill-switch (Redis cleanup, DB
@@ -276,10 +279,13 @@ export class AdminService {
     try {
       await this.gameLoopService.stopRoomRuntime(roomId, matchId);
     } catch (error) {
+      partial = true;
       const errMsg = error instanceof Error ? error.message : String(error);
+      const errStack = error instanceof Error ? error.stack : undefined;
+      if (!cleanupError) cleanupError = errMsg;
       this.logger.error(
-        `stopRoomRuntime failed during admin termination of room ${roomId}${matchId ? ` (match ${matchId})` : ""}: ${errMsg}`,
-        error instanceof Error ? error.stack : undefined,
+        `Partial termination: stopRoomRuntime failed during admin termination of room ${roomId}${matchId ? ` (match ${matchId})` : ""}: ${errMsg}`,
+        errStack,
       );
     }
 
@@ -290,10 +296,13 @@ export class AdminService {
     try {
       this.gameLoopService.emitRoomTerminated(roomId, { matchId, message });
     } catch (error) {
+      partial = true;
       const errMsg = error instanceof Error ? error.message : String(error);
+      const errStack = error instanceof Error ? error.stack : undefined;
+      if (!cleanupError) cleanupError = errMsg;
       this.logger.error(
-        `emitRoomTerminated failed during admin termination of room ${roomId}${matchId ? ` (match ${matchId})` : ""}: ${errMsg}`,
-        error instanceof Error ? error.stack : undefined,
+        `Partial termination: emitRoomTerminated failed during admin termination of room ${roomId}${matchId ? ` (match ${matchId})` : ""}: ${errMsg}`,
+        errStack,
       );
     }
 
@@ -308,17 +317,16 @@ export class AdminService {
     // The error is also surfaced to the caller (not just logged) so the
     // admin UI can report a partial result and trigger a follow-up sweep
     // if needed.
-    let partial = false;
-    let cleanupError: string | undefined;
     try {
       await this.cleanupRoomRedisKeys(roomId, matchId);
     } catch (error) {
       partial = true;
       const errMsg = error instanceof Error ? error.message : String(error);
-      cleanupError = errMsg;
+      const errStack = error instanceof Error ? error.stack : undefined;
+      if (!cleanupError) cleanupError = errMsg;
       this.logger.error(
         `Partial termination: failed to cleanup Redis keys for room ${roomId}${matchId ? ` (match ${matchId})` : ""}: ${errMsg}`,
-        error instanceof Error ? error.stack : undefined,
+        errStack,
       );
     }
 

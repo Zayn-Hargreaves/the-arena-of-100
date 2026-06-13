@@ -83,6 +83,10 @@ export default function LobbyPage({ params }: LobbyPageProps) {
 
     return () => {
       window.clearTimeout(redirectTimer);
+      useSocketStore.setState({
+        roomTerminated: false,
+        roomTerminationMessage: null,
+      });
     };
   }, [roomTerminated, roomTerminationMessage, router, toast, tTermination]);
 

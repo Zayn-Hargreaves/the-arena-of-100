@@ -707,9 +707,10 @@ describe("AdminService", () => {
 
       // Steps 5 and 6 must still run.
       expect(roomService.disbandRoom).toHaveBeenCalledWith("r10");
-      // Disband succeeded → response is clean success.
-      expect(result.success).toBe(true);
-      expect(result.partial).toBe(false);
+      // Disband succeeded but emitRoomTerminated failed → response is partial.
+      expect(result.success).toBe(false);
+      expect(result.partial).toBe(true);
+      expect(result.cleanupError).toBe("[object Object]");
     });
 
     it("logs Error stacks when emitRoomTerminated throws an Error", async () => {
@@ -847,9 +848,10 @@ describe("AdminService", () => {
         message: undefined,
       });
       expect(roomService.disbandRoom).toHaveBeenCalledWith("r12");
-      // Disband succeeded → response is clean success.
-      expect(result.success).toBe(true);
-      expect(result.partial).toBe(false);
+      // Disband succeeded but stopRoomRuntime failed → response is partial.
+      expect(result.success).toBe(false);
+      expect(result.partial).toBe(true);
+      expect(result.cleanupError).toBe("runtime stop boom (string)");
     });
 
     it("logs Error stacks when stopRoomRuntime throws an Error", async () => {
