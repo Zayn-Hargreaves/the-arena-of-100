@@ -53,7 +53,7 @@
 5. **Frictionless Onboarding + Content Moderation**: nickname qua `authenticate()` chưa qua profanity filter; chưa có device fingerprint.
 6. **Anonymous Identity Tracking**: `guestId` đã quyết định (Model C) nhưng chưa code enforce.
 7. **Optimistic UI**: lock-in có, rollback flow chưa đầy đủ ở `game/[matchId]/page.tsx`.
-8. **Game Operations / Kill Switch**: `system/reset` đã có nhưng chưa có `force-kill room`, `void question`, `global broadcast`.
+8. **Game Operations / Kill Switch**: `system/reset` đã có; `force-kill room` / admin kill-switch flow đã xong, nhưng `ROOM_TERMINATED` message sanitizer vẫn deferred (schema hiện fail-fast cho raw `message`).
 9. **Post-match rematch + stats**: `/result` có UI nhưng rematch/share chưa có.
 10. **Asset preloading + runtime fallback**: chưa có.
 11. **Tie-break / Sudden Death**: chưa có.

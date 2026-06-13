@@ -80,7 +80,11 @@ describe("AdminController", () => {
   });
 
   describe("terminateRoom", () => {
-    it("delegates to AdminService.terminateRoom with the roomId and message", async () => {
+    it("delegates to AdminService.terminateRoom with the roomId (no message)", async () => {
+      // Note: `message` is currently rejected at the schema boundary
+      // because the shared sanitizer pipeline is not yet wired
+      // (see terminate-room.dto.ts and plan.md §501). Once it lands,
+      // update this test to also assert the message is forwarded.
       const dto = { message: "abandoned by host" };
       const expected = {
         success: true,
@@ -91,16 +95,13 @@ describe("AdminController", () => {
       };
       vi.mocked(service.terminateRoom).mockResolvedValue(expected);
 
-      const result = await controller.terminateRoom("r1", dto);
-
-      expect(service.terminateRoom).toHaveBeenCalledWith(
-        "r1",
-        "abandoned by host",
-      );
-      expect(result).toEqual(expected);
+      // Currently rejects — message field is fail-fast until the
+      // sanitizer pipeline lands.
+      await expect(controller.terminateRoom("r1", dto)).rejects.toThrow();
+      expect(service.terminateRoom).not.toHaveBeenCalled();
     });
 
-    it("treats an undefined body as an empty DTO (message=undefined)", async () => {
+    it("forwards the call when message is omitted", async () => {
       vi.mocked(service.terminateRoom).mockResolvedValue({
         success: true,
         roomId: "r1",
@@ -109,9 +110,10 @@ describe("AdminController", () => {
         terminatedAt: 12345,
       });
 
-      await controller.terminateRoom("r1", undefined);
+      const result = await controller.terminateRoom("r1", undefined);
 
       expect(service.terminateRoom).toHaveBeenCalledWith("r1", undefined);
+      expect(result.success).toBe(true);
     });
 
     it("propagates ROOM_NOT_FOUND from AdminService (controller → 404)", async () => {
@@ -126,6 +128,16 @@ describe("AdminController", () => {
 
     it("rejects messages longer than 200 characters (zod validation)", async () => {
       const dto = { message: "x".repeat(201) };
+
+      await expect(controller.terminateRoom("r1", dto)).rejects.toThrow();
+      expect(service.terminateRoom).not.toHaveBeenCalled();
+    });
+
+    it("rejects any message because the sanitizer pipeline is not yet available", async () => {
+      // Even a short, well-formed message is rejected at the schema
+      // boundary (fail-fast). When the sanitizer lands this test
+      // should flip to "forwards the call" semantics.
+      const dto = { message: "abandoned" };
 
       await expect(controller.terminateRoom("r1", dto)).rejects.toThrow();
       expect(service.terminateRoom).not.toHaveBeenCalled();

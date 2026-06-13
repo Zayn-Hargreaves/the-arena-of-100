@@ -214,9 +214,8 @@ export default function AdminPage() {
   };
 
   const performTerminateRoom = async () => {
-    setShowTerminateModal(false);
     const trimmedRoomId = terminateRoomId.trim();
-    if (!trimmedRoomId) return;
+    setShowTerminateModal(false);
 
     setTerminating(true);
     try {
@@ -225,7 +224,9 @@ export default function AdminPage() {
       // localized rate-limit message instead of a raw error string.
       // A 2xx response may still carry `partial: true` if the backend's
       // DB disband step failed after the room channel was already notified
-      // and timers/Redis were cleaned — that case needs a different toast.
+      // and timers/Redis were cleaned — that case needs a different toast
+      // AND must preserve the inputs so the operator can retry once the
+      // underlying DB issue is resolved.
       const response = await apiSendJson<{
         success: boolean;
         partial?: boolean;
@@ -249,17 +250,18 @@ export default function AdminPage() {
             error: response.cleanupError ?? "unknown",
           }),
         });
+        // Preserve inputs on partial failure so the operator can
+        // investigate the DB inconsistency and retry without retyping
+        // the roomId / message.
       } else {
         toast({
           title: tTerminate("success"),
         });
+        // Clear inputs only on full success so the next call does not
+        // accidentally re-target the same room.
+        setTerminateRoomId("");
+        setTerminateMessage("");
       }
-      // Clear inputs after a terminate attempt so the next call does not
-      // accidentally re-target the same room. This runs on both full and
-      // partial success — the operator should be aware of the partial
-      // result from the toast above and can investigate before re-trying.
-      setTerminateRoomId("");
-      setTerminateMessage("");
     } catch (error) {
       const isRateLimited = error instanceof ApiError && error.status === 429;
       toast({

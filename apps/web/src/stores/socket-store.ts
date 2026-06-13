@@ -596,12 +596,16 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     // active match in it). Clear local room/match state and surface a
     // termination flag so the lobby page can redirect + toast. We do NOT
     // auto-redirect here — page-level navigation needs the i18n router.
+    // `isEliminated` is also reset: a previous match's elimination state
+    // must not leak into the next room after a forced restart, otherwise
+    // the spectator/ELIMINATED UI would persist on reconnect/join.
     newSocket.on(ServerEvent.ROOM_TERMINATED, (data: RoomTerminatedPayload) => {
       set({
         room: null,
         match: null,
         remainingCount: null,
         lastAnswerResult: null,
+        isEliminated: false,
         roomTerminated: true,
         roomTerminationMessage: data.message ?? null,
       });

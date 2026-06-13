@@ -267,11 +267,35 @@ export class AdminService {
       }
     }
 
-    // 3. Stop in-memory timers + lobby countdown
-    await this.gameLoopService.stopRoomRuntime(roomId, matchId);
+    // 3. Stop in-memory timers + lobby countdown. `stopRoomRuntime` reaches
+    // Redis via `clearPersistedCountdown`, which can throw. We do not want
+    // that to abort the rest of the kill-switch (Redis cleanup, DB
+    // disband, room-channel notification) — the room must still be torn
+    // down from the caller's perspective. The error is logged with
+    // context so it can be correlated with the room/match in observability.
+    try {
+      await this.gameLoopService.stopRoomRuntime(roomId, matchId);
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `stopRoomRuntime failed during admin termination of room ${roomId}${matchId ? ` (match ${matchId})` : ""}: ${errMsg}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
 
-    // 4. Emit ROOM_TERMINATED to the room channel
-    this.gameLoopService.emitRoomTerminated(roomId, { matchId, message });
+    // 4. Emit ROOM_TERMINATED to the room channel. `emitRoomTerminated`
+    // already guards against `!this.server` (logs a warn and returns), but
+    // a misbehaving socket.io adapter could still throw on the actual
+    // emit. Defensive catch so the rest of the kill-switch still runs.
+    try {
+      this.gameLoopService.emitRoomTerminated(roomId, { matchId, message });
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `emitRoomTerminated failed during admin termination of room ${roomId}${matchId ? ` (match ${matchId})` : ""}: ${errMsg}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
 
     // 5. Clean Redis keys explicitly
     await this.cleanupRoomRedisKeys(roomId, matchId);

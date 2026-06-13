@@ -108,7 +108,8 @@
 - [ ] Mass-spectator isolation (SSE channel riêng)
 - [ ] Anonymous identity tracking (device fingerprint)
 - [ ] Optimistic UI implementation với smart recovery (đã có một phần ở `game/[matchId]/page.tsx` nhưng chưa đầy đủ rollback)
-- [ ] Game operations tools (admin force-kill chưa có, hiện chỉ có `system/reset` thô)
+- [x] Game operations tools — admin force-kill ✅ Done (Phases 1–5 of the kill-switch; contract, backend endpoint, client transport, admin UI, and lobby redirect are all merged)
+  - [ ] Admin kill-switch message sanitizer — deferred until the shared profanity/content-moderation pipeline lands; current schema fail-fast rejects raw `message` input (see `plan.md` deferred items)
   - [x] **Phase 1 (contract) done** (2026-06-07): typed `ServerEvent.ROOM_TERMINATED` + `RoomTerminatedPayload` + `RoomTerminationReason="ADMIN_TERMINATED"`; mirrored `RoomEventType.ROOM_TERMINATED` + `RoomTerminatedEventPayload` for event-sourcing. `@arena/shared` build green. Phases 2–5 pending.
   - [x] **Phase 2 (backend admin action) done** (2026-06-07): `POST /admin/rooms/:roomId/terminate` (ADMIN-only, 5/min throttle) wired through `AdminService.terminateRoom` orchestrator. Extends `MatchService.finishMatch` to accept `null` winner (admin termination skips score persistence). New `GameLoopService.stopRoomRuntime` cancels lobby countdown + match timers; `emitRoomTerminated` encapsulates the socket.io emit. Explicit Redis cleanup (room keys + SCAN'd presence keys + match state + lobby countdowns index). 607 tests pass, `@arena/api` build green. Phases 3–5 pending.
 
@@ -152,7 +153,7 @@
 - [ ] `packages/config` directory trống
 - [x] **Profile + Rankings mock data** — cần backend endpoints trước khi gắn UI thật ✅ Done (issue.md Step 3+4+5: backend + hooks + UI live)
 - [ ] **Design system Phase 5 chưa đóng** (shell templates, legacy CSS, visual audit) — **Follow-up**: Design system Phase 5 (shell templates/legacy CSS/visual audit) — owner: TBD, ticket: TBD
-- [ ] **Lobby mock players fallback** — cần real player events khi prod (debug only hiện tại)
+- [x] **Lobby mock players fallback** — removed (Phase 3 refinement 2026-06-08); page now reads strictly from server-authoritative player list via `useLobbyLifecycle` hook
 
 ### 🟢 Nice-to-Have
 

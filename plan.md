@@ -499,6 +499,7 @@ Keep these out of the critical path unless a blocking requirement appears:
 
 - device fingerprint enforcement
 - profanity moderation pipeline
+- admin kill-switch message sanitizer (ROOM_TERMINATED payload)
 - admin kill switch expansion
 - mass-spectator SSE isolation
 - deep optimistic UI retry/idempotency

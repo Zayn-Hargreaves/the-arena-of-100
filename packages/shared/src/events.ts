@@ -97,9 +97,14 @@ export interface PlayerPresenceUpdatedEventPayload {
   updatedAt: number;
 }
 
+export type RoomTerminationReason =
+  | "ADMIN_TERMINATED"
+  | "SYSTEM_MAINTENANCE"
+  | "INACTIVITY_TIMEOUT";
+
 export interface RoomTerminatedEventPayload {
   roomId: string;
-  reason: "ADMIN_TERMINATED";
+  reason: RoomTerminationReason;
   matchId: string | null;
   message?: string;
   terminatedAt: number;

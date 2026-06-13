@@ -51,7 +51,7 @@ export const LobbyStartControls: FC<LobbyStartControlsProps> = ({
       type="button"
       onClick={onStart}
       disabled={!canHostStart}
-      aria-busy={roomStatus !== RoomStatus.WAITING}
+      aria-busy={roomStatus !== RoomStatus.WAITING ? "true" : "false"}
       className={cn(
         "w-full h-14 bg-candy-mint text-candy-ink border-[3.5px] border-candy-ink shadow-[6px_6px_0_0_#2B2D42] rounded-2xl hover:translate-y-[-2px] hover:shadow-[8px_8px_0_0_#2B2D42] active:translate-y-[4px] active:shadow-[2px_2px_0_0_#2B2D42] font-display font-black text-sm tracking-widest uppercase flex items-center justify-center cursor-pointer transition-all select-none disabled:opacity-50 disabled:cursor-not-allowed",
         FOCUS_RING,

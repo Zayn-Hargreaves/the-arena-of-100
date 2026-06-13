@@ -3,6 +3,7 @@
 // Client-Server Communication Protocol
 // ============================================================
 
+import type { RoomTerminationReason } from "./events";
 import type { RoomStatus } from "./state";
 
 // Socket Namespaces
@@ -223,8 +224,6 @@ export interface RoomPresenceUpdatedPayload {
   isOnline: boolean;
   updatedAt: number;
 }
-
-export type RoomTerminationReason = "ADMIN_TERMINATED";
 
 export interface RoomTerminatedPayload {
   roomId: string;

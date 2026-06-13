@@ -217,6 +217,7 @@ apps/web/src/
 - Spectator mode + drop-in spectating
 - AFK sweeping
 - Graceful exit UX
+- Admin kill-switch message sanitizer (deferred until shared profanity/content-moderation pipeline lands; terminate-room schema currently fail-fast rejects raw `message`)
 - Content moderation + device fingerprint
 - Optimistic UI rollback đầy đủ
 - Game operations kill switch
