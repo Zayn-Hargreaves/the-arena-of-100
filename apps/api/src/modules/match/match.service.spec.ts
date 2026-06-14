@@ -20,6 +20,7 @@ describe("MatchService", () => {
       },
       matchRound: { create: vi.fn() },
       answer: { create: vi.fn(), createMany: vi.fn() },
+      question: { findUnique: vi.fn() },
       $transaction: vi.fn(async (ops) => {
         // Execute all operations sequentially for test fidelity
         if (Array.isArray(ops)) {
@@ -197,6 +198,147 @@ describe("MatchService", () => {
       expect(sm).toBeUndefined();
       expect(redis.del).toHaveBeenCalledWith("match:state:bad");
     });
+
+    // L3 coverage: rehydrateCorrectAnswer runs when getStateMachine
+    // restores from Redis. The restored state machine's current round
+    // has the safe shape (no correctAnswer in the Redis JSON) and
+    // must re-attach the answer from the DB so grading works.
+    it("rehydrates the correct answer from the DB for an in-flight ACTIVE round", async () => {
+      // Build a serialized state with currentRound in ACTIVE status
+      // so rehydrateCorrectAnswer actually runs the prisma lookup.
+      const serialized = JSON.stringify({
+        state: {
+          id: "m-rehydrate",
+          roomId: "r-rehydrate",
+          status: MatchStatus.ROUND_ACTIVE,
+          currentRoundNo: 1,
+          totalRounds: 0,
+          players: [
+            [
+              "u1",
+              {
+                id: "u1",
+                name: "A",
+                status: PlayerStatus.ACTIVE,
+                score: 0,
+                totalResponseTimeMs: 0,
+                correctAnswers: 0,
+                isOnline: true,
+              },
+            ],
+            [
+              "u2",
+              {
+                id: "u2",
+                name: "B",
+                status: PlayerStatus.ACTIVE,
+                score: 0,
+                totalResponseTimeMs: 0,
+                correctAnswers: 0,
+                isOnline: true,
+              },
+            ],
+          ],
+          survivingPlayerIds: ["u1", "u2"],
+          eliminatedPlayerIds: [],
+          winnerId: null,
+          startedAt: 0,
+          endedAt: null,
+        },
+        currentRound: {
+          roundNo: 1,
+          question: {
+            id: "q-rehydrate",
+            content: "Q?",
+            options: ["A", "B"],
+            difficulty: "MEDIUM",
+          },
+          startedAt: 1000,
+          endsAt: 2000,
+          status: "ACTIVE",
+          answers: [],
+        },
+        eventLog: [],
+      });
+      vi.mocked(redis.get).mockResolvedValue(serialized);
+      vi.mocked(prisma.question.findUnique).mockResolvedValue({
+        correctAnswer: "A",
+      } as any);
+
+      const sm = await service.getStateMachine("m-rehydrate");
+      expect(sm).toBeDefined();
+      // The DB lookup must have run with the question id from
+      // the in-flight round.
+      expect(prisma.question.findUnique).toHaveBeenCalledWith({
+        where: { id: "q-rehydrate" },
+        select: { correctAnswer: true },
+      });
+      // The restored state machine's round now has the correct
+      // answer attached (L3 re-attach).
+      const restoredRound = sm!.getCurrentRound();
+      expect(restoredRound).not.toBeNull();
+      // The `correctAnswer` field is internal on the round
+      // shape; verify it via the typed access.
+      const internalAnswer = (
+        restoredRound as unknown as {
+          correctAnswer: string;
+        }
+      ).correctAnswer;
+      expect(internalAnswer).toBe("A");
+    });
+
+    it("does not call the DB when the restored round is not ACTIVE", async () => {
+      // Build a serialized state with currentRound in COMPLETED
+      // status. rehydrateCorrectAnswer must short-circuit and
+      // not run the prisma lookup.
+      const serialized = JSON.stringify({
+        state: {
+          id: "m-skip",
+          roomId: "r-skip",
+          status: MatchStatus.ROUND_RESULT,
+          currentRoundNo: 1,
+          totalRounds: 0,
+          players: [
+            [
+              "u1",
+              {
+                id: "u1",
+                name: "A",
+                status: PlayerStatus.ACTIVE,
+                score: 0,
+                totalResponseTimeMs: 0,
+                correctAnswers: 0,
+                isOnline: true,
+              },
+            ],
+          ],
+          survivingPlayerIds: ["u1"],
+          eliminatedPlayerIds: [],
+          winnerId: null,
+          startedAt: 0,
+          endedAt: null,
+        },
+        currentRound: {
+          roundNo: 1,
+          question: {
+            id: "q-skip",
+            content: "Q?",
+            options: ["A", "B"],
+            difficulty: "MEDIUM",
+          },
+          startedAt: 1000,
+          endsAt: 2000,
+          status: "COMPLETED",
+          answers: [],
+        },
+        eventLog: [],
+      });
+      vi.mocked(redis.get).mockResolvedValue(serialized);
+
+      const sm = await service.getStateMachine("m-skip");
+      expect(sm).toBeDefined();
+      expect(prisma.question.findUnique).not.toHaveBeenCalled();
+    });
   });
 
   describe("persistStateMachine", () => {
@@ -245,7 +387,7 @@ describe("MatchService", () => {
         roomId: "r1",
       } as any);
 
-      await service.finishMatch("m1", "u1");
+      await service.finishMatch("m1", "u1", "r1");
 
       expect(prisma.match.update).toHaveBeenCalledWith({
         where: { id: "m1" },
@@ -284,7 +426,7 @@ describe("MatchService", () => {
       } as any);
 
       // Admin termination path: winnerId === null
-      await service.finishMatch("m1", null);
+      await service.finishMatch("m1", null, "r1");
 
       // Match update records null winner
       expect(prisma.match.update).toHaveBeenCalledWith({
@@ -302,8 +444,14 @@ describe("MatchService", () => {
       });
       // Redis state cleaned
       expect(redis.del).toHaveBeenCalledWith("match:state:m1");
-      // No score persistence ($transaction NOT called for null-winner path)
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+      // H2 fix: the match+room update is wrapped in $transaction.
+      // The transaction array contains no score updateMany ops
+      // (winnerId is null) but DOES contain match.update +
+      // room.update.
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      const txArg = vi.mocked(prisma.$transaction).mock.calls[0][0];
+      expect(Array.isArray(txArg)).toBe(true);
+      expect(txArg).toHaveLength(2);
       expect(prisma.matchPlayer.updateMany).not.toHaveBeenCalled();
     });
 
@@ -334,7 +482,7 @@ describe("MatchService", () => {
       // Non-Error rejection to cover `String(error)` in the warning path.
       vi.mocked(redis.del).mockRejectedValueOnce("redis del boom (string)");
 
-      await service.finishMatch("m2", "u1");
+      await service.finishMatch("m2", "u1", "r2");
 
       expect(redis.del).toHaveBeenCalledWith("match:state:m2");
       expect(prisma.match.update).toHaveBeenCalledWith(
@@ -372,10 +520,10 @@ describe("MatchService", () => {
       } as any);
       vi.mocked(redis.del).mockRejectedValueOnce(new Error("redis del boom"));
 
-      await service.finishMatch("m2b", "u1");
+      await service.finishMatch("m2b", "u1", "r2b");
 
       expect(loggerWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Failed to delete Redis state for match m2b:"),
+        expect.stringContaining("Failed to delete Redis state for match m2b"),
       );
     });
 
@@ -408,15 +556,21 @@ describe("MatchService", () => {
         "score tx boom (string)",
       );
 
-      await service.finishMatch("m3", "u1");
+      // H2 fix: the $transaction failure now propagates. The
+      // function does not silently swallow the error; instead, the
+      // operator sees a clear failure and the in-memory state
+      // stays intact (no half-cleanup).
+      await expect(service.finishMatch("m3", "u1", "r3")).rejects.toThrow(
+        "score tx boom (string)",
+      );
 
       expect(prisma.$transaction).toHaveBeenCalled();
-      expect(prisma.match.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: "m3" },
-          data: expect.objectContaining({ winnerId: "u1" }),
-        }),
-      );
+      // In-memory state was NOT cleaned up on failure.
+      const internalMap = (service as any).stateMachines as Map<
+        string,
+        unknown
+      >;
+      expect(internalMap.has("m3")).toBe(true);
     });
   });
 
@@ -572,13 +726,39 @@ describe("MatchService", () => {
         { playerId: "u2", answer: "A", isCorrect: true, responseTimeMs: 8000 },
       ]);
 
-      await service.finishMatch("m1", "u1");
+      // Capture the return value of the single, meaningful
+      // `finishMatch` call. The previous version of this test
+      // (code review 2026-06-14) called `finishMatch` a second
+      // time to capture the return value, but by then the state
+      // machine had already been evicted by the first call, so
+      // `buildScoreUpdateOps` returned `[]`. That meant the
+      // assertion only verified the empty-ops path, NOT the
+      // actual `scoreUpdateOps.length > 0` path that the H2
+      // index-lookup fix was written for. The fix: assert the
+      // return value on the same call where `scoreUpdateOps`
+      // contains the two score updates we're verifying below.
+      const finishResult = await service.finishMatch("m1", "u1", "r1");
 
-      // Verify $transaction was invoked with an array of 2 updateMany operations
+      // Verify $transaction was invoked with an array containing
+      // 2 score updateMany operations + match.update + room.update
+      // (4 total). The H2 fix unified score+match+room writes into
+      // a single atomic $transaction.
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       const txArg = vi.mocked(prisma.$transaction).mock.calls[0][0];
       expect(Array.isArray(txArg)).toBe(true);
-      expect(txArg).toHaveLength(2);
+      expect(txArg).toHaveLength(4);
+
+      // Regression for the H2 + scoreUpdateOps spread bug: the
+      // returned match object must be the result of match.update
+      // (at index `scoreUpdateOps.length` = 2), NOT the first
+      // score-updateMany result. With the previous `[match]`
+      // destructuring, this assertion would fail because the
+      // destructured value was `{ count }` from updateMany.
+      // The scoreUpdateOps here is `[u1Update, u2Update]`
+      // (length 2), so the match.update result is at index 2.
+      expect(finishResult).toEqual(
+        expect.objectContaining({ id: "m1", roomId: "r1" }),
+      );
 
       // Inspect each updateMany call's args to verify scores
       const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
@@ -605,13 +785,21 @@ describe("MatchService", () => {
       expect(internalMap.has("m1")).toBe(true);
       internalMap.delete("m1");
 
-      await service.finishMatch("m1", "u1");
+      await service.finishMatch("m1", "u1", "r1");
 
-      // Should NOT throw, should still update match+room
+      // Should still update match+room via the atomic transaction
+      // (H2 fix: the score update and the match/room updates all
+      // run in the SAME $transaction).
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      const txArg = vi.mocked(prisma.$transaction).mock.calls[0][0];
+      expect(Array.isArray(txArg)).toBe(true);
+      // Only the match.update + room.update (no score updateMany
+      // because the state machine was gone, so buildScoreUpdateOps
+      // returned an empty array).
+      expect(txArg).toHaveLength(2);
       expect(prisma.match.update).toHaveBeenCalled();
-      // Should NOT have called $transaction for score persistence
-      expect(prisma.$transaction).not.toHaveBeenCalled();
-      // updateMany should not have been called
+      expect(prisma.room.update).toHaveBeenCalled();
+      // updateMany should not have been called (no scores to update).
       expect(prisma.matchPlayer.updateMany).not.toHaveBeenCalled();
     });
 
@@ -624,7 +812,7 @@ describe("MatchService", () => {
         { playerId: "u2", answer: "B", isCorrect: false, responseTimeMs: 500 },
       ]);
 
-      await service.finishMatch("m1", "u1");
+      await service.finishMatch("m1", "u1", "r1");
 
       const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
         .calls as any[][];
@@ -633,7 +821,13 @@ describe("MatchService", () => {
       expect(u2Call![0].data.score).toBe(0);
     });
 
-    it("continues to update match and room status even if score persistence fails", async () => {
+    it("propagates the transaction error when the atomic write fails (H2)", async () => {
+      // H2 fix follow-up: the previous behaviour was to swallow
+      // the score-write error and continue with match+room updates.
+      // That was the bug — a partial write left the DB inconsistent.
+      // The new contract: $transaction is atomic, so ANY error
+      // rolls back ALL writes and the function throws. Operators
+      // see a clear failure rather than silent data corruption.
       await setupMatch("m1", "r1", ["u1", "u2"]);
 
       // Make $transaction fail
@@ -641,11 +835,20 @@ describe("MatchService", () => {
         new Error("DB transaction failed"),
       );
 
-      // Should NOT throw — score persistence failure is logged but non-fatal
-      await expect(service.finishMatch("m1", "u1")).resolves.toBeDefined();
+      // The error is propagated; the function does not swallow it.
+      await expect(service.finishMatch("m1", "u1", "r1")).rejects.toThrow(
+        "DB transaction failed",
+      );
 
-      // Match and room updates should still have happened
-      expect(prisma.match.update).toHaveBeenCalled();
+      // The in-memory stateMachines map should NOT have been
+      // touched: cleanup happens only on success. (Otherwise a
+      // failed transaction would leave a half-clean state where
+      // a retry's getStateMachine would return undefined.)
+      const internalMap = (service as any).stateMachines as Map<
+        string,
+        unknown
+      >;
+      expect(internalMap.has("m1")).toBe(true);
     });
 
     it("accumulates score across multiple rounds correctly", async () => {
@@ -675,7 +878,7 @@ describe("MatchService", () => {
         1,
       );
 
-      await service.finishMatch("m1", "u1");
+      await service.finishMatch("m1", "u1", "r1");
 
       const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
         .calls as any[][];

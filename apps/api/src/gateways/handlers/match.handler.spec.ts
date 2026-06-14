@@ -43,6 +43,11 @@ describe("MatchHandler", () => {
     client = {
       emit: vi.fn(),
       data: { userId: "u1", username: "Alice" },
+      // H6 fix: handleRequestSnapshot now checks socket channel
+      // membership. Default the client to having joined room r1
+      // so the existing happy-path tests keep working. The
+      // H6-rejection test mutates this directly.
+      rooms: new Set<string>(["room:r1"]),
       nsp: {
         server: server,
       },
@@ -347,7 +352,13 @@ describe("MatchHandler", () => {
   describe("handleRequestSnapshot", () => {
     it("emits snapshot on success", async () => {
       const snapshot = { matchId: "m1", status: "ROUND_ACTIVE" };
-      const mockMachine = { getSnapshot: vi.fn().mockReturnValue(snapshot) };
+      const mockMachine = {
+        getSnapshot: vi.fn().mockReturnValue(snapshot),
+        // H6 fix: handleRequestSnapshot reads state.roomId to
+        // verify socket channel membership. Provide it in the
+        // mock so the happy path passes the new gate.
+        getState: vi.fn().mockReturnValue({ roomId: "r1" }),
+      };
       vi.mocked(matchService.getStateMachine).mockResolvedValue(
         mockMachine as any,
       );
@@ -368,12 +379,21 @@ describe("MatchHandler", () => {
       // remain open to non-players — that is the whole point of the
       // baseline. The snapshot is client-safe (no correctAnswer
       // leakage) so this is a deliberate allow-list.
+      //
+      // H6 fix follow-up: the H6 gate is on socket channel
+      // membership, NOT on player roster. A spectator's socket is
+      // in the room channel (handleJoinRoom calls client.join), so
+      // the H6 check passes for them. The roster check is still
+      // intentionally absent — see the comment in the handler.
       const snapshot = {
         matchId: "m1",
         status: "ROUND_ACTIVE",
         currentQuestion: { id: "q1", content: "Q?", options: ["A", "B"] },
       };
-      const mockMachine = { getSnapshot: vi.fn().mockReturnValue(snapshot) };
+      const mockMachine = {
+        getSnapshot: vi.fn().mockReturnValue(snapshot),
+        getState: vi.fn().mockReturnValue({ roomId: "r1" }),
+      };
       vi.mocked(matchService.getStateMachine).mockResolvedValue(
         mockMachine as any,
       );
@@ -399,6 +419,46 @@ describe("MatchHandler", () => {
       ) {
         expect(emitted.currentQuestion).not.toHaveProperty("correctAnswer");
       }
+    });
+
+    it("H6 fix: rejects a requester who is not in the room channel", async () => {
+      // H6 fix: the new room-membership gate rejects any
+      // authenticated user who is not in the room's Socket.io
+      // channel — even with a valid token and a known matchId.
+      // Without this, anyone who knew a matchId could read the
+      // full match state (player roster, scores, current
+      // question).
+      const snapshot = { matchId: "m1", status: "ROUND_ACTIVE" };
+      const mockMachine = {
+        getSnapshot: vi.fn().mockReturnValue(snapshot),
+        getState: vi.fn().mockReturnValue({ roomId: "r1" }),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+
+      // Clear the default room:r1 from client.rooms; this client
+      // is NOT a member of the room's channel.
+      (client.rooms as Set<string>).clear();
+
+      await handler.handleRequestSnapshot(client, {
+        matchId: "m1",
+        lastSeenSeqNo: 0,
+      });
+
+      // No snapshot was emitted.
+      expect(client.emit).not.toHaveBeenCalledWith(
+        ServerEvent.SNAPSHOT,
+        expect.anything(),
+      );
+      // An UNAUTHORIZED error was emitted instead.
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({ code: ErrorCode.UNAUTHORIZED }),
+      );
+      // getSnapshot was NEVER called — the gate fires before
+      // reaching the snapshot read.
+      expect(mockMachine.getSnapshot).not.toHaveBeenCalled();
     });
 
     it("emits error when match not found", async () => {
@@ -432,6 +492,9 @@ describe("MatchHandler", () => {
         getSnapshot: vi.fn().mockImplementation(() => {
           throw "snapshot failure";
         }),
+        // H6 fix: provide state.roomId so the gate doesn't reject
+        // before the throw is reached.
+        getState: vi.fn().mockReturnValue({ roomId: "r1" }),
       };
       vi.mocked(matchService.getStateMachine).mockResolvedValue(
         mockMachine as any,
@@ -453,6 +516,9 @@ describe("MatchHandler", () => {
         getSnapshot: vi.fn().mockImplementation(() => {
           throw new Error("some standard error");
         }),
+        // H6 fix: same as above — keep the gate happy so the
+        // handler reaches the throw path.
+        getState: vi.fn().mockReturnValue({ roomId: "r1" }),
       };
       vi.mocked(matchService.getStateMachine).mockResolvedValue(
         mockMachine as any,

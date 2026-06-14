@@ -15,26 +15,17 @@ export * from "./socket";
 // Errors
 export * from "./errors";
 
+// Validation Schemas
+export * from "./schemas";
+
 // Avatar Seeds
 export * from "./avatars";
 
-// Game Constants
-export const GAME_CONFIG = {
-  MAX_PLAYERS: 100,
-  MIN_PLAYERS_TO_START: 2,
-  ROUND_DURATION_MS: 15_000, // 15 seconds per round
-  COUNTDOWN_DURATION_MS: 5_000, // 5 seconds countdown
-  RESULT_DISPLAY_MS: 3_000, // 3 seconds to show result
-  MAX_ROUNDS: 50, // Safety limit
-  ROOM_CODE_LENGTH: 6,
-  // Scoring: each correct answer grants base + speed bonus
-  // total = SCORE_BASE_CORRECT + max(0, (WINDOW - responseTimeMs) / DIVISOR)
-  // Max bonus: 50 (when responseTime = 0)
-  // Min bonus: 0  (when responseTime >= WINDOW)
-  SCORE_BASE_CORRECT: 100,
-  SCORE_SPEED_BONUS_WINDOW_MS: 10_000,
-  SCORE_SPEED_BONUS_DIVISOR: 200,
-} as const;
+// Game Constants (defined in its own file so schemas.ts can
+// import GAME_CONFIG.MAX_ROUNDS without creating a circular
+// dependency through the index barrel).
+export { GAME_CONFIG } from "./game-config";
+import { GAME_CONFIG } from "./game-config";
 
 export type RoomCategory =
   | "ALL"
@@ -94,4 +85,6 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.NOT_ENOUGH_PLAYERS]: "Cần ít nhất 2 người chơi",
   [ErrorCode.INVALID_ROOM_TYPE]: "Loại phòng không hợp lệ",
   [ErrorCode.SPECTATOR_CANNOT_ANSWER]: "Khán giả không thể gửi câu trả lời",
+  [ErrorCode.INVALID_PAYLOAD]: "Dữ liệu gửi lên không hợp lệ",
+  [ErrorCode.PLAYER_DISCONNECTED]: "Bạn đã bị ngắt kết nối, vui lòng thử lại",
 };

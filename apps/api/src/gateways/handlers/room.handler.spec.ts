@@ -29,7 +29,8 @@ describe("RoomHandler", () => {
     gameLoopService = {
       maybeStartPublicCountdown: vi.fn().mockResolvedValue(null),
       handleRoomPlayerLeft: vi.fn().mockResolvedValue(undefined),
-      getCountdownEnd: vi.fn().mockReturnValue(null),
+      handleMatchPlayerLeft: vi.fn().mockResolvedValue(undefined),
+      getCountdownEnd: vi.fn().mockResolvedValue(null),
     };
     handler = new RoomHandler(
       roomService,
@@ -508,8 +509,16 @@ describe("RoomHandler", () => {
   });
 
   describe("handleLeaveRoom", () => {
-    it("leaves room and emits PLAYER_LEFT", async () => {
-      vi.mocked(roomService.leaveRoom).mockResolvedValue(undefined as any);
+    it("leaves a non-IN_GAME room, broadcasts PLAYER_LEFT, and calls handleRoomPlayerLeft", async () => {
+      // WAITING room: the player leaving never had a match, so we
+      // just notify the lobby and let handleRoomPlayerLeft decide
+      // whether to cancel the countdown. The new C1 path
+      // (handleMatchPlayerLeft) must NOT be taken.
+      vi.mocked(roomService.leaveRoom).mockResolvedValue({
+        id: "r1",
+        currentMatchId: null,
+        status: RoomStatus.WAITING,
+      } as any);
 
       await handler.handleLeaveRoom(client, server, { roomId: "r1" });
 
@@ -526,6 +535,107 @@ describe("RoomHandler", () => {
         "r1",
         server,
       );
+      // C1 fix: must NOT call handleMatchPlayerLeft for WAITING rooms.
+      expect(gameLoopService.handleMatchPlayerLeft).not.toHaveBeenCalled();
+    });
+
+    it("C1 fix: notifies the game loop when leaving an IN_GAME room", async () => {
+      // C1 fix: a player leaving an IN_GAME room must have their
+      // match state machine updated to DISCONNECTED, otherwise the
+      // SUBMIT_ANSWER gate (which checks `status === ACTIVE`) keeps
+      // accepting their answers from a socket that no longer
+      // belongs to the ROOM channel. This is a cheating vector.
+      vi.mocked(roomService.leaveRoom).mockResolvedValue({
+        id: "r1",
+        currentMatchId: "m1",
+        status: RoomStatus.IN_GAME,
+      } as any);
+      // Add the new method to the mock so the handler can call it.
+      (
+        gameLoopService as unknown as {
+          handleMatchPlayerLeft: ReturnType<typeof vi.fn>;
+        }
+      ).handleMatchPlayerLeft = vi.fn().mockResolvedValue(undefined);
+
+      await handler.handleLeaveRoom(client, server, { roomId: "r1" });
+
+      expect(roomService.leaveRoom).toHaveBeenCalledWith("r1", "u1");
+      expect(client.leave).toHaveBeenCalledWith("room:r1");
+      // The new C1 path is taken: game loop is notified.
+      expect(
+        (
+          gameLoopService as unknown as {
+            handleMatchPlayerLeft: ReturnType<typeof vi.fn>;
+          }
+        ).handleMatchPlayerLeft,
+      ).toHaveBeenCalledWith("m1", "r1", "u1", server);
+      // The lobby PLAYER_LEFT broadcast is NOT emitted (the
+      // game loop's handleMatchPlayerLeft handles the broadcast for
+      // IN_GAME rooms) — we should not double-emit.
+      expect(server.to).not.toHaveBeenCalled();
+      // The COUNTDOWN path is NOT taken.
+      expect(gameLoopService.handleRoomPlayerLeft).not.toHaveBeenCalled();
+    });
+
+    it("C1 fix: notifies the game loop when leaving a FINISHED room", async () => {
+      // FINISHED is included in the C1 fix because the room still
+      // has a currentMatchId (the match ended moments ago). Marking
+      // the player DISCONNECTED is harmless but consistent with the
+      // IN_GAME path.
+      vi.mocked(roomService.leaveRoom).mockResolvedValue({
+        id: "r1",
+        currentMatchId: "m1",
+        status: RoomStatus.FINISHED,
+      } as any);
+      (
+        gameLoopService as unknown as {
+          handleMatchPlayerLeft: ReturnType<typeof vi.fn>;
+        }
+      ).handleMatchPlayerLeft = vi.fn().mockResolvedValue(undefined);
+
+      await handler.handleLeaveRoom(client, server, { roomId: "r1" });
+
+      expect(
+        (
+          gameLoopService as unknown as {
+            handleMatchPlayerLeft: ReturnType<typeof vi.fn>;
+          }
+        ).handleMatchPlayerLeft,
+      ).toHaveBeenCalledWith("m1", "r1", "u1", server);
+    });
+
+    it("IN_GAME room with no currentMatchId falls back to the lobby path", async () => {
+      // Defensive: a room could be IN_GAME without a currentMatchId
+      // (e.g. the match was rolled back). The C1 path requires
+      // BOTH a currentMatchId AND an IN_GAME/FINISHED status. If
+      // either is missing we fall through to the lobby path.
+      vi.mocked(roomService.leaveRoom).mockResolvedValue({
+        id: "r1",
+        currentMatchId: null,
+        status: RoomStatus.IN_GAME,
+      } as any);
+      (
+        gameLoopService as unknown as {
+          handleMatchPlayerLeft: ReturnType<typeof vi.fn>;
+        }
+      ).handleMatchPlayerLeft = vi.fn().mockResolvedValue(undefined);
+
+      await handler.handleLeaveRoom(client, server, { roomId: "r1" });
+
+      // Lobby path: PLAYER_LEFT broadcast + handleRoomPlayerLeft.
+      expect(server.to).toHaveBeenCalledWith("room:r1");
+      expect(gameLoopService.handleRoomPlayerLeft).toHaveBeenCalledWith(
+        "r1",
+        server,
+      );
+      // C1 path NOT taken.
+      expect(
+        (
+          gameLoopService as unknown as {
+            handleMatchPlayerLeft: ReturnType<typeof vi.fn>;
+          }
+        ).handleMatchPlayerLeft,
+      ).not.toHaveBeenCalled();
     });
 
     it("emits error on failure", async () => {

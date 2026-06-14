@@ -519,27 +519,44 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           ? prev
           : null;
 
-      set((state) => ({
-        match: state.match
-          ? {
-              ...state.match,
-              status: "ROUND_RESULT",
-              roundEndTime: null, // Reset round end time
-            }
-          : null,
-        lastAnswerResult: {
-          matchId: data.matchId,
-          roundNo: data.roundNo,
-          ...(priorForThisRound?.isCorrect !== undefined && {
-            isCorrect: priorForThisRound.isCorrect,
-          }),
-          ...(priorForThisRound?.responseTimeMs !== undefined && {
-            responseTimeMs: priorForThisRound.responseTimeMs,
-          }),
-          correctAnswer: data.correctAnswer,
-        },
-        remainingCount: data.survivingPlayerIds.length,
-      }));
+      // F1 fix: cross-check the server's `eliminatedPlayerIds` array
+      // and stamp `status = "ELIMINATED"` on each player in
+      // `match.players`. The previous sidebar rendered a hardcoded
+      // list of mock opponents (`Zero_Cool`, `Acid_Burn`, …) that
+      // was a flat-out deception to the user. Now the sidebar reads
+      // from `match.players` and reflects actual server-side
+      // elimination state. We use an immutable map update so React
+      // re-renders on player status changes.
+      set((state) => {
+        const eliminatedSet = new Set(data.eliminatedPlayerIds);
+        const updatedPlayers = state.match?.players.map((player) =>
+          eliminatedSet.has(player.id)
+            ? { ...player, status: "ELIMINATED" as const }
+            : player,
+        );
+        return {
+          match: state.match
+            ? {
+                ...state.match,
+                players: updatedPlayers ?? state.match.players,
+                status: "ROUND_RESULT",
+                roundEndTime: null, // Reset round end time
+              }
+            : null,
+          lastAnswerResult: {
+            matchId: data.matchId,
+            roundNo: data.roundNo,
+            ...(priorForThisRound?.isCorrect !== undefined && {
+              isCorrect: priorForThisRound.isCorrect,
+            }),
+            ...(priorForThisRound?.responseTimeMs !== undefined && {
+              responseTimeMs: priorForThisRound.responseTimeMs,
+            }),
+            correctAnswer: data.correctAnswer,
+          },
+          remainingCount: data.survivingPlayerIds.length,
+        };
+      });
       console.log("🏁 Round ended:", data);
     });
 
@@ -550,6 +567,21 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         if (data.playerId === currentState.userId) {
           set({ isEliminated: true });
         }
+        // F1 fix: stamp `status = "ELIMINATED"` on the affected
+        // player in `match.players` so the sidebar / opponents
+        // list can render the correct badge without waiting for
+        // the ROUND_ENDED broadcast (which carries the full
+        // `eliminatedPlayerIds` array). This is a real-time
+        // mirror of the per-player event.
+        set((state) => {
+          if (!state.match) return state;
+          const updatedPlayers = state.match.players.map((player) =>
+            player.id === data.playerId
+              ? { ...player, status: "ELIMINATED" as const }
+              : player,
+          );
+          return { match: { ...state.match, players: updatedPlayers } };
+        });
         console.log("💀 Player eliminated:", data);
       },
     );

@@ -29,7 +29,7 @@ describe("AuthHandler", () => {
     } as unknown as MatchService;
     gameLoopService = {
       handlePlayerDisconnect: vi.fn(),
-      getCountdownEnd: vi.fn().mockReturnValue(null),
+      getCountdownEnd: vi.fn().mockResolvedValue(null),
     } as unknown as GameLoopService;
     presenceService = {
       isPresent: vi.fn().mockResolvedValue(true),
@@ -51,6 +51,8 @@ describe("AuthHandler", () => {
       data: {},
       nsp: {
         sockets: mockSockets,
+        // Required for handleDisconnect's match-notification path.
+        server: { to: vi.fn() },
       },
     } as unknown as Socket;
   });
@@ -387,6 +389,323 @@ describe("AuthHandler", () => {
       ).resolves.not.toThrow();
       // Auth still succeeded
       expect(client.data.userId).toBe("u1");
+    });
+
+    // ---- C3 fix: multi-room reconnection ----
+    describe("C3: multi-room reconnection", () => {
+      it("joins ALL active rooms' channels, not just the most recent", async () => {
+        // C3 fix: previously the reconnect path took the single most
+        // recent active room and re-joined only its channel. A user
+        // with RoomPlayer rows in two rooms (e.g. an IN_GAME match
+        // and a public lobby) would silently stop receiving
+        // broadcasts from the dropped room. The fix joins all
+        // channels and reconnects the player to every live match's
+        // state machine.
+        vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
+          {
+            joinedAt: new Date("2026-06-14T10:00:00Z"),
+            room: {
+              id: "r1",
+              code: "MATCH",
+              type: "PRIVATE",
+              status: "IN_GAME",
+              hostId: "u1",
+              currentMatchId: "m1",
+              players: [{ userId: "u1", user: { username: "Alice" } }],
+            },
+          },
+          {
+            joinedAt: new Date("2026-06-14T10:05:00Z"),
+            room: {
+              id: "r2",
+              code: "LOBBY",
+              type: "PUBLIC",
+              status: "WAITING",
+              hostId: "u2",
+              currentMatchId: null,
+              players: [
+                { userId: "u1", user: { username: "Alice" } },
+                { userId: "u2", user: { username: "Bob" } },
+              ],
+            },
+          },
+        ] as any);
+        const mockSm1 = {
+          reconnectPlayer: vi.fn(),
+          getSnapshot: vi.fn().mockReturnValue({ matchId: "m1" }),
+        };
+        vi.mocked(matchService.getStateMachine).mockResolvedValue(
+          mockSm1 as any,
+        );
+
+        await handler.handleAuthenticate(client, { token: "t" });
+
+        // The socket is joined to BOTH room channels. join() is
+        // called twice (once per room) — we don't assume the order
+        // in this assertion to keep the test resilient to internal
+        // reordering.
+        const joinedChannels = (client.join as any).mock.calls.map(
+          (call: unknown[]) => call[0],
+        );
+        expect(joinedChannels).toContain("room:r1");
+        expect(joinedChannels).toContain("room:r2");
+        expect(joinedChannels).toHaveLength(2);
+
+        // C3 + presence fix: updatePresence is called for EVERY
+        // rejoined room, not just the most recent. The sweeper
+        // uses the presence key to mark non-reconnected players
+        // stale, so all rooms' presence records must be refreshed
+        // on reconnect. We don't assume the call order.
+        const presenceCalls = vi.mocked(presenceService.updatePresence).mock
+          .calls;
+        const presenceRooms = presenceCalls.map(
+          (call) => (call[0] as string) ?? "",
+        );
+        expect(presenceRooms).toContain("r1");
+        expect(presenceRooms).toContain("r2");
+        expect(presenceCalls).toHaveLength(2);
+
+        // The match state machine is reconnected for r1.
+        expect(mockSm1.reconnectPlayer).toHaveBeenCalledWith("u1");
+        // The persistence call uses the matchId (m1) for the IN_GAME
+        // room.
+        expect(matchService.persistStateMachine).toHaveBeenCalledWith("m1");
+
+        // ROOM_JOINED is emitted ONCE — for the most recent room
+        // (r2, joinedAt=10:05). The web store has a single
+        // `room` slot; emitting twice would race and clobber.
+        const roomJoinedCalls = (client.emit as any).mock.calls.filter(
+          (call: unknown[]) => call[0] === ServerEvent.ROOM_JOINED,
+        );
+        expect(roomJoinedCalls).toHaveLength(1);
+        expect(roomJoinedCalls[0][1]).toEqual(
+          expect.objectContaining({ roomId: "r2", code: "LOBBY" }),
+        );
+
+        // SNAPSHOT is emitted once for the most recent room's match.
+        // r2 has no currentMatchId, so no snapshot for it. r1's
+        // match is also the most recent in the sort order
+        // (joinedAt desc: r2 first), so r2 gets the user-facing
+        // ROOM_JOINED; r1's match is not the "primary" room and
+        // does not get a snapshot — the user can REQUEST_SNAPSHOT
+        // on demand.
+        const snapshotCalls = (client.emit as any).mock.calls.filter(
+          (call: unknown[]) => call[0] === ServerEvent.SNAPSHOT,
+        );
+        expect(snapshotCalls).toHaveLength(0);
+      });
+
+      it("emits ROOM_JOINED + SNAPSHOT for the most recent active match", async () => {
+        // Variant: the most recent room is the one WITH a current
+        // matchId. ROOM_JOINED is emitted for that room, and a
+        // SNAPSHOT is replayed for its match.
+        vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
+          {
+            joinedAt: new Date("2026-06-14T10:00:00Z"),
+            room: {
+              id: "r1",
+              code: "LOBBY",
+              type: "PUBLIC",
+              status: "WAITING",
+              hostId: "u1",
+              currentMatchId: null,
+              players: [{ userId: "u1", user: { username: "Alice" } }],
+            },
+          },
+          {
+            joinedAt: new Date("2026-06-14T10:05:00Z"),
+            room: {
+              id: "r2",
+              code: "MATCH",
+              type: "PRIVATE",
+              status: "IN_GAME",
+              hostId: "u1",
+              currentMatchId: "m2",
+              players: [{ userId: "u1", user: { username: "Alice" } }],
+            },
+          },
+        ] as any);
+        const snapshot = { matchId: "m2", status: "ROUND_ACTIVE" };
+        const mockSm = {
+          reconnectPlayer: vi.fn(),
+          getSnapshot: vi.fn().mockReturnValue(snapshot),
+        };
+        vi.mocked(matchService.getStateMachine).mockResolvedValue(
+          mockSm as any,
+        );
+
+        await handler.handleAuthenticate(client, { token: "t" });
+
+        const roomJoinedCalls = (client.emit as any).mock.calls.filter(
+          (call: unknown[]) => call[0] === ServerEvent.ROOM_JOINED,
+        );
+        expect(roomJoinedCalls).toHaveLength(1);
+        expect(roomJoinedCalls[0][1]).toEqual(
+          expect.objectContaining({ roomId: "r2" }),
+        );
+
+        // Snapshot is emitted for the most recent room's match.
+        const snapshotCalls = (client.emit as any).mock.calls.filter(
+          (call: unknown[]) => call[0] === ServerEvent.SNAPSHOT,
+        );
+        expect(snapshotCalls).toHaveLength(1);
+        expect(snapshotCalls[0][1]).toEqual(snapshot);
+      });
+
+      it("still works with a single active room (regression)", async () => {
+        // The single-room case must still work as before.
+        vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
+          {
+            joinedAt: new Date(),
+            room: {
+              id: "r1",
+              code: "ABC",
+              type: "PUBLIC",
+              status: "WAITING",
+              hostId: "u1",
+              currentMatchId: null,
+              players: [{ userId: "u1", user: { username: "Alice" } }],
+            },
+          },
+        ] as any);
+
+        await handler.handleAuthenticate(client, { token: "t" });
+
+        expect(client.join).toHaveBeenCalledWith("room:r1");
+        expect(client.emit).toHaveBeenCalledWith(
+          ServerEvent.ROOM_JOINED,
+          expect.objectContaining({ roomId: "r1" }),
+        );
+      });
+
+      it("returns early when the user has no active rooms", async () => {
+        vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([]);
+
+        await handler.handleAuthenticate(client, { token: "t" });
+
+        expect(client.join).not.toHaveBeenCalled();
+        expect(client.emit).not.toHaveBeenCalledWith(
+          ServerEvent.ROOM_JOINED,
+          expect.anything(),
+        );
+      });
+    });
+
+    // ---- L1 fix: stale connectedPlayers cleanup ----
+    describe("L1: stale connectedPlayers cleanup", () => {
+      it("removes a connectedPlayers entry when the old socket is gone from the namespace", async () => {
+        // L1: if a socket was force-closed (e.g. process OOM-killed)
+        // and Socket.IO cleaned up its internal map, our
+        // connectedPlayers map would still hold a stale entry.
+        // A subsequent authenticate would silently no-op the kick
+        // and the map would grow unbounded.
+        vi.mocked(authService.verifyToken).mockReturnValue({
+          userId: "u-stale",
+          username: "Stale",
+          role: "GUEST" as any,
+        });
+
+        // Pre-populate connectedPlayers with a socket id that does
+        // NOT exist in the namespace's socket map.
+        const staleSocket = {
+          id: "socket-stale-gone",
+          emit: vi.fn(),
+          disconnect: vi.fn(),
+        } as unknown as Socket;
+        (handler as any).connectedPlayers.set("u-stale", staleSocket.id);
+        // Note: we do NOT add staleSocket to mockSockets.
+
+        // New socket for the same user authenticates.
+        await handler.handleAuthenticate(client, { token: "t" });
+
+        // The new socket is the active session now.
+        expect((handler as any).connectedPlayers.get("u-stale")).toBe(
+          client.id,
+        );
+        // The stale socket was NOT kicked (it didn't exist to be kicked).
+        expect(staleSocket.disconnect).not.toHaveBeenCalled();
+      });
+    });
+
+    // ---- L2 fix: generation counter for socket disconnect race ----
+    describe("L2: generation counter for socket disconnect race", () => {
+      it("ignores a stale disconnect from a superseded socket", async () => {
+        // L2: when a user opens a second tab, the first socket is
+        // kicked and the connectionGeneration is bumped. The first
+        // socket's eventual disconnect event should be a no-op
+        // because its captured generation no longer matches the
+        // live one.
+        vi.mocked(authService.verifyToken).mockReturnValue({
+          userId: "u-race",
+          username: "Race",
+          role: "GUEST" as any,
+        });
+
+        const socket1 = {
+          id: "socket-1",
+          emit: vi.fn(),
+          disconnect: vi.fn(),
+          join: vi.fn(),
+          data: {},
+          nsp: { sockets: mockSockets, server: { to: vi.fn() } },
+        } as unknown as Socket;
+        mockSockets.set(socket1.id, socket1);
+        await handler.handleAuthenticate(socket1, { token: "t1" });
+
+        const socket2 = {
+          id: "socket-2",
+          emit: vi.fn(),
+          disconnect: vi.fn(),
+          join: vi.fn(),
+          data: {},
+          nsp: { sockets: mockSockets, server: { to: vi.fn() } },
+        } as unknown as Socket;
+        mockSockets.set(socket2.id, socket2);
+        await handler.handleAuthenticate(socket2, { token: "t2" });
+
+        // socket1 was kicked and the generation bumped. socket2 is
+        // the live one.
+        const liveGen = (handler as any).connectionGeneration.get("u-race");
+        const socket1Gen = (socket1 as any).data.connectionGen;
+        expect(socket1Gen).toBeLessThan(liveGen);
+
+        // Now socket1 fires its disconnect event. This is a no-op
+        // because socket1's captured generation is stale.
+        // We do NOT expect any match notification.
+        vi.mocked(roomService.getUserActiveRooms).mockClear();
+        await handler.handleDisconnect(socket1);
+
+        // No DB lookup, no match notification.
+        expect(roomService.getUserActiveRooms).not.toHaveBeenCalled();
+      });
+
+      it("processes a disconnect from the current (non-superseded) socket", async () => {
+        // L2 regression: a normal disconnect from the LIVE socket
+        // must still be processed (notify matches, clear the map).
+        vi.mocked(authService.verifyToken).mockReturnValue({
+          userId: "u-live",
+          username: "Live",
+          role: "GUEST" as any,
+        });
+        vi.mocked(roomService.getUserActiveRooms).mockResolvedValue([
+          {
+            room: { currentMatchId: "m-live" },
+          },
+        ] as any);
+
+        await handler.handleAuthenticate(client, { token: "t" });
+        await handler.handleDisconnect(client);
+
+        // The user was removed from the map and the active match
+        // was notified.
+        expect((handler as any).connectedPlayers.has("u-live")).toBe(false);
+        expect((handler as any).connectionGeneration.has("u-live")).toBe(false);
+        expect(gameLoopService.handlePlayerDisconnect).toHaveBeenCalledWith(
+          "m-live",
+          "u-live",
+          expect.anything(),
+        );
+      });
     });
   });
 });

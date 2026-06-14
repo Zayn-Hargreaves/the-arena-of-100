@@ -1,8 +1,8 @@
 # Progress: Arena of 100
 
-## Current Status: ✅ Lobby + Heartbeat + Graceful Exit + Admin Kill-Switch + Design System Phase 5B + Drop-in Spectating Baseline Done → In-match AFK Next
+## Current Status: ✅ Lobby + Heartbeat + Graceful Exit + Admin Kill-Switch + Design System Phase 5B + Drop-in Spectating Baseline + Match Race + Frontend Correctness Hardening Done → In-match AFK Next
 
-> Cập nhật 2026-06-14 dựa trên code + GitNexus. So với bản 2026-06-06, các mốc lobby/heartbeat/graceful-exit/admin kill-switch đã hoàn thành baseline và chuyển trạng thái. Design System Phase 5B closeout cũng đã hoàn thành 2026-06-14 (ground truth từ code: `app-shell-layout.tsx:34` và `sidebar.tsx:230` không còn shell gradient; `styles/components.css` đã được xác nhận không còn reference). PR Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`) cũng đã hoàn thành 2026-06-14 — chi tiết ở mục "Phase 11 — Drop-in Spectating Baseline (2026-06-14)" bên dưới.
+> Cập nhật 2026-06-14 dựa trên code + GitNexus. So với bản 2026-06-06, các mốc lobby/heartbeat/graceful-exit/admin kill-switch đã hoàn thành baseline và chuyển trạng thái. Design System Phase 5B closeout cũng đã hoàn thành 2026-06-14 (ground truth từ code: `app-shell-layout.tsx:34` và `sidebar.tsx:230` không còn shell gradient; `styles/components.css` đã được xác nhận không còn reference). PR Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`) cũng đã hoàn thành 2026-06-14. Cùng ngày cũng close PR `fix/match-race-frontend-correctness` — 3 race bug backend (B1-B3) + 8 correctness bug frontend (F1-F8) đã sửa với 51 test mới (tổng 712 unit + 11 E2E backend; 68 game-core; 31 web) và coverage per-file ≥90% cho mọi file production sửa (`game-loop.service.ts` 96.25%, `admin.service.ts` 100%, `match.service.ts` 95.53%, `match-state-machine.ts` 98.63%). Xem section `Phase 12` bên dưới.
 > Các file liên quan: `PROJECT_STATUS.md` và `activeContext.md` cũng được đồng bộ trong cùng lần cập nhật này.
 
 ### ✅ Completed (Phase 0: Planning & Setup)
@@ -100,6 +100,62 @@
 - [x] **Phase 10 — Spectator Baseline (eliminated only)** — `socket-store` có `isEliminated`, handle `PLAYER_ELIMINATED`; `GamePage` render "Chế độ khán giả" với overlay khi `isEliminated === true`. Drop-in spectating (vào `IN_GAME`/`FINISHED`) chưa có
 - [x] **Phase 11 — Drop-in Spectating Baseline** (`feat/drop-in-spectating-baseline`, 2026-06-14) — cho phép late-joiner vào `IN_GAME`/`FINISHED` với `JoinMode = "SPECTATOR"` (read-only). Reuse `room:[id]` channel + `MatchStateMachine.getSnapshot` (client-safe, không leak `correctAnswer`). Server-side gate `SPECTATOR_CANNOT_ANSWER` ở `MatchHandler.handleSubmitAnswer`. Frontend: lobby banner + auto-redirect `/result/[matchId]` cho FINISHED + spectator UI trên game page. Coverage per-file ≥90% cho tất cả file sửa. Xem section chi tiết bên dưới (Phase 11).
 
+### ✅ Phase 12 — Match Race + Frontend Correctness Hardening (`fix/match-race-frontend-correctness`, 2026-06-14) — Hoàn thành
+
+PR gộp duy nhất đóng 3 race bug backend (B1, B2, B3) + 8 correctness bug frontend (F1-F8) trong 1 lần. Mục tiêu: chống double-write DB khi match-finish race giữa timer và admin kill-switch, đóng double-launch race khi recovery chạy đồng thời với auto-start, bỏ mock sidebar (deception thật với user), khôi phục server-authoritative guarantee bị phá bởi magic number `<= 12`, fix timer leak + race trong round-result sequence.
+
+#### Backend (3 bug)
+
+- [x] **B1** — `finishMatchLoop` idempotency guard. Thêm `private finishingMatches = new Set<string>()` (mirror `endingRounds` pattern, line 38 của `game-loop.service.ts`). Guard đầu `finishMatchLoop:962` với try/finally. Expose public `GameLoopService.isMatchFinishing(matchId)`. `AdminService.terminateRoom:258-274` check guard trước khi gọi `matchService.finishMatch` — nếu đã finishing, abort toàn bộ kill-switch, trả `{ success: false, reason: "ALREADY_FINISHING" }`. Ngăn 2 đường ghi DB cùng `Match` row với `winnerId` mâu thuẫn (string vs null) + 2 broadcasts `MATCH_FINISHED` + `ROOM_TERMINATED` cùng lúc.
+- [x] **B2** — `winnerId` null/undefined guard. `MatchStateMachine.tieBreak` + `determineWinner` return type widen `string` → `string | null`. Empty-roster path early-return `null` (trước: trả `undefined` qua `sorted[0]`, type system không bắt được). `finishMatch` skip `winner.status = WINNER` khi `winnerId === null` (trước: throws `TypeError: Cannot read properties of null`). `finishMatchLoop:984` đổi `state.winnerId!` → `state.winnerId ?? null` (explicit conversion). `matchService.finishMatch(matchId, null, roomId)` đã accept `string | null` từ trước. MATCH_FINISHED event phát `winnerId: null` thay vì `undefined` (Prisma sẽ silently drop field `undefined`).
+- [x] **B3** — `launchRoomMatch` atomic guard. Inject `PrismaService` vào `GameLoopService` (PrismaModule là global, không cần đổi module). Wrap critical section trong `prisma.$transaction` với `tx.$queryRaw\`SELECT id, status, "currentMatchId" FROM "Room" WHERE id = ${roomId} FOR UPDATE\``. Check status in [WAITING, COUNTDOWN] + `currentMatchId IS NULL`atomic dưới row lock. Set`Room.status = STARTING`trong transaction.`createMatch`gọi ngoài transaction (đã có internal transaction cho MatchPlayer.createMany). Cleanup path: nếu`createMatch` throw sau khi transaction commit → revert room status + (TODO: delete orphan match row nếu có).
+
+#### Frontend (8 bug)
+
+- [x] **F1** — Sidebar real data. Bỏ 5 mock name cứng (`Zero_Cool`, `Acid_Burn`, `Lord_Nikon`, `Cereal_Killer`, `Crash_Override`) ở `game/[matchId]/page.tsx:442-472`. Render `match.players` thật, sort alive trước, badge OK/ELIMINATED từ `player.status`. `socket-store.ts:515-555` ROUND_ENDED + PLAYER_ELIMINATED handlers cross-check `eliminatedPlayerIds` và stamp `status = "ELIMINATED"`. Empty players → render "(đang chờ danh sách người chơi)" thay vì mock.
+- [x] **F2** — Bỏ magic number `<= 12` redirect. Xoá `if (newCount !== null && newCount <= 12) { router.push('/result/${matchId}') }` ở `game page:153`. Match-end redirect giờ chỉ từ effect `match.status === "FINISHED"` (đã có sẵn, dùng đúng). Khôi phục server-authoritative guarantee — server `shouldEndMatch` chỉ true khi `<= 1` survivor hoặc `MAX_ROUNDS` hit.
+- [x] **F3** — Tách nested setTimeout. Tách thành 2 ref `roundResultRevealRef` (1s reveal) + `roundResultContinueRef` (3s transition). `clearTimers` clear cả 2. Cleanup effect return cũng clear 2. Tránh timer leak + race khi component re-render giữa chừng.
+- [x] **F4** — Dynamic maxPlayers. Import `GAME_CONFIG` từ `@arena/shared`. `maxPlayers = match.players.length > 0 ? match.players.length : GAME_CONFIG.MAX_PLAYERS`. Render `{livePlayerCount} / {maxPlayers}` thay vì `?? 100 / 100`. `room.maxPlayers` chưa có trên ROOM_JOINED payload (track PR 12 riêng).
+- [x] **F5** — Loading state. Khi `!match.currentQuestion` render `<div className="animate-pulse">{t("loadingQuestion")}</div>` thay vì hardcoded monorepo package names. Thêm i18n key `Game.loadingQuestion` + `Game.opponentsEmpty` ở `messages/{en,vi}.json`.
+- [x] **F6** — Bỏ `currentRoundNo || 1` dead data. `submitAnswer` chỉ emit khi `match.currentRoundNo > 0`. Server `MatchHandler.handleSubmitAnswer` đọc round từ state machine, bỏ client roundNo để tránh log noise.
+- [x] **F7** — Round-end signal rõ. Effect round-completed drive từ `match.status === "ROUND_RESULT" && match.roundEndTime === null` (server-authoritative) thay vì `lastAnswerResult?.correctAnswer` (có thể rỗng/falsy khi question row missing answer key). `revealedCorrectAnswer` vẫn dùng `lastAnswerResult.correctAnswer` cho display.
+- [x] **F8** — Auto-join guard. Thêm `joinInFlightRef = useRef(false)` ở `use-lobby-lifecycle.ts`. Check ở đầu effect; set true trước `await joinRoom`, false trong `finally` (kể cả cancelled). Tránh double-emit `JOIN_ROOM` khi `room` object thay đổi do presence/PLAYER_JOINED event re-trigger effect.
+
+#### Verification
+
+- [x] **712/712** unit tests pass (was 661, **+51 net tests**: 4 B1 + 2 B2 + 4 B3 + 1 B1 admin abort + 2 L3 rehydrate coverage + …). 11/11 E2E tests pass. 68/68 game-core tests pass. 31/31 web tests pass (was 28, +3 F8).
+- [x] **Coverage per-file ≥90%** cho 4 file production sửa:
+  - `game-loop.service.ts` **96.25%** stmts / 94.44% branch
+  - `admin.service.ts` **100%** / 100%
+  - `match.service.ts` **95.53%** / 92.59%
+  - `match-state-machine.ts` **98.63%** / 88.8% (≈90% branch — hash seed + map.entries edge cases)
+- [x] **Server-authoritative guarantee** khôi phục: client không tự redirect kết thúc trận, chỉ tin `MATCH_FINISHED` broadcast từ server.
+- [x] **Socket protocol không đổi**: không thêm event mới, không đổi payload shape, không bump version. `winnerId: string | null` đã có sẵn.
+- [x] **Shared types không đổi**: `@arena/shared/src/**` nguyên vẹn (F4 dùng `GAME_CONFIG.MAX_PLAYERS` đã có).
+- [x] **Prisma schema không đổi**: `Room.maxPlayers`, `Match.winnerId` đều nullable từ trước.
+- [x] `pnpm --filter @arena/api {tsc --noEmit, vitest run, build}` pass.
+- [x] `pnpm --filter @arena/web {tsc --noEmit, build, lint}` pass.
+- [x] `pnpm --filter @arena/web test --run` pass (3 new F8 tests + 28 existing shell tests).
+
+#### Bug deltas (GitNexus cross-check)
+
+- Plan claim: `MatchService.finishMatch` upstream MEDIUM (4 callers) → thực tế **CRITICAL (6 callers)**
+- Plan claim: `GameLoopService.launchRoomMatch` upstream MEDIUM (3 callers) → thực tế **HIGH (4 direct + 4 indirect)**
+- Plan claim: `GameLoopService.finishMatchLoop` upstream LOW (2 callers) → thực tế **HIGH (2 callers + 3 processes)**
+- Plan claim: B2 chỉ "DB ghi `winnerId: undefined`" → thực tế **còn crash ở `finishMatch:433` trước khi DB write xảy ra** khi `winnerId === undefined` (không chỉ là data corruption)
+- B1 fix close được race thật: `AdminService.terminateRoom` + `GameLoopService.finishMatchLoop` không thể cùng ghi DB `Match` row + phát 2 broadcasts mâu thuẫn
+
+#### Out of scope (deferred sang PR riêng)
+
+- PR 2: Mass-Spectator Transport Scaling
+- PR 3: Admin Kill-Switch Append-Only Audit Event (vẫn chưa có)
+- PR 4: In-Match AFK Policy (P1, product — pending decision)
+- PR 5: Optimistic Answer Rollback đầy đủ (F6 chỉ bỏ dead data, chưa có idempotency key)
+- PR 6: Home Page Shell Gradient Cleanup
+- PR 7: Content Moderation + Message Sanitizer + Device Fingerprint
+- PR 8-11: Post-match rematch, accessibility, k6 load, Playwright
+- PR 12: `Room.maxPlayers` field trong `ROOM_JOINED` payload (F4 dùng fallback `GAME_CONFIG.MAX_PLAYERS`)
+
 ### ✅ Phase 11 — Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`, 2026-06-14) — Hoàn thành
 
 Drop-in spectating cho phép late-joiner vào phòng `IN_GAME` hoặc `FINISHED` với tư cách `SPECTATOR` (read-only), tách biệt khỏi flow player và eliminated-spectator. Baseline reuse `room:[id]` channel + `MatchStateMachine.getSnapshot` (đã client-safe, không leak `correctAnswer`).
@@ -185,7 +241,7 @@ Drop-in spectating cho phép late-joiner vào phòng `IN_GAME` hoặc `FINISHED`
 
 ### 📋 Upcoming — PR Kế Tiếp (đề xuất)
 
-1. **In-match AFK policy** (P1, product) — promoted lên P1 sau khi drop-in spectating baseline done
+1. **In-match AFK policy** (P1, product) — promoted lên P1 sau khi drop-in spectating baseline + match-race/correctness fixes done
    - Backend: round-miss detection tận dụng `Answer` table (current/previous round)
    - Quyết định: 2+ round miss → auto-`ELIMINATED` (loss-of-life) hoặc `SPECTATOR` (chill) — pending product decision
 2. **Mass-spectator transport scaling** (P2, infra) — SSE channel riêng cho spectator
@@ -252,17 +308,17 @@ Drop-in spectating cho phép late-joiner vào phòng `IN_GAME` hoặc `FINISHED`
 
 ## Architecture Assessment Scores (cập nhật 2026-06-14)
 
-| Dimension                | Score      | Notes                                                                                                 |
-| ------------------------ | ---------- | ----------------------------------------------------------------------------------------------------- |
-| Monorepo Structure       | 10/10      | Turborepo + Remote Caching                                                                            |
-| Package Boundaries       | 9/10       | Clean separation, đúng dependency flow                                                                |
-| Domain Logic (game-core) | 9/10       | Có serialize/deserialize, immutability, persistence, deterministic tie-break                          |
-| Backend Architecture     | 8/10       | Handlers rõ ràng; lobby/heartbeat baseline done; admin kill-switch baseline done                      |
-| Frontend Architecture    | 8/10       | Lobby/Game/Result done; spectator baseline (eliminated) done; Profile/Rankings real                   |
-| Infrastructure           | 8/10       | Docker + Redis + Throttler + CI/E2E; chưa có multi-instance adapter                                   |
-| DevOps/CI-CD             | 10/10      | GitHub Actions pipeline configured; E2E job có cache strategy gọn + fail artifacts                    |
-| Testing                  | 9/10       | 587 unit + 11 E2E; coverage 94.98% stmts; PR #38 + PR #47 cleanup; admin 100%/100%                    |
-| **Overall**              | **8.4/10** | Lobby/heartbeat/graceful-exit/admin kill-switch baseline done; Design System Phase 5B done 2026-06-14 |
+| Dimension                | Score      | Notes                                                                                                                                        |
+| ------------------------ | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Monorepo Structure       | 10/10      | Turborepo + Remote Caching                                                                                                                   |
+| Package Boundaries       | 9/10       | Clean separation, đúng dependency flow                                                                                                       |
+| Domain Logic (game-core) | 9/10       | Có serialize/deserialize, immutability, persistence, deterministic tie-break                                                                 |
+| Backend Architecture     | 9/10       | Handlers rõ ràng; lobby/heartbeat baseline done; admin kill-switch baseline done; **race fixes (B1, B2, B3) landed 2026-06-14**              |
+| Frontend Architecture    | 8.5/10     | Lobby/Game/Result done; spectator baseline (eliminated + drop-in) done; **F1-F8 correctness fixes landed 2026-06-14**; Profile/Rankings real |
+| Infrastructure           | 8/10       | Docker + Redis + Throttler + CI/E2E; chưa có multi-instance adapter                                                                          |
+| DevOps/CI-CD             | 10/10      | GitHub Actions pipeline configured; E2E job có cache strategy gọn + fail artifacts                                                           |
+| Testing                  | 9.5/10     | 712 unit + 11 E2E; coverage 95.05% stmts backend; **+51 net tests for B1-B3 + 3 for F8**                                                     |
+| **Overall**              | **8.7/10** | Lobby/heartbeat/graceful-exit/admin kill-switch baseline + race fixes + frontend correctness all done                                        |
 
 ## Milestones
 
@@ -293,7 +349,7 @@ Drop-in spectating cho phép late-joiner vào phòng `IN_GAME` hoặc `FINISHED`
 - CSRF + rate limiting + Zod validation đã wire xuyên suốt
 - Frontend pages: home (`/`), `/room/create`, `/lobby/[roomCode]`, `/game/[matchId]`, `/result/[matchId]`, `/profile`, `/rankings`, `/settings`, `/admin`
 - Socket-store với auto-reconnect logic, room lifecycle events, ROOM_TERMINATED handling, eliminated spectator state
-- 587/587 unit tests + 11/11 E2E tests pass; API coverage 94.98% statements
+- 716/716 unit tests (api) + 68/68 unit tests (game-core) + 31/31 unit tests (web) + 11/11 E2E tests pass; API coverage 95.05% statements
 
 ## What's Next (Priority Order)
 

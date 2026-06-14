@@ -19,11 +19,58 @@ import {
   type RequestSnapshotPayload,
   type LeaveRoomPayload,
   type HeartbeatPayload,
+  type AuthenticatePayload,
 } from "@arena/shared";
 import { AuthHandler, RoomHandler, MatchHandler } from "./handlers";
 import { AuthService } from "../modules/auth/auth.service";
 import { PresenceService } from "../modules/match/presence.service";
 import { GameLoopService } from "../modules/match/game-loop.service";
+import { WsValidationPipe } from "../common/pipes/ws-validation.pipe";
+import {
+  AuthenticatePayloadSchema,
+  CreateRoomPayloadSchema,
+  HeartbeatPayloadSchema,
+  JoinRoomPayloadSchema,
+  LeaveRoomPayloadSchema,
+  RequestSnapshotPayloadSchema,
+  StartMatchPayloadSchema,
+  SubmitAnswerPayloadSchema,
+} from "@arena/shared";
+
+// Per-event validation pipe instances. Each one is a thin wrapper around
+// the corresponding Zod schema. Cached at module level so a single
+// instance is shared across all incoming events (the pipe is stateless).
+//
+// Why this matters (C2): previously the gateway passed the raw payload
+// straight to the handler with no runtime validation. A client could
+// send { answer: { inject: true } } and corrupt downstream Prisma
+// string-column writes, or send { matchId: 123 } (a number) and use it
+// as a Redis key. Now any malformed payload is rejected with
+// ErrorCode.INVALID_PAYLOAD before any handler code runs.
+const AuthenticatePayloadPipe = new WsValidationPipe<AuthenticatePayload>(
+  AuthenticatePayloadSchema,
+);
+const CreateRoomPayloadPipe = new WsValidationPipe<CreateRoomPayload>(
+  CreateRoomPayloadSchema,
+);
+const JoinRoomPayloadPipe = new WsValidationPipe<JoinRoomPayload>(
+  JoinRoomPayloadSchema,
+);
+const LeaveRoomPayloadPipe = new WsValidationPipe<LeaveRoomPayload>(
+  LeaveRoomPayloadSchema,
+);
+const StartMatchPayloadPipe = new WsValidationPipe<{ roomId: string }>(
+  StartMatchPayloadSchema,
+);
+const SubmitAnswerPayloadPipe = new WsValidationPipe<SubmitAnswerPayload>(
+  SubmitAnswerPayloadSchema,
+);
+const RequestSnapshotPayloadPipe = new WsValidationPipe<RequestSnapshotPayload>(
+  RequestSnapshotPayloadSchema,
+);
+const HeartbeatPayloadPipe = new WsValidationPipe<HeartbeatPayload>(
+  HeartbeatPayloadSchema,
+);
 
 @WebSocketGateway({
   cors: {
@@ -96,7 +143,7 @@ export class GameGateway
   @SubscribeMessage(ClientEvent.AUTHENTICATE)
   handleAuthenticate(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { token: string },
+    @MessageBody(AuthenticatePayloadPipe) payload: AuthenticatePayload,
   ) {
     return this.authHandler.handleAuthenticate(client, payload);
   }
@@ -104,7 +151,7 @@ export class GameGateway
   @SubscribeMessage(ClientEvent.CREATE_ROOM)
   handleCreateRoom(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: CreateRoomPayload,
+    @MessageBody(CreateRoomPayloadPipe) payload: CreateRoomPayload,
   ) {
     return this.roomHandler.handleCreateRoom(client, payload);
   }
@@ -112,7 +159,7 @@ export class GameGateway
   @SubscribeMessage(ClientEvent.JOIN_ROOM)
   handleJoinRoom(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: JoinRoomPayload,
+    @MessageBody(JoinRoomPayloadPipe) payload: JoinRoomPayload,
   ) {
     return this.roomHandler.handleJoinRoom(client, payload);
   }
@@ -120,7 +167,7 @@ export class GameGateway
   @SubscribeMessage(ClientEvent.LEAVE_ROOM)
   handleLeaveRoom(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: LeaveRoomPayload,
+    @MessageBody(LeaveRoomPayloadPipe) payload: LeaveRoomPayload,
   ) {
     return this.roomHandler.handleLeaveRoom(client, this._server, payload);
   }
@@ -128,7 +175,7 @@ export class GameGateway
   @SubscribeMessage(ClientEvent.START_MATCH)
   handleStartMatch(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { roomId: string },
+    @MessageBody(StartMatchPayloadPipe) payload: { roomId: string },
   ) {
     return this.matchHandler.handleStartMatch(client, this._server, payload);
   }
@@ -136,7 +183,7 @@ export class GameGateway
   @SubscribeMessage(ClientEvent.SUBMIT_ANSWER)
   handleSubmitAnswer(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: SubmitAnswerPayload,
+    @MessageBody(SubmitAnswerPayloadPipe) payload: SubmitAnswerPayload,
   ) {
     return this.matchHandler.handleSubmitAnswer(client, payload);
   }
@@ -144,7 +191,7 @@ export class GameGateway
   @SubscribeMessage(ClientEvent.REQUEST_SNAPSHOT)
   handleRequestSnapshot(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: RequestSnapshotPayload,
+    @MessageBody(RequestSnapshotPayloadPipe) payload: RequestSnapshotPayload,
   ) {
     return this.matchHandler.handleRequestSnapshot(client, payload);
   }
@@ -157,7 +204,7 @@ export class GameGateway
   @SubscribeMessage(ClientEvent.HEARTBEAT)
   async handleHeartbeat(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: HeartbeatPayload,
+    @MessageBody(HeartbeatPayloadPipe) payload: HeartbeatPayload,
   ) {
     const userId = client.data.userId as string | undefined;
     if (!userId || !payload.roomId) return;

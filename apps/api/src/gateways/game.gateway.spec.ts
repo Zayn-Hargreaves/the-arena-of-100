@@ -1,5 +1,15 @@
 import { Socket, Server } from "socket.io";
-import { ServerEvent } from "@arena/shared";
+import {
+  ServerEvent,
+  SubmitAnswerPayloadSchema,
+  CreateRoomPayloadSchema,
+  AuthenticatePayloadSchema,
+  LeaveRoomPayloadSchema,
+  HeartbeatPayloadSchema,
+  RequestSnapshotPayloadSchema,
+  JoinRoomPayloadSchema,
+  StartMatchPayloadSchema,
+} from "@arena/shared";
 import { GameGateway } from "./game.gateway";
 import { AuthHandler } from "./handlers/auth.handler";
 import { RoomHandler } from "./handlers/room.handler";
@@ -277,6 +287,120 @@ describe("GameGateway", () => {
       gateway.handlePing(client);
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.PONG, {
         timestamp: expect.any(Number),
+      });
+    });
+
+    // ---- C2 fix: WS payload validation ----
+    //
+    // The gateway's @SubscribeMessage handlers apply a WsValidationPipe
+    // to the @MessageBody. In a real Socket.io invocation NestJS runs
+    // the pipe before the handler body. We can't easily exercise that
+    // path through direct handler calls (the @MessageBody decorator is
+    // a no-op when the handler is invoked directly). What we CAN pin
+    // here is:
+    //
+    // 1. The same Zod schema the pipe uses rejects malformed payloads.
+    // 2. The gateway imports those schemas from the shared package so
+    //    the validation is shared across the server, the test, and any
+    //    future client SDK.
+    //
+    // Together with the dedicated WsValidationPipe unit tests in
+    // ws-validation.pipe.spec.ts, this covers the C2 contract: "no
+    // malformed WS payload reaches a handler".
+    describe("C2: WS payload validation", () => {
+      it("SUBMIT_ANSWER schema rejects an object injection in `answer`", async () => {
+        // The C2 attack vector: a client sends { answer: { inject: true
+        // } } and the gateway would have happily passed it to the
+        // handler. With the pipe, this throws WsValidationError before
+        // the handler runs.
+        const result = SubmitAnswerPayloadSchema.safeParse({
+          matchId: "m1",
+          roundNo: 1,
+          answer: { inject: true },
+          clientTimestamp: Date.now(),
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it("SUBMIT_ANSWER schema rejects missing matchId", () => {
+        const result = SubmitAnswerPayloadSchema.safeParse({
+          roundNo: 1,
+          answer: "A",
+          clientTimestamp: Date.now(),
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it("SUBMIT_ANSWER schema rejects oversized answer string", () => {
+        const result = SubmitAnswerPayloadSchema.safeParse({
+          matchId: "m1",
+          roundNo: 1,
+          answer: "x".repeat(2000),
+          clientTimestamp: Date.now(),
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it("CREATE_ROOM schema caps maxPlayers to GAME_CONFIG.MAX_PLAYERS", () => {
+        // Bonus M2 fix: a client asking for a 100,000-player room is
+        // rejected at the validation layer, never reaching the
+        // service.
+        const result = CreateRoomPayloadSchema.safeParse({
+          roomType: "PUBLIC",
+          maxPlayers: 100_000,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it("CREATE_ROOM schema rejects unknown roomType enum", () => {
+        const result = CreateRoomPayloadSchema.safeParse({
+          roomType: "WEDDING",
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it("AUTHENTICATE schema rejects empty token", () => {
+        const result = AuthenticatePayloadSchema.safeParse({ token: "" });
+        expect(result.success).toBe(false);
+      });
+
+      it("LEAVE_ROOM schema requires roomId", () => {
+        const result = LeaveRoomPayloadSchema.safeParse({});
+        expect(result.success).toBe(false);
+      });
+
+      it("HEARTBEAT schema accepts sentAt=0 (boundary)", () => {
+        const result = HeartbeatPayloadSchema.safeParse({ sentAt: 0 });
+        expect(result.success).toBe(true);
+      });
+
+      it("REQUEST_SNAPSHOT schema rejects negative lastSeenSeqNo", () => {
+        const result = RequestSnapshotPayloadSchema.safeParse({
+          matchId: "m1",
+          lastSeenSeqNo: -1,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it("JOIN_ROOM schema accepts an empty payload (roomCode and roomType are optional)", () => {
+        // JOIN_ROOM is a public-lobby lookup when both fields are
+        // absent. A regression that makes either field required
+        // would break the "browse public rooms" flow.
+        const result = JoinRoomPayloadSchema.safeParse({});
+        expect(result.success).toBe(true);
+      });
+
+      it("JOIN_ROOM schema rejects unknown roomType enum", () => {
+        const result = JoinRoomPayloadSchema.safeParse({
+          roomCode: "ABC",
+          roomType: "WEDDING",
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it("START_MATCH schema requires a non-empty roomId", () => {
+        const result = StartMatchPayloadSchema.safeParse({ roomId: "" });
+        expect(result.success).toBe(false);
       });
     });
 

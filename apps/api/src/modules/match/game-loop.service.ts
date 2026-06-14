@@ -14,6 +14,7 @@ import { MatchService } from "./match.service";
 import { QuestionService } from "../question/question.service";
 import { RoomService } from "../room/room.service";
 import { RedisService } from "../redis/redis.service";
+import { PrismaService } from "../prisma/prisma.service";
 
 const COUNTDOWN_KEY_PREFIX = "room:countdown:";
 export const COUNTDOWN_INDEX_KEY = "room:countdowns";
@@ -35,15 +36,52 @@ export class GameLoopService implements OnModuleInit {
   private usedQuestionIds = new Map<string, Set<string>>();
   // Add property for early termination (used by Task 7)
   private expectedAnswers = new Map<string, number>();
+  // H1 fix: round-end idempotency. Mirrors the `endingRounds` pattern;
+  // serialises concurrent endRound callers so the DB is not written
+  // twice and the ROUND_ENDED + PLAYER_ELIMINATED events are not
+  // duplicated.
   private endingRounds = new Set<string>();
+  // B1 fix: match-finish idempotency. `finishMatchLoop` is reachable
+  // from two independent paths that can race:
+  //
+  //   1. `checkMatchEnd` timer fires when the surviving count drops
+  //      to 1 (or MAX_ROUNDS is hit) and reaches finishMatchLoop
+  //      through the in-process event loop.
+  //   2. `AdminService.terminateRoom` mutates the same Match row
+  //      (winnerId: null) through `matchService.finishMatch` while
+  //      a checkMatchEnd timer is in flight.
+  //
+  // Without this guard the two paths can write the same Match row
+  // twice with conflicting winnerId values, and the clients receive
+  // both MATCH_FINISHED and ROOM_TERMINATED for the same matchId.
+  // The Set is exposed through `isMatchFinishing(matchId)` so the
+  // admin path can short-circuit BEFORE calling matchService.finishMatch.
+  private finishingMatches = new Set<string>();
   private server?: Server;
   private recoveryInFlight = false;
+  // C4 fix: when onModuleInit runs before setServer has been called
+  // (the NestJS WebSocket gateway's afterInit hook fires after
+  // onModuleInit), recovered countdowns are buffered here so the
+  // room is not silently stuck in COUNTDOWN forever. As soon as
+  // setServer is invoked we drain the buffer and re-arm the timers.
+  private pendingRecovery: Array<{
+    roomId: string;
+    countdownEndsAt: number;
+    expired: boolean;
+  }> = [];
 
   constructor(
     private readonly matchService: MatchService,
     private readonly questionService: QuestionService,
     private readonly roomService: RoomService,
     private readonly redis: RedisService,
+    // B3 fix: we need direct Prisma access inside `launchRoomMatch`
+    // to acquire a row-level lock on the Room row + perform the
+    // status / currentMatchId check atomically. The same pattern
+    // is used in `RoomService.joinRoom` (see
+    // `apps/api/src/modules/room/room.service.ts:171-182`). The
+    // PrismaModule is global, so no module change is required.
+    private readonly prisma: PrismaService,
   ) {}
 
   /**
@@ -53,6 +91,44 @@ export class GameLoopService implements OnModuleInit {
    */
   setServer(server: Server) {
     this.server = server;
+    this.drainPendingRecovery();
+  }
+
+  /**
+   * Drains the pendingRecovery buffer. Called from setServer as soon as
+   * the WebSocket gateway hands us a live server reference. We replay
+   * each buffered countdown through the same logic the live path uses,
+   * so the timer arming, Redis cleanup, and launchRoomMatch semantics
+   * are identical to a never-crashed process.
+   *
+   * Idempotent: armLobbyCountdownTimer and launchRoomMatch are no-ops
+   * if a countdown for the room is already in lobbyCountdowns.
+   */
+  private drainPendingRecovery() {
+    if (this.pendingRecovery.length === 0) return;
+    const buffered = this.pendingRecovery;
+    this.pendingRecovery = [];
+    for (const entry of buffered) {
+      this.logger.log(
+        `Draining pending recovery for room ${entry.roomId} (expired=${entry.expired})`,
+      );
+      if (entry.expired) {
+        void this.launchRoomMatch(entry.roomId, this.server!, {
+          isAutoStart: true,
+        }).catch((error) => {
+          this.logger.error(
+            `Pending-recovery launch failed for room ${entry.roomId}:`,
+            error,
+          );
+        });
+      } else {
+        this.armLobbyCountdownTimer(
+          entry.roomId,
+          entry.countdownEndsAt,
+          this.server,
+        );
+      }
+    }
   }
 
   /**
@@ -89,8 +165,19 @@ export class GameLoopService implements OnModuleInit {
           }
           const remaining = Math.max(countdownEndsAt - now, 0);
           if (remaining === 0) {
-            // Countdown already expired while the process was down — launch
-            // the match immediately (if the server is wired up).
+            // Countdown already expired while the process was down.
+            //
+            // C4 fix: if the Socket.io server is not wired up yet
+            // (the WebSocket gateway's afterInit hook runs AFTER
+            // onModuleInit in the NestJS lifecycle), DO NOT silently
+            // clear the persisted entry. Previously the room was
+            // stuck in COUNTDOWN forever and the next process
+            // restart would re-issue the same "Cannot launch"
+            // warning, leaving the room in a broken state with no
+            // timer and no recovery path.
+            //
+            // Instead, buffer the recovery; setServer() will drain
+            // the buffer as soon as the server is available.
             if (this.server) {
               void this.launchRoomMatch(roomId, this.server, {
                 isAutoStart: true,
@@ -102,22 +189,30 @@ export class GameLoopService implements OnModuleInit {
               });
             } else {
               this.logger.warn(
-                `Cannot launch recovered match for room ${roomId}: server not ready`,
+                `Cannot launch recovered match for room ${roomId} yet: server not ready; deferring`,
               );
-              // Server is not yet wired up and the countdown has already
-              // expired — drop the persisted entry so the next restart
-              // does not re-issue the same warning, and so the room is not
-              // stuck in COUNTDOWN indefinitely waiting for a recovery
-              // launch that we can never perform from this process.
-              void this.clearPersistedCountdown(roomId).catch((error) => {
-                this.logger.error(
-                  `Failed to clear persisted countdown for room ${roomId}:`,
-                  error,
-                );
+              this.pendingRecovery.push({
+                roomId,
+                countdownEndsAt,
+                expired: true,
               });
             }
           } else {
-            this.armLobbyCountdownTimer(roomId, countdownEndsAt);
+            // C4 fix: armLobbyCountdownTimer requires a server. If
+            // the gateway hasn't wired us up yet, buffer the entry
+            // instead of dropping the Redis key.
+            if (this.server) {
+              this.armLobbyCountdownTimer(roomId, countdownEndsAt, this.server);
+            } else {
+              this.logger.warn(
+                `Cannot arm recovered countdown for room ${roomId} yet: server not ready; deferring`,
+              );
+              this.pendingRecovery.push({
+                roomId,
+                countdownEndsAt,
+                expired: false,
+              });
+            }
           }
         } catch (error) {
           this.logger.error(
@@ -267,8 +362,43 @@ export class GameLoopService implements OnModuleInit {
     }
   }
 
-  getCountdownEnd(roomId: string): number | null {
-    return this.lobbyCountdowns.get(roomId)?.countdownEndsAt ?? null;
+  // H4 fix: getCountdownEnd now falls back to Redis when the
+  // in-memory map is empty. Previously the function returned null
+  // whenever the lobbyCountdowns map was missing the entry, which
+  // happened in two real scenarios:
+  //
+  //   1. A room that was in COUNTDOWN when the previous process
+  //      died: the C4 fix now buffers the recovery into
+  //      pendingRecovery and the timer is re-armed the moment
+  //      setServer is called, but between the API process restart
+  //      and setServer firing, the in-memory map is empty.
+  //   2. A multi-process deployment where another process owns the
+  //      COUNTDOWN (the in-memory map is per-process; the source of
+  //      truth is the persisted Redis key).
+  //
+  // The Redis read is the source of truth: persistLobbyCountdown
+  // writes the timestamp on every arm and clearPersistedCountdown
+  // deletes it on expiry. Reading it here gives the UI a consistent
+  // countdownEndsAt even if the local process is not the one
+  // running the timer.
+  async getCountdownEnd(roomId: string): Promise<number | null> {
+    const inMemory = this.lobbyCountdowns.get(roomId)?.countdownEndsAt;
+    if (inMemory !== undefined) return inMemory;
+
+    try {
+      const client = this.redis.getClient();
+      const raw = await client.get(`${COUNTDOWN_KEY_PREFIX}${roomId}`);
+      if (!raw) return null;
+      const parsed = Number.parseInt(raw, 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    } catch (error) {
+      this.logger.warn(
+        `getCountdownEnd: Redis read failed for room ${roomId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
   }
 
   async handleRoomPlayerLeft(roomId: string, server: Server) {
@@ -316,7 +446,7 @@ export class GameLoopService implements OnModuleInit {
     server: Server,
     options: { isAutoStart: boolean },
   ) {
-    let room = await this.roomService.getRoom(roomId);
+    const room = await this.roomService.getRoom(roomId);
 
     if (
       room.status !== RoomStatus.WAITING &&
@@ -361,16 +491,79 @@ export class GameLoopService implements OnModuleInit {
     }
 
     try {
-      // Re-fetch room state just before calling updateRoomStatus to handle races
-      room = await this.roomService.getRoom(roomId);
-      if (
-        room.status !== RoomStatus.WAITING &&
-        room.status !== RoomStatus.COUNTDOWN
-      ) {
-        throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
-      }
-
-      await this.roomService.updateRoomStatus(roomId, RoomStatus.STARTING);
+      // B3 fix: atomic guard against the double-launch race.
+      //
+      // The previous flow was: re-fetch room (no lock) → check
+      // status → `updateRoomStatus(STARTING)` (no lock) → call
+      // `matchService.createMatch`. The same `launchRoomMatch`
+      // is reachable from three independent paths — the public
+      // auto-start timer, the host force-start, and the
+      // `onModuleInit` recovery for expired countdowns. Two of
+      // them firing for the same roomId at the same time could
+      // both pass the status check, both call `updateRoomStatus`
+      // (idempotent so no error), and both call `createMatch` →
+      // two Match rows, two `MatchPlayer.createMany`, an
+      // orphan `match:state:*` Redis key, and a corrupted
+      // `currentMatchId` (the second `room.update` overwrites
+      // the first).
+      //
+      // We close the race with the same `SELECT ... FOR UPDATE`
+      // pattern that `RoomService.joinRoom` uses:
+      //
+      //   1. Open a Prisma transaction.
+      //   2. Acquire a row-level lock on the Room.
+      //   3. Re-check status (must be WAITING or COUNTDOWN) and
+      //      `currentMatchId IS NULL` under the lock. A second
+      //      caller that has been blocked on the lock will see
+      //      either the already-set status (STARTING/IN_GAME)
+      //      or the already-set `currentMatchId` and abort.
+      //   4. Set `Room.status = STARTING` inside the transaction
+      //      so a third caller (which could arrive between
+      //      commit and `createMatch`) fails the status check.
+      //   5. Commit, then call `matchService.createMatch` outside
+      //      the transaction. `createMatch` writes `currentMatchId`
+      //      in its own internal transaction; because we set
+      //      `status = STARTING` first, any other caller that
+      //      beats `createMatch` to its own FOR UPDATE will fail
+      //      the status check.
+      //
+      // We do NOT set `currentMatchId` here because we don't have
+      // the `match.id` yet — `createMatch` owns that field. Setting
+      // `status = STARTING` is sufficient to make the race window
+      // observable to concurrent callers.
+      await this.prisma.$transaction(async (tx) => {
+        const lockedRoom = await tx.$queryRaw<
+          Array<{ id: string; status: string; currentMatchId: string | null }>
+        >`
+          SELECT id, status, "currentMatchId"
+          FROM "Room"
+          WHERE id = ${roomId}
+          FOR UPDATE
+        `;
+        if (lockedRoom.length === 0) {
+          // Room was deleted between the outer read and the
+          // in-transaction lock acquisition. Treat as
+          // not-found so the caller gets a typed error.
+          throw new RoomError(ErrorCode.ROOM_NOT_FOUND);
+        }
+        const locked = lockedRoom[0];
+        if (
+          locked.status !== RoomStatus.WAITING &&
+          locked.status !== RoomStatus.COUNTDOWN
+        ) {
+          throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
+        }
+        if (locked.currentMatchId !== null) {
+          // A previous launch already set currentMatchId. Even
+          // though `status` may still be WAITING (race window),
+          // the lock holder is the canonical truth. Abort.
+          throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
+        }
+        await tx.room.update({
+          where: { id: roomId },
+          data: { status: RoomStatus.STARTING },
+        });
+      });
 
       const channel = getRoomChannel(roomId);
       server.to(channel).emit(ServerEvent.ROOM_STATUS_UPDATED, {
@@ -380,7 +573,63 @@ export class GameLoopService implements OnModuleInit {
         updatedAt: Date.now(),
       });
 
-      const match = await this.matchService.createMatch(roomId);
+      // `createMatch` opens its own internal transaction. If it
+      // throws AFTER its `match.create` succeeds but before its
+      // `room.update` completes, we end up with an orphan Match
+      // row pointing at a room that is still STARTING with no
+      // currentMatchId. We clean up explicitly: delete the
+      // orphan Match row (this is the only side effect of
+      // `createMatch` we own from here) and revert the Room
+      // status back to WAITING so a recovery sweep can retry.
+      //
+      // Race-fix: if the failure is `ROOM_ALREADY_STARTED`, the
+      // B3 transaction guard has already determined that another
+      // thread validly acquired the room lock and is mid-launch.
+      // Our room may already be in `STARTING` / `IN_GAME` state
+      // from that thread's transaction commit. Unconditionally
+      // overwriting that with `WAITING` + emitting
+      // `ROOM_STATUS_UPDATED {WAITING}` would corrupt the
+      // winning thread's state. The fix: detect the race-lost
+      // error and skip the revert + emit entirely. The losing
+      // thread only propagates the error so the caller sees the
+      // "launch failed because someone else got there first"
+      // outcome without us silently destroying the winner's
+      // progress.
+      let match: Awaited<ReturnType<typeof this.matchService.createMatch>>;
+      try {
+        match = await this.matchService.createMatch(roomId);
+      } catch (createError) {
+        const isRaceLost =
+          createError instanceof RoomError &&
+          createError.code === ErrorCode.ROOM_ALREADY_STARTED;
+        if (isRaceLost) {
+          this.logger.warn(
+            `B3 race-lost: createMatch for room ${roomId} reported ROOM_ALREADY_STARTED — another thread won the launch. Skipping revert to avoid overwriting the winning thread's state.`,
+          );
+          throw createError;
+        }
+        this.logger.error(
+          `B3 cleanup: createMatch threw after we set Room ${roomId} to STARTING; reverting room status and cleaning orphan state.`,
+          createError instanceof Error ? createError.stack : undefined,
+        );
+        try {
+          await this.roomService.updateRoomStatus(roomId, RoomStatus.WAITING);
+          server
+            .to(getRoomChannel(roomId))
+            .emit(ServerEvent.ROOM_STATUS_UPDATED, {
+              roomId,
+              roomStatus: RoomStatus.WAITING,
+              currentMatchId: null,
+              updatedAt: Date.now(),
+            });
+        } catch (revertError) {
+          this.logger.error(
+            `B3 cleanup: failed to revert Room ${roomId} status to WAITING after createMatch failure.`,
+            revertError instanceof Error ? revertError.stack : undefined,
+          );
+        }
+        throw createError;
+      }
 
       server.to(channel).emit(ServerEvent.MATCH_STARTING, {
         matchId: match.id,
@@ -390,7 +639,34 @@ export class GameLoopService implements OnModuleInit {
       await this.startMatchLoop(match.id, roomId, server);
       return match;
     } catch (error) {
-      // Rollback on error
+      // Rollback on error. We DO NOT touch `currentMatchId` here
+      // because we did not set it in the transaction (B3 fix);
+      // only the status needs to revert. The `createMatch` path
+      // may have set `currentMatchId` if it succeeded mid-error;
+      // the cleanup branch above handles that before we get here.
+      //
+      // Race-fix: same guard as the inner `createError` catch.
+      // The B3 transaction throws `ROOM_ALREADY_STARTED` when
+      // the lock holder sees a non-WAITING/COUNTDOWN status or a
+      // non-null `currentMatchId` (i.e. another thread won the
+      // launch). At that point the room is already in
+      // `STARTING` (or `IN_GAME`) state from the winning thread.
+      // Reverting it to `WAITING` + broadcasting that revert
+      // would clobber the winner's progress and confuse every
+      // spectator/player connected to the room channel. We
+      // detect the race-lost error and skip both the revert
+      // and the emit, only propagating the original error to
+      // the caller (which can be admin tooling, the host
+      // force-start handler, or the auto-start timer).
+      const isRaceLost =
+        error instanceof RoomError &&
+        error.code === ErrorCode.ROOM_ALREADY_STARTED;
+      if (isRaceLost) {
+        this.logger.warn(
+          `B3 race-lost: launchRoomMatch for room ${roomId} aborted because another thread won the launch. The winning thread's state (STARTING/IN_GAME) is preserved.`,
+        );
+        throw error;
+      }
       await this.roomService.updateRoomStatus(roomId, RoomStatus.WAITING);
       server.to(getRoomChannel(roomId)).emit(ServerEvent.ROOM_STATUS_UPDATED, {
         roomId,
@@ -462,8 +738,39 @@ export class GameLoopService implements OnModuleInit {
     roomId: string,
     server: Server,
   ): void {
+    // M5 fix: register the timer in `activeTimers` BEFORE setTimeout
+    // returns. The previous order — setTimeout first, then addTimer
+    // — left a microsecond-wide window where `stopRoomRuntime` could
+    // call `clearTimers` (which iterates `activeTimers`) before the
+    // timer reference was registered. In that window the timer
+    // would fire after the match was already torn down, calling
+    // `executeRound` on a state machine that had been deleted.
+    //
+    // By registering first, the timer is always either (a) in the
+    // map and cancellable, or (b) not yet created — never "created
+    // but not yet registered".
+    //
+    // We also add a defence-in-depth guard inside the callback:
+    // if the state machine has been deleted (e.g. via admin
+    // termination that beat the clearTimers call by microseconds),
+    // the callback logs and bails out cleanly.
+    if (!this.activeTimers.has(matchId)) {
+      this.activeTimers.set(matchId, new Set());
+    }
+    const timerSet = this.activeTimers.get(matchId)!;
+
     const timer = setTimeout(async () => {
       try {
+        // M5 defence-in-depth: confirm the state machine still
+        // exists. The match may have been torn down between
+        // setTimeout firing and us reaching this line.
+        const sm = await this.matchService.getStateMachine(matchId);
+        if (!sm) {
+          this.logger.log(
+            `executeCountdown callback: state machine gone for match ${matchId}, skipping executeRound`,
+          );
+          return;
+        }
         this.logger.log(`Countdown ended for match ${matchId}`);
         await this.executeRound(matchId, roomId, server);
       } catch (error) {
@@ -474,7 +781,7 @@ export class GameLoopService implements OnModuleInit {
       }
     }, GAME_CONFIG.COUNTDOWN_DURATION_MS);
 
-    this.addTimer(matchId, timer);
+    timerSet.add(timer);
   }
 
   // ============================================================
@@ -646,6 +953,12 @@ export class GameLoopService implements OnModuleInit {
     roomId: string,
     server: Server,
   ): Promise<void> {
+    // H1 fix (defensive double-check): the `endingRounds` guard is the
+    // single source of truth for round-end idempotency. clearTimeout
+    // does NOT cancel a callback that is already in Node's timer queue
+    // — it only stops a future fire. So `checkEarlyTermination` can
+    // race with the 15s timer: both will reach this method. The guard
+    // ensures only the first caller does the work.
     if (this.endingRounds.has(matchId)) {
       this.logger.warn(
         `endRound already in progress or completed for match ${matchId}`,
@@ -680,36 +993,71 @@ export class GameLoopService implements OnModuleInit {
       const { survivingIds, eliminatedIds, correctAnswer } =
         stateMachine.evaluateRound();
 
-      // 4. Transition to ROUND_RESULT
-      stateMachine.transition(MatchStatus.ROUND_RESULT);
+      // H3 fix: PERSIST the round's DB writes BEFORE advancing the
+      // state machine to ROUND_RESULT. The previous order
+      //   transition(EVALUATING) → evaluate → transition(RESULT) →
+      //   persistStateMachine → saveRound → saveAnswers
+      // meant that if `saveRound` or `saveAnswers` threw (Prisma
+      // P2002, DB connection blip, etc.) the state machine was
+      // already in ROUND_RESULT but no DB row existed for the round.
+      // The next round would start, leaderboards and answer history
+      // would be permanently missing one round of data.
+      //
+      // New order: persist ALL DB writes (state machine + round +
+      // answers) in ROUND_EVALUATING, then transition to ROUND_RESULT.
+      // If any DB write fails, the state machine is still in
+      // EVALUATING and the next 15s timer (or checkMatchEnd retry)
+      // can re-evaluate. We do NOT throw from this function because
+      // the surrounding timer callback would log the error and move
+      // on — we want a hard failure that operators notice.
+      try {
+        // 4. Save the round row to get the roundId for the answer rows.
+        const currentRoundForSave = stateMachine.getCurrentRound()!;
+        const roundRecord = await this.matchService.saveRound(
+          matchId,
+          state.currentRoundNo,
+          currentRoundForSave.question.id,
+        );
 
-      // F6: Persist after mutation
-      await this.matchService.persistStateMachine(matchId);
-
-      // 5. Save round + answers to DB (Task 5)
-      const currentRound = stateMachine.getCurrentRound()!;
-      const roundRecord = await this.matchService.saveRound(
-        matchId,
-        state.currentRoundNo,
-        currentRound.question.id,
-      );
-      // F5: roundRecord.id is available from Prisma create return
-      const answersToSave = Array.from(currentRound.answers.entries()).map(
-        ([playerId, answer]) => ({
+        // 5. Save all answers in a single batch.
+        const answersToSave = Array.from(
+          currentRoundForSave.answers.entries(),
+        ).map(([playerId, answer]) => ({
           matchId,
           roundId: roundRecord.id,
           userId: playerId,
           answer: answer.answer,
           isCorrect: answer.isCorrect,
           responseTimeMs: answer.responseTimeMs,
-        }),
-      );
-      await this.matchService.saveAnswers(answersToSave);
+        }));
+        if (answersToSave.length > 0) {
+          await this.matchService.saveAnswers(answersToSave);
+        }
+      } catch (dbError) {
+        // H3 fix: a DB failure here must not silently advance the
+        // state machine. We log the error at error level (operators
+        // notice) and re-throw so the surrounding 15s timer callback
+        // surfaces the failure. The state machine remains in
+        // ROUND_EVALUATING — the next round timer will see the same
+        // active state and retry, OR an admin can investigate.
+        this.logger.error(
+          `H3: endRound DB persistence failed for match ${matchId} round ${state.currentRoundNo}; state machine will NOT advance to ROUND_RESULT`,
+          dbError,
+        );
+        throw dbError;
+      }
 
-      // 6. Convert Maps to arrays for Socket.io serialization
+      // 6. Persist state machine (now that DB writes succeeded).
+      await this.matchService.persistStateMachine(matchId);
+
+      // 7. Transition to ROUND_RESULT — safe now that DB is consistent.
+      stateMachine.transition(MatchStatus.ROUND_RESULT);
+      await this.matchService.persistStateMachine(matchId);
+
+      // 8. Convert Maps to arrays for Socket.io serialization
       const playerInfos = Array.from(state.players.values());
 
-      // 7. Broadcast ROUND_ENDED (KHÔNG gửi correctAnswer trong question object)
+      // 9. Broadcast ROUND_ENDED (KHÔNG gửi correctAnswer trong question object)
       const channel = getRoomChannel(roomId);
       server.to(channel).emit(ServerEvent.ROUND_ENDED, {
         matchId,
@@ -720,7 +1068,7 @@ export class GameLoopService implements OnModuleInit {
         playerResults: playerInfos,
       });
 
-      // 8. Per-player eliminated notification
+      // 10. Per-player eliminated notification
       for (const playerId of eliminatedIds) {
         const player = state.players.get(playerId);
         if (!player) continue;
@@ -729,13 +1077,13 @@ export class GameLoopService implements OnModuleInit {
           roundNo: state.currentRoundNo,
           playerId,
           playerName: player.name,
-          reason: currentRound.answers.has(playerId)
+          reason: stateMachine.getCurrentRound()?.answers.has(playerId)
             ? "WRONG_ANSWER"
             : "TIMEOUT",
         });
       }
 
-      // 9. Set 3s timer → checkMatchEnd
+      // 11. Set 3s timer → checkMatchEnd
       const timer = setTimeout(async () => {
         try {
           await this.checkMatchEnd(matchId, roomId, server);
@@ -765,7 +1113,13 @@ export class GameLoopService implements OnModuleInit {
     const stateMachine = await this.matchService.getStateMachine(matchId);
     if (!stateMachine) return;
 
-    if (stateMachine.shouldEndMatch()) {
+    // H5 fix: pass MAX_ROUNDS so the state machine can end the match
+    // even if more than 1 player is still alive. The constant is
+    // defined in @arena/shared and currently set to 50. With 15s
+    // rounds + 5s countdowns + 3s result displays, 50 rounds is
+    // roughly 19 minutes — a safe upper bound that still keeps
+    // matches engaging.
+    if (stateMachine.shouldEndMatch(GAME_CONFIG.MAX_ROUNDS)) {
       await this.finishMatchLoop(matchId, roomId, server);
     } else {
       // Loop: next round
@@ -781,17 +1135,62 @@ export class GameLoopService implements OnModuleInit {
     matchId: string,
     roomId: string,
     server: Server,
-    serverOrContext: unknown = null,
+  ): Promise<void> {
+    // L6 fix: the dead `serverOrContext` parameter has been removed.
+    // It was a no-op refactoring artefact (a debug-only conditional
+    // log of an object the function never read). Removing it
+    // simplifies the call graph — the only callers (checkMatchEnd,
+    // admin termination) pass exactly the live `server` they
+    // already have.
+
+    // B1 fix: idempotency guard. The match-finish path is reachable
+    // from `checkMatchEnd` (timer-driven) and from the admin
+    // kill-switch (`AdminService.terminateRoom` → `matchService.finishMatch`).
+    // If both fire for the same matchId, the second call must be a
+    // no-op: the first call is already in the middle of writing
+    // DB rows, emitting MATCH_FINISHED, and clearing timers. A
+    // second writer would produce a corrupted winnerId and a
+    // confusing pair of `MATCH_FINISHED` + `ROOM_TERMINATED`
+    // broadcasts for the same match. The Set is the same pattern
+    // as `endingRounds` (round-end idempotency, H1) — explicit
+    // try/finally so a thrown error still drops the matchId from
+    // the Set (otherwise a transient DB error would lock the match
+    // out of all future finish attempts until the process restarts).
+    if (this.finishingMatches.has(matchId)) {
+      this.logger.warn(
+        `finishMatchLoop already in progress for match ${matchId}; second caller is a no-op`,
+      );
+      return;
+    }
+    this.finishingMatches.add(matchId);
+
+    try {
+      await this.finishMatchLoopInner(matchId, roomId, server);
+    } finally {
+      this.finishingMatches.delete(matchId);
+    }
+  }
+
+  /**
+   * Public guard query used by `AdminService.terminateRoom` to abort
+   * the kill-switch if a natural finish is already in flight for the
+   * same match. Returns true while `finishMatchLoop` is mid-execution
+   * (between Set add and Set delete). This is the B1 surface that
+   * closes the race window between the timer-driven finish and the
+   * admin-driven finish.
+   */
+  isMatchFinishing(matchId: string): boolean {
+    return this.finishingMatches.has(matchId);
+  }
+
+  private async finishMatchLoopInner(
+    matchId: string,
+    roomId: string,
+    server: Server,
   ): Promise<void> {
     // 1. Get state machine
     const stateMachine = await this.matchService.getStateMachine(matchId);
     if (!stateMachine) return;
-
-    if (serverOrContext) {
-      this.logger.debug(
-        `finishMatchLoop called with context: ${JSON.stringify(serverOrContext)}`,
-      );
-    }
 
     // 2. Transition to FINISHED
     stateMachine.transition(MatchStatus.FINISHED);
@@ -799,13 +1198,27 @@ export class GameLoopService implements OnModuleInit {
     // F1: finishMatch() returns void. winnerId is set internally on state.
     stateMachine.finishMatch();
     const state = stateMachine.getState();
-    const winnerId = state.winnerId!;
+    // B2 fix: `state.winnerId` is now typed `string | null` in the
+    // state machine. We convert `null`/`undefined` defensively into
+    // an explicit `null` for the wire. The non-null assertion (`!`)
+    // was hiding a real bug: when `tieBreak` returned `undefined` for
+    // an empty roster, this code would push `undefined` into the
+    // Prisma update payload, which silently dropped the field — the
+    // DB would still show the previous (stale) winnerId instead of
+    // marking the match finished with no winner. We now make the
+    // null case explicit and let it flow through to `finishMatch`
+    // which already accepts `string | null`.
+    const winnerId: string | null = state.winnerId ?? null;
 
     // F6: Persist lần cuối
     await this.matchService.persistStateMachine(matchId);
 
-    // 3. Persist match result to DB (updates room status, cleans memory + Redis)
-    await this.matchService.finishMatch(matchId, winnerId);
+    // 3. Persist match result to DB (updates room status, cleans memory + Redis).
+    // Pass the roomId from the state machine (always present at this
+    // point because the match was created from a room) so the
+    // finishMatch transaction can update the Room row in the same
+    // atomic batch.
+    await this.matchService.finishMatch(matchId, winnerId, roomId);
 
     // 4. Broadcast MATCH_FINISHED
     const channel = getRoomChannel(roomId);
@@ -822,9 +1235,15 @@ export class GameLoopService implements OnModuleInit {
     this.usedQuestionIds.delete(matchId);
     this.expectedAnswers.delete(matchId);
 
-    this.logger.log(
-      `Match ${matchId} finished. Winner: ${winnerId}. Rounds: ${state.currentRoundNo}`,
-    );
+    if (winnerId === null) {
+      this.logger.warn(
+        `Match ${matchId} finished with no winner (empty roster or unresolvable tie-break). Rounds: ${state.currentRoundNo}. Clients receive MATCH_FINISHED with winnerId: null.`,
+      );
+    } else {
+      this.logger.log(
+        `Match ${matchId} finished. Winner: ${winnerId}. Rounds: ${state.currentRoundNo}`,
+      );
+    }
   }
 
   // ============================================================
@@ -877,6 +1296,79 @@ export class GameLoopService implements OnModuleInit {
   }
 
   // ============================================================
+  // VOLUNTARY MATCH LEAVE
+  // ============================================================
+
+  /**
+   * Called when a user explicitly sends `LEAVE_ROOM` while the room is
+   * IN_GAME or FINISHED (i.e. the room has a live or recently-finished
+   * match). This is the C1 cheating-vector fix:
+   *
+   * Without this call, the state machine still had the player as ACTIVE
+   * after their RoomPlayer row was deleted, so the SUBMIT_ANSWER gate
+   * (`status === ACTIVE`) would keep accepting their answers — a
+   * spectator who wants to read the question and then race back in
+   * to submit the right answer could do exactly that.
+   *
+   * We mark the player as DISCONNECTED (re-using the existing
+   * state-machine method) and persist. The next round's
+   * `evaluateRound` will skip them because they're no longer ACTIVE,
+   * and even if they tried to submit before the next round, the gate
+   * rejects. The match can still complete — we don't terminate it
+   * just because someone quit; the surviving players continue to the
+   * end.
+   *
+   * We accept `roomId` from the caller (RoomHandler.handleLeaveRoom
+   * already has it on the payload) to avoid re-fetching it from
+   * state and to keep the function self-contained for the FINISHED
+   * case where the state machine may already be torn down.
+   */
+  async handleMatchPlayerLeft(
+    matchId: string,
+    roomId: string,
+    userId: string,
+    server: Server,
+  ): Promise<void> {
+    // 1. Get state machine. The match might already be FINISHED (room
+    //    status FINISHED) and the in-memory state machine could be
+    //    gone. In that case there is nothing to mark and nothing to
+    //    persist, but we still want the broadcast so other clients
+    //    know the player has left the spectator list.
+    const stateMachine = await this.matchService.getStateMachine(matchId);
+
+    if (stateMachine) {
+      // 2. Mark the player as DISCONNECTED in the state machine. This
+      //    is the same path the actual socket-disconnect handler uses;
+      //    we re-use it so behaviour stays consistent (reconnect still
+      //    possible, evaluateRound skips them, submitAnswer gate
+      //    rejects).
+      stateMachine.disconnectPlayer(userId);
+      await this.matchService.persistStateMachine(matchId);
+    } else {
+      this.logger.warn(
+        `handleMatchPlayerLeft: no state machine for match ${matchId} (likely already finished); skipping state update`,
+      );
+    }
+
+    // 3. Broadcast PLAYER_LEFT with reason "LEFT" so the lobby / match
+    //    UIs can update the player list. We use the room channel (not
+    //    the match channel) so the lobby view and the in-match view
+    //    stay in sync. FINISHED matches also receive this so spectators
+    //    can update their "players still here" badge.
+    const channel = getRoomChannel(roomId);
+    server.to(channel).emit(ServerEvent.PLAYER_LEFT, {
+      roomId,
+      matchId,
+      playerId: userId,
+      reason: "LEFT",
+    });
+
+    this.logger.log(
+      `Player ${userId} voluntarily left match ${matchId} (room ${roomId})`,
+    );
+  }
+
+  // ============================================================
   // CHECK EARLY TERMINATION
   // ============================================================
 
@@ -889,6 +1381,17 @@ export class GameLoopService implements OnModuleInit {
     roomId: string,
     server: Server,
   ): Promise<void> {
+    // H1 fix: explicit `endingRounds` guard. Previously this method
+    // relied entirely on `endRound`'s own `endingRounds` check to
+    // serialise concurrent invocations. That worked by accident but
+    // coupled the two methods through a shared Set. Pin the guard
+    // here too: if a 15s timer is already in the queue (e.g. the
+    // last player submitted at T+14.9s), the early-termination path
+    // must back off and let the timer fire.
+    if (this.endingRounds.has(matchId)) {
+      return;
+    }
+
     // 1. Get state machine
     const stateMachine = await this.matchService.getStateMachine(matchId);
     if (!stateMachine) return;
@@ -904,10 +1407,16 @@ export class GameLoopService implements OnModuleInit {
         `Early termination triggered for match ${matchId} - all players answered`,
       );
 
-      // Clear existing timers
+      // Clear existing timers. Scoped to this match (the match ID is
+      // the key in the activeTimers map) so a stale timer from a
+      // previous round does not leak. The 15s timer is the only one
+      // in flight for this match at this point.
       this.clearTimers(matchId);
 
-      // End round immediately
+      // End round immediately. The `endingRounds` guard inside
+      // endRound is now a defence-in-depth — if for any reason this
+      // call races with a still-pending timer callback, only one of
+      // them does the work.
       await this.endRound(matchId, roomId, server);
     }
   }

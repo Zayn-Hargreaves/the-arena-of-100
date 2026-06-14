@@ -72,6 +72,20 @@ describe("GameLoopService Persistence", () => {
       questionService,
       roomService,
       createMockRedisService() as any,
+      // B3 fix: GameLoopService now takes a PrismaService for the
+      // `SELECT ... FOR UPDATE` transaction in `launchRoomMatch`.
+      // The persistence suite does not exercise that path, so a
+      // no-op mock with a stub tx client is sufficient.
+      {
+        $transaction: vi.fn().mockImplementation(
+          async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> =>
+            fn({
+              $queryRaw: vi.fn().mockResolvedValue([]),
+              room: { update: vi.fn().mockResolvedValue({}) },
+            }),
+        ),
+        $queryRaw: vi.fn().mockResolvedValue([]),
+      } as any,
     );
   });
 

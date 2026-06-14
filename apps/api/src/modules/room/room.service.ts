@@ -42,6 +42,18 @@ export class RoomService {
     timeLimit?: number,
     category?: string,
   ) {
+    // M2 fix: defence-in-depth cap on maxPlayers. The C2 fix
+    // already caps it at the WebSocket validation layer (Zod
+    // schema in @arena/shared), but the service is also called
+    // from other paths in the future (admin tools, REST
+    // controllers) and we never want a single room to claim a
+    // 100k-player broadcast budget. Clamp here so the persisted
+    // value is always within bounds.
+    const safeMaxPlayers = Math.min(
+      Math.max(2, Math.floor(maxPlayers ?? GAME_CONFIG.MAX_PLAYERS)),
+      GAME_CONFIG.MAX_PLAYERS,
+    );
+
     const code = generateRoomCode();
     const room = await this.prisma.room.create({
       data: {
@@ -49,7 +61,7 @@ export class RoomService {
         type: roomType,
         status: RoomStatus.WAITING,
         hostId,
-        maxPlayers: maxPlayers ?? GAME_CONFIG.MAX_PLAYERS,
+        maxPlayers: safeMaxPlayers,
         timeLimit: timeLimit ?? 15,
         category: category ?? "ALL",
       },

@@ -3,6 +3,7 @@ import { Socket, Server } from "socket.io";
 import {
   ServerEvent,
   ErrorCode,
+  PlayerStatus,
   RoomStatus,
   type SubmitAnswerPayload,
   type RequestSnapshotPayload,
@@ -84,6 +85,17 @@ export class MatchHandler extends BaseHandler {
         throw new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER);
       }
 
+      // M6 fix: emit a distinct error code for DISCONNECTED players.
+      // Without this, a player who just lost their socket (e.g.
+      // brief network blip) would see "Bạn không ở trong phòng này"
+      // — confusing because they ARE in the room, just temporarily
+      // offline. The frontend can use PLAYER_DISCONNECTED to drive
+      // a reconnect flow instead of an error toast.
+      const player = stateMachine.getState().players.get(userId);
+      if (player && player.status === PlayerStatus.DISCONNECTED) {
+        throw new RoomError(ErrorCode.PLAYER_DISCONNECTED);
+      }
+
       const serverTimestamp = Date.now();
       const result = stateMachine.submitAnswer(
         userId,
@@ -99,7 +111,15 @@ export class MatchHandler extends BaseHandler {
 
       client.emit(ServerEvent.ANSWER_RESULT, {
         matchId: payload.matchId,
-        roundNo: stateMachine.getCurrentRound()?.roundNo ?? payload.roundNo,
+        // L4 fix: read roundNo from the state machine, not from the
+        // client payload. The previous `?? payload.roundNo` fallback
+        // never fired in practice (getCurrentRound is non-null when
+        // submitAnswer succeeded) and trusting the client's roundNo
+        // was a UX trap: a stale or future round number from the
+        // client would be persisted to AnswerResult events. The
+        // state machine is the single source of truth for which
+        // round is currently active.
+        roundNo: stateMachine.getCurrentRound()!.roundNo,
         isCorrect: result.isCorrect,
         responseTimeMs: result.responseTimeMs,
       });
@@ -137,8 +157,21 @@ export class MatchHandler extends BaseHandler {
       );
       if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
 
-      // Drop-in spectating baseline: spectators use this exact path to
-      // hydrate the match UI after joining an IN_GAME or FINISHED room.
+      // H6 fix: room-membership gate. Previously this handler was
+      // fully open to any authenticated user that knew the matchId
+      // — a leak risk for the player roster, the in-flight question,
+      // and the per-player score. The previous comment said
+      // "spectators use this exact path" and explicitly opted out
+      // of a player-roster check, but the right check is socket
+      // channel membership: both players AND drop-in spectators
+      // (who entered via JOIN_ROOM → handleJoinRoom) end up in the
+      // `room:${roomId}` channel. Anyone who has not joined the
+      // room — even with a valid token — is rejected.
+      const roomId = stateMachine.getState().roomId;
+      if (!client.rooms.has(`room:${roomId}`)) {
+        throw new RoomError(ErrorCode.UNAUTHORIZED);
+      }
+
       // The snapshot is already client-safe: MatchStateMachine.getSnapshot
       // returns only the question (no correctAnswer), so no answer leak
       // is possible through this endpoint. We intentionally do NOT check

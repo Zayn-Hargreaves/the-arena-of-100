@@ -9,11 +9,46 @@ import {
   ServerEvent,
   GAME_CONFIG,
   ErrorCode,
+  RoomError,
 } from "@arena/shared";
 import { Server } from "socket.io";
 import { vi, beforeEach, it, expect, describe } from "vitest";
 import { RoomService } from "../room/room.service";
 import { createMockRedisService } from "./redis.mock";
+
+// B3 fix: GameLoopService now takes a `PrismaService` so it can open
+// a `SELECT ... FOR UPDATE` transaction inside `launchRoomMatch`.
+// Tests construct the service directly (no Nest DI), so we provide a
+// minimal mock here. The default implementation makes
+// `tx.$queryRaw` return a sensible "room exists, launchable" row
+// so the existing launchRoomMatch tests pass without per-test
+// setup. B3-specific tests override `__tx.$queryRaw` to drive the
+// race scenarios (e.g. set `currentMatchId` to simulate a losing
+// race).
+function createMockPrismaService() {
+  const txStub = {
+    $queryRaw: vi
+      .fn()
+      .mockResolvedValue([
+        { id: "r1", status: RoomStatus.WAITING, currentMatchId: null },
+      ]),
+    room: {
+      update: vi.fn().mockResolvedValue({}),
+    },
+  };
+  return {
+    $transaction: vi
+      .fn()
+      .mockImplementation(
+        async <T>(fn: (tx: typeof txStub) => Promise<T>): Promise<T> => {
+          return fn(txStub);
+        },
+      ),
+    $queryRaw: vi.fn().mockResolvedValue([]),
+    // Tests that need to drive the tx client pull this out.
+    __tx: txStub,
+  };
+}
 
 describe("GameLoopService", () => {
   let service: GameLoopService;
@@ -86,6 +121,7 @@ describe("GameLoopService", () => {
       questionService,
       roomService,
       createMockRedisService() as any,
+      createMockPrismaService() as any,
     );
   });
 
@@ -450,8 +486,14 @@ describe("GameLoopService", () => {
     const winnerId = stateMachine.getState().winnerId;
     expect(winnerId).toBe("p1"); // p1 answered correctly
 
-    // Check that match was finished in service
-    expect(matchService.finishMatch).toHaveBeenCalledWith("match-1", winnerId);
+    // Check that match was finished in service (H2 + M4: the
+    // roomId is now passed explicitly so the transaction can
+    // update the Room row atomically with the Match row).
+    expect(matchService.finishMatch).toHaveBeenCalledWith(
+      "match-1",
+      winnerId,
+      "room-1",
+    );
 
     // Check that state was persisted
     expect(matchService.persistStateMachine).toHaveBeenCalledWith("match-1");
@@ -735,6 +777,77 @@ describe("GameLoopService", () => {
 
     // Verify PLAYER_LEFT was NOT emitted
     expect(emitSpy).not.toHaveBeenCalled();
+  });
+
+  // ---- handleMatchPlayerLeft (C1) ----
+  describe("handleMatchPlayerLeft (C1)", () => {
+    it("marks the player DISCONNECTED, persists, and broadcasts PLAYER_LEFT with reason=LEFT", async () => {
+      // C1 fix: a voluntary LEAVE_ROOM while IN_GAME must update the
+      // match state machine so the player can no longer submit
+      // answers. The previous behaviour (state machine still ACTIVE
+      // after RoomPlayer row was deleted) was a cheating vector.
+      stateMachine.transition(MatchStatus.COUNTDOWN);
+      stateMachine.transition(MatchStatus.ROUND_ACTIVE);
+      const emitSpy = vi.fn();
+      const toMock = vi.fn().mockReturnValue({ emit: emitSpy });
+      (mockServer.to as any).mockImplementation(toMock);
+
+      await service.handleMatchPlayerLeft(
+        "match-1",
+        "room-1",
+        "p1",
+        mockServer as unknown as Server,
+      );
+
+      // The state machine now has p1 as DISCONNECTED.
+      const updated = stateMachine.getState();
+      expect(updated.players.get("p1")?.status).toBe(PlayerStatus.DISCONNECTED);
+      expect(matchService.persistStateMachine).toHaveBeenCalledWith("match-1");
+
+      // The broadcast uses reason "LEFT" (not "DISCONNECTED") so the
+      // UI can distinguish a voluntary leave from a socket drop.
+      expect(emitSpy).toHaveBeenCalledWith(
+        ServerEvent.PLAYER_LEFT,
+        expect.objectContaining({
+          roomId: "room-1",
+          matchId: "match-1",
+          playerId: "p1",
+          reason: "LEFT",
+        }),
+      );
+    });
+
+    it("still broadcasts PLAYER_LEFT when the state machine is gone (FINISHED case)", async () => {
+      // The C1 path can run while the room is FINISHED — the match
+      // state machine may already have been torn down. We must not
+      // throw; we should still broadcast so spectator UIs update.
+      vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(
+        undefined as any,
+      );
+      const emitSpy = vi.fn();
+      const toMock = vi.fn().mockReturnValue({ emit: emitSpy });
+      (mockServer.to as any).mockImplementation(toMock);
+
+      await service.handleMatchPlayerLeft(
+        "match-gone",
+        "room-1",
+        "p1",
+        mockServer as unknown as Server,
+      );
+
+      // No persist call when there's no state machine.
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+      // Broadcast still happens with the FULL payload.
+      expect(emitSpy).toHaveBeenCalledWith(
+        ServerEvent.PLAYER_LEFT,
+        expect.objectContaining({
+          roomId: "room-1",
+          matchId: "match-gone",
+          playerId: "p1",
+          reason: "LEFT",
+        }),
+      );
+    });
   });
 
   // === NEW TESTS: Race conditions & Idempotency / Error handling ===
@@ -1296,11 +1409,67 @@ describe("GameLoopService", () => {
       expect(getRoundSpy).not.toHaveBeenCalled();
     });
 
-    it("should handle optional serverOrContext parameter in finishMatchLoop", async () => {
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(stateMachine);
-      const loggerDebugSpy = vi.spyOn((service as any).logger, "debug");
+    // L6 fix: the dead `serverOrContext` parameter was removed in
+    // the same change that eliminated its debug log. There is no
+    // longer an optional fourth argument to test; the L6 contract
+    // is "finishMatchLoop(matchId, roomId, server) with exactly
+    // three required parameters", pinned by the existing
+    // "should finish match and read winnerId from state" test
+    // above and the caller-side types in
+    // `game-loop.service.ts:990`.
+    it("L6 fix: finishMatchLoop no longer accepts a fourth context argument", () => {
+      // Compile-time check: the function's parameter count is 3
+      // (matchId, roomId, server). We read .length off the
+      // function reference to make any future re-introduction of
+      // the dead parameter fail this test.
+      expect(
+        (
+          service as unknown as {
+            finishMatchLoop: (...args: unknown[]) => unknown;
+          }
+        ).finishMatchLoop.length,
+      ).toBe(3);
+    });
 
-      // Setup state machine so finishMatch succeeds
+    // B1 fix: idempotency guard for finishMatchLoop. Two callers
+    // (checkMatchEnd timer + admin kill-switch) must not both
+    // write the Match row for the same matchId. We verify the
+    // Set-based guard returns early without calling
+    // `matchService.finishMatch` twice.
+    it("B1: finishMatchLoop is a no-op on the second concurrent call for the same matchId", async () => {
+      vi.useFakeTimers();
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+      // Pre-mark this matchId as "already finishing" to simulate
+      // an in-flight first call. The guard should detect the Set
+      // membership and bail out.
+      (service as any).finishingMatches.add("match-1");
+      try {
+        await (service as any).finishMatchLoop("match-1", "room-1", mockServer);
+
+        // No DB write, no broadcast, no state transition.
+        expect(matchService.finishMatch).not.toHaveBeenCalled();
+        expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+        expect(emitSpy).not.toHaveBeenCalledWith(
+          ServerEvent.MATCH_FINISHED,
+          expect.anything(),
+        );
+      } finally {
+        (service as any).finishingMatches.delete("match-1");
+      }
+
+      vi.useRealTimers();
+    });
+
+    it("B1: isMatchFinishing returns true while finishMatchLoop is in-flight", async () => {
+      vi.useFakeTimers();
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+      // Drive the service into a state where finishMatchLoop
+      // has work to do. The first call would normally grab the
+      // matchId into the Set and then clear it in `finally`.
       stateMachine.transition(MatchStatus.COUNTDOWN);
       stateMachine.transition(MatchStatus.ROUND_ACTIVE);
       stateMachine.startRound({
@@ -1311,22 +1480,138 @@ describe("GameLoopService", () => {
         difficulty: "MEDIUM",
       });
       stateMachine.submitAnswer("p1", "A", Date.now());
-      stateMachine.submitAnswer("p2", "B", Date.now());
       stateMachine.evaluateRound();
 
-      const contextObj = { customKey: "customValue" };
-      await (service as any).finishMatchLoop(
-        "match-1",
-        "room-1",
-        mockServer,
-        contextObj,
+      // Sanity: outside of an in-flight call, the guard returns false.
+      expect(service.isMatchFinishing("match-1")).toBe(false);
+
+      // Manually mark the Set (simulating "currently in flight")
+      // and assert isMatchFinishing flips.
+      (service as any).finishingMatches.add("match-1");
+      expect(service.isMatchFinishing("match-1")).toBe(true);
+      (service as any).finishingMatches.delete("match-1");
+      expect(service.isMatchFinishing("match-1")).toBe(false);
+
+      vi.useRealTimers();
+    });
+
+    it("B1: finishMatchLoop releases the finishingMatches guard in finally", async () => {
+      vi.useFakeTimers();
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+      stateMachine.transition(MatchStatus.COUNTDOWN);
+      stateMachine.transition(MatchStatus.ROUND_ACTIVE);
+      stateMachine.startRound({
+        id: "q1",
+        content: "Q",
+        options: ["A", "B"],
+        correctAnswer: "A",
+        difficulty: "MEDIUM",
+      });
+      stateMachine.submitAnswer("p1", "A", Date.now());
+      stateMachine.evaluateRound();
+
+      await (service as any).finishMatchLoop("match-1", "room-1", mockServer);
+
+      // After the call returns, the Set should no longer contain
+      // the matchId. This is critical: a thrown DB error inside
+      // finishMatchLoop must not lock the match out of future
+      // finish attempts.
+      expect((service as any).finishingMatches.has("match-1")).toBe(false);
+      expect(service.isMatchFinishing("match-1")).toBe(false);
+
+      vi.useRealTimers();
+    });
+
+    it("B1: finishMatchLoop still releases the guard even if finishMatch throws", async () => {
+      vi.useFakeTimers();
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+      stateMachine.transition(MatchStatus.COUNTDOWN);
+      stateMachine.transition(MatchStatus.ROUND_ACTIVE);
+      stateMachine.startRound({
+        id: "q1",
+        content: "Q",
+        options: ["A", "B"],
+        correctAnswer: "A",
+        difficulty: "MEDIUM",
+      });
+      stateMachine.submitAnswer("p1", "A", Date.now());
+      stateMachine.evaluateRound();
+
+      // Force finishMatch to throw, then verify the guard is
+      // still released so a follow-up call (e.g. from the admin
+      // path) can succeed.
+      vi.mocked(matchService.finishMatch).mockRejectedValueOnce(
+        new Error("DB down"),
       );
 
-      expect(loggerDebugSpy).toHaveBeenCalledWith(
-        expect.stringContaining(
-          'finishMatchLoop called with context: {"customKey":"customValue"}',
-        ),
+      await expect(
+        (service as any).finishMatchLoop("match-1", "room-1", mockServer),
+      ).rejects.toThrow("DB down");
+
+      expect((service as any).finishingMatches.has("match-1")).toBe(false);
+      expect(service.isMatchFinishing("match-1")).toBe(false);
+
+      vi.useRealTimers();
+    });
+
+    // B2 fix: when determineWinner returns null (empty roster or
+    // unresolvable tie-break), finishMatchLoop must not crash on
+    // the non-null assertion and must persist an explicit null
+    // winnerId. The previous code wrote `undefined` to Prisma,
+    // which silently dropped the field — the DB would keep the
+    // stale winnerId instead of marking the match finished with
+    // no winner.
+    it("B2: finishMatchLoop persists null winnerId and emits MATCH_FINISHED.winnerId: null", async () => {
+      vi.useFakeTimers();
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+      // Force the state machine into the empty-roster path. We
+      // can either drive a real empty-roster setup (annoying with
+      // shared `stateMachine`) or stub `determineWinner` directly
+      // for this test. Stubbing keeps the test focused on the
+      // finishMatchLoop handling rather than the state machine.
+      const determineWinnerSpy = vi
+        .spyOn(stateMachine, "determineWinner")
+        .mockReturnValue(null as unknown as string);
+
+      // Set up a minimal ROUND_RESULT transition (the state
+      // machine that finishMatchLoopInner will then transition to
+      // FINISHED). We do NOT pre-transition to FINISHED because
+      // finishMatchLoop owns that transition.
+      stateMachine.transition(MatchStatus.COUNTDOWN);
+      stateMachine.transition(MatchStatus.ROUND_ACTIVE);
+      stateMachine.transition(MatchStatus.ROUND_EVALUATING);
+      stateMachine.transition(MatchStatus.ROUND_RESULT);
+
+      await (service as any).finishMatchLoop("match-1", "room-1", mockServer);
+
+      // finishMatch on the service must receive an explicit null,
+      // not undefined (Prisma would drop the field for undefined).
+      expect(matchService.finishMatch).toHaveBeenCalledWith(
+        "match-1",
+        null,
+        "room-1",
       );
+
+      // MATCH_FINISHED wire payload carries the explicit null
+      // winnerId so clients can render the "no winner" state.
+      expect(emitSpy).toHaveBeenCalledWith(
+        ServerEvent.MATCH_FINISHED,
+        expect.objectContaining({
+          matchId: "match-1",
+          winnerId: null,
+        }),
+      );
+
+      // The non-null assertion path is gone; if it were still
+      // there, this test would have crashed with a TypeError.
+      determineWinnerSpy.mockRestore();
+      vi.useRealTimers();
     });
   });
 
@@ -1371,23 +1656,27 @@ describe("GameLoopService", () => {
         questionService,
         roomService,
         redis,
+        createMockPrismaService() as any,
       );
       return { svc, redis, multiSpy };
     }
 
     // ---- getCountdownEnd ----
     describe("getCountdownEnd", () => {
-      it("returns null when no countdown is active for the room", () => {
-        expect(service.getCountdownEnd("r1")).toBeNull();
+      it("returns null when no countdown is active for the room", async () => {
+        // H4 fix follow-up: getCountdownEnd is now async because it
+        // falls back to Redis. The test awaits the returned promise.
+        expect(await service.getCountdownEnd("r1")).toBeNull();
       });
 
-      it("returns the recorded countdownEndsAt for an active countdown", () => {
+      it("returns the recorded countdownEndsAt for an active countdown", async () => {
         const endsAt = Date.now() + 10_000;
         (service as any).lobbyCountdowns.set("r1", {
           timer: setTimeout(() => undefined, 100),
           countdownEndsAt: endsAt,
         });
-        expect(service.getCountdownEnd("r1")).toBe(endsAt);
+        // H4 fix: same async-aware assertion.
+        expect(await service.getCountdownEnd("r1")).toBe(endsAt);
       });
     });
 
@@ -1634,19 +1923,12 @@ describe("GameLoopService", () => {
       it("happy path: updates status to STARTING, creates the match, and starts the loop", async () => {
         const emitSpy = vi.fn();
         (mockServer.to as any).mockReturnValue({ emit: emitSpy });
-        vi.mocked(roomService.getRoom)
-          .mockResolvedValueOnce({
-            id: "r1",
-            status: RoomStatus.WAITING,
-            currentMatchId: null,
-            players: [{ userId: "p1" }, { userId: "p2" }],
-          } as any)
-          .mockResolvedValueOnce({
-            id: "r1",
-            status: RoomStatus.WAITING,
-            currentMatchId: null,
-            players: [{ userId: "p1" }, { userId: "p2" }],
-          } as any);
+        vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+          id: "r1",
+          status: RoomStatus.WAITING,
+          currentMatchId: null,
+          players: [{ userId: "p1" }, { userId: "p2" }],
+        } as any);
         (matchService.createMatch as any) = vi
           .fn()
           .mockResolvedValue({ id: "m1" });
@@ -1654,15 +1936,29 @@ describe("GameLoopService", () => {
           .spyOn(service as any, "startMatchLoop")
           .mockResolvedValue(undefined);
 
+        // B3 fix: launchRoomMatch now uses `prisma.$transaction` with
+        // a `SELECT ... FOR UPDATE` for the atomic guard. The default
+        // mock (see `createMockPrismaService`) returns a valid room
+        // row, which lets the transaction commit and `createMatch`
+        // run as before.
+        const prisma = (service as any).prisma;
+        const txUpdateSpy = vi.spyOn(prisma.__tx.room, "update");
+
         const match = await (service as any).launchRoomMatch("r1", mockServer, {
           isAutoStart: false,
         });
 
         expect(match).toEqual({ id: "m1" });
-        expect(roomService.updateRoomStatus).toHaveBeenCalledWith(
-          "r1",
-          RoomStatus.STARTING,
-        );
+        // B3 fix: the STARTING transition is now performed inside
+        // the transaction (tx.room.update) so a concurrent caller
+        // racing on the same roomId is rejected by the lock. The
+        // old `roomService.updateRoomStatus(r1, STARTING)` call is
+        // no longer made for the launch transition; that path now
+        // only runs in the rollback branch below.
+        expect(txUpdateSpy).toHaveBeenCalledWith({
+          where: { id: "r1" },
+          data: { status: RoomStatus.STARTING },
+        });
         expect(emitSpy).toHaveBeenCalledWith(
           ServerEvent.MATCH_STARTING,
           expect.objectContaining({ matchId: "m1" }),
@@ -1673,19 +1969,12 @@ describe("GameLoopService", () => {
       it("rolls back to WAITING and re-broadcasts ROOM_STATUS_UPDATED if createMatch throws", async () => {
         const emitSpy = vi.fn();
         (mockServer.to as any).mockReturnValue({ emit: emitSpy });
-        vi.mocked(roomService.getRoom)
-          .mockResolvedValueOnce({
-            id: "r1",
-            status: RoomStatus.WAITING,
-            currentMatchId: null,
-            players: [{ userId: "p1" }, { userId: "p2" }],
-          } as any)
-          .mockResolvedValueOnce({
-            id: "r1",
-            status: RoomStatus.WAITING,
-            currentMatchId: null,
-            players: [{ userId: "p1" }, { userId: "p2" }],
-          } as any);
+        vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+          id: "r1",
+          status: RoomStatus.WAITING,
+          currentMatchId: null,
+          players: [{ userId: "p1" }, { userId: "p2" }],
+        } as any);
         (matchService.createMatch as any) = vi
           .fn()
           .mockRejectedValue(new Error("db boom"));
@@ -1696,6 +1985,11 @@ describe("GameLoopService", () => {
           }),
         ).rejects.toThrow("db boom");
 
+        // B3 fix: after the transaction commits (status=STARTING)
+        // and createMatch throws, we revert the room status to
+        // WAITING via the existing rollback path. The revert
+        // itself still uses `roomService.updateRoomStatus` so the
+        // existing assertion continues to hold.
         expect(roomService.updateRoomStatus).toHaveBeenLastCalledWith(
           "r1",
           RoomStatus.WAITING,
@@ -1707,6 +2001,172 @@ describe("GameLoopService", () => {
               RoomStatus.WAITING,
         );
         expect(rollback).toBeDefined();
+      });
+
+      // B3 fix: the old test asserted the "re-fetched room is no
+      // longer launchable" race via `roomService.getRoom`. With the
+      // `SELECT ... FOR UPDATE` transaction, the launchability
+      // check happens inside the transaction against the locked
+      // row. This new test overrides `tx.$queryRaw` to return a
+      // row that is no longer launchable, asserting the
+      // `ROOM_ALREADY_STARTED` path is still taken.
+      it("B3: throws ROOM_ALREADY_STARTED when the locked row is no longer launchable (race)", async () => {
+        const prisma = (service as any).prisma;
+        // Simulate the case where, by the time we acquire the
+        // FOR UPDATE lock, the room has already been transitioned
+        // to STARTING by a previous launch.
+        vi.spyOn(prisma.__tx, "$queryRaw").mockResolvedValueOnce([
+          {
+            id: "r1",
+            status: RoomStatus.STARTING,
+            currentMatchId: null,
+          },
+        ]);
+
+        await expect(
+          (service as any).launchRoomMatch("r1", mockServer, {
+            isAutoStart: false,
+          }),
+        ).rejects.toMatchObject({ code: ErrorCode.ROOM_ALREADY_STARTED });
+      });
+
+      // B3 fix: same race, but the room still shows WAITING in the
+      // outer fetch yet the previous launcher already set
+      // `currentMatchId`. The transaction's currentMatchId check
+      // catches this even though the status check would have passed.
+      it("B3: throws ROOM_ALREADY_STARTED when the locked row has a non-null currentMatchId (race)", async () => {
+        const prisma = (service as any).prisma;
+        vi.spyOn(prisma.__tx, "$queryRaw").mockResolvedValueOnce([
+          {
+            id: "r1",
+            status: RoomStatus.WAITING,
+            currentMatchId: "m-already-running",
+          },
+        ]);
+
+        await expect(
+          (service as any).launchRoomMatch("r1", mockServer, {
+            isAutoStart: false,
+          }),
+        ).rejects.toMatchObject({ code: ErrorCode.ROOM_ALREADY_STARTED });
+      });
+
+      // B3 fix: the FOR UPDATE row is missing (room was deleted
+      // between outer read and lock acquisition). The transaction
+      // throws ROOM_NOT_FOUND so the caller gets a typed error.
+      it("B3: throws ROOM_NOT_FOUND when the FOR UPDATE row is missing", async () => {
+        const prisma = (service as any).prisma;
+        vi.spyOn(prisma.__tx, "$queryRaw").mockResolvedValueOnce([]);
+
+        await expect(
+          (service as any).launchRoomMatch("r1", mockServer, {
+            isAutoStart: false,
+          }),
+        ).rejects.toMatchObject({ code: ErrorCode.ROOM_NOT_FOUND });
+      });
+
+      // B3 race-lost guard (finding from code review, 2026-06-14):
+      // when the inner `tx.$queryRaw FOR UPDATE` throws
+      // `ROOM_ALREADY_STARTED` (lock holder saw a non-WAITING/
+      // COUNTDOWN status or a non-null `currentMatchId`),
+      // another thread has already validly acquired the room
+      // lock and set `status = STARTING` (or further) in their
+      // own transaction. The previous unconditional rollback
+      // in the outer `catch` would overwrite the winner's
+      // `STARTING` with `WAITING` + emit
+      // `ROOM_STATUS_UPDATED {WAITING}` to every connected
+      // client — corrupting the winner's state and confusing
+      // all spectators/players in the room channel.
+      //
+      // The new guard detects the race-lost error and skips
+      // BOTH the revert AND the emit. Only the original
+      // `ROOM_ALREADY_STARTED` error is propagated to the
+      // caller (admin tooling / host force-start / auto-start
+      // timer) so they can report "someone else got there
+      // first" without us silently destroying the winner.
+      it("B3 race-lost: does NOT revert room status when the lock-holder reports ROOM_ALREADY_STARTED", async () => {
+        const prisma = (service as any).prisma;
+        // Simulate the case where, by the time we acquired the
+        // FOR UPDATE lock, the room's status had already moved
+        // out of the launchable range (e.g. another thread set
+        // `status = STARTING` in their transaction and committed
+        // before our lock was released).
+        vi.spyOn(prisma.__tx, "$queryRaw").mockResolvedValueOnce([
+          {
+            id: "r1",
+            status: RoomStatus.STARTING,
+            currentMatchId: null,
+          },
+        ]);
+        const updateRoomStatusSpy = vi.spyOn(roomService, "updateRoomStatus");
+        const emitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+        await expect(
+          (service as any).launchRoomMatch("r1", mockServer, {
+            isAutoStart: false,
+          }),
+        ).rejects.toMatchObject({ code: ErrorCode.ROOM_ALREADY_STARTED });
+
+        // CRITICAL: no revert of the room status to WAITING.
+        // The winning thread's STARTING state is preserved.
+        expect(updateRoomStatusSpy).not.toHaveBeenCalled();
+        // CRITICAL: no `ROOM_STATUS_UPDATED` broadcast. We
+        // must not announce a state that the winning thread
+        // didn't author.
+        const rollbackEmits = emitSpy.mock.calls.filter(
+          (call) =>
+            call[0] === ServerEvent.ROOM_STATUS_UPDATED &&
+            (call[1] as { roomStatus: string }).roomStatus ===
+              RoomStatus.WAITING,
+        );
+        expect(rollbackEmits).toHaveLength(0);
+      });
+
+      // Same race-lost guard for the inner `createMatch` catch
+      // (defense-in-depth — `createMatch` currently doesn't
+      // throw `ROOM_ALREADY_STARTED` directly, but if a future
+      // refactor routes the FOR UPDATE check through it, the
+      // same protection must apply).
+      it("B3 race-lost (createMatch): does NOT revert room status when createMatch throws ROOM_ALREADY_STARTED", async () => {
+        // The transaction guard passes (room is launchable), so
+        // we reach `createMatch`. `createMatch` then throws the
+        // race-lost error directly (e.g. a future refactor that
+        // moves the FOR UPDATE check inside `createMatch`).
+        vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+          id: "r1",
+          status: RoomStatus.WAITING,
+          currentMatchId: null,
+          players: [{ userId: "p1" }, { userId: "p2" }],
+        } as any);
+        // The matchService mock from beforeEach has no
+        // `createMatch` field; tests that need it attach a
+        // vi.fn() to the object (matching the pattern used
+        // elsewhere in this file). The vi.fn() exposes
+        // `mockRejectedValueOnce` for the race-lost assertion.
+        (matchService.createMatch as any) = vi
+          .fn()
+          .mockRejectedValueOnce(new RoomError(ErrorCode.ROOM_ALREADY_STARTED));
+        const updateRoomStatusSpy = vi.spyOn(roomService, "updateRoomStatus");
+        const emitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+        await expect(
+          (service as any).launchRoomMatch("r1", mockServer, {
+            isAutoStart: false,
+          }),
+        ).rejects.toMatchObject({ code: ErrorCode.ROOM_ALREADY_STARTED });
+
+        // The winning thread's STARTING/IN_GAME state must
+        // NOT be clobbered.
+        expect(updateRoomStatusSpy).not.toHaveBeenCalled();
+        const rollbackEmits = emitSpy.mock.calls.filter(
+          (call) =>
+            call[0] === ServerEvent.ROOM_STATUS_UPDATED &&
+            (call[1] as { roomStatus: string }).roomStatus ===
+              RoomStatus.WAITING,
+        );
+        expect(rollbackEmits).toHaveLength(0);
       });
     });
 
@@ -1797,7 +2257,17 @@ describe("GameLoopService", () => {
         });
       });
 
-      it("clears the persisted entry when the recovered countdown expired and no server is wired up", async () => {
+      it("buffers expired countdowns into pendingRecovery when no server is wired up (C4)", async () => {
+        // C4 fix: the previous behaviour was to silently clear the
+        // persisted entry when the recovered countdown had expired
+        // but the server was not yet wired up. That left the room
+        // stuck in COUNTDOWN forever and the next restart would
+        // re-issue the same warning, looping the broken state.
+        //
+        // New behaviour: the recovery is buffered in
+        // `pendingRecovery` and replayed by `drainPendingRecovery`
+        // the moment `setServer` is called. No Redis state is
+        // touched on the no-server path.
         const pastEnd = Date.now() - 1000;
         const { svc, multiSpy } = buildService({
           smembers: ["rExpiredNoServer"],
@@ -1806,12 +2276,98 @@ describe("GameLoopService", () => {
         // No setServer call → server is undefined
 
         await svc.onModuleInit();
-        // Allow the fire-and-forget clearPersistedCountdown to run
-        await Promise.resolve();
+
+        // The recovery was buffered, NOT cleared.
+        expect((svc as any).pendingRecovery).toEqual([
+          {
+            roomId: "rExpiredNoServer",
+            countdownEndsAt: pastEnd,
+            expired: true,
+          },
+        ]);
+        // The Redis multi() path was NOT used — the persisted entry
+        // stays in place until setServer drains the buffer.
+        expect(multiSpy).not.toHaveBeenCalled();
+      });
+
+      it("drains pendingRecovery when setServer is called (C4)", async () => {
+        // C4 fix: pendingRecovery entries are replayed through
+        // launchRoomMatch / armLobbyCountdownTimer the moment
+        // setServer is called. This test exercises the expired path
+        // (room launches immediately) and the unexpired path
+        // (room re-arms its timer).
+        const now = Date.now();
+        const pastEnd = now - 1000;
+        const futureEnd = now + 60_000;
+        const { svc, redis } = buildService({
+          smembers: ["rExpired", "rFuture"],
+        });
+        // mockImplementation lets us return a different value per
+        // key, which the two roomIds in smembers require.
+        vi.mocked(redis.getClient().get).mockImplementation(async (key) => {
+          if (typeof key !== "string") return null;
+          if (key.endsWith("rExpired")) return String(pastEnd);
+          if (key.endsWith("rFuture")) return String(futureEnd);
+          return null;
+        });
+
+        await svc.onModuleInit();
+        expect((svc as any).pendingRecovery).toHaveLength(2);
+
+        const launchSpy = vi
+          .spyOn(svc as any, "launchRoomMatch")
+          .mockResolvedValue({ id: "m1" });
+
+        svc.setServer(mockServer as unknown as Server);
         await Promise.resolve();
 
-        // The clear path used multi() (or directly .srem)
-        expect(multiSpy).toHaveBeenCalled();
+        // The buffer is drained atomically.
+        expect((svc as any).pendingRecovery).toEqual([]);
+        // Expired entry → launchRoomMatch was called.
+        expect(launchSpy).toHaveBeenCalledWith("rExpired", mockServer, {
+          isAutoStart: true,
+        });
+        // Future entry → the lobbyCountdowns map was populated.
+        expect((svc as any).lobbyCountdowns.has("rFuture")).toBe(true);
+      });
+
+      it("onModuleInit after setServer does not re-buffer (C4)", async () => {
+        // Sanity: once setServer has been called, `this.server` is
+        // truthy. A subsequent onModuleInit must use the direct
+        // launch / arm paths, NOT re-buffer. Re-buffering would mean
+        // the buffer grows unbounded across multiple re-inits.
+        const pastEnd = Date.now() - 1000;
+        const { svc, redis } = buildService({
+          smembers: ["rExpired"],
+        });
+        vi.mocked(redis.getClient().smembers).mockResolvedValue(["rExpired"]);
+        vi.mocked(redis.getClient().get).mockImplementation(async (key) => {
+          if (typeof key !== "string") return null;
+          if (key.endsWith("rExpired")) return String(pastEnd);
+          return null;
+        });
+        const launchSpy = vi
+          .spyOn(svc as any, "launchRoomMatch")
+          .mockResolvedValue({ id: "m1" });
+
+        // First recovery (no server) → buffer populated.
+        await svc.onModuleInit();
+        expect((svc as any).pendingRecovery).toHaveLength(1);
+
+        // setServer drains the buffer; server is now set.
+        svc.setServer(mockServer as unknown as Server);
+        await Promise.resolve();
+        expect(launchSpy).toHaveBeenCalledTimes(1);
+        expect((svc as any).pendingRecovery).toEqual([]);
+
+        // Second recovery (server set) → launches directly, no
+        // re-buffer. The buffer stays empty and launch is called a
+        // second time (idempotency is launchRoomMatch's own
+        // responsibility, tested elsewhere).
+        await svc.onModuleInit();
+        await Promise.resolve();
+        expect(launchSpy).toHaveBeenCalledTimes(2);
+        expect((svc as any).pendingRecovery).toEqual([]);
       });
 
       it("logs and continues when a per-room recovery error is thrown", async () => {
@@ -1977,6 +2533,7 @@ describe("GameLoopService", () => {
           questionService,
           roomService,
           redis,
+          createMockPrismaService() as any,
         );
         return { svc, redis, failingExec, multiSpy };
       }
@@ -2027,6 +2584,7 @@ describe("GameLoopService", () => {
           questionService,
           roomService,
           redis,
+          createMockPrismaService() as any,
         );
         const warnSpy = vi.spyOn((svc as any).logger, "warn");
 
@@ -2122,60 +2680,59 @@ describe("GameLoopService", () => {
         );
       });
 
-      it("onModuleInit logs when clearPersistedCountdown itself fails during the no-server recovery path", async () => {
-        // The countdown is past expiry AND no server is wired up, so the
-        // service falls into the `else` branch and tries to clear the
-        // persisted entry. If that clear call also rejects, the
-        // .catch() on the fire-and-forget promise must log the failure
-        // — otherwise an unhandled rejection would crash the process.
+      it("onModuleInit does not touch Redis when the no-server path is taken (C4)", async () => {
+        // C4 fix follow-up: previously, when the countdown had expired
+        // and the server was not yet wired up, the service issued a
+        // fire-and-forget `clearPersistedCountdown` call. That call
+        // could fail and would have been logged via .catch(). With the
+        // C4 fix, no clearPersistedCountdown call is made on the
+        // no-server path — the recovery is buffered instead. This
+        // test pins the new contract.
         const pastEnd = Date.now() - 1000;
         const { svc } = buildService({
           smembers: ["rExpiredNoServer"],
           get: String(pastEnd),
         });
-        // No setServer() call → server is undefined → else branch
-        vi.spyOn(svc as any, "clearPersistedCountdown").mockRejectedValue(
-          new Error("clear boom"),
-        );
+        const clearSpy = vi.spyOn(svc as any, "clearPersistedCountdown");
         const errorSpy = vi.spyOn((svc as any).logger, "error");
 
         await svc.onModuleInit();
-        // Flush the void promise chain
-        await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(errorSpy).toHaveBeenCalledWith(
-          "Failed to clear persisted countdown for room rExpiredNoServer:",
+        // The clear path is not invoked on the no-server path.
+        expect(clearSpy).not.toHaveBeenCalled();
+        // No error is logged because no call rejected.
+        expect(errorSpy).not.toHaveBeenCalledWith(
+          expect.stringContaining("Failed to clear persisted countdown"),
           expect.any(Error),
         );
+        // The recovery was buffered for later drain.
+        expect((svc as any).pendingRecovery).toEqual([
+          {
+            roomId: "rExpiredNoServer",
+            countdownEndsAt: pastEnd,
+            expired: true,
+          },
+        ]);
       });
 
       it("launchRoomMatch throws ROOM_ALREADY_STARTED when the re-fetched room is no longer launchable (race)", async () => {
-        // First getRoom returns a launchable state (COUNTDOWN). Between
-        // that call and the inner re-fetch, the room's status changes
-        // (e.g. another caller launched it). The second getRoom now
-        // returns IN_GAME, and the service must throw ROOM_ALREADY_STARTED
-        // instead of double-starting the match.
+        // B3 fix: the previous version of this test drove the race
+        // via a second `roomService.getRoom` call. The new code
+        // reads the launchable status inside the
+        // `SELECT ... FOR UPDATE` transaction, so we drive the race
+        // by returning an IN_GAME row from `tx.$queryRaw`.
         const emitSpy = vi.fn();
         (mockServer.to as any).mockReturnValue({ emit: emitSpy });
-        vi.mocked(roomService.getRoom)
-          .mockResolvedValueOnce({
+        const prisma = (service as any).prisma;
+        vi.spyOn(prisma.__tx, "$queryRaw").mockResolvedValueOnce([
+          {
             id: "r1",
-            status: RoomStatus.COUNTDOWN,
-            currentMatchId: null,
-            players: [{ userId: "p1" }, { userId: "p2" }],
-          } as any)
-          .mockResolvedValueOnce({
-            id: "r1",
-            status: RoomStatus.IN_GAME, // race: someone else already started it
+            status: RoomStatus.IN_GAME,
             currentMatchId: "m-existing",
-            players: [{ userId: "p1" }, { userId: "p2" }],
-          } as any);
-        // Make sure no stale countdown is in the in-memory map so we hit
-        // the post-re-fetch race branch (otherwise the test would short-
-        // circuit before the re-fetch).
-        (service as any).lobbyCountdowns.delete("r1");
+          },
+        ]);
         (matchService.createMatch as any) = vi.fn();
 
         await expect(
@@ -2184,14 +2741,17 @@ describe("GameLoopService", () => {
           }),
         ).rejects.toMatchObject({ code: ErrorCode.ROOM_ALREADY_STARTED });
 
-        // createMatch must NOT be called — the re-fetch guard prevents a
-        // double-start.
+        // createMatch must NOT be called — the FOR UPDATE guard
+        // prevents a double-start.
         expect(matchService.createMatch).not.toHaveBeenCalled();
-        // Room must be rolled back to WAITING and a status event emitted
-        expect(roomService.updateRoomStatus).toHaveBeenLastCalledWith(
-          "r1",
-          RoomStatus.WAITING,
-        );
+        // B3 race-lost guard (code review 2026-06-14): the
+        // winning thread has already set `status = STARTING` /
+        // `IN_GAME` in their own transaction. We MUST NOT
+        // overwrite that with `WAITING` — that would clobber
+        // the winner's state and confuse every connected
+        // client. The old "rollback to WAITING" expectation is
+        // intentionally removed.
+        expect(roomService.updateRoomStatus).not.toHaveBeenCalled();
       });
     });
 
