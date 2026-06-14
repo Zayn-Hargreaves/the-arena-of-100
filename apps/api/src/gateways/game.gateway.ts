@@ -8,7 +8,7 @@ import {
   ConnectedSocket,
   MessageBody,
 } from "@nestjs/websockets";
-import { Logger } from "@nestjs/common";
+import { Logger, UseFilters } from "@nestjs/common";
 import { Server, Socket } from "socket.io";
 import {
   ClientEvent,
@@ -26,6 +26,7 @@ import { AuthService } from "../modules/auth/auth.service";
 import { PresenceService } from "../modules/match/presence.service";
 import { GameLoopService } from "../modules/match/game-loop.service";
 import { WsValidationPipe } from "../common/pipes/ws-validation.pipe";
+import { WsExceptionFilter } from "../common/filters/ws-exception.filter";
 import {
   AuthenticatePayloadSchema,
   CreateRoomPayloadSchema,
@@ -79,6 +80,14 @@ const HeartbeatPayloadPipe = new WsValidationPipe<HeartbeatPayload>(
   },
   namespace: "/game",
 })
+// WsExceptionFilter must be scoped to this gateway (not registered
+// globally via APP_FILTER) — two global catch-alls would have the
+// Ws filter win every dispatch, drop HTTP requests on the floor,
+// and never let the HTTP filter respond. Per-gateway @UseFilters
+// keeps the two exception channels independent: HTTP requests
+// always go through HttpExceptionFilter, WS requests through
+// WsExceptionFilter, no cross-talk.
+@UseFilters(WsExceptionFilter)
 export class GameGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
 {

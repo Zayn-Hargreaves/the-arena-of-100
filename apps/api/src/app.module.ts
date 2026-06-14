@@ -21,7 +21,6 @@ import { GameGateway } from "./gateways/game.gateway";
 import { AuthHandler, RoomHandler, MatchHandler } from "./gateways/handlers";
 import { TransformInterceptor } from "./common/interceptors/transform.interceptor";
 import { HttpExceptionFilter } from "./common/filters/http-exception.filter";
-import { WsExceptionFilter } from "./common/filters/ws-exception.filter";
 import { JwtAuthGuard } from "./modules/auth/guards/jwt-auth.guard";
 import { RolesGuard } from "./modules/auth/guards/roles.guard";
 import { CsrfGuard } from "./modules/auth/guards/csrf.guard";
@@ -66,10 +65,6 @@ import { ThrottlerGuard } from "@nestjs/throttler";
     {
       provide: APP_FILTER,
       useClass: HttpExceptionFilter,
-    },
-    {
-      provide: APP_FILTER,
-      useClass: WsExceptionFilter,
     },
     {
       provide: APP_GUARD,
