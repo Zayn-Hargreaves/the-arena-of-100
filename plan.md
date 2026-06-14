@@ -1,30 +1,31 @@
-# Plan: Next PR - Design System Phase 5B Closeout
+# Plan: Next PR - Drop-in Spectating Baseline — ✅ COMPLETED 2026-06-14
 
-> ⚠️ **[ARCHIVED 2026-06-14 — Phase 5B đã đóng theo ground truth từ code]** File này giữ lại làm execution reference lịch sử; nội dung phases bên dưới không còn là active work.
+> **Trạng thái (2026-06-14)**: PR `feat/drop-in-spectating-baseline` đã hoàn thành và sẵn sàng review.
+> Tất cả 5 phase đã xong. Coverage per-file ≥90% gate đạt. 661/661 unit tests pass. Plan này đã được thực thi xong — xem `memory-bank/progress.md` (Phase 11), `memory-bank/activeContext.md`, `PROJECT_STATUS.md` cho current status.
 >
-> Updated 2026-06-14 from `memory-bank/*.md`, `PROJECT_STATUS.md`, source review, and GitNexus.
-> This file now tracks the next PR only, plus a short follow-on queue.
-> It intentionally removes outdated open phases that are already done in code.
+> Updated 2026-06-14 from source review, `memory-bank/*.md`, `PROJECT_STATUS.md`, and GitNexus.
+> This file now documents the completed Drop-in Spectating Baseline PR (was tracking Phase 5B closeout before; that PR merged earlier).
+> The "Explicit Deferrals After This PR" section at the bottom remains valid for the next-PR queue.
 
 ## PR Snapshot
 
-- PR name: `Design System Phase 5B Closeout`
-- Primary goal: finish shared shell visual cleanup without mixing gameplay or backend work
-- Recommended branch: `feat/design-system-phase-5b-closeout`
-- Recommended owner lane: frontend-only
-- Recommended agent type: `frontend-specialist`
-- GitNexus note: index is 1 commit behind HEAD and one search returned degraded FTS; if deeper symbol search is needed before implementation, run `npx gitnexus analyze --force`
+- PR name: `Drop-in Spectating Baseline` — ✅ **READY FOR REVIEW**
+- Primary goal: allow late joiners to enter `IN_GAME` or `FINISHED` rooms as read-only spectators without changing gameplay authority
+- Branch: `feat/drop-in-spectating-baseline` ✅
+- Execution: 5 phases sequential, all completed 2026-06-14
+- Coverage gate: per-file ≥90% — all 3 touched source files meet the bar
+- GitNexus: indexed repo covers all touched files; ready for `gitnexus_detect_changes` pre-review
 
 ## Tracking Board
 
-- [ ] Phase 0 complete: baseline and scope lock
-- [ ] Phase 1 complete: `AppShellLayout` cleanup
-- [ ] Phase 2 complete: desktop `Sidebar` cleanup
-- [ ] Phase 3 complete: mobile `Sidebar` overlay cleanup
-- [ ] Phase 4 complete: residual shell artifact audit
-- [ ] Phase 5 complete: verification and docs sync
-- [ ] PR ready for review
-- [ ] PR merged
+- [x] Phase 0 complete: truth sync and scope lock
+- [x] Phase 1 complete: shared contract baseline
+- [x] Phase 2 complete: backend join policy
+- [x] Phase 3 complete: spectator snapshot and socket transport baseline
+- [x] Phase 4 complete: frontend spectator entry and read-only surface
+- [x] Phase 5 complete: verification and docs sync
+- [x] PR ready for review
+- [ ] PR merged (chờ review/merge)
 
 ## Reality Check
 
@@ -444,28 +445,18 @@ Success target:
 - Replace mock opponent list with real store-backed match/player data
 - Keep shell untouched
 
-### PR 3: Drop-In Spectating Backend Entry
+### PR 3: Mass-Spectator Transport Scaling
 
 Reason:
 
-- `RoomService.joinRoom` still rejects non-`WAITING` rooms at `room.service.ts:103-105`
-- GitNexus shows `joinRoom` touches `RoomHandler`, `RoomController`, and gateway join flows
+- Drop-in spectating baseline đã reuse `room:[id]` channel + `getSnapshot` cho late-joiner (đã xong trong Phase 11, branch `feat/drop-in-spectating-baseline`)
+- Baseline này đủ unblock sản phẩm; SSE/namespace riêng chỉ cần khi scale lên hàng nghìn spectator / room
 
 Success target:
 
-- Allow late join to ongoing or finished room as spectator
-- Keep this PR backend-contract-first
-
-### PR 4: Spectator Transport And UI
-
-Reason:
-
-- Late join and spectator transport should not be bundled with join policy
-- This likely touches shared events, socket store, and game/result UI
-
-Success target:
-
-- Dedicated spectator transport path
+- Dedicated spectator transport path (SSE hoặc Socket.io namespace)
+- Batched low-frequency spectator updates
+- Clear player vs spectator transport boundaries ở `game.gateway.ts` + `match.handler.ts`
 - Clear player vs spectator responsibilities
 
 ### PR 5: In-Match AFK Policy

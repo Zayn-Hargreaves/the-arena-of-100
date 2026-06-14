@@ -149,7 +149,11 @@ export class AuthHandler extends BaseHandler {
         }),
       );
 
-      // Emit ROOM_JOINED with the list of players to avoid N+1 socket emits
+      // Emit ROOM_JOINED with the list of players to avoid N+1 socket emits.
+      // Reconnect path: the user already has a RoomPlayer row, so they
+      // are joining as PLAYER, not as a drop-in spectator. The host
+      // controls the room, the snapshot is replayed from the match
+      // state machine, and answer submission is allowed.
       client.emit(ServerEvent.ROOM_JOINED, {
         roomId: room.id,
         code: room.code,
@@ -158,6 +162,7 @@ export class AuthHandler extends BaseHandler {
         roomStatus: room.status as import("@arena/shared").RoomStatus,
         currentMatchId: room.currentMatchId,
         countdownEndsAt,
+        joinedAs: "PLAYER",
         players,
       } satisfies RoomJoinedPayload);
 

@@ -93,4 +93,5 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.NOT_ROOM_HOST]: "Chỉ chủ phòng mới có thể bắt đầu",
   [ErrorCode.NOT_ENOUGH_PLAYERS]: "Cần ít nhất 2 người chơi",
   [ErrorCode.INVALID_ROOM_TYPE]: "Loại phòng không hợp lệ",
+  [ErrorCode.SPECTATOR_CANNOT_ANSWER]: "Khán giả không thể gửi câu trả lời",
 };

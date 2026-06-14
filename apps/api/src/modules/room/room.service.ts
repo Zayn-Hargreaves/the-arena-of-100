@@ -11,6 +11,7 @@ import {
   GAME_CONFIG,
   ErrorCode,
   RoomError,
+  type JoinMode,
 } from "@arena/shared";
 
 // Atomic Lua script that decrements a player-count counter and clamps the
@@ -89,7 +90,21 @@ export class RoomService {
     return room;
   }
 
-  // Join room by code
+  // Join room by code.
+  //
+  // Behaviour matrix (drop-in spectating baseline):
+  //
+  //   room.status      | user already in players? | outcome
+  //   ------------------+--------------------------+--------------------
+  //   WAITING          | no                       | join as PLAYER
+  //   WAITING          | yes                      | no-op rejoin PLAYER
+  //   COUNTDOWN/STARTING| *                       | reject ROOM_ALREADY_STARTED
+  //   IN_GAME/FINISHED | yes (reconnect)          | rejoin as PLAYER
+  //   IN_GAME/FINISHED | no                       | join as SPECTATOR (no DB write)
+  //
+  // The user-record check runs BEFORE the status check so that an
+  // in-match player who disconnects and rejoins the room code keeps
+  // their PLAYER role even if the room has progressed past WAITING.
   async joinRoom(roomCode: string, userId: string) {
     const room = await this.prisma.room.findUnique({
       where: { code: roomCode },
@@ -100,49 +115,161 @@ export class RoomService {
       throw new RoomError(ErrorCode.ROOM_NOT_FOUND);
     }
 
-    if (room.status !== RoomStatus.WAITING) {
-      throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
+    const isExistingPlayer = room.players.some((p) => p.userId === userId);
+
+    // 1. Reconnect / no-op rejoin path — works in any status, since the
+    //    user already has a RoomPlayer row.
+    if (isExistingPlayer) {
+      this.logger.log(
+        `Player ${userId} (re)joined room ${roomCode} (status=${room.status})`,
+      );
+      const updatedRoom = await this.getRoom(room.id);
+      return {
+        ...updatedRoom,
+        joined: false,
+        joinedAs: "PLAYER" as JoinMode,
+      };
     }
 
-    if (room.players.length >= room.maxPlayers) {
-      throw new RoomError(ErrorCode.ROOM_FULL);
-    }
+    // 2. WAITING — normal player join. Enforce maxPlayers atomically.
+    //
+    // The capacity check and the roomPlayer.create are wrapped in a
+    // single Prisma transaction that begins with `SELECT ... FOR
+    // UPDATE` on the parent Room row. Under PostgreSQL's default
+    // READ COMMITTED isolation, a plain SELECT does NOT acquire any
+    // row lock, so two concurrent join transactions could each read
+    // `players.length = maxPlayers - 1`, both pass the capacity
+    // check, and both insert — overshooting maxPlayers. The explicit
+    // FOR UPDATE holds the row lock until commit/rollback, so the
+    // second concurrent transaction blocks here, then re-evaluates
+    // the count against the freshly-committed row.
+    //
+    // Additionally, the `isExistingPlayer` check is repeated INSIDE
+    // the transaction. Two near-simultaneous requests for the same
+    // *new* user (e.g. double-click / reconnect race) both see
+    // `isExistingPlayer = false` from the outer pre-transaction
+    // read. The FOR UPDATE lock serialises them, but the second
+    // transaction would otherwise try to insert a duplicate
+    // RoomPlayer and trip `@@unique([roomId, userId])` (Prisma
+    // P2002) — which surfaces as INTERNAL_ERROR. Re-checking under
+    // the lock turns the second insert into a no-op rejoin (same
+    // outcome as the early-return path for an existing player).
+    if (room.status === RoomStatus.WAITING) {
+      let didCreate = false;
+      await this.prisma.$transaction(async (tx) => {
+        // Acquire a row-level lock on the Room. Tagged-template
+        // parameter binding escapes the cuid safely; we never
+        // interpolate user input.
+        const lockedRoom = await tx.$queryRaw<
+          Array<{ id: string; maxPlayers: number }>
+        >`
+          SELECT id, "maxPlayers"
+          FROM "Room"
+          WHERE id = ${room.id}
+          FOR UPDATE
+        `;
+        if (lockedRoom.length === 0) {
+          // Room was deleted between the outer read and the
+          // in-transaction lock acquisition. Treat as not-found so
+          // the caller gets a typed error.
+          throw new RoomError(ErrorCode.ROOM_NOT_FOUND);
+        }
+        const maxPlayers = lockedRoom[0].maxPlayers;
 
-    // Check if already in room
-    const isAlreadyInRoom = room.players.some((p) => p.userId === userId);
-    if (!isAlreadyInRoom) {
-      await this.prisma.roomPlayer.create({
-        data: {
-          roomId: room.id,
-          userId,
-        },
+        // Re-check membership under the row lock. Handles the
+        // double-join race: a concurrent transaction may have
+        // inserted the same (roomId, userId) between our outer
+        // read and the lock acquisition.
+        const existing = await tx.roomPlayer.findFirst({
+          where: { roomId: room.id, userId },
+          select: { id: true },
+        });
+        if (existing) {
+          // No-op rejoin under the lock. Fall through with
+          // didCreate = false; the caller will see `joined: false`
+          // (same shape as the early-return reconnect path above).
+          return;
+        }
+
+        // Count players under the row lock. Counting is cheaper
+        // than re-fetching the include graph and is sufficient for
+        // the capacity check.
+        const currentPlayers = await tx.roomPlayer.count({
+          where: { roomId: room.id },
+        });
+        if (currentPlayers >= maxPlayers) {
+          throw new RoomError(ErrorCode.ROOM_FULL);
+        }
+
+        await tx.roomPlayer.create({
+          data: {
+            roomId: room.id,
+            userId,
+          },
+        });
+        didCreate = true;
       });
 
-      await this.redis.sadd(`room:${room.id}:players`, userId);
+      // Only update Redis state if this transaction actually created
+      // a RoomPlayer row. The no-op rejoin path (double-join race)
+      // deliberately skips the sadd/incr/mirror to keep the cached
+      // playerCount consistent with the authoritative DB.
+      if (didCreate) {
+        await this.redis.sadd(`room:${room.id}:players`, userId);
 
-      // Atomically bump the player-count counter. INCR is safe for joins
-      // (the count can only go up) and avoids the getJSON->modify->setJSON
-      // race that loses concurrent increments.
-      const newCount = await this.redis.incr(`room:${room.id}:playerCount`);
+        // Atomically bump the player-count counter. INCR is safe for joins
+        // (the count can only go up) and avoids the getJSON->modify->setJSON
+        // race that loses concurrent increments.
+        const newCount = await this.redis.incr(`room:${room.id}:playerCount`);
 
-      // Best-effort: mirror the new count into the cached room JSON. The
-      // counter is the source of truth; the JSON is for cheap reads.
-      const cached = await this.redis.getJSON<{ playerCount: number }>(
-        `room:${room.id}`,
-      );
-      if (cached) {
-        cached.playerCount = newCount;
-        await this.redis.setJSON(`room:${room.id}`, cached, 3600);
+        // Best-effort: mirror the new count into the cached room JSON. The
+        // counter is the source of truth; the JSON is for cheap reads.
+        const cached = await this.redis.getJSON<{ playerCount: number }>(
+          `room:${room.id}`,
+        );
+        if (cached) {
+          cached.playerCount = newCount;
+          await this.redis.setJSON(`room:${room.id}`, cached, 3600);
+        }
+
+        this.logger.log(`Player ${userId} joined room ${roomCode}`);
+      } else {
+        this.logger.log(
+          `Player ${userId} no-op rejoin room ${roomCode} (concurrent insert won the race)`,
+        );
       }
+
+      const updatedRoom = await this.getRoom(room.id);
+      return {
+        ...updatedRoom,
+        joined: didCreate,
+        joinedAs: "PLAYER" as JoinMode,
+      };
     }
 
-    this.logger.log(`Player ${userId} joined room ${roomCode}`);
+    // 3. IN_GAME / FINISHED — drop-in spectator path. No DB write, no
+    //    playerCount bump, no RoomPlayer row. The user just receives a
+    //    read-only view of the match (or the result if FINISHED).
+    if (
+      room.status === RoomStatus.IN_GAME ||
+      room.status === RoomStatus.FINISHED
+    ) {
+      this.logger.log(
+        `Spectator ${userId} joined room ${roomCode} (status=${room.status})`,
+      );
+      const updatedRoom = await this.getRoom(room.id);
+      return {
+        ...updatedRoom,
+        joined: false,
+        joinedAs: "SPECTATOR" as JoinMode,
+      };
+    }
 
-    const updatedRoom = await this.getRoom(room.id);
-    return {
-      ...updatedRoom,
-      joined: !isAlreadyInRoom,
-    };
+    // 4. COUNTDOWN / STARTING — the match is about to launch; spectators
+    //    would arrive too late to see anything useful, so we reject with
+    //    the same error a stale join attempt would have hit before this
+    //    PR.
+    throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
   }
 
   // Leave room

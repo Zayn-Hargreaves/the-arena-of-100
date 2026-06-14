@@ -23,6 +23,14 @@ export enum MatchStatus {
 }
 
 // Player States in Match
+//
+// Note: drop-in spectating does NOT add a SPECTATOR member here.
+// Spectators are not in MatchState.players (no RoomPlayer row, never
+// call stateMachine.submitAnswer), so they never get a PlayerInfo
+// with `status`. The "is this socket a spectator?" role is carried
+// separately in the socket transport layer via JoinMode
+// (`packages/shared/src/socket.ts` — see RoomJoinedPayload.joinedAs)
+// and is consumed by the frontend to render the spectator UI.
 export enum PlayerStatus {
   ACTIVE = "ACTIVE",
   ELIMINATED = "ELIMINATED",

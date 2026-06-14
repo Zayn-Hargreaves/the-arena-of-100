@@ -1,13 +1,13 @@
 # Active Context: Arena of 100
 
 > Cập nhật 2026-06-14 dựa trên code + GitNexus.
-> Bản 2026-06-06 từng liệt kê lobby lifecycle / heartbeat / graceful exit / kill-switch là "chưa có"; thực tế code đã hoàn thành baseline ở PR #38 (lobby/heartbeat/graceful exit) và PR #47 (admin kill-switch), nay đồng bộ lại.
+> Bản 2026-06-06 từng liệt kê lobby lifecycle / heartbeat / graceful exit / kill-switch là "chưa có"; thực tế code đã hoàn thành baseline ở PR #38 (lobby/heartbeat/graceful exit) và PR #47 (admin kill-switch), nay đồng bộ lại. Cùng ngày cũng đóng PR Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`): thêm `JoinMode` payload (`RoomJoinedPayload.joinedAs`) + backend join policy 4-way matrix + server-side submit gate + frontend spectator UI. Xem mục `Recent Changes` và `phase 11` dưới đây.
 
 ## Current Focus
 
-- Nhánh hiện tại: `feat/admin-kill-switch-end-to-end` (PR #47 review follow-up đã merge).
-- Trọng tâm review gần nhất: `apps/web/src/app/[locale]/game/[matchId]/page.tsx` (admin `ROOM_TERMINATED` UX), `apps/api/src/modules/admin/admin.service.ts:250-362` (defensive orchestrator), `apps/api/src/modules/admin/dto/terminate-room.dto.ts` (truth-in-advertising description).
-- Trạng thái thật của code: lobby/heartbeat/graceful exit/admin kill-switch đều baseline-done. Còn lại polish (Design System Phase 5B) + 2 product gap (drop-in spectating, in-match AFK).
+- Nhánh hiện tại: `feat/drop-in-spectating-baseline` (PR sẵn sàng review, chờ merge). Branch kế tiếp ưu tiên: in-match AFK policy (đang chờ product decision loại vs. chuyển spectator).
+- Trọng tâm review gần nhất: backend `RoomService.joinRoom` 4-way matrix (`apps/api/src/modules/room/room.service.ts:93-180`) + `RoomHandler.handleJoinRoom` spectator branch (`apps/api/src/gateways/handlers/room.handler.ts:77-189`) + `MatchHandler.handleSubmitAnswer` server gate (`apps/api/src/gateways/handlers/match.handler.ts:69-130`) + frontend `lobby/[roomCode]/page.tsx` + `game/[matchId]/page.tsx` spectator UI.
+- Trạng thái thật của code: lobby/heartbeat/graceful exit/admin kill-switch/Design System Phase 5B/drop-in spectating đều baseline-done. Còn lại 4 product gap: in-match AFK, mass-spectator scaling, content moderation, optimistic rollback.
 - Mục tiêu lần cập nhật này:
   - Khẳng định các mốc đã xong (lobby baseline, heartbeat, graceful exit, admin kill-switch, profile/rankings real APIs, spectator baseline khi bị loại).
   - Liệt kê các gap còn lại (Design System Phase 5B, drop-in spectating, in-match AFK, content moderation, optimistic rollback).
@@ -45,7 +45,7 @@
 - **Phase 7 Shell Cleanup Isolation** — verify `AppShellLayout` + `Sidebar`; Escape + backdrop click-to-close cho mobile nav; preserve skip-link a11y
 - **Phase 8 Frontend Audit Sweep** — `AvatarFrame` reusable; Home page a11y
 - **Phase 9 Tie-Break baseline** — `MatchStateMachine.tieBreak` deterministic (response time → correct answers → alphabetical fallback). UI surface chưa expose riêng
-- **Phase 10 Spectator Baseline (eliminated only)** — `socket-store.isEliminated`; `GamePage` render "Chế độ khán giả" overlay khi bị loại. Drop-in spectating chưa có
+- **Phase 10 Spectator Baseline (eliminated only)** — `socket-store.isEliminated`; `GamePage` render "Chế độ khán giả" overlay khi bị loại. Drop-in spectating (vào `IN_GAME`/`FINISHED` cho non-existing player) được bổ sung ở Phase 11 dưới đây.
 - **Atomic Design Migration PoC** — `RoomCodeCard` chuyển sang `components/atoms/` qua GitNexus impact analysis
 - **Admin Kill-Switch (PR #47, 2026-06-14)**
   - `POST /admin/rooms/:roomId/terminate` (ADMIN-only, 5/min throttle)
@@ -54,6 +54,18 @@
   - `GamePage` UX: toast qua `useToast`, `clearTimers` callback, `useRef` guard cho strict-mode double-invoke, redirect `/` sau 1.5s; `Game.termination.{toastTitle,toastDefault}` i18n keys
   - `TerminateRoomDto.message` description sửa để khớp fail-fast behavior; mark `deprecated: true`
   - `terminate-room.dto.spec.ts` 8 tests; `admin.service.spec.ts` 33 tests; `game-loop.service.spec.ts` 78 tests. `admin.service.ts` 100% stmts/100% branch, `match.service.ts` 100%/100%, `game-loop.service.ts` 100% stmts / 98.57% branch
+- **Drop-in Spectating Baseline (PR `feat/drop-in-spectating-baseline`, 2026-06-14)**
+  - `packages/shared/src/socket.ts` — thêm `type JoinMode = "PLAYER" | "SPECTATOR"` + `joinedAs: JoinMode` trong `RoomJoinedPayload` + `RoomCreatedPayload` (spectator role carried ở transport layer, không phải `PlayerStatus`)
+  - `packages/shared/src/error-codes.ts` — thêm `SPECTATOR_CANNOT_ANSWER` (server gate)
+  - `RoomService.joinRoom` 4-way matrix: WAITING+new→PLAYER, WAITING+existing→PLAYER reconnect, IN_GAME/FINISHED+existing→PLAYER reconnect, IN_GAME/FINISHED+new→SPECTATOR (no DB write), COUNTDOWN/STARTING→reject
+  - `RoomHandler.handleJoinRoom` — spectator branch: KHÔNG emit `PLAYER_JOINED`, KHÔNG gọi `maybeStartPublicCountdown`, VẪN `client.join(\`room:${id}\`)`để nhận ROUND_* broadcasts; ROOM_JOINED payload include`joinedAs`
+  - `MatchHandler.handleSubmitAnswer` — server-side gate `stateMachine.getState().players.has(userId)` → throw `SPECTATOR_CANNOT_ANSWER` nếu không phải player
+  - `MatchHandler.handleRequestSnapshot` — comment rõ allow-list cho spectator path; regression test verify no `correctAnswer` leak
+  - `socket-store.ts` — thêm `joinMode: JoinMode` vào `Room` interface; set từ `ROOM_JOINED.joinedAs`
+  - `lobby/[roomCode]/page.tsx` — spectator banner + "Vào xem" (IN_GAME) / "Xem kết quả" (FINISHED) CTA + auto-redirect `/result/[matchId]` cho FINISHED + suppress `LobbyStartControls` + replace "Quick Tips" panel
+  - `game/[matchId]/page.tsx` — `handleSelectAnswer` short-circuit khi `isSpectator`; render spectator banner + reuse Swords/Spectator block với i18n mới (`dropInSpectator.*` namespace)
+  - `messages/{en,vi}.json` — thêm `lobby.spectator.*` + `Game.dropInSpectator.*` (8 keys mới)
+  - 661/661 unit tests pass; coverage per-file ≥90% cho tất cả file sửa: `room.service.ts` 98.25%/91.89%, `room.handler.ts` 100%/90.47%, `match.handler.ts` 100%/95.65%
 
 ## Architecture Assessment Summary
 
@@ -71,7 +83,7 @@
 4. ~~Frontend Only Has Landing Page~~ [RESOLVED] — Có lobby/game/result/profile/rankings/settings/admin/room-create/not-found.
 5. ~~No Lobby Lifecycle Management~~ [RESOLVED] — backend baseline + store wiring + frontend surfaces đều done. `WAITING -> COUNTDOWN -> STARTING -> IN_GAME` đầy đủ. Auto-start public, force-start private, heartbeat/presence sweep, countdown recovery.
 6. ~~Missing Admin Kill-Switch~~ [RESOLVED baseline] — `POST /admin/rooms/:roomId/terminate` end-to-end. Message sanitizer deferred tới khi shared profanity/content-moderation pipeline lands.
-7. **Drop-in spectating** — `RoomService.joinRoom` còn reject khi `room.status !== WAITING`. Late-joiners chưa được chuyển sang `PlayerStatus.SPECTATOR`; spectator transport riêng chưa có.
+7. ~~Drop-in spectating~~ [RESOLVED baseline 2026-06-14] — `JoinMode` payload (`RoomJoinedPayload.joinedAs`) added; `RoomService.joinRoom` 4-way matrix; `MatchHandler.handleSubmitAnswer` server gate; frontend spectator UI trên lobby + game page. Reuse `room:[id]` channel. Mass-spectator SSE vẫn deferred (PR 3).
 8. **Design System Phase 5B closeout** — **done 2026-06-14**. Shell gradient đã bỏ ở `app-shell-layout.tsx:34` + mobile overlay `sidebar.tsx:230`; legacy `styles/components.css` audit xác nhận không còn reference; vitest infrastructure cho web package setup với 99.58% coverage trên 2 file shell (28 tests pass). Home page gradient ở `[locale]/page.tsx:193` deferred sang PR riêng vì home không dùng AppShellLayout.
 
 ### 🟢 Architecture Score (cập nhật 2026-06-14)
@@ -114,7 +126,7 @@
 - [x] Guest login hijacking fix → Model C device-based `guestId`
 - [x] Lobby countdown strategy → in-process `setTimeout` + Redis persistence + recovery (đủ cho 1 instance)
 - [ ] **In-match AFK policy** — 2+ round miss → auto-`ELIMINATED` (loss-of-life) hay chuyển `SPECTATOR`? Cần product decision
-- [ ] **Spectator transport** — WebSocket chung hay SSE/namespace riêng cho mass-spectate?
+- [ ] **Mass-spectator transport scaling** — baseline đã reuse `room:[id]` channel + `getSnapshot` cho late-joiner. SSE channel riêng + batched low-frequency updates vẫn là next step khi cần scale.
 - [ ] **Admin kill-switch custom message** — cho phép `TerminateRoomDto.message` sau khi shared profanity/content-moderation pipeline (plan.md §501) lands
 
 ## Next Steps (Immediate — Priority Order)
@@ -157,21 +169,22 @@
 
 ### Following PRs (Priority Order)
 
-1. Drop-in spectating + spectator transport baseline (P2, product)
-2. In-match AFK policy (P2, product — pending decision)
-3. Content moderation pipeline + admin kill-switch message sanitizer (P2, compliance)
-4. Optimistic UI rollback đầy đủ (P2, game feel)
-5. Post-match rematch + share (P3, retention)
-6. Accessibility audit (WCAG) (P2, compliance)
-7. k6 load test 100 concurrent WS (P2, pre-launch gate)
-8. Playwright browser E2E (P3, deferred)
+1. ✅ Drop-in spectating baseline — **done 2026-06-14** (`feat/drop-in-spectating-baseline`)
+2. In-match AFK policy (P1, product — pending decision) — promoted lên P1 sau khi drop-in spectating baseline done
+3. Mass-spectator transport scaling (P2, infra) — SSE channel riêng + batched low-frequency updates
+4. Content moderation pipeline + admin kill-switch message sanitizer (P2, compliance)
+5. Optimistic UI rollback đầy đủ (P2, game feel)
+6. Post-match rematch + share (P3, retention)
+7. Accessibility audit (WCAG) (P2, compliance)
+8. k6 load test 100 concurrent WS (P2, pre-launch gate)
+9. Playwright browser E2E (P3, deferred)
 
 ## Key Files Reference (verified 2026-06-14)
 
 ```
 packages/shared/src/
 ├── events.ts        # Event types and factory (ROOM_TERMINATED, ROOM_COUNTDOWN_*, MATCH_STARTING, ...)
-├── state.ts         # State interfaces (RoomStatus.WAITING/COUNTDOWN/STARTING/IN_GAME/FINISHED, PlayerStatus.SPECTATOR)
+├── state.ts         # State interfaces (RoomStatus.WAITING/COUNTDOWN/STARTING/IN_GAME/FINISHED, PlayerStatus.ACTIVE/ELIMINATED/DISCONNECTED/WINNER/SPECTATOR — SPECTATOR added in PR drop-in-spectating-baseline 2026-06-14)
 ├── socket.ts        # Socket protocol + getRoomChannel
 ├── errors.ts        # RoomError + ErrorCode
 ├── avatars.ts       # AVATAR_SEEDS + isValidAvatarSeed
@@ -266,7 +279,6 @@ apps/web/src/
 Đã gỡ hết blocker kỹ thuật. Các gap product/UX còn lại (theo thứ tự ưu tiên):
 
 - Design System Phase 5B closeout (shell gradient legacy + safe-delete CSS + visual audit)
-- Drop-in spectating (`RoomService.joinRoom` cho phép late-joiner với `PlayerStatus.SPECTATOR` + transport riêng)
 - In-match AFK policy (sau khi có product decision: loại vs. chuyển spectator)
 - Content moderation + admin kill-switch message sanitizer (deferred tới khi shared profanity/content-moderation pipeline lands; `TerminateRoomDto.message` hiện fail-fast)
 - Device fingerprint (Model C đã chốt nhưng backend chưa enforce)

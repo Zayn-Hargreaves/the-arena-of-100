@@ -13,7 +13,7 @@ import { useRouter } from "@/i18n/routing";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useToast } from "@/hooks/use-toast";
-import { Users, ShieldAlert, Swords, LogOut, Trophy } from "lucide-react";
+import { Users, ShieldAlert, Swords, LogOut, Trophy, Eye } from "lucide-react";
 import { avatars } from "@/lib/avatars";
 
 interface GamePageProps {
@@ -36,9 +36,18 @@ export default function GamePage({ params }: GamePageProps) {
     isEliminated,
     roomTerminated,
     roomTerminationMessage,
+    room,
+    requestSnapshot,
   } = useSocketStore();
   const t = useTranslations("Game");
   const tTermination = useTranslations("Game.termination");
+  const tSpectator = useTranslations("Game.dropInSpectator");
+
+  // Drop-in spectating baseline: a late-joiner entered the room as
+  // SPECTATOR and is viewing the match read-only. The server enforces
+  // the same gate independently (see MatchHandler.handleSubmitAnswer)
+  // — this derivation only drives the UI.
+  const isSpectator = room?.joinMode === "SPECTATOR";
 
   // Extract locale from pathname if not provided
   const currentLocale = locale || pathname.split("/")[1] || "vi";
@@ -66,6 +75,30 @@ export default function GamePage({ params }: GamePageProps) {
       intervalRef.current = null;
     }
   }, []);
+
+  // Drop-in spectating baseline: hydrate the match UI on mount when
+  // the store has no match state yet. This is the case the
+  // REQUEST_SNAPSHOT backend path was added for — a late-joiner
+  // enters an IN_GAME room as SPECTATOR, navigates from the lobby
+  // to /game/[matchId], and lands with `match === null` because no
+  // ROUND_STARTED has fired for them yet. Without this, they see a
+  // blank/stale screen until the next round starts.
+  //
+  // We only fire when `match` is null: for an active player who
+  // already received MATCH_STARTED/ROUND_STARTED, the local state
+  // is fresh and a redundant snapshot would wipe the in-flight
+  // `lastAnswerResult` / `remainingCount` (the SNAPSHOT handler
+  // resets those to null). The `snapshotHydratedRef` guard makes
+  // the intent explicit and survives React 18 strict-mode double-
+  // invoke during development.
+  const snapshotHydratedRef = useRef(false);
+  useEffect(() => {
+    if (snapshotHydratedRef.current) return;
+    if (match) return;
+    if (!matchId) return;
+    snapshotHydratedRef.current = true;
+    requestSnapshot(matchId, 0);
+  }, [matchId, match, requestSnapshot]);
 
   // Calculate time left based on server timestamp
   const calculateTimeLeft = useCallback(() => {
@@ -201,6 +234,12 @@ export default function GamePage({ params }: GamePageProps) {
 
   const handleSelectAnswer = (option: string) => {
     if (roundCompleted) return;
+    // Drop-in spectating baseline: spectators cannot submit answers. The
+    // server enforces the same gate (MatchHandler.handleSubmitAnswer) so
+    // this is a UX-only short-circuit — a malicious client would still
+    // be rejected by the server, but we hide the interactive control
+    // entirely so the spectator UI stays read-only.
+    if (isSpectator) return;
     setSelectedAnswer(option);
 
     // Submit answer to socket-store
@@ -261,6 +300,29 @@ export default function GamePage({ params }: GamePageProps) {
             </h2>
             <p className="font-sans text-sm font-bold text-candy-ink/70">
               {t("eliminatedOverlay.subtitle")}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Drop-in spectator banner: a thin top-of-page strip telling the
+          user they joined as a late spectator. We keep this lighter than
+          the isEliminated fullscreen overlay because the spectator still
+          has useful work to do (read the live question, follow the
+          round, plan to leave). It also surfaces below the leave CTA
+          so the user can leave at any time without dismissing first. */}
+      {isSpectator && !isEliminated && (
+        <div
+          data-testid="game-spectator-banner"
+          className="max-w-6xl mx-auto w-full mb-4 mt-2 px-4 py-3 rounded-2xl border-[3px] border-candy-ink bg-candy-blue/15 flex items-start gap-3 shadow-[3px_3px_0_0_#2B2D42]"
+        >
+          <Eye className="w-5 h-5 text-candy-blue stroke-[2.5] shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            <h3 className="font-display font-black text-sm text-candy-ink uppercase tracking-wider">
+              {tSpectator("bannerTitle")}
+            </h3>
+            <p className="text-xs font-semibold text-candy-ink/70 leading-relaxed">
+              {tSpectator("bannerBody")}
             </p>
           </div>
         </div>
@@ -329,15 +391,24 @@ export default function GamePage({ params }: GamePageProps) {
               </h2>
             </div>
 
-            {/* Answer Options Grid or Spectator View */}
-            {isEliminated ? (
+            {/* Answer Options Grid or Spectator View. The isEliminated
+                branch is the original spectator-on-elimination UI. The
+                isSpectator branch is the new drop-in spectator path
+                (late-joiner). Both render the same read-only block but
+                with different copy so the user knows why they cannot
+                answer. */}
+            {isEliminated || isSpectator ? (
               <div className="p-8 rounded-3xl border-[3.5px] border-candy-ink bg-candy-cloud text-candy-ink shadow-[6px_6px_0_0_#2B2D42] flex flex-col items-center justify-center min-h-[220px] text-center space-y-4">
                 <Swords className="w-12 h-12 text-candy-red stroke-[2]" />
                 <h3 className="font-display font-black text-xl uppercase tracking-wide">
-                  {t("spectatorMode.title")}
+                  {isSpectator
+                    ? tSpectator("bannerTitle")
+                    : t("spectatorMode.title")}
                 </h3>
                 <p className="font-sans text-sm text-candy-ink/70">
-                  {t("spectatorMode.subtitle")}
+                  {isSpectator
+                    ? tSpectator("bannerBody")
+                    : t("spectatorMode.subtitle")}
                 </p>
               </div>
             ) : (

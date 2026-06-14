@@ -59,6 +59,9 @@ export class RoomHandler extends BaseHandler {
             isOnline: true,
           },
         ],
+        // The host is always a player; mirrors RoomJoinedPayload
+        // shape so the frontend can rely on a single `joinMode` field.
+        joinedAs: "PLAYER",
       } satisfies RoomCreatedPayload);
 
       this.logger.log(`Room created via socket: ${room.code}`);
@@ -82,8 +85,16 @@ export class RoomHandler extends BaseHandler {
 
       const room = await this.roomService.joinRoom(payload.roomCode, userId);
 
+      // Spectators still join the Socket.io room channel so they receive
+      // the same ROUND_STARTED / ROUND_ENDED / MATCH_FINISHED events as
+      // players. We do NOT broadcast a PLAYER_JOINED to other players for
+      // a spectator (it would look like a new participant) and we do NOT
+      // call maybeStartPublicCountdown (spectators never start a match).
+      const isSpectator = room.joinedAs === "SPECTATOR";
+
       client.join(`room:${room.id}`);
-      if (room.joined) {
+
+      if (room.joined && !isSpectator) {
         client.to(`room:${room.id}`).emit(ServerEvent.PLAYER_JOINED, {
           roomId: room.id,
           playerId: userId,
@@ -99,6 +110,7 @@ export class RoomHandler extends BaseHandler {
         roomStatus: asRoomStatus(room.status),
         currentMatchId: room.currentMatchId,
         countdownEndsAt: this.gameLoopService.getCountdownEnd(room.id),
+        joinedAs: room.joinedAs,
         players: await Promise.all(
           room.players.map(async (player) => {
             // RoomService.getRoom() always joins the user relation, so
@@ -145,14 +157,16 @@ export class RoomHandler extends BaseHandler {
         ),
       } satisfies RoomJoinedPayload);
 
-      if (room.joined) {
+      if (room.joined && !isSpectator) {
         await this.gameLoopService.maybeStartPublicCountdown(
           room.id,
           client.nsp.server,
         );
       }
 
-      this.logger.log(`Player ${userId} joined room ${room.code} via socket`);
+      this.logger.log(
+        `${isSpectator ? "Spectator" : "Player"} ${userId} joined room ${room.code} via socket (mode=${room.joinedAs})`,
+      );
     } catch (error) {
       const code =
         error instanceof RoomError ? error.code : ErrorCode.INTERNAL_ERROR;

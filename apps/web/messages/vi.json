@@ -149,7 +149,13 @@
     },
     "termination": {
       "toastTitle": "Phòng đã bị đóng",
-      "toastDefault": "Phòng đã bị quản trị viên đóng. Bạn sẽ được đưa về trang chủ."
+      "toastDefault": "Phòng đã bị quản trị viên đóng. Bạn sẽ được đưa về trang chính."
+    },
+    "dropInSpectator": {
+      "bannerTitle": "CHẾ ĐỘ KHÁN GIẢ",
+      "bannerBody": "Bạn vào trận đấu này với tư cách khán giả muộn. Chức năng trả lời đã bị tắt — bạn chỉ có thể xem.",
+      "infoTitle": "Drop-in spectating",
+      "infoBody": "Trận đấu đã bắt đầu trước khi bạn vào. Bạn đang xem trực tiếp với tư cách khán giả."
     }
   },
   "profile": {
@@ -302,6 +308,14 @@
       "toastTitle": "Phòng đã bị đóng",
       "toastDefault": "Phòng đã bị quản trị viên đóng. Bạn sẽ được đưa về trang chính.",
       "redirecting": "Đang đưa bạn về trang chính..."
+    },
+    "spectator": {
+      "bannerTitle": "Chế độ khán giả",
+      "bannerBody": "Trận đấu đang diễn ra. Bạn đang xem với tư cách khán giả — không thể gửi câu trả lời.",
+      "watchButton": "Vào xem trận đấu",
+      "resultButton": "Xem kết quả",
+      "toastTitle": "Đã vào với tư cách khán giả",
+      "toastDescription": "Bạn đang xem một trận đang diễn ra. Chức năng trả lời đã bị tắt."
     }
   }
 }

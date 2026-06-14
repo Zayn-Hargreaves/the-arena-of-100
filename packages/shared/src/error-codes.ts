@@ -15,4 +15,8 @@ export enum ErrorCode {
   RATE_LIMITED = "RATE_LIMITED",
   INTERNAL_ERROR = "INTERNAL_ERROR",
   INVALID_ROOM_TYPE = "INVALID_ROOM_TYPE",
+  // Drop-in spectating baseline (PR): emitted when a user that is not
+  // a registered player in the match tries to submit an answer.
+  // Server-side gate in MatchHandler.handleSubmitAnswer.
+  SPECTATOR_CANNOT_ANSWER = "SPECTATOR_CANNOT_ANSWER",
 }

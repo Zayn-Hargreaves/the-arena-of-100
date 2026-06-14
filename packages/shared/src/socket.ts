@@ -30,6 +30,15 @@ export enum ClientEvent {
   PING = "ping",
 }
 
+// How a user joined a room. PLAYER = the user has (or just gained) a
+// RoomPlayer row and is participating in the match. SPECTATOR = the user
+// entered a room that is already IN_GAME or FINISHED and will only
+// receive read-only state. The frontend uses this to render the
+// spectator UI and to block answer submission on the client side
+// (the server still enforces the gate independently in
+// MatchHandler.handleSubmitAnswer).
+export type JoinMode = "PLAYER" | "SPECTATOR";
+
 // Server -> Client Events (Notifications)
 export enum ServerEvent {
   // Room Events
@@ -165,6 +174,9 @@ export interface RoomCreatedPayload {
   roomStatus: RoomStatus;
   currentMatchId: string | null;
   players: RoomPlayerSummary[];
+  // The host is always a player; included for consistency with
+  // RoomJoinedPayload so frontend code can rely on a single shape.
+  joinedAs: JoinMode;
 }
 
 export interface RoomJoinedPayload {
@@ -176,6 +188,11 @@ export interface RoomJoinedPayload {
   currentMatchId: string | null;
   countdownEndsAt: number | null;
   players: RoomPlayerSummary[];
+  // Tells the client whether this socket just joined as a participant
+  // (PLAYER) or as a read-only late-joiner (SPECTATOR). Backwards-
+  // compatible defaults to PLAYER at the call site if a legacy server
+  // omits the field.
+  joinedAs: JoinMode;
 }
 
 export interface RoomPlayerJoinedPayload {
