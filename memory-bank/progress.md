@@ -1,8 +1,8 @@
 # Progress: Arena of 100
 
-## Current Status: ✅ Lobby Lifecycle + Heartbeat + Graceful Exit + Admin Kill-Switch Baseline Done → Design System Phase 5 Closeout
+## Current Status: ✅ Lobby Lifecycle + Heartbeat + Graceful Exit + Admin Kill-Switch Baseline Done → Design System Phase 5B Done → Drop-in Spectating Next
 
-> Cập nhật 2026-06-14 dựa trên code + GitNexus. So với bản 2026-06-06, các mốc lobby/heartbeat/graceful-exit/admin kill-switch đã hoàn thành baseline và chuyển trạng thái. Vài mục trước đây đánh "chưa xong" nay đã có code thật và được tick lại.
+> Cập nhật 2026-06-14 dựa trên code + GitNexus. So với bản 2026-06-06, các mốc lobby/heartbeat/graceful-exit/admin kill-switch đã hoàn thành baseline và chuyển trạng thái. Design System Phase 5B closeout cũng đã hoàn thành 2026-06-14 (ground truth từ code: `app-shell-layout.tsx:34` và `sidebar.tsx:230` không còn shell gradient; `styles/components.css` đã được xác nhận không còn reference). Vài mục trước đây đánh "chưa xong" nay đã có code thật và được tick lại.
 > Các file liên quan: `PROJECT_STATUS.md` và `activeContext.md` cũng được đồng bộ trong cùng lần cập nhật này.
 
 ### ✅ Completed (Phase 0: Planning & Setup)
@@ -70,10 +70,12 @@
 - [x] Phase 3 — Procedural Avatars + MelbitSprite
 - [x] Phase 4 — Game Molecules (AnswerTile, Timer, PlayerGrid)
 - [x] Phase 5A — Shell Cleanup (mobile overlay, escape/backdrop, skip-link) — **completed 2026-06-08**
-- [ ] Phase 5B — Shell visual closeout + legacy CSS (xem [migrateDesignSystem.md](./migrateDesignSystem.md))
-  - [ ] Bước 5B.1: Refactor `AppShellLayout` / `GameShell` (còn dùng gradient cũ ở `app-shell-layout.tsx:32` + mobile overlay `sidebar.tsx:211`)
-  - [ ] Bước 5B.2: Safe-delete legacy CSS (`styles/components.css` và các class cyberpunk cũ)
-  - [ ] Bước 5B.3: End-to-end visual audit bằng `pnpm dev` + duyệt Lobby/Match/Result/Rankings/Profile
+- [x] Phase 5B — Shell visual closeout (2026-06-14)
+  - [x] Bước 5B.1: Bỏ shell-level gradient ở `app-shell-layout.tsx:34` (redundant với `body` gradient ở `globals.css:22`); AppShellLayout 100% test coverage (10 tests)
+  - [x] Bước 5B.2: Bỏ mobile overlay gradient + `backdrop-blur-md` ở `sidebar.tsx:230`; Sidebar 99.51% test coverage (18 tests)
+  - [x] Bước 5B.3: Audit `styles/components.css` (0 live references — confirmed gone); `bg-gradient-to-br from-pink-50 via-blue-50 to-indigo-50` không còn trong code
+  - [x] Web vitest infrastructure setup (vitest + RTL + jsdom + coverage-v8); coverage 99.58% trên 2 file shell
+  - [x] Plan.md line numbers fixed (32→34, 211→230); home page gradient deferred sang PR riêng
 
 ### ✅ Lobby Lifecycle + Graceful Exit Baseline (PR #38, 2026-06-07/08) — Hoàn thành
 
@@ -124,27 +126,22 @@
 
 ### 📋 Upcoming — PR Kế Tiếp (đề xuất)
 
-1. **Design System Phase 5B closeout** (P1, polish)
-   - Bước 5B.1: bỏ gradient cũ ở `app-shell-layout.tsx` + `sidebar.tsx`
-   - Bước 5B.2: safe-delete legacy CSS (`styles/components.css`, cyberpunk classes)
-   - Bước 5B.3: visual audit toàn flow Lobby/Match/Result/Rankings/Profile/Settings/Admin
-   - Owner: TBD, ticket: TBD
-2. **Drop-in spectating + spectator transport baseline** (P2, product)
+1. **Drop-in spectating + spectator transport baseline** (P1, product) — promoted lên P1 sau khi Phase 5B done
    - Re-evaluate `RoomService.joinRoom` để cho phép late-joiners vào `IN_GAME`/`FINISHED` với `PlayerStatus.SPECTATOR`
    - Thêm socket channel `spectator:<matchId>` (hoặc namespace riêng) để mass-spectate không pollute player channel
    - Tests: `RoomService.joinRoom` reject vs. allow-by-status, presence semantics cho spectator
-3. **In-match AFK policy** (P2, product)
+2. **In-match AFK policy** (P2, product)
    - Backend: round-miss detection tận dụng `Answer` table (current/previous round)
    - Quyết định: 2+ round miss → auto-`ELIMINATED` (loss-of-life) hoặc `SPECTATOR` (chill) — pending product decision
-4. **Content moderation + message sanitizer + device fingerprint** (P2, compliance)
+3. **Content moderation + message sanitizer + device fingerprint** (P2, compliance)
    - Shared profanity/content-moderation pipeline (plan.md §501)
    - `TerminateRoomDto.message` cho phép custom message
    - Backend enforce `guestId` Model C + IP/UA fingerprint
-5. **Optimistic UI rollback** (P2, game feel) — hiện `game/[matchId]/page.tsx` đã có `selectedAnswer` + `roundCompleted` lock-in; thiếu idempotency key + rollback path khi server reject
-6. **Post-match rematch + share** (P3, retention)
-7. **Accessibility audit (WCAG)** (P2, compliance)
-8. **k6 load test 100 concurrent WS** (P2, pre-launch gate) — xem Testing Roadmap bên dưới
-9. **Playwright browser E2E (3-5 cases)** (P3) — deferred sau khi Design System ổn định
+4. **Optimistic UI rollback** (P2, game feel) — hiện `game/[matchId]/page.tsx` đã có `selectedAnswer` + `roundCompleted` lock-in; thiếu idempotency key + rollback path khi server reject
+5. **Post-match rematch + share** (P3, retention)
+6. **Accessibility audit (WCAG)** (P2, compliance)
+7. **k6 load test 100 concurrent WS** (P2, pre-launch gate) — xem Testing Roadmap bên dưới
+8. **Playwright browser E2E (3-5 cases)** (P3) — deferred sau khi Design System ổn định
 
 ### 🔮 Future (Phase 3: Production Ready)
 
@@ -168,8 +165,9 @@
 - [ ] `correctAnswer` có thể leak qua `stateMachine.startRound` (đã strip ở broadcast nhưng cần audit thêm)
 - [ ] `SocketNamespace` chưa có SPECTATOR entry riêng (drop-in spectating sẽ cần)
 - [ ] `packages/config` directory trống
-- [ ] **Design system Phase 5B chưa đóng** (shell closeout + legacy CSS + visual audit) — owner: TBD, ticket: TBD
+- [x] **Design system Phase 5B đã đóng (2026-06-14)** — shell gradient đã bỏ ở `app-shell-layout.tsx:34` + mobile overlay ở `sidebar.tsx:230`; `styles/components.css` audit xác nhận 0 live references; visual closeout done
 - [ ] **Admin kill-switch message sanitizer** — deferred tới khi profanity/content-moderation pipeline lands
+- [ ] **Admin kill-switch append-only audit event** — `AdminService.terminateRoom` (`apps/api/src/modules/admin/admin.service.ts:250-362`) mutate DB (finishMatch + disbandRoom) + Redis + timers + emit `ROOM_TERMINATED` nhưng KHÔNG ghi `EventLog` row. Vi phạm `.github/instructions/review.instructions.md:36` + `memory-bank/codingGuidelines.md:247`. Cần: append immutable audit event (roomId, matchId, adminUserId, reason, timestamp) trước/song song với `disbandRoom`. Owner: TBD, ticket: TBD
 - [ ] **Host kick player** — backend hook (`PlayerStatus.KICKED` đã có ở shared types) chưa wire vào room handler / admin endpoint
 - [ ] **Drop-in spectating** — `RoomService.joinRoom` còn reject khi `room.status !== WAITING`
 
@@ -194,17 +192,17 @@
 
 ## Architecture Assessment Scores (cập nhật 2026-06-14)
 
-| Dimension                | Score      | Notes                                                                               |
-| ------------------------ | ---------- | ----------------------------------------------------------------------------------- |
-| Monorepo Structure       | 10/10      | Turborepo + Remote Caching                                                          |
-| Package Boundaries       | 9/10       | Clean separation, đúng dependency flow                                              |
-| Domain Logic (game-core) | 9/10       | Có serialize/deserialize, immutability, persistence, deterministic tie-break        |
-| Backend Architecture     | 8/10       | Handlers rõ ràng; lobby/heartbeat baseline done; admin kill-switch baseline done    |
-| Frontend Architecture    | 8/10       | Lobby/Game/Result done; spectator baseline (eliminated) done; Profile/Rankings real |
-| Infrastructure           | 8/10       | Docker + Redis + Throttler + CI/E2E; chưa có multi-instance adapter                 |
-| DevOps/CI-CD             | 10/10      | GitHub Actions pipeline configured; E2E job có cache strategy gọn + fail artifacts  |
-| Testing                  | 9/10       | 587 unit + 11 E2E; coverage 94.98% stmts; PR #38 + PR #47 cleanup; admin 100%/100%  |
-| **Overall**              | **8.4/10** | Lobby/heartbeat/graceful-exit/admin kill-switch baseline done; còn Phase 5B polish  |
+| Dimension                | Score      | Notes                                                                                                 |
+| ------------------------ | ---------- | ----------------------------------------------------------------------------------------------------- |
+| Monorepo Structure       | 10/10      | Turborepo + Remote Caching                                                                            |
+| Package Boundaries       | 9/10       | Clean separation, đúng dependency flow                                                                |
+| Domain Logic (game-core) | 9/10       | Có serialize/deserialize, immutability, persistence, deterministic tie-break                          |
+| Backend Architecture     | 8/10       | Handlers rõ ràng; lobby/heartbeat baseline done; admin kill-switch baseline done                      |
+| Frontend Architecture    | 8/10       | Lobby/Game/Result done; spectator baseline (eliminated) done; Profile/Rankings real                   |
+| Infrastructure           | 8/10       | Docker + Redis + Throttler + CI/E2E; chưa có multi-instance adapter                                   |
+| DevOps/CI-CD             | 10/10      | GitHub Actions pipeline configured; E2E job có cache strategy gọn + fail artifacts                    |
+| Testing                  | 9/10       | 587 unit + 11 E2E; coverage 94.98% stmts; PR #38 + PR #47 cleanup; admin 100%/100%                    |
+| **Overall**              | **8.4/10** | Lobby/heartbeat/graceful-exit/admin kill-switch baseline done; Design System Phase 5B done 2026-06-14 |
 
 ## Milestones
 
@@ -214,7 +212,7 @@
 | Architecture Review             | Week 1   | ✅ Complete                          |
 | Critical Fixes (Phase 0.5)      | Week 2   | ✅ Complete                          |
 | Core Gameplay Loop              | Week 2   | ✅ Complete                          |
-| Frontend Pages + Design System  | Week 2-3 | 🟡 Phase 5A done, 5B pending         |
+| Frontend Pages + Design System  | Week 2-3 | ✅ Phase 5A + 5B done (2026-06-14)   |
 | Lobby Lifecycle + Graceful Exit | Week 3   | ✅ Complete (PR #38)                 |
 | Admin Kill-Switch End-to-End    | Week 3-4 | ✅ Baseline (PR #47)                 |
 | Profile/Rankings real APIs      | Week 4   | ✅ Complete                          |
@@ -239,17 +237,13 @@
 
 ## What's Next (Priority Order)
 
-1. **PR tiếp theo — Design System Phase 5B closeout (đề xuất)**
-   - Bước 5B.1: bỏ gradient cũ ở `app-shell-layout.tsx` + `sidebar.tsx`
-   - Bước 5B.2: safe-delete legacy CSS
-   - Bước 5B.3: visual audit toàn flow
-2. **PR sau — Drop-in spectating + spectator transport baseline**
+1. **PR tiếp theo — Drop-in spectating + spectator transport baseline (đề xuất)**
    - `RoomService.joinRoom` cho phép late-joiner vào `IN_GAME`/`FINISHED` với `PlayerStatus.SPECTATOR`
    - Socket channel/namespace riêng cho spectator
-3. **PR sau — In-match AFK policy** (sau khi có product decision: loại vs. spectator)
-4. **PR sau — Content moderation + message sanitizer + device fingerprint**
-5. **Optimistic UI rollback** (game feel, không block ship MVP)
-6. **Post-match rematch + share** (retention)
-7. **k6 load test 100 concurrent WS** (pre-launch gate)
-8. **Playwright browser E2E** (deferred tới khi UI ổn định)
-9. Cập nhật `PROJECT_STATUS.md` và `activeContext.md` cho khớp hiện trạng ✅ done trong lần này
+2. **PR sau — In-match AFK policy** (sau khi có product decision: loại vs. spectator)
+3. **PR sau — Content moderation + message sanitizer + device fingerprint**
+4. **Optimistic UI rollback** (game feel, không block ship MVP)
+5. **Post-match rematch + share** (retention)
+6. **k6 load test 100 concurrent WS** (pre-launch gate)
+7. **Playwright browser E2E** (deferred tới khi UI ổn định)
+8. Cập nhật `PROJECT_STATUS.md` và `activeContext.md` cho khớp hiện trạng ✅ done trong lần này

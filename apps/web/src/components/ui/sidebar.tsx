@@ -227,7 +227,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* --- MOBILE NAV OVERLAY --- */}
       {mobileOpen && (
         <div
-          className="md:hidden fixed inset-0 top-16 bg-gradient-to-br from-pink-50 via-blue-50 to-indigo-50/95 backdrop-blur-md z-40 flex flex-col p-6 animate-fade-in border-t-4 border-candy-ink select-none"
+          className="md:hidden fixed inset-0 top-16 z-40 flex flex-col p-6 animate-fade-in border-t-4 border-candy-ink select-none"
           onClick={handleBackdropClick}
           role="dialog"
           aria-modal="true"

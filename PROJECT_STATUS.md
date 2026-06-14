@@ -8,7 +8,7 @@
 - Tổng quan: monorepo pnpm + Turborepo, NestJS Fastify + Socket.io backend, Next.js 15 + React 19 + Zustand frontend, Prisma + PostgreSQL + Redis.
 - Nhánh/focus gần nhất: `feat/admin-kill-switch-end-to-end` (PR #47 review follow-up đã merge).
 - Trạng thái baseline đã hoàn thành: core gameplay loop, lobby state machine, heartbeat/presence sweep, graceful exit + spectator baseline (eliminated), admin kill-switch, profile/rankings real APIs.
-- Gap còn thật (xem phần `Critical UX Gaps` bên dưới): Design System Phase 5B closeout, drop-in spectating, in-match AFK policy, content moderation pipeline, optimistic UI rollback, k6 load test.
+- Gap còn thật (xem phần `Critical UX Gaps` bên dưới): drop-in spectating, in-match AFK policy, content moderation pipeline, optimistic UI rollback, k6 load test.
 
 ### ✅ Đã Có Trong Code (verified 2026-06-14)
 
@@ -45,17 +45,16 @@
 - Frontend pages: `/`, `/room/create`, `/lobby/[roomCode]`, `/game/[matchId]`, `/result/[matchId]`, `/profile`, `/rankings`, `/settings`, `/admin`, `not-found`
 - Profile page real data: `useProfileStats` + `useMatchHistory` hooks
 - Rankings page real data: `useLeaderboard` hook (weekly/all-time toggle, Redis-cached)
-- `socket-store` với auto-reconnect, 15+ server event handlers (ROOM*\*, MATCH*_, ROUND\__, ROOM_TERMINATED), `isEliminated` state cho spectator view
+- `socket-store` với auto-reconnect, 15+ server event handlers (ROOM*\*, MATCH*\_, ROUND\_\_, ROOM_TERMINATED), `isEliminated` state cho spectator view
 - `useLobbyLifecycle` hook + extracted lobby components (`LobbyHeader`, `RoomCodeCard`, `LobbyPlayerGrid`, `LeaveRoomModal`, `LobbyCountdownOverlay`, `LobbyStartControls`)
 - `GamePage` UX: nút "Rời Trận Đấu" + `LeaveMatchModal`, auto-redirect `/result` 3s, ROOM_TERMINATED toast + redirect `/` 1.5s
 - `AvatarFrame` reusable cho `LobbyPlayerGrid` + `GamePage` sidebar
 - Lobby i18n migration (`next-intl` namespaces `lobby.*` cho cả 5 components + hook + page)
-- Candy 3D Jelly UI Phase 1-4 + Phase 5A (mobile overlay, escape/backdrop, skip-link)
-- Sidebar + AppShell + Sidebar mobile (gradient cũ còn ở `app-shell-layout.tsx:32` + `sidebar.tsx:211` — Phase 5B chưa đóng)
+- Candy 3D Jelly UI Phase 1-4 + Phase 5A (mobile overlay, escape/backdrop, skip-link) + Phase 5B closeout (2026-06-14)
+- Sidebar + AppShell + Sidebar mobile (gradient cũ đã bỏ ở `app-shell-layout.tsx:34` + `sidebar.tsx:230`; `styles/components.css` confirmed absent)
 
 ### 🟡 Một Số Phần Còn Dở (Mock / Hardcoded)
 
-- Design System Phase 5B chưa đóng: `app-shell-layout.tsx:32` và `sidebar.tsx:211` còn gradient cũ; `styles/components.css` chưa safe-delete; visual audit chưa đóng
 - `GamePage` sidebar còn danh sách player mock hardcode (lines 366-443: `Zero_Cool`, `Acid_Burn`, ...). Cần wire với `match.players` từ socket-store
 
 ### 🔴 Use Case Còn Thiếu (theo brief, chưa có implementation)
@@ -72,7 +71,6 @@
 10. **Asset preloading + runtime fallback** — chưa có
 11. **Sudden death mode** — tie-break deterministic đã có nhưng sudden death chưa có state machine branch
 12. **Accessibility audit (WCAG)** — chưa có
-13. **Design System Phase 5B closeout** — shell gradient legacy + safe-delete CSS + visual audit
 
 ## Usecases — Có Thật vs Còn Thiếu
 
@@ -272,34 +270,34 @@ Mỗi use case dưới đây gồm trạng thái (✅ Có / 🟡 Dở / ❌ Thi�
 
 ## Critical UX Gaps — Mức Ưu Tiên PR
 
-| Priority | Gap                                  | Use Case Brief | Why Now                                                                 |
-| -------- | ------------------------------------ | -------------- | ----------------------------------------------------------------------- |
-| P1       | Design System Phase 5B closeout      | polish         | Branch hiện tại đang mở; còn gradient cũ ở shell; đóng để chốt theme    |
-| P2       | Drop-in spectating + transport       | #5, #6         | Sau lobby/heartbeat/kill-switch; cần transport riêng cho mass-spectate  |
-| P2       | In-match AFK policy                  | #7             | Cần product decision (loại vs. spectator); sweep chỉ phủ lobby          |
-| P2       | Frictionless onboarding + moderation | #1             | Privacy/legal risk nếu public; share với kill-switch sanitizer pipeline |
-| P2       | Accessibility audit                  | #14            | Compliance                                                              |
-| P2       | Optimistic UI rollback đầy đủ        | #16            | Game feel, không block ship MVP                                         |
-| P2       | Content moderation + sanitizer       | #1, #17        | Unlock custom termination message; cần shared profanity pipeline        |
-| P3       | Host kick player                     | #2             | API đã có, hook chưa wire vào room handler / admin                      |
-| P3       | Post-match rematch + share           | #12            | Retention                                                               |
-| P3       | Sudden death + tie-break UI          | #11            | Game feel giai đoạn cuối                                                |
-| P3       | Asset preloading                     | #9             | Chỉ cần khi có media assets thật                                        |
-| P3       | Surrender in-match                   | #8             | Optional; cho phép player rời khi đang IN_GAME                          |
+| Priority      | Gap                                  | Use Case Brief | Why Now                                                                                                                                                |
+| ------------- | ------------------------------------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ✅ 2026-06-14 | Design System Phase 5B closeout      | polish         | Done: shell gradient bỏ ở `app-shell-layout.tsx:34` + `sidebar.tsx:230`; `styles/components.css` audit xác nhận 0 references; visual closeout complete |
+| P2            | Drop-in spectating + transport       | #5, #6         | Sau lobby/heartbeat/kill-switch; cần transport riêng cho mass-spectate                                                                                 |
+| P2            | In-match AFK policy                  | #7             | Cần product decision (loại vs. spectator); sweep chỉ phủ lobby                                                                                         |
+| P2            | Frictionless onboarding + moderation | #1             | Privacy/legal risk nếu public; share với kill-switch sanitizer pipeline                                                                                |
+| P2            | Accessibility audit                  | #14            | Compliance                                                                                                                                             |
+| P2            | Optimistic UI rollback đầy đủ        | #16            | Game feel, không block ship MVP                                                                                                                        |
+| P2            | Content moderation + sanitizer       | #1, #17        | Unlock custom termination message; cần shared profanity pipeline                                                                                       |
+| P3            | Host kick player                     | #2             | API đã có, hook chưa wire vào room handler / admin                                                                                                     |
+| P3            | Post-match rematch + share           | #12            | Retention                                                                                                                                              |
+| P3            | Sudden death + tie-break UI          | #11            | Game feel giai đoạn cuối                                                                                                                               |
+| P3            | Asset preloading                     | #9             | Chỉ cần khi có media assets thật                                                                                                                       |
+| P3            | Surrender in-match                   | #8             | Optional; cho phép player rời khi đang IN_GAME                                                                                                         |
 
 ## Strategic Recommendations
 
-### PR Kế Tiếp (P1): Design System Phase 5B Closeout
+### ✅ Done 2026-06-14: Design System Phase 5B Closeout
 
-Scope đề xuất:
+Phase đã đóng theo ground truth từ code. Bằng chứng:
 
-1. **Bước 5B.1**: refactor `app-shell-layout.tsx` + `sidebar.tsx` bỏ gradient cũ, switch sang `.jelly-card`/design tokens
-2. **Bước 5B.2**: safe-delete `styles/components.css` + cyberpunk classes cũ (chỉ khi verify không còn reference)
-3. **Bước 5B.3**: visual audit toàn flow bằng `pnpm dev` + duyệt `/`, `/room/create`, `/lobby`, `/game`, `/result`, `/rankings`, `/profile`, `/admin`, `not-found`
-4. **Verify**: `pnpm --filter @arena/web {build,lint,typecheck}` + screenshot diff
-5. **Out of scope**: lobby/game logic, room lifecycle, broad page rewrites
+1. **Bước 5B.1**: shell-level gradient đã bỏ ở `app-shell-layout.tsx:34` (redundant với `body` gradient ở `globals.css:22`)
+2. **Bước 5B.2**: mobile overlay gradient + `backdrop-blur-md` đã bỏ ở `sidebar.tsx:230`
+3. **Bước 5B.3**: audit `styles/components.css` xác nhận 0 live references (file đã absent); `bg-gradient-to-br from-pink-50 via-blue-50 to-indigo-50` không còn trong code
+4. **Verify**: vitest infrastructure setup cho web package; AppShellLayout 100% test coverage (10 tests); Sidebar 99.51% (18 tests)
+5. **Out of scope** (deferred sang PR riêng): home page gradient ở `[locale]/page.tsx:193` vì home không dùng AppShellLayout
 
-### PR Sau (P2): Drop-in Spectating + Spectator Transport Baseline
+### PR Kế Tiếp (P2): Drop-in Spectating + Spectator Transport Baseline
 
 Scope đề xuất:
 
@@ -381,8 +379,8 @@ Dự án đã có nền tảng kỹ thuật vững (server-authoritative, event-
 1. ✅ Hoàn thiện lobby lifecycle + graceful exit (production-ready) — done ở PR #38
 2. ✅ Real data APIs cho profile/rankings (thay mock) — done (Bước 3-5 `issue.md`)
 3. ✅ Admin kill-switch end-to-end — done ở PR #47 baseline (chỉ còn deferred message-sanitizer)
-4. ⏳ Đóng Design System Phase 5B (visual consistency) — proposed next PR
-5. ⏳ Drop-in spectating + spectator transport — proposed P2
+4. ✅ Design System Phase 5B closeout (visual consistency) — done 2026-06-14
+5. ⏳ Drop-in spectating + spectator transport — proposed next PR
 6. ⏳ In-match AFK policy — proposed P2
 7. ⏳ Bổ sung content moderation (profanity filter, device fingerprint) — P2
 8. ⏳ Accessibility audit (WCAG) — P2

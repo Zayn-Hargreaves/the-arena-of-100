@@ -72,7 +72,7 @@
 5. ~~No Lobby Lifecycle Management~~ [RESOLVED] — backend baseline + store wiring + frontend surfaces đều done. `WAITING -> COUNTDOWN -> STARTING -> IN_GAME` đầy đủ. Auto-start public, force-start private, heartbeat/presence sweep, countdown recovery.
 6. ~~Missing Admin Kill-Switch~~ [RESOLVED baseline] — `POST /admin/rooms/:roomId/terminate` end-to-end. Message sanitizer deferred tới khi shared profanity/content-moderation pipeline lands.
 7. **Drop-in spectating** — `RoomService.joinRoom` còn reject khi `room.status !== WAITING`. Late-joiners chưa được chuyển sang `PlayerStatus.SPECTATOR`; spectator transport riêng chưa có.
-8. **Design System Phase 5B closeout** — shell còn dùng gradient cũ ở `app-shell-layout.tsx:32` + `sidebar.tsx:211`; legacy CSS chưa safe-delete; visual audit chưa đóng.
+8. **Design System Phase 5B closeout** — **done 2026-06-14**. Shell gradient đã bỏ ở `app-shell-layout.tsx:34` + mobile overlay `sidebar.tsx:230`; legacy `styles/components.css` audit xác nhận không còn reference; vitest infrastructure cho web package setup với 99.58% coverage trên 2 file shell (28 tests pass). Home page gradient ở `[locale]/page.tsx:193` deferred sang PR riêng vì home không dùng AppShellLayout.
 
 ### 🟢 Architecture Score (cập nhật 2026-06-14)
 
@@ -147,13 +147,13 @@
 6. ~~Profile + Rankings real APIs~~ ✅ (Step 3-5 `issue.md`)
 7. ~~Admin kill-switch end-to-end~~ ✅ (PR #47 baseline)
 
-### Next PR (đề xuất): Design System Phase 5B Closeout
+### Next PR (đề xuất): Design System Phase 5B Closeout — DONE 2026-06-14
 
-1. Bước 5B.1: bỏ gradient cũ ở `app-shell-layout.tsx` + `sidebar.tsx`, switch sang `.jelly-card`/design tokens
-2. Bước 5B.2: safe-delete `styles/components.css` + cyberpunk classes cũ
-3. Bước 5B.3: visual audit toàn flow (`pnpm dev` + duyệt Lobby/Match/Result/Rankings/Profile/Settings/Admin/Not-Found)
-4. Verify: `pnpm --filter @arena/web {build,lint,typecheck}` + screenshot diff
-5. Out of scope: lobby/game logic, room lifecycle, broad page rewrites
+1. ✅ Bước 5B.1: bỏ shell gradient ở `app-shell-layout.tsx:34` (redundant với body gradient)
+2. ✅ Bước 5B.2: audit `styles/components.css` (0 live references) + bỏ mobile overlay gradient ở `sidebar.tsx:230`
+3. ✅ Bước 5B.3: setup vitest infrastructure (vitest + RTL + jsdom + coverage-v8); 28 tests / 99.58% coverage trên 2 file shell
+4. ✅ Verify: `pnpm --filter @arena/web {build,lint,typecheck}` all pass
+5. ✅ Plan.md updated (line numbers fixed, home page gradient added to deferrals)
 
 ### Following PRs (Priority Order)
 

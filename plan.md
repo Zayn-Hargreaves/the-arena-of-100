@@ -1,432 +1,385 @@
-# Plan: Arena of 100
+# Plan: Next PR - Design System Phase 5B Closeout
 
-## Goal
+> ⚠️ **[ARCHIVED 2026-06-14 — Phase 5B đã đóng theo ground truth từ code]** File này giữ lại làm execution reference lịch sử; nội dung phases bên dưới không còn là active work.
+>
+> Updated 2026-06-14 from `memory-bank/*.md`, `PROJECT_STATUS.md`, source review, and GitNexus.
+> This file now tracks the next PR only, plus a short follow-on queue.
+> It intentionally removes outdated open phases that are already done in code.
 
-Ship the MVP core loop without a broad architecture rewrite:
+## PR Snapshot
 
-- finish lobby lifecycle [COMPLETED]
-- add graceful exit and presence handling [COMPLETED]
-- keep frontend refactors incremental [COMPLETED]
-- isolate high-risk shell cleanup into its own phases [COMPLETED]
+- PR name: `Design System Phase 5B Closeout`
+- Primary goal: finish shared shell visual cleanup without mixing gameplay or backend work
+- Recommended branch: `feat/design-system-phase-5b-closeout`
+- Recommended owner lane: frontend-only
+- Recommended agent type: `frontend-specialist`
+- GitNexus note: index is 1 commit behind HEAD and one search returned degraded FTS; if deeper symbol search is needed before implementation, run `npx gitnexus analyze --force`
 
-## Current State
+## Tracking Board
 
-Done and verified:
+- [ ] Phase 0 complete: baseline and scope lock
+- [ ] Phase 1 complete: `AppShellLayout` cleanup
+- [ ] Phase 2 complete: desktop `Sidebar` cleanup
+- [ ] Phase 3 complete: mobile `Sidebar` overlay cleanup
+- [ ] Phase 4 complete: residual shell artifact audit
+- [ ] Phase 5 complete: verification and docs sync
+- [ ] PR ready for review
+- [ ] PR merged
 
-- Core match loop works with deterministic tie-breaks.
-- Lobby lifecycle (`WAITING -> COUNTDOWN -> STARTING -> IN_GAME`) fully implemented.
-- Heartbeat & Presence tracking (Redis-backed last-seen sweep) fully operational.
-- Graceful exit, surrender path, and result page transitions implemented.
-- Robust, cross-browser clipboard copy mechanism with fallback.
-- Client-side Spectator View when eliminated.
-- AppShellLayout/Sidebar visual cleanup, modern design guidelines compliance, and mobile UX/a11y verified.
-- 100% test passing rate across packages (`@arena/game-core`, `@arena/api`, `@arena/web`, `@arena/shared`).
+## Reality Check
 
-Main gap now:
+The old `plan.md` is stale. These are already done and must not be planned again as open work:
 
-- Refactoring and addressing remaining technical debt (asRoomType consolidation, batch player removal, deterministic tie-break sorting, and RoomCodeCard copy-to-clipboard polish).
+- Core gameplay loop
+- Lobby lifecycle contract and backend orchestration
+- Socket/store lobby wiring
+- Lobby UI extraction and graceful leave
+- Heartbeat/presence sweep baseline
+- Graceful exit and result navigation baseline
+- Admin kill-switch baseline
+- Profile and rankings real APIs
+- Design System Phase 1 to Phase 5A
+- Eliminated-player spectator baseline
 
-Important risk notes from GitNexus:
+## Why This PR Next
 
-- `RoomService` has MEDIUM upstream impact across room controller and auth/room/match handlers
-- `AppShellLayout` has CRITICAL upstream impact across 8 pages, so shell cleanup must be isolated
-- one GitNexus query reported degraded FTS search; if symbol search feels weak, run `gitnexus analyze --force` before implementation
+Choose this PR next because it is the cleanest isolated polish PR left on the frontend path.
 
-## Rules For 200k-Token Models
+Evidence from docs and code:
 
-- One phase = one PR = one primary problem.
-- Do not mix backend lobby work with shell/layout cleanup in the same phase.
-- Do not do a repo-wide Atomic Design migration.
-- Only extract components on the page currently being changed.
-- Hard cap per phase:
-  - around 8-12 production files
-  - around 3-6 test files
-  - no more than 2 subsystems at once
-- Prefer extending existing services/handlers over introducing a new abstraction layer unless duplication becomes clear.
-- Every phase must end with verification, not just code changes.
-- Do not reopen `/profile` and `/rankings` unless fixing a regression.
+- `activeContext.md` and `progress.md` both propose Design System Phase 5B as the next PR
+- `apps/web/src/components/ui/app-shell-layout.tsx:34` still carries a shell-level gradient
+- `apps/web/src/components/ui/sidebar.tsx:230` still carries a mobile overlay gradient
+- GitNexus impact shows `AppShellLayout` has `CRITICAL` upstream impact across 8 pages, so shell work must be isolated
+- Product work like drop-in spectating and in-match AFK still crosses backend, transport, and UI, so it should not be mixed into this PR
 
-## Global Constraints
+## GitNexus Context
 
-- Keep transport logic in handlers/controllers only.
-- Keep domain logic out of frontend and gateways.
-- Persist state transitions after every meaningful server-side state change.
-- Never leak `correctAnswer` through snapshot or room/lobby payloads.
-- Use Zod patterns already established in the repo.
-- Prefer targeted component extraction over folder-taxonomy refactors.
+GitNexus findings used to shape this plan:
 
-## Critical Path
+- `AppShellLayout` upstream impact: `CRITICAL`
+- Direct consumers of `AppShellLayout`: `AdminPage`, `GamePage`, `LobbyPage`, `ProfilePage`, `RankingsPage`, `ResultPage`, `CreateRoomPage`, `SettingsPage`
+- `RoomService` upstream impact: `MEDIUM`
+- `PresenceService` upstream impact: `LOW`
+- `RoomService.joinRoom` upstream impact: `LOW`, but it is the main blocker for drop-in spectating
+- `RoomService.joinRoom` currently rejects any room where `room.status !== WAITING` at `apps/api/src/modules/room/room.service.ts:103-105`
+- `GamePage` has low upstream impact and still contains hardcoded opponent/sidebar data at `apps/web/src/app/[locale]/game/[matchId]/page.tsx:366-443`
+- `apps/web/src/styles/components.css` does not exist anymore, so old docs that mention deleting it are stale; Phase 5B should treat that step as an audit, not a blind delete
 
-The MVP critical path is:
+## Locked Decisions (2026-06-14)
 
-1. lobby lifecycle contract
-2. backend lobby orchestration
-3. socket/store wiring
-4. lobby UI + graceful leave
-5. heartbeat/presence baseline
-6. shell cleanup and visual audit
+- Mobile overlay treatment: remove both `bg-gradient-to-br from-pink-50 via-blue-50 to-indigo-50/95` and `backdrop-blur-md` from the mobile nav overlay so the body shows through cleanly.
+- Home page gradient (`apps/web/src/app/[locale]/page.tsx:193` — same Tailwind pattern) is **out of scope** for this PR and gets added to Explicit Deferrals below.
+- `plan.md` line numbers in this file are kept accurate to current code (32→34, 211→230) so downstream agents do not re-discover the staleness.
+- Phase 4 is strictly audit-only: any route-level visual bug that is not directly caused by Phase 1–3 is deferred to a follow-up PR.
 
-## Phase 1: Lobby Lifecycle Contract
+## Hard Constraints For 256k-Token Agents
 
-Goal:
-Define the smallest shared contract for room lifecycle so backend and frontend can evolve safely.
+- One phase at a time
+- Do not read the whole repo when a phase names a bounded read set
+- Hard cap per implementation phase: 1 to 3 production files
+- Hard cap per verification phase: 0 to 2 docs files
+- Do not touch backend files in this PR
+- Do not touch `socket-store.ts` in this PR
+- Do not touch `RoomService`, `PresenceService`, or `GameLoopService` in this PR
+- Do not fix drop-in spectating in this PR
+- Do not fix in-match AFK in this PR
+- Do not fix `GamePage` hardcoded opponent data in this PR
+- Do not do repo-wide component taxonomy moves
+- Do not introduce new generic abstractions unless duplication is impossible to avoid
+- If a phase requires page-level business-logic changes on more than 2 pages, stop and split that work into a later PR
 
-Read set:
+## PR Success Criteria
 
+- Shared shell visuals match the current Candy/Jelly direction
+- Residual shell gradients are removed from shared shell surfaces
+- Desktop and mobile sidebar behavior remain stable
+- Skip-link behavior remains intact
+- No gameplay behavior changes
+- No backend behavior changes
+- All pages using `AppShellLayout` still render correctly
+- `pnpm --filter @arena/web build` passes
+- `pnpm --filter @arena/web lint` passes
+- `pnpm --filter @arena/web typecheck` passes
+- Manual smoke review across all shell consumers is completed
+
+## Out Of Scope
+
+- Drop-in spectating
+- Spectator transport isolation
+- In-match AFK policy
+- Optimistic answer rollback
+- `GamePage` live opponents data wiring
+- Home page redesign
+- Not-found redesign
+- Admin feature changes
+- Shared backend contract changes
+- Broad icon/glyph audit across the app
+- Legacy design-system archaeology beyond shell artifacts directly touched here
+
+## Phase 0: Baseline And Scope Lock
+
+### Goal
+
+Freeze scope before editing the high-risk shell.
+
+### Suggested agent window
+
+- Target context size: under 20k tokens
+- Suggested agent: `explore` or `frontend-specialist`
+
+### Read Set
+
+- `plan.md`
 - `memory-bank/progress.md`
 - `memory-bank/activeContext.md`
-- `memory-bank/codingGuidelines.md`
-- `packages/shared/src/state.ts`
-- `packages/shared/src/events.ts`
-- `packages/shared/src/socket.ts`
-- `apps/api/prisma/schema.prisma` if room status enum is DB-backed
+- `memory-bank/migrateDesignSystem.md`
+- `memory-bank/frontend-enterprise-followups.md`
+- `PROJECT_STATUS.md`
+- `apps/web/src/components/ui/app-shell-layout.tsx`
+- `apps/web/src/components/ui/sidebar.tsx`
 
-Target files:
+### Required Checks
 
-- `packages/shared/src/state.ts`
-- `packages/shared/src/events.ts`
-- `packages/shared/src/socket.ts`
-- `packages/shared/src/index.ts`
-- `apps/api/prisma/schema.prisma` only if needed
+- [ ] Confirm the next PR is still shell-only
+- [ ] Confirm `AppShellLayout` is still the highest-risk shared frontend symbol for this PR
+- [ ] Confirm `styles/components.css` is already absent
+- [ ] Confirm no backend file is needed for this PR
+- [ ] Confirm `GamePage` mock sidebar remains explicitly out of scope
 
-Deliverables:
+### Deliverables
 
-- formal room lifecycle states for lobby flow
-- explicit event names/payloads for countdown/start/presence if missing
-- clear separation between room lifecycle state and match lifecycle state
+- Short scope note in PR description draft
+- Final list of files allowed for this PR
+- Final list of files explicitly forbidden for this PR
 
-Out of scope:
+### Allowed Files After Phase 0
 
-- no UI changes
-- no heartbeat scheduler yet
-- no shell refactor
+- `apps/web/src/components/ui/app-shell-layout.tsx`
+- `apps/web/src/components/ui/sidebar.tsx`
+- `apps/web/src/app/globals.css` only if absolutely required
+- At most 2 shell-consuming page files, and only for tiny regression fixes caused by shell changes
+- `memory-bank/progress.md`
+- `memory-bank/activeContext.md`
 
-Done when:
+### Stop Conditions
 
-- shared types compile
-- backend and web can consume the new contract without ad-hoc local types
-- no ambiguous state naming remains between room and match
+- If shell cleanup requires touching backend files
+- If shell cleanup requires redesigning page-level business surfaces
+- If shell cleanup requires changing more than 2 consumer pages materially
 
-Verify:
+## Phase 1: `AppShellLayout` Cleanup
 
-- `pnpm --filter @arena/shared build`
-- `pnpm --filter @arena/api build`
-- `pnpm --filter @arena/web build`
+### Goal
 
-## Phase 2: Backend Lobby Orchestration Baseline
+Remove residual shared shell visual debt in the layout container while preserving behavior.
 
-Goal:
-Make rooms move through a minimal lifecycle before a match starts.
+### Why Separate
 
-Read set:
+GitNexus marks `AppShellLayout` as `CRITICAL` upstream. This must land before any sidebar or route-level polish.
 
-- Phase 1 contract files
-- `apps/api/src/modules/room/room.service.ts`
-- `apps/api/src/gateways/handlers/room.handler.ts`
-- `apps/api/src/gateways/handlers/match.handler.ts`
-- `apps/api/src/modules/match/game-loop.service.ts`
-- room and handler specs
+### Suggested agent window
 
-Target files:
+- Target context size: under 25k tokens
+- Suggested agent: `frontend-specialist`
 
-- `apps/api/src/modules/room/room.service.ts`
-- `apps/api/src/gateways/handlers/room.handler.ts`
-- `apps/api/src/gateways/handlers/match.handler.ts`
-- `apps/api/src/modules/match/game-loop.service.ts`
-- related specs
+### Read Set
 
-Deliverables:
-
-- public room auto-start trigger
-- private room host force-start
-- room status transitions like `WAITING -> COUNTDOWN -> STARTING -> IN_GAME`
-- room status updates synchronized with match start
-- no read-modify-write regressions worse than current baseline
-
-Out of scope:
-
-- frontend countdown UI
-- AFK sweep
-- shell/layout cleanup
-
-Done when:
-
-- a room can transition into a match through the backend only
-- match start no longer assumes lobby is always manually started
-- room and match services agree on final room status at start
-
-Verify:
-
-- `pnpm --filter @arena/api test`
-- `pnpm --filter @arena/api build`
-
-## Phase 3: Socket Transport And Store Wiring
-
-Goal:
-Expose the new lobby lifecycle cleanly to the client without overloading page components.
-
-Read set:
-
-- Phase 2 backend files
-- `apps/web/src/stores/socket-store.ts`
+- `apps/web/src/components/ui/app-shell-layout.tsx`
+- `apps/web/src/app/globals.css`
+- `apps/web/src/styles/utilities.css`
+- One consumer page for spot-checking structure:
 - `apps/web/src/app/[locale]/lobby/[roomCode]/page.tsx`
 
-Target files:
+### Instructions
 
-- `apps/web/src/stores/socket-store.ts`
-- `apps/web/src/app/[locale]/lobby/[roomCode]/page.tsx`
-- shared payload files only if Phase 2 changed them
+- Remove the shell-level gradient from `AppShellLayout` if the body/background already owns that responsibility
+- Preserve layout behavior: `min-h-screen`, split desktop/mobile shell, scroll containment, and main-content padding
+- Preserve proactive websocket connect behavior
+- Preserve skip-link semantics exactly
+- Do not rename the component
+- Do not move the component
+- Do not change child-page layout contracts
 
-Deliverables:
+### Target Files
 
-- store state for lobby countdown / room phase
-- socket listeners for room lifecycle events
-- page reads store state instead of deriving fake lifecycle behavior
-- remove stale assumptions around manual start-only behavior
+- `apps/web/src/components/ui/app-shell-layout.tsx`
+- `apps/web/src/app/globals.css` only if needed
 
-Out of scope:
+### Tracking
 
-- big visual redesign
-- shell cleanup
-- global component extraction
+- [ ] Shell wrapper no longer owns redundant gradient styling
+- [ ] Skip-link still points to `#main-content`
+- [ ] Main scrolling still works on desktop and mobile
+- [ ] Websocket connect-on-mount behavior unchanged
+- [ ] No page-level business logic touched
 
-Done when:
+### Verify
 
-- lobby page can react to room lifecycle state from the store
-- host/non-host UI can branch on real server state
-- no local page-only lifecycle hacks remain
-
-Verify:
-
-- `pnpm --filter @arena/web build`
 - `pnpm --filter @arena/web typecheck`
 
-## Phase 4: Lobby UI + Incremental Component Extraction
+## Phase 2: Desktop `Sidebar` Cleanup
 
-Goal:
-Make the lobby usable and cleaner without a repo-wide Atomic Design pass.
+### Goal
 
-Read set:
+Finish the desktop shell closeout without changing information architecture.
 
-- `apps/web/src/app/[locale]/lobby/[roomCode]/page.tsx`
+### Why Separate
+
+`Sidebar` is shared UI but still narrower than `AppShellLayout`. Keep desktop cleanup independent from mobile overlay cleanup.
+
+### Suggested agent window
+
+- Target context size: under 30k tokens
+- Suggested agent: `frontend-specialist`
+
+### Read Set
+
+- `apps/web/src/components/ui/sidebar.tsx`
+- `apps/web/src/components/ui/avatar.tsx`
+- `apps/web/src/components/ui/button.tsx` only if needed for style consistency
+- `apps/web/src/components/ui/glass-panel.tsx` only if needed for style reference
+
+### Instructions
+
+- Keep the current nav structure and routes
+- Keep collapse behavior and floating toggle
+- Keep active-state clarity
+- Keep tooltips usable when collapsed
+- Keep keyboard focus styling
+- Align desktop shell visuals with current Candy/Jelly primitives
+- Avoid opportunistic icon refactors unless directly necessary
+- Do not change translation keys
+
+### Target Files
+
+- `apps/web/src/components/ui/sidebar.tsx`
+- At most one supporting UI primitive if absolutely required
+
+### Tracking
+
+- [ ] Desktop sidebar visuals match current shell direction
+- [ ] Collapse toggle still works
+- [ ] Active route state still reads clearly
+- [ ] Collapsed tooltip still works
+- [ ] Footer identity block still renders cleanly
+- [ ] No route map or navigation semantics changed
+
+### Verify
+
+- `pnpm --filter @arena/web typecheck`
+
+## Phase 3: Mobile `Sidebar` Overlay Cleanup
+
+### Goal
+
+Remove the remaining legacy-feeling overlay treatment while preserving mobile behavior.
+
+### Why Separate
+
+Mobile overlay behavior is easy to regress and should be checked on its own.
+
+### Suggested agent window
+
+- Target context size: under 25k tokens
+- Suggested agent: `frontend-specialist`
+
+### Read Set
+
+- `apps/web/src/components/ui/sidebar.tsx`
 - `apps/web/src/components/ui/app-shell-layout.tsx`
-- `apps/web/src/components/game/player-grid.tsx`
-- `memory-bank/frontend-enterprise-followups.md`
 
-Target files:
+### Instructions
 
+- Replace the residual overlay gradient at `sidebar.tsx:230` with the current shell treatment
+- Preserve `Escape` close
+- Preserve backdrop-click close
+- Preserve `role="dialog"` and `aria-modal="true"`
+- Keep menu button hit area comfortable on mobile
+- Keep header height and sticky feel stable
+- Do not introduce focus traps unless the repo already uses one
+- Do not expand scope into full mobile nav redesign
+
+### Target Files
+
+- `apps/web/src/components/ui/sidebar.tsx`
+
+### Tracking
+
+- [ ] Mobile overlay no longer uses the stale gradient treatment
+- [ ] Escape still closes the menu
+- [ ] Backdrop click still closes the menu
+- [ ] Menu button remains usable on touch devices
+- [ ] Overlay remains readable on small screens
+- [ ] No regressions in header layout
+
+### Verify
+
+- `pnpm --filter @arena/web typecheck`
+
+## Phase 4: Residual Shell Artifact Audit
+
+### Goal
+
+Do a narrow cleanup pass for shell-specific leftovers and confirm stale doc assumptions.
+
+### Why Separate
+
+This is the safe place to catch small regressions without reopening broader product surfaces.
+
+### Suggested agent window
+
+- Target context size: under 35k tokens
+- Suggested agent: `explore` then `frontend-specialist`
+
+### Read Set
+
+- `apps/web/src/components/ui/app-shell-layout.tsx`
+- `apps/web/src/components/ui/sidebar.tsx`
+- `apps/web/src/app/[locale]/room/create/page.tsx`
 - `apps/web/src/app/[locale]/lobby/[roomCode]/page.tsx`
-- new local components under `apps/web/src/components/lobby/`
-- `apps/web/src/components/game/player-grid.tsx` only if reuse is obvious
+- `apps/web/src/app/[locale]/game/[matchId]/page.tsx`
+- `apps/web/src/app/[locale]/result/[matchId]/page.tsx`
+- `apps/web/src/app/[locale]/profile/page.tsx`
+- `apps/web/src/app/[locale]/rankings/page.tsx`
+- `apps/web/src/app/[locale]/settings/page.tsx`
+- `apps/web/src/app/[locale]/admin/page.tsx`
 
-Deliverables:
+### Instructions
 
-- countdown overlay
-- waiting-for-players state
-- leave-room button + confirm modal
-- host start controls rendered against real lifecycle state
-- extract only page-local pieces such as:
-  - `LobbyHeader`
-  - `RoomCodeCard`
-  - `LobbyPlayerGrid`
-  - `LeaveRoomModal`
-  - `LobbyCountdownOverlay`
+- Grep for shell-specific residual gradients and dead shell references
+- Treat `styles/components.css` deletion as a confirmation task, not an assumed code-change task
+- Only fix route-level regressions if they are directly caused by Phase 1 to Phase 3
+- Limit route-level fixes to spacing, overflow, or wrapper-class adjustments
+- Do not touch gameplay logic
+- Do not touch the hardcoded `GamePage` opponent list in this PR
 
-Out of scope:
+### Tracking
 
-- folder rename to `atoms/molecules/organisms`
-- app shell redesign
-- spectator mode
+- [ ] No live import/reference expects `styles/components.css`
+- [ ] Shared shell gradients are removed or intentionally retained with justification
+- [ ] Consumer pages still fit inside the shell without overflow regressions
+- [ ] No accidental gameplay or data-flow changes introduced
+- [ ] `GamePage` mock opponent block is explicitly left for later PR
 
-Done when:
-
-- lobby page is materially smaller and easier to read
-- extracted components are page-focused, not artificially generic
-- dev-only mock fallback is either removed or tightly scoped and clearly intentional
-
-Verify:
+### Verify
 
 - `pnpm --filter @arena/web build`
 - `pnpm --filter @arena/web lint`
 - `pnpm --filter @arena/web typecheck`
 
-## Phase 5: Heartbeat / Presence Baseline
+## Phase 5: Verification And Docs Sync
 
-Goal:
-Prevent ghost players from blocking flow.
+### Goal
 
-Read set:
+Close the PR with evidence, not intuition.
 
-- `apps/api/src/modules/room/room.service.ts`
-- `apps/api/src/gateways/handlers/auth.handler.ts`
-- `apps/api/src/gateways/handlers/room.handler.ts`
-- `apps/web/src/stores/socket-store.ts`
-- lobby page
-- room/match/auth specs
+### Suggested agent window
 
-Target files:
+- Target context size: under 25k tokens
+- Suggested agent: `test-engineer` or `frontend-specialist`
 
-- room/auth handlers
-- `RoomService`
-- `socket-store.ts`
-- lobby page
-- related tests
-
-Deliverables:
-
-- client heartbeat emission or equivalent lightweight presence signal
-- Redis-backed last-seen tracking or equivalent minimal server presence state
-- stale player cleanup policy for lobby
-- room player list reflects live presence more reliably
-
-Out of scope:
-
-- full in-match AFK elimination
-- spectator conversion flow
-- shell cleanup
-
-Done when:
-
-- disconnected or stale players do not linger indefinitely in lobby
-- presence updates do not require full page reload
-- behavior is covered by tests
-
-Verify:
-
-- `pnpm --filter @arena/api test`
-- `pnpm --filter @arena/web build`
-
-## Phase 6: Graceful Exit And Result Navigation Cleanup
-
-Goal:
-Close the remaining user-flow gaps after lobby baseline.
-
-Read set:
-
-- `apps/web/src/stores/socket-store.ts`
-- `apps/web/src/app/[locale]/game/[matchId]/page.tsx`
-- `apps/web/src/app/[locale]/result/[matchId]/page.tsx`
-- `apps/api/src/gateways/handlers/room.handler.ts`
-- `apps/api/src/modules/match/game-loop.service.ts`
-
-Target files:
-
-- `apps/web/src/stores/socket-store.ts`
-- `apps/web/src/app/[locale]/game/[matchId]/page.tsx`
-- `apps/web/src/app/[locale]/result/[matchId]/page.tsx`
-- backend files only if surrender/leave semantics need explicit support
-
-Deliverables:
-
-- remove stale TODO around match-finished navigation
-- explicit result-page transition strategy
-- coherent leave behavior from lobby and in-game surfaces
-- optional minimal surrender path if product decision is ready
-
-Out of scope:
-
-- spectator mode
-- shell cleanup
-- tie-break redesign
-
-Done when:
-
-- match finish flow is explicit and testable
-- player can leave without getting stuck in a dead-end client state
-
-Verify:
-
-- `pnpm --filter @arena/web build`
-- `pnpm --filter @arena/api test` if backend behavior changed
-
-## Phase 7: Shell Cleanup Isolation
-
-Goal:
-Complete Design System Phase 5A without mixing it into gameplay work.
-
-Reason to isolate:
-`AppShellLayout` has CRITICAL upstream impact across most pages.
-
-Read set:
-
-- `memory-bank/migrateDesignSystem.md`
-- `memory-bank/frontend-enterprise-followups.md`
-- `apps/web/src/components/ui/app-shell-layout.tsx`
-- `apps/web/src/components/ui/sidebar.tsx`
-
-Target files:
-
-- `apps/web/src/components/ui/app-shell-layout.tsx`
-- `apps/web/src/components/ui/sidebar.tsx`
-- small supporting UI primitives only if strictly necessary
-
-Deliverables:
-
-- remove remaining legacy gradient/shell inconsistencies
-- align desktop/mobile shell behavior
-- preserve skip-link behavior
-- no page-level business logic changes
-
-Out of scope:
-
-- lobby logic
-- game logic
-- room lifecycle
-- broad page rewrites
-
-Done when:
-
-- shell styles are stable across all pages using `AppShellLayout`
-- mobile overlay behavior matches the design system direction
-- no unrelated page logic changed in the same PR
-
-Verify:
-
-- `pnpm --filter @arena/web build`
-- `pnpm --filter @arena/web typecheck`
-- manual smoke check on lobby, game, result, profile, rankings, settings, admin
-
-## Phase 8: Frontend Audit Sweep
-
-Goal:
-Do the small-but-real cleanup that remains after core flow is stable.
-
-Read set:
-
-- `memory-bank/frontend-enterprise-followups.md`
-- home page
-- not-found pages
-- `player-grid.tsx`
-- lobby/game shared avatar and glyph usages
-
-Target files:
-
-- `apps/web/src/app/[locale]/page.tsx`
-- `apps/web/src/app/not-found.tsx`
-- `apps/web/src/app/[locale]/not-found.tsx`
-- `apps/web/src/components/game/player-grid.tsx`
-- a few shared primitives if repetition is obvious
-
-Deliverables:
-
-- home-page a11y fixes
-- not-found consistency
-- duplicate avatar/sprite framing cleanup where it clearly helps
-- audit tooling refinements if false positives remain costly
-
-Out of scope:
-
-- shell redesign
-- backend features
-- spectator transport
-
-Done when:
-
-- the touched pages are cleaner and more consistent
-- audit scripts are more actionable, less noisy
-- no gratuitous component taxonomy refactor was introduced
-
-Verify:
+### Verification Commands
 
 - `pnpm --filter @arena/web build`
 - `pnpm --filter @arena/web lint`
@@ -434,98 +387,127 @@ Verify:
 - `pnpm --filter @arena/web audit:ux`
 - `pnpm --filter @arena/web audit:a11y`
 
-## Phase 9: Tie-Break And Post-Match Polish
+### Manual Smoke Matrix
 
-Goal:
-Improve endgame quality only after the lobby flow is stable.
+- [ ] `/room/create` desktop
+- [ ] `/room/create` mobile
+- [ ] `/lobby/[roomCode]` desktop
+- [ ] `/lobby/[roomCode]` mobile
+- [ ] `/game/[matchId]` desktop
+- [ ] `/game/[matchId]` mobile
+- [ ] `/result/[matchId]` desktop
+- [ ] `/result/[matchId]` mobile
+- [ ] `/rankings` desktop
+- [ ] `/rankings` mobile
+- [ ] `/profile` desktop
+- [ ] `/profile` mobile
+- [ ] `/settings` desktop
+- [ ] `/settings` mobile
+- [ ] `/admin` desktop
+- [ ] `/admin` mobile
+- [ ] not-found surface desktop
+- [ ] not-found surface mobile
+- [ ] skip-link works on at least one shell route
+- [ ] mobile menu open/close checked on at least 3 shell routes
 
-Target areas:
+### Docs Sync
 
-- `packages/game-core`
-- match service / game loop
-- result page
+- [ ] Update `memory-bank/progress.md` with a short Phase 5B completion note
+- [ ] Update `memory-bank/activeContext.md` to move Design System Phase 5B from proposed to done
+- [ ] Update this file’s tracking boxes
+- [ ] Add PR note listing any intentionally deferred issues found during shell audit
 
-Deliverables:
+## Definition Of Done
 
-- formal tie-break behavior
-- sudden-death decision if still desired
-- result page polish for winner/loser clarity
-- rematch decision point captured, even if full rematch is deferred
+- Shared shell cleanup is complete
+- GitNexus high-risk shell symbol was changed in isolation
+- No backend or transport files changed
+- No product-scope expansion happened
+- Web build, lint, and typecheck all pass
+- Audit scripts were reviewed manually
+- Manual smoke matrix is checked off
+- Progress docs are updated
 
-Done when:
+## Explicit Deferrals After This PR
 
-- endgame rules are explicit
-- result UI reflects real outcome logic cleanly
+Do not pull these into the current PR. They are real gaps, but they deserve their own PRs.
 
-Verify:
+### PR 2: `GamePage` Live Opponents Panel
 
-- game-core tests
-- API tests if persistence changes
-- web build
+Reason:
 
-## Phase 10: Spectator And Late-Join Baseline
+- `apps/web/src/app/[locale]/game/[matchId]/page.tsx:366-443` still uses hardcoded sidebar data
+- GitNexus shows `GamePage` has low upstream risk, so this is a good isolated frontend follow-up PR
 
-Goal:
-Unlock drop-in spectating after the core player flow is trustworthy.
+Success target:
 
-Target areas:
+- Replace mock opponent list with real store-backed match/player data
+- Keep shell untouched
 
-- shared event contracts
-- room/match handlers
-- game/result/lobby pages
-- optional separate spectator channel design
+### PR 3: Drop-In Spectating Backend Entry
 
-Deliverables:
+Reason:
 
-- late join policy
-- spectator entry path
-- eliminated-player spectator transition baseline
-- minimal spectator UI, not full micro-interaction polish yet
+- `RoomService.joinRoom` still rejects non-`WAITING` rooms at `room.service.ts:103-105`
+- GitNexus shows `joinRoom` touches `RoomHandler`, `RoomController`, and gateway join flows
 
-Done when:
+Success target:
 
-- ongoing matches can be observed without breaking player flow
-- player and spectator responsibilities are distinct
+- Allow late join to ongoing or finished room as spectator
+- Keep this PR backend-contract-first
 
-Verify:
+### PR 4: Spectator Transport And UI
 
-- API/socket tests
-- web build
-- manual multiplayer smoke test
+Reason:
 
-## Deferred Until After Core MVP Loop
+- Late join and spectator transport should not be bundled with join policy
+- This likely touches shared events, socket store, and game/result UI
 
-Keep these out of the critical path unless a blocking requirement appears:
+Success target:
 
-- device fingerprint enforcement
-- profanity moderation pipeline
-- admin kill-switch message sanitizer (ROOM_TERMINATED payload)
-- admin kill switch expansion
-- mass-spectator SSE isolation
-- deep optimistic UI retry/idempotency
-- full accessibility audit pass
-- asset preloading system
-- bot/demo system
+- Dedicated spectator transport path
+- Clear player vs spectator responsibilities
 
-## Phase Acceptance Checklist
+### PR 5: In-Match AFK Policy
 
-Every phase must finish with:
+Reason:
 
-- code changes limited to that phase’s concern
-- updated tests for touched behavior
-- build passes for touched packages
-- no cross-cutting cleanup justified only by taste
-- brief note in `memory-bank/progress.md` after implementation
+- `PresenceService.sweep` currently handles lobby stale users, not in-match round-miss policy
+- This crosses domain rules, backend orchestration, and product semantics
 
-## Recommended PR Order
+Pending decision:
 
-1. Phase 1
-2. Phase 2
-3. Phase 3
-4. Phase 4
-5. Phase 5
-6. Phase 6
-7. Phase 7
-8. Phase 8
-9. Phase 9
-10. Phase 10
+- auto-`ELIMINATED` or auto-`SPECTATOR` after missed rounds
+
+### PR 6: Optimistic Answer Rollback
+
+Reason:
+
+- Current answer lock-in exists, but idempotency and rejection rollback are still incomplete
+
+Success target:
+
+- idempotency key
+- rollback UX
+- retry strategy
+
+### PR 7: Home Page Shell Gradient Cleanup
+
+Reason:
+
+- `apps/web/src/app/[locale]/page.tsx:193` paints the same redundant `bg-gradient-to-br from-[#FFF0F5] via-[#E6E6FA] to-[#E0F2FE]` shell background as the body already owns.
+- Home page does **not** use `AppShellLayout`, so it sits outside the shell cleanup scope of this PR.
+- Leaving it untouched keeps this PR strictly within the shared shell layer; the home page visual closeout becomes its own follow-up.
+
+Success target:
+
+- Drop the redundant gradient class from the home `<main>` and let `body` own the background.
+- Keep the floating candy/donut/emoji decorative layer intact.
+- Stay a one-file change unless the audit surfaces a real reason to widen.
+
+## Notes For Whoever Executes This Plan
+
+- The biggest trap is scope creep from shared shell files into unrelated route cleanup
+- The second biggest trap is treating stale docs as truth; `styles/components.css` is already gone
+- The third biggest trap is accidentally fixing `GamePage` mock data while inside the shell PR
+- If Phase 4 finds a real route-level visual bug that is not caused by shell cleanup, document it and defer it
