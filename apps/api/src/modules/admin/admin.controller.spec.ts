@@ -80,7 +80,7 @@ describe("AdminController", () => {
   });
 
   describe("terminateRoom", () => {
-    it("delegates to AdminService.terminateRoom with the roomId (no message)", async () => {
+    it("rejects when message is provided (fail-fast until sanitizer lands)", async () => {
       // Note: `message` is currently rejected at the schema boundary
       // because the shared sanitizer pipeline is not yet wired
       // (see terminate-room.dto.ts and plan.md §501). Once it lands,

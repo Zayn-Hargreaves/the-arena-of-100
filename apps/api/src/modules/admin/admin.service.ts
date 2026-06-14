@@ -399,7 +399,7 @@ export class AdminService {
         1000,
       );
       cursor = next;
-      if (keys.length) keysToDelete.push(...keys);
+      if (keys.length > 0) keysToDelete.push(...keys);
     } while (cursor !== "0");
 
     if (matchId) {

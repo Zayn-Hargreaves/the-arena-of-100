@@ -31,7 +31,7 @@ export const AppShellLayout: React.FC<AppShellLayoutProps> = ({
   }, [connect, isConnected]);
 
   return (
-    <div className="flex flex-col md:flex-row min-h-screen md:h-screen md:max-h-screen bg-gradient-to-br from-pink-50 via-blue-50 to-indigo-50 text-candy-ink overflow-hidden relative font-sans antialiased">
+    <div className="flex flex-col md:flex-row min-h-screen md:h-screen md:max-h-screen text-candy-ink overflow-hidden relative font-sans antialiased">
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-[60] focus:px-4 focus:py-3 focus:rounded-2xl focus:bg-white focus:text-candy-ink focus:border-[3px] focus:border-candy-ink focus:shadow-[4px_4px_0_0_#2B2D42] focus:font-display focus:font-black focus:text-xs focus:uppercase"
