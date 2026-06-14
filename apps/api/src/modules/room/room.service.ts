@@ -11,6 +11,7 @@ import {
   GAME_CONFIG,
   ErrorCode,
   RoomError,
+  type JoinMode,
 } from "@arena/shared";
 
 // Atomic Lua script that decrements a player-count counter and clamps the
@@ -89,7 +90,21 @@ export class RoomService {
     return room;
   }
 
-  // Join room by code
+  // Join room by code.
+  //
+  // Behaviour matrix (drop-in spectating baseline):
+  //
+  //   room.status      | user already in players? | outcome
+  //   ------------------+--------------------------+--------------------
+  //   WAITING          | no                       | join as PLAYER
+  //   WAITING          | yes                      | no-op rejoin PLAYER
+  //   COUNTDOWN/STARTING| *                       | reject ROOM_ALREADY_STARTED
+  //   IN_GAME/FINISHED | yes (reconnect)          | rejoin as PLAYER
+  //   IN_GAME/FINISHED | no                       | join as SPECTATOR (no DB write)
+  //
+  // The user-record check runs BEFORE the status check so that an
+  // in-match player who disconnects and rejoins the room code keeps
+  // their PLAYER role even if the room has progressed past WAITING.
   async joinRoom(roomCode: string, userId: string) {
     const room = await this.prisma.room.findUnique({
       where: { code: roomCode },
@@ -100,17 +115,28 @@ export class RoomService {
       throw new RoomError(ErrorCode.ROOM_NOT_FOUND);
     }
 
-    if (room.status !== RoomStatus.WAITING) {
-      throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
+    const isExistingPlayer = room.players.some((p) => p.userId === userId);
+
+    // 1. Reconnect / no-op rejoin path — works in any status, since the
+    //    user already has a RoomPlayer row.
+    if (isExistingPlayer) {
+      this.logger.log(
+        `Player ${userId} (re)joined room ${roomCode} (status=${room.status})`,
+      );
+      const updatedRoom = await this.getRoom(room.id);
+      return {
+        ...updatedRoom,
+        joined: false,
+        joinedAs: "PLAYER" as JoinMode,
+      };
     }
 
-    if (room.players.length >= room.maxPlayers) {
-      throw new RoomError(ErrorCode.ROOM_FULL);
-    }
+    // 2. WAITING — normal player join. Enforce maxPlayers.
+    if (room.status === RoomStatus.WAITING) {
+      if (room.players.length >= room.maxPlayers) {
+        throw new RoomError(ErrorCode.ROOM_FULL);
+      }
 
-    // Check if already in room
-    const isAlreadyInRoom = room.players.some((p) => p.userId === userId);
-    if (!isAlreadyInRoom) {
       await this.prisma.roomPlayer.create({
         data: {
           roomId: room.id,
@@ -134,15 +160,40 @@ export class RoomService {
         cached.playerCount = newCount;
         await this.redis.setJSON(`room:${room.id}`, cached, 3600);
       }
+
+      this.logger.log(`Player ${userId} joined room ${roomCode}`);
+
+      const updatedRoom = await this.getRoom(room.id);
+      return {
+        ...updatedRoom,
+        joined: true,
+        joinedAs: "PLAYER" as JoinMode,
+      };
     }
 
-    this.logger.log(`Player ${userId} joined room ${roomCode}`);
+    // 3. IN_GAME / FINISHED — drop-in spectator path. No DB write, no
+    //    playerCount bump, no RoomPlayer row. The user just receives a
+    //    read-only view of the match (or the result if FINISHED).
+    if (
+      room.status === RoomStatus.IN_GAME ||
+      room.status === RoomStatus.FINISHED
+    ) {
+      this.logger.log(
+        `Spectator ${userId} joined room ${roomCode} (status=${room.status})`,
+      );
+      const updatedRoom = await this.getRoom(room.id);
+      return {
+        ...updatedRoom,
+        joined: false,
+        joinedAs: "SPECTATOR" as JoinMode,
+      };
+    }
 
-    const updatedRoom = await this.getRoom(room.id);
-    return {
-      ...updatedRoom,
-      joined: !isAlreadyInRoom,
-    };
+    // 4. COUNTDOWN / STARTING — the match is about to launch; spectators
+    //    would arrive too late to see anything useful, so we reject with
+    //    the same error a stale join attempt would have hit before this
+    //    PR.
+    throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
   }
 
   // Leave room

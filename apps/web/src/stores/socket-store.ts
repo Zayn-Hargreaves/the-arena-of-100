@@ -9,6 +9,7 @@ import {
   ClientEvent,
   ServerEvent,
   RoomStatus,
+  type JoinMode,
   type RoomCreatedPayload,
   type SnapshotPayload,
   type AnswerResultPayload,
@@ -54,6 +55,13 @@ export interface Room {
   currentMatchId?: string | null;
   countdownEndsAt?: number | null;
   players: Player[];
+  // Drop-in spectating baseline: which role the current socket joined
+  // as. PLAYER = the user is a participant in the match. SPECTATOR =
+  // the user is a read-only late-joiner (joined an IN_GAME or FINISHED
+  // room). The lobby and game pages read this to render the spectator
+  // UI and to block answer submission on the client side (the server
+  // still enforces the gate independently).
+  joinMode: JoinMode;
 }
 
 interface Match {
@@ -256,6 +264,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           roomType: data.roomType,
           currentMatchId: data.currentMatchId,
           countdownEndsAt: null,
+          // The host is always a player.
+          joinMode: data.joinedAs ?? "PLAYER",
           players: data.players.map((player) => ({
             id: player.playerId,
             name: player.playerName,
@@ -279,6 +289,9 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           roomType: data.roomType,
           currentMatchId: data.currentMatchId,
           countdownEndsAt: data.countdownEndsAt,
+          // Default to PLAYER for legacy servers that may not include
+          // the field, then override with whatever the server sent.
+          joinMode: data.joinedAs ?? "PLAYER",
           players: data.players.map((player) => ({
             id: player.playerId,
             name: player.playerName,
@@ -288,7 +301,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           })),
         },
       });
-      console.log("🏠 Room joined:", data.code);
+      console.log("🏠 Room joined:", data.code, "as", data.joinedAs);
     });
 
     newSocket.on(ServerEvent.PLAYER_JOINED, (data: RoomPlayerJoinedPayload) => {

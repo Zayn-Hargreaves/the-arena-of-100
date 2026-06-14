@@ -180,6 +180,7 @@ describe("RoomHandler", () => {
         status: RoomStatus.WAITING,
         currentMatchId: null,
         joined: true,
+        joinedAs: "PLAYER",
         players: [
           {
             userId: "u1",
@@ -208,6 +209,7 @@ describe("RoomHandler", () => {
         roomStatus: RoomStatus.WAITING,
         currentMatchId: null,
         countdownEndsAt: null,
+        joinedAs: "PLAYER",
         players: [
           {
             playerId: "u1",
@@ -224,6 +226,50 @@ describe("RoomHandler", () => {
       );
     });
 
+    it("joins IN_GAME room as SPECTATOR without broadcasting PLAYER_JOINED or triggering countdown", async () => {
+      // Drop-in spectating baseline: a late-joiner must not look like a
+      // new participant to the existing players, and must not start the
+      // public-room auto-start countdown.
+      vi.mocked(roomService.joinRoom).mockResolvedValue({
+        id: "r1",
+        code: "ABC123",
+        hostId: "u9",
+        type: "PUBLIC",
+        status: RoomStatus.IN_GAME,
+        currentMatchId: "m1",
+        joined: false,
+        joinedAs: "SPECTATOR",
+        players: [
+          {
+            userId: "u2",
+            user: { username: "Bob" },
+          },
+        ],
+      } as any);
+
+      await handler.handleJoinRoom(client, { roomCode: "ABC123" });
+
+      // Spectator still joins the Socket.io room channel so they can
+      // receive ROUND_STARTED / ROUND_ENDED broadcasts.
+      expect(client.join).toHaveBeenCalledWith("room:r1");
+      // But no PLAYER_JOINED broadcast to the rest of the room.
+      expect(client.to).not.toHaveBeenCalled();
+      // And no public-room countdown kick-off.
+      expect(gameLoopService.maybeStartPublicCountdown).not.toHaveBeenCalled();
+      // The ROOM_JOINED payload must tell the client they are a
+      // spectator so the UI can render the read-only banner.
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ROOM_JOINED,
+        expect.objectContaining({
+          roomId: "r1",
+          code: "ABC123",
+          roomStatus: RoomStatus.IN_GAME,
+          currentMatchId: "m1",
+          joinedAs: "SPECTATOR",
+        }),
+      );
+    });
+
     it("does not emit PLAYER_JOINED when user is already in room", async () => {
       vi.mocked(roomService.joinRoom).mockResolvedValue({
         id: "r1",
@@ -233,6 +279,7 @@ describe("RoomHandler", () => {
         status: RoomStatus.WAITING,
         currentMatchId: null,
         joined: false,
+        joinedAs: "PLAYER",
         players: [
           {
             userId: "u1",
@@ -330,6 +377,7 @@ describe("RoomHandler", () => {
         status: RoomStatus.WAITING,
         currentMatchId: null,
         joined: true,
+        joinedAs: "PLAYER",
         players: [
           {
             userId: "u2",
@@ -368,6 +416,42 @@ describe("RoomHandler", () => {
         expect.stringMatching(
           /Presence lookup failed for player u2 in room r1[\s\S]*Redis connection timeout/,
         ),
+      );
+    });
+
+    it("coerces non-Error rejected presence values to a string in the warn log", async () => {
+      // Branch coverage: when the rejected value is not an Error instance
+      // (e.g. a primitive thrown by a misbehaving Redis client mock), the
+      // handler's `String(error)` fallback must produce a useful warn
+      // message instead of crashing or producing "undefined".
+      vi.mocked(roomService.joinRoom).mockResolvedValue({
+        id: "r1",
+        code: "ABC123",
+        hostId: "u9",
+        type: "PUBLIC",
+        status: RoomStatus.WAITING,
+        currentMatchId: null,
+        joined: true,
+        joinedAs: "PLAYER",
+        players: [
+          {
+            userId: "u2",
+            user: { username: "Bob" },
+          },
+        ],
+      } as any);
+      vi.mocked(presenceService.isPresent).mockRejectedValueOnce(
+        "string thrown from upstream" as unknown as Error,
+      );
+      const logger = (
+        handler as unknown as { logger: { warn: ReturnType<typeof vi.fn> } }
+      ).logger;
+      const warnSpy = vi.spyOn(logger, "warn");
+
+      await handler.handleJoinRoom(client, { roomCode: "ABC123" });
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("string thrown from upstream"),
       );
     });
 

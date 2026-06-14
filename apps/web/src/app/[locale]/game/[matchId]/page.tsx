@@ -13,7 +13,7 @@ import { useRouter } from "@/i18n/routing";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useToast } from "@/hooks/use-toast";
-import { Users, ShieldAlert, Swords, LogOut, Trophy } from "lucide-react";
+import { Users, ShieldAlert, Swords, LogOut, Trophy, Eye } from "lucide-react";
 import { avatars } from "@/lib/avatars";
 
 interface GamePageProps {
@@ -36,9 +36,17 @@ export default function GamePage({ params }: GamePageProps) {
     isEliminated,
     roomTerminated,
     roomTerminationMessage,
+    room,
   } = useSocketStore();
   const t = useTranslations("Game");
   const tTermination = useTranslations("Game.termination");
+  const tSpectator = useTranslations("Game.dropInSpectator");
+
+  // Drop-in spectating baseline: a late-joiner entered the room as
+  // SPECTATOR and is viewing the match read-only. The server enforces
+  // the same gate independently (see MatchHandler.handleSubmitAnswer)
+  // — this derivation only drives the UI.
+  const isSpectator = room?.joinMode === "SPECTATOR";
 
   // Extract locale from pathname if not provided
   const currentLocale = locale || pathname.split("/")[1] || "vi";
@@ -201,6 +209,12 @@ export default function GamePage({ params }: GamePageProps) {
 
   const handleSelectAnswer = (option: string) => {
     if (roundCompleted) return;
+    // Drop-in spectating baseline: spectators cannot submit answers. The
+    // server enforces the same gate (MatchHandler.handleSubmitAnswer) so
+    // this is a UX-only short-circuit — a malicious client would still
+    // be rejected by the server, but we hide the interactive control
+    // entirely so the spectator UI stays read-only.
+    if (isSpectator) return;
     setSelectedAnswer(option);
 
     // Submit answer to socket-store
@@ -252,7 +266,7 @@ export default function GamePage({ params }: GamePageProps) {
     <AppShellLayout>
       {isEliminated && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-none">
-          <div className="jelly-card p-6 rounded-3xl border-[4px] border-candy-ink bg-white shadow-[8px_8px_0_0_#2B2D42] text-center space-y-3 animate-bounce-in pointer-events-auto">
+          <div className="jelly-card p-6 rounded-3xl border-[4px] border-candy-ink bg-white shadow-[8px_8px_0_0_2B2D42] text-center space-y-3 animate-bounce-in pointer-events-auto">
             <div className="flex justify-center">
               <Trophy className="w-12 h-12 text-candy-yellow animate-bounce stroke-[2] fill-candy-ink/10" />
             </div>
@@ -261,6 +275,29 @@ export default function GamePage({ params }: GamePageProps) {
             </h2>
             <p className="font-sans text-sm font-bold text-candy-ink/70">
               {t("eliminatedOverlay.subtitle")}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Drop-in spectator banner: a thin top-of-page strip telling the
+          user they joined as a late spectator. We keep this lighter than
+          the isEliminated fullscreen overlay because the spectator still
+          has useful work to do (read the live question, follow the
+          round, plan to leave). It also surfaces below the leave CTA
+          so the user can leave at any time without dismissing first. */}
+      {isSpectator && !isEliminated && (
+        <div
+          data-testid="game-spectator-banner"
+          className="max-w-6xl mx-auto w-full mb-4 mt-2 px-4 py-3 rounded-2xl border-[3px] border-candy-ink bg-candy-blue/15 flex items-start gap-3 shadow-[3px_3px_0_0_#2B2D42]"
+        >
+          <Eye className="w-5 h-5 text-candy-blue stroke-[2.5] shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            <h3 className="font-display font-black text-sm text-candy-ink uppercase tracking-wider">
+              {tSpectator("bannerTitle")}
+            </h3>
+            <p className="text-xs font-semibold text-candy-ink/70 leading-relaxed">
+              {tSpectator("bannerBody")}
             </p>
           </div>
         </div>
@@ -329,15 +366,24 @@ export default function GamePage({ params }: GamePageProps) {
               </h2>
             </div>
 
-            {/* Answer Options Grid or Spectator View */}
-            {isEliminated ? (
+            {/* Answer Options Grid or Spectator View. The isEliminated
+                branch is the original spectator-on-elimination UI. The
+                isSpectator branch is the new drop-in spectator path
+                (late-joiner). Both render the same read-only block but
+                with different copy so the user knows why they cannot
+                answer. */}
+            {isEliminated || isSpectator ? (
               <div className="p-8 rounded-3xl border-[3.5px] border-candy-ink bg-candy-cloud text-candy-ink shadow-[6px_6px_0_0_#2B2D42] flex flex-col items-center justify-center min-h-[220px] text-center space-y-4">
                 <Swords className="w-12 h-12 text-candy-red stroke-[2]" />
                 <h3 className="font-display font-black text-xl uppercase tracking-wide">
-                  {t("spectatorMode.title")}
+                  {isSpectator
+                    ? tSpectator("bannerTitle")
+                    : t("spectatorMode.title")}
                 </h3>
                 <p className="font-sans text-sm text-candy-ink/70">
-                  {t("spectatorMode.subtitle")}
+                  {isSpectator
+                    ? tSpectator("bannerBody")
+                    : t("spectatorMode.subtitle")}
                 </p>
               </div>
             ) : (

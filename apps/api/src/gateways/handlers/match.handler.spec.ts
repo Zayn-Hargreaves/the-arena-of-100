@@ -158,7 +158,10 @@ describe("MatchHandler", () => {
     it("submits answer and emits ANSWER_RESULT", async () => {
       const mockMachine = {
         getCurrentRound: vi.fn().mockReturnValue({ roundNo: 1 }),
-        getState: vi.fn().mockReturnValue({ roomId: "r1" }),
+        getState: vi.fn().mockReturnValue({
+          roomId: "r1",
+          players: new Map([["u1", { id: "u1" }]]),
+        }),
         submitAnswer: vi
           .fn()
           .mockReturnValue({ isCorrect: true, responseTimeMs: 500 }),
@@ -186,6 +189,40 @@ describe("MatchHandler", () => {
         roundNo: 1,
         isCorrect: true,
         responseTimeMs: 500,
+      });
+    });
+
+    it("rejects submitAnswer from a non-player (drop-in spectator gate)", async () => {
+      // Drop-in spectating baseline: a user that is not in the match
+      // roster must NOT be allowed to submit answers even if they emit
+      // SUBMIT_ANSWER. This is the server-side counterpart of the
+      // client-side UI gate; the server is the source of truth.
+      const mockMachine = {
+        getCurrentRound: vi.fn().mockReturnValue({ roundNo: 1 }),
+        getState: vi.fn().mockReturnValue({
+          roomId: "r1",
+          players: new Map([["u2", { id: "u2" }]]),
+        }),
+        submitAnswer: vi.fn(),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+
+      await handler.handleSubmitAnswer(client, {
+        matchId: "m1",
+        answer: "A",
+        roundNo: 1,
+        clientTimestamp: 1234567890,
+      });
+
+      // The state machine must never be invoked.
+      expect(mockMachine.submitAnswer).not.toHaveBeenCalled();
+      // The client must receive a typed error so the UI can surface a
+      // localized message.
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.SPECTATOR_CANNOT_ANSWER,
+        message: ERROR_MESSAGES[ErrorCode.SPECTATOR_CANNOT_ANSWER],
       });
     });
 
@@ -221,6 +258,10 @@ describe("MatchHandler", () => {
 
     it("emits error when submitAnswer throws", async () => {
       const mockMachine = {
+        getState: vi.fn().mockReturnValue({
+          roomId: "r1",
+          players: new Map([["u1", { id: "u1" }]]),
+        }),
         submitAnswer: vi.fn().mockImplementation(() => {
           throw new Error(ErrorCode.ALREADY_ANSWERED);
         }),
@@ -244,6 +285,10 @@ describe("MatchHandler", () => {
 
     it("handles non-Error thrown values", async () => {
       const mockMachine = {
+        getState: vi.fn().mockReturnValue({
+          roomId: "r1",
+          players: new Map([["u1", { id: "u1" }]]),
+        }),
         submitAnswer: vi.fn().mockImplementation(() => {
           throw 42;
         }),
@@ -270,7 +315,10 @@ describe("MatchHandler", () => {
       const roomId = "r1";
       const mockMachine = {
         getCurrentRound: vi.fn().mockReturnValue({ roundNo: 1 }),
-        getState: vi.fn().mockReturnValue({ roomId }),
+        getState: vi.fn().mockReturnValue({
+          roomId,
+          players: new Map([["u1", { id: "u1" }]]),
+        }),
         submitAnswer: vi
           .fn()
           .mockReturnValue({ isCorrect: true, responseTimeMs: 500 }),
@@ -311,6 +359,46 @@ describe("MatchHandler", () => {
 
       expect(mockMachine.getSnapshot).toHaveBeenCalledWith(0);
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.SNAPSHOT, snapshot);
+    });
+
+    it("allows a non-player user to request a snapshot (drop-in spectator path)", async () => {
+      // Drop-in spectating baseline: handleRequestSnapshot is the
+      // entry point spectators use after joining an IN_GAME or
+      // FINISHED room. Unlike handleSubmitAnswer, this method must
+      // remain open to non-players — that is the whole point of the
+      // baseline. The snapshot is client-safe (no correctAnswer
+      // leakage) so this is a deliberate allow-list.
+      const snapshot = {
+        matchId: "m1",
+        status: "ROUND_ACTIVE",
+        currentQuestion: { id: "q1", content: "Q?", options: ["A", "B"] },
+      };
+      const mockMachine = { getSnapshot: vi.fn().mockReturnValue(snapshot) };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+
+      // No roster check — the handler never inspects the player map
+      // here. We simply assert that the snapshot flows through.
+      await handler.handleRequestSnapshot(client, {
+        matchId: "m1",
+        lastSeenSeqNo: 0,
+      });
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.SNAPSHOT, snapshot);
+      // Regression guard: the snapshot payload must NOT contain a
+      // correctAnswer field. If a future change starts leaking it,
+      // this assertion will fail loudly.
+      const emitted = (client.emit as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c) => c[0] === ServerEvent.SNAPSHOT)
+        .map((c) => c[1])[0] as Record<string, unknown>;
+      expect(emitted).not.toHaveProperty("correctAnswer");
+      if (
+        emitted.currentQuestion &&
+        typeof emitted.currentQuestion === "object"
+      ) {
+        expect(emitted.currentQuestion).not.toHaveProperty("correctAnswer");
+      }
     });
 
     it("emits error when match not found", async () => {

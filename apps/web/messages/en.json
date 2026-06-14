@@ -150,6 +150,12 @@
     "termination": {
       "toastTitle": "Room was closed",
       "toastDefault": "The room was closed by an administrator. You will be returned to the home page."
+    },
+    "dropInSpectator": {
+      "bannerTitle": "SPECTATOR MODE",
+      "bannerBody": "You joined this match as a late spectator. Answer submission is disabled — you can only watch.",
+      "infoTitle": "Drop-in spectating",
+      "infoBody": "This match started before you joined. You are viewing it as a spectator in real time."
     }
   },
   "profile": {
@@ -302,6 +308,14 @@
       "toastTitle": "Room was closed",
       "toastDefault": "The room was closed by an administrator. You will be returned to the home page.",
       "redirecting": "Returning you to the home page..."
+    },
+    "spectator": {
+      "bannerTitle": "Spectator mode",
+      "bannerBody": "This match is already in progress. You are viewing it as a spectator — you cannot submit answers.",
+      "watchButton": "Watch the match",
+      "resultButton": "View result",
+      "toastTitle": "Joined as a spectator",
+      "toastDescription": "You are watching an in-progress match. Answer submission is disabled."
     }
   }
 }

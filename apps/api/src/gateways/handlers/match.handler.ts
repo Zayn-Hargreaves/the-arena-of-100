@@ -75,6 +75,15 @@ export class MatchHandler extends BaseHandler {
       );
       if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
 
+      // Drop-in spectating baseline: gate answer submission on the
+      // server so a late-joiner who is not a registered player in the
+      // match cannot submit answers even if they emit SUBMIT_ANSWER.
+      // The state machine is the source of truth for the player roster.
+      const isPlayerInMatch = stateMachine.getState().players.has(userId);
+      if (!isPlayerInMatch) {
+        throw new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER);
+      }
+
       const serverTimestamp = Date.now();
       const result = stateMachine.submitAnswer(
         userId,
@@ -128,6 +137,14 @@ export class MatchHandler extends BaseHandler {
       );
       if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
 
+      // Drop-in spectating baseline: spectators use this exact path to
+      // hydrate the match UI after joining an IN_GAME or FINISHED room.
+      // The snapshot is already client-safe: MatchStateMachine.getSnapshot
+      // returns only the question (no correctAnswer), so no answer leak
+      // is possible through this endpoint. We intentionally do NOT check
+      // whether the requester is in the player roster here, because
+      // spectators are exactly the new caller profile that the baseline
+      // unlocks.
       const snapshot = stateMachine.getSnapshot(payload.lastSeenSeqNo);
       client.emit(ServerEvent.SNAPSHOT, snapshot);
 

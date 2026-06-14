@@ -61,7 +61,7 @@ describe("RoomService", () => {
   });
 
   describe("joinRoom", () => {
-    it("joins room successfully", async () => {
+    it("joins WAITING room successfully as PLAYER", async () => {
       const mockRoom = {
         id: "r1",
         code: "ABC",
@@ -78,7 +78,7 @@ describe("RoomService", () => {
 
       expect(prisma.roomPlayer.create).toHaveBeenCalled();
       expect(redis.sadd).toHaveBeenCalledWith("room:r1:players", "u2");
-      expect(result).toEqual({ id: "r1", joined: true });
+      expect(result).toEqual({ id: "r1", joined: true, joinedAs: "PLAYER" });
     });
 
     it("throws ROOM_NOT_FOUND when room does not exist", async () => {
@@ -88,18 +88,127 @@ describe("RoomService", () => {
       });
     });
 
-    it("throws ROOM_ALREADY_STARTED when room is in game", async () => {
+    it("joins IN_GAME room as SPECTATOR (drop-in spectating baseline)", async () => {
       vi.mocked(prisma.room.findUnique).mockResolvedValue({
+        id: "r1",
+        code: "ABC",
         status: RoomStatus.IN_GAME,
+        players: [{ userId: "u1" }],
+        maxPlayers: 100,
+      } as any);
+      vi.spyOn(service, "getRoom").mockResolvedValue({ id: "r1" } as any);
+
+      const result = await service.joinRoom("ABC", "u9");
+
+      // Spectator must NOT trigger any DB write or playerCount bump —
+      // they are a transient read-only viewer.
+      expect(prisma.roomPlayer.create).not.toHaveBeenCalled();
+      expect(redis.sadd).not.toHaveBeenCalled();
+      expect(redis.incr).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        id: "r1",
+        joined: false,
+        joinedAs: "SPECTATOR",
+      });
+    });
+
+    it("joins FINISHED room as SPECTATOR (drop-in spectating baseline)", async () => {
+      vi.mocked(prisma.room.findUnique).mockResolvedValue({
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.FINISHED,
+        players: [{ userId: "u1" }],
+        maxPlayers: 100,
+      } as any);
+      vi.spyOn(service, "getRoom").mockResolvedValue({ id: "r1" } as any);
+
+      const result = await service.joinRoom("ABC", "u9");
+
+      expect(prisma.roomPlayer.create).not.toHaveBeenCalled();
+      expect(redis.sadd).not.toHaveBeenCalled();
+      expect(redis.incr).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        id: "r1",
+        joined: false,
+        joinedAs: "SPECTATOR",
+      });
+    });
+
+    it("keeps existing player as PLAYER on reconnect to IN_GAME room", async () => {
+      // Regression: a player whose socket dropped mid-match must come
+      // back as a player, not be demoted to spectator. The user-record
+      // check runs before the status check.
+      vi.mocked(prisma.room.findUnique).mockResolvedValue({
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.IN_GAME,
+        players: [{ userId: "u1" }],
+        maxPlayers: 100,
+      } as any);
+      vi.spyOn(service, "getRoom").mockResolvedValue({ id: "r1" } as any);
+
+      const result = await service.joinRoom("ABC", "u1");
+
+      // Reconnect is a no-op for the player table.
+      expect(prisma.roomPlayer.create).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        id: "r1",
+        joined: false,
+        joinedAs: "PLAYER",
+      });
+    });
+
+    it("keeps existing player as PLAYER on reconnect to FINISHED room", async () => {
+      vi.mocked(prisma.room.findUnique).mockResolvedValue({
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.FINISHED,
+        players: [{ userId: "u1" }],
+        maxPlayers: 100,
+      } as any);
+      vi.spyOn(service, "getRoom").mockResolvedValue({ id: "r1" } as any);
+
+      const result = await service.joinRoom("ABC", "u1");
+
+      expect(result).toEqual({
+        id: "r1",
+        joined: false,
+        joinedAs: "PLAYER",
+      });
+    });
+
+    it("rejects COUNTDOWN join with ROOM_ALREADY_STARTED", async () => {
+      // COUNTDOWN is a transient state right before launch; spectators
+      // would arrive too late to be useful so we keep the strict reject
+      // that pre-PR behaviour already had.
+      vi.mocked(prisma.room.findUnique).mockResolvedValue({
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.COUNTDOWN,
         players: [],
         maxPlayers: 100,
       } as any);
-      await expect(service.joinRoom("ABC", "u1")).rejects.toMatchObject({
+
+      await expect(service.joinRoom("ABC", "u9")).rejects.toMatchObject({
         code: ErrorCode.ROOM_ALREADY_STARTED,
       });
     });
 
-    it("throws ROOM_FULL when at capacity", async () => {
+    it("rejects STARTING join with ROOM_ALREADY_STARTED", async () => {
+      vi.mocked(prisma.room.findUnique).mockResolvedValue({
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.STARTING,
+        players: [],
+        maxPlayers: 100,
+      } as any);
+
+      await expect(service.joinRoom("ABC", "u9")).rejects.toMatchObject({
+        code: ErrorCode.ROOM_ALREADY_STARTED,
+      });
+    });
+
+    it("throws ROOM_FULL when at capacity (WAITING)", async () => {
       vi.mocked(prisma.room.findUnique).mockResolvedValue({
         status: RoomStatus.WAITING,
         maxPlayers: 1,
@@ -110,7 +219,7 @@ describe("RoomService", () => {
       });
     });
 
-    it("skips creating roomPlayer if already in room", async () => {
+    it("no-op rejoin for an existing player in WAITING room returns PLAYER", async () => {
       const mockRoom = {
         id: "r1",
         code: "ABC",
@@ -124,7 +233,7 @@ describe("RoomService", () => {
       const result = await service.joinRoom("ABC", "u1");
 
       expect(prisma.roomPlayer.create).not.toHaveBeenCalled();
-      expect(result).toEqual({ id: "r1", joined: false });
+      expect(result).toEqual({ id: "r1", joined: false, joinedAs: "PLAYER" });
     });
   });
 
