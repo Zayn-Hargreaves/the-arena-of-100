@@ -9,6 +9,7 @@ import {
   getRoomChannel,
   RoomError,
   ErrorCode,
+  type RoomPlayerLeftPayload,
 } from "@arena/shared";
 import { MatchService } from "./match.service";
 import { QuestionService } from "../question/question.service";
@@ -1011,28 +1012,26 @@ export class GameLoopService implements OnModuleInit {
       // the surrounding timer callback would log the error and move
       // on — we want a hard failure that operators notice.
       try {
-        // 4. Save the round row to get the roundId for the answer rows.
+        // 4. Save the round row + all answers atomically. The single
+        //    $transaction means a failure on the answer batch rolls
+        //    back the round row too, so a retry after a process
+        //    restart (Redis still holds ROUND_ACTIVE) does NOT hit
+        //    @@unique([matchId, roundNo]) with a P2002 — previously
+        //    this could permanently stall the match.
         const currentRoundForSave = stateMachine.getCurrentRound()!;
-        const roundRecord = await this.matchService.saveRound(
+        await this.matchService.saveRoundAndAnswers(
           matchId,
           state.currentRoundNo,
           currentRoundForSave.question.id,
+          Array.from(currentRoundForSave.answers.entries()).map(
+            ([playerId, answer]) => ({
+              userId: playerId,
+              answer: answer.answer,
+              isCorrect: answer.isCorrect,
+              responseTimeMs: answer.responseTimeMs,
+            }),
+          ),
         );
-
-        // 5. Save all answers in a single batch.
-        const answersToSave = Array.from(
-          currentRoundForSave.answers.entries(),
-        ).map(([playerId, answer]) => ({
-          matchId,
-          roundId: roundRecord.id,
-          userId: playerId,
-          answer: answer.answer,
-          isCorrect: answer.isCorrect,
-          responseTimeMs: answer.responseTimeMs,
-        }));
-        if (answersToSave.length > 0) {
-          await this.matchService.saveAnswers(answersToSave);
-        }
       } catch (dbError) {
         // H3 fix: a DB failure here must not silently advance the
         // state machine. We log the error at error level (operators
@@ -1355,13 +1354,23 @@ export class GameLoopService implements OnModuleInit {
     //    the match channel) so the lobby view and the in-match view
     //    stay in sync. FINISHED matches also receive this so spectators
     //    can update their "players still here" badge.
+    //
+    //    The payload shape is the contract defined by
+    //    `RoomPlayerLeftPayload` — same as the lobby leave path in
+    //    RoomHandler.handleLeaveRoom. A previous version of this
+    //    emit added an extra `matchId` field, which was inconsistent
+    //    with the type and would silently allow downstream clients
+    //    to depend on a field the lobby leave path doesn't supply.
+    //    We keep the room channel as the single broadcast surface;
+    //    subscribers that need to know which match is in flight can
+    //    read `match.currentMatchId` from the most recent SNAPSHOT
+    //    they already hold.
     const channel = getRoomChannel(roomId);
     server.to(channel).emit(ServerEvent.PLAYER_LEFT, {
       roomId,
-      matchId,
       playerId: userId,
       reason: "LEFT",
-    });
+    } satisfies RoomPlayerLeftPayload);
 
     this.logger.log(
       `Player ${userId} voluntarily left match ${matchId} (room ${roomId})`,

@@ -86,9 +86,9 @@ describe("GameLoopService", () => {
       getStateMachine: vi.fn().mockResolvedValue(stateMachine),
       persistStateMachine: vi.fn().mockResolvedValue(undefined),
       finishMatch: vi.fn().mockResolvedValue({}),
-      saveRound: vi.fn().mockResolvedValue({ id: "round-1" }),
-      saveAnswer: vi.fn().mockResolvedValue({}),
-      saveAnswers: vi.fn().mockResolvedValue({ count: 2 }),
+      // H2-style endRound fix: round + answers are persisted
+      // atomically in a single $transaction call.
+      saveRoundAndAnswers: vi.fn().mockResolvedValue({ id: "round-1" }),
     } as unknown as MatchService;
 
     questionService = {
@@ -337,20 +337,21 @@ describe("GameLoopService", () => {
     // Check state transitions
     expect(stateMachine.getState().status).toBe(MatchStatus.ROUND_RESULT);
 
-    // Check that round was evaluated
-    expect(matchService.saveRound).toHaveBeenCalledWith("match-1", 1, "q1");
-    expect(matchService.saveAnswers).toHaveBeenCalledWith(
+    // Check that round was evaluated. The round row + answer batch
+    // are now committed via a single $transaction-backed call;
+    // the answer map at the call site no longer carries roundId
+    // (it's stamped inside the transaction).
+    expect(matchService.saveRoundAndAnswers).toHaveBeenCalledWith(
+      "match-1",
+      1,
+      "q1",
       expect.arrayContaining([
         expect.objectContaining({
-          matchId: "match-1",
-          roundId: "round-1",
           userId: "p1",
           answer: "A",
           isCorrect: true,
         }),
         expect.objectContaining({
-          matchId: "match-1",
-          roundId: "round-1",
           userId: "p2",
           answer: "B",
           isCorrect: false,
@@ -806,11 +807,14 @@ describe("GameLoopService", () => {
 
       // The broadcast uses reason "LEFT" (not "DISCONNECTED") so the
       // UI can distinguish a voluntary leave from a socket drop.
+      // Payload now matches RoomPlayerLeftPayload exactly — the
+      // previous extra `matchId` field was dropped to keep the
+      // room-channel broadcast shape consistent with the lobby
+      // leave path in RoomHandler.handleLeaveRoom.
       expect(emitSpy).toHaveBeenCalledWith(
         ServerEvent.PLAYER_LEFT,
         expect.objectContaining({
           roomId: "room-1",
-          matchId: "match-1",
           playerId: "p1",
           reason: "LEFT",
         }),
@@ -837,12 +841,11 @@ describe("GameLoopService", () => {
 
       // No persist call when there's no state machine.
       expect(matchService.persistStateMachine).not.toHaveBeenCalled();
-      // Broadcast still happens with the FULL payload.
+      // Broadcast still happens with the same payload shape.
       expect(emitSpy).toHaveBeenCalledWith(
         ServerEvent.PLAYER_LEFT,
         expect.objectContaining({
           roomId: "room-1",
-          matchId: "match-gone",
           playerId: "p1",
           reason: "LEFT",
         }),
@@ -888,7 +891,7 @@ describe("GameLoopService", () => {
 
       // State machine should only have evaluated and saved once
       expect(stateMachine.getState().status).toBe(MatchStatus.ROUND_RESULT);
-      expect(matchService.saveRound).toHaveBeenCalledTimes(1);
+      expect(matchService.saveRoundAndAnswers).toHaveBeenCalledTimes(1);
     });
 
     it("should bypass endRound if match status is not ROUND_ACTIVE or round is not ACTIVE", async () => {
@@ -943,9 +946,10 @@ describe("GameLoopService", () => {
       endRoundSpy.mockRestore();
       const loggerErrorSpy2 = vi.spyOn((service as any).logger, "error");
 
-      // Re-mock saveRound and saveAnswers for endRound
-      (matchService.saveRound as any).mockResolvedValue({ id: "round-1" });
-      (matchService.saveAnswers as any).mockResolvedValue({ count: 2 });
+      // Re-mock saveRoundAndAnswers for endRound
+      (matchService.saveRoundAndAnswers as any).mockResolvedValue({
+        id: "round-1",
+      });
 
       // Set up state for endRound to succeed
       const players = [

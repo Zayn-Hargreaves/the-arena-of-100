@@ -14,6 +14,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
 
   catch(exception: unknown, host: ArgumentsHost): void {
+    // WsExceptionFilter owns WebSocket delivery. If we get called
+    // for a WS context, defer — otherwise we would attempt
+    // `host.switchToHttp()` on a socket and TypeError on
+    // `response.status().send()`.
+    if (host.getType() !== "http") {
+      return;
+    }
+
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<FastifyReply>();
     const request = ctx.getRequest<FastifyRequest>();

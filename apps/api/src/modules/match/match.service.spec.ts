@@ -838,6 +838,102 @@ describe("MatchService", () => {
   });
 
   // ============================================================
+  // Atomic round+answers persistence (endRound H2-style fix)
+  // ============================================================
+  describe("saveRoundAndAnswers", () => {
+    it("creates the round row and the batched answers in a single $transaction", async () => {
+      vi.mocked(prisma.matchRound.create).mockResolvedValue({
+        id: "round-1",
+      } as any);
+      vi.mocked(prisma.answer.createMany).mockResolvedValue({
+        count: 2,
+      } as any);
+
+      const answers = [
+        {
+          userId: "u1",
+          answer: "A",
+          isCorrect: true,
+          responseTimeMs: 500,
+        },
+        {
+          userId: "u2",
+          answer: "B",
+          isCorrect: false,
+          responseTimeMs: 800,
+        },
+      ];
+
+      const round = await service.saveRoundAndAnswers("m1", 1, "q1", answers);
+
+      expect(round).toEqual({ id: "round-1" });
+      // The single $transaction callback is the only thing that
+      // touches the DB; the order inside is round first, then
+      // answers, so the foreign-key roundId is established before
+      // any answer row references it.
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.matchRound.create).toHaveBeenCalledWith({
+        data: { matchId: "m1", roundNo: 1, questionId: "q1" },
+      });
+      expect(prisma.answer.createMany).toHaveBeenCalledWith({
+        data: [
+          {
+            matchId: "m1",
+            roundId: "round-1",
+            userId: "u1",
+            answer: "A",
+            isCorrect: true,
+            responseTimeMs: 500,
+          },
+          {
+            matchId: "m1",
+            roundId: "round-1",
+            userId: "u2",
+            answer: "B",
+            isCorrect: false,
+            responseTimeMs: 800,
+          },
+        ],
+      });
+    });
+
+    it("skips the answer batch but still creates the round row when answers is empty", async () => {
+      // An all-timeout round (nobody answered) is a normal case.
+      // The round row must still land so the round counter
+      // advances; the answer batch is a no-op.
+      vi.mocked(prisma.matchRound.create).mockResolvedValue({
+        id: "round-empty",
+      } as any);
+
+      const round = await service.saveRoundAndAnswers("m1", 3, "q3", []);
+
+      expect(round).toEqual({ id: "round-empty" });
+      expect(prisma.matchRound.create).toHaveBeenCalledTimes(1);
+      expect(prisma.answer.createMany).not.toHaveBeenCalled();
+    });
+
+    it("propagates a transaction rollback so partial writes are impossible", async () => {
+      // Regression test: a failure on the answer batch (e.g.
+      // transient Prisma error) MUST NOT leave a stray round row
+      // behind. The two operations live in one $transaction; the
+      // surrounding caller relies on this to avoid the
+      // "ROUND_EVALUATING + P2002 on retry" stall.
+      vi.mocked(prisma.matchRound.create).mockResolvedValue({
+        id: "round-x",
+      } as any);
+      vi.mocked(prisma.answer.createMany).mockRejectedValue(
+        new Error("write conflict"),
+      );
+
+      await expect(
+        service.saveRoundAndAnswers("m1", 1, "q1", [
+          { userId: "u1", answer: "A", isCorrect: true, responseTimeMs: 100 },
+        ]),
+      ).rejects.toThrow("write conflict");
+    });
+  });
+
+  // ============================================================
   // B2: finishMatch persists accumulated scores to DB
   // ============================================================
   describe("finishMatch (B2 — score persistence)", () => {

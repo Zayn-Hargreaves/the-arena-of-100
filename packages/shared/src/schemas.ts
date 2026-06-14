@@ -76,15 +76,20 @@ export type StartMatchPayload = z.infer<typeof StartMatchPayloadSchema>;
 // report.)
 const ANSWER_MAX_LENGTH = 1024;
 
-// clientTimestamp upper bound: ~1 year of slack beyond the moment the
-// schema module was loaded. Catches client clock-skew (browsers with
+// clientTimestamp upper bound: ~1 year of slack beyond the moment
+// the validation runs. Catches client clock-skew (browsers with
 // wildly wrong system clocks, mobile devices in poor-network states)
 // and obvious garbage payloads without rejecting the legitimate
 // "slightly out of sync" case. Number.MAX_SAFE_INTEGER was previously
-// used here, which allowed timestamps thousands of years in the past
-// or future — clearly a payload corruption indicator.
+// used here, which allowed timestamps thousands of years in the
+// past or future — clearly a payload corruption indicator.
+//
+// `.refine()` is required (not a frozen `Date.now() + OFFSET`
+// constant) so a long-running server process keeps using the
+// current clock as the reference, not a value baked in at module
+// load. Otherwise a server up >1 year would start rejecting every
+// legitimate SUBMIT_ANSWER whose timestamp is in the present.
 const CLIENT_TIMESTAMP_MAX_OFFSET_MS = 365 * 24 * 60 * 60 * 1000;
-const CLIENT_TIMESTAMP_MAX = Date.now() + CLIENT_TIMESTAMP_MAX_OFFSET_MS;
 
 export const SubmitAnswerPayloadSchema = z.object({
   matchId: idSchema,
@@ -95,7 +100,18 @@ export const SubmitAnswerPayloadSchema = z.object({
   // inconsistent with GAME_CONFIG.MAX_ROUNDS = 50.
   roundNo: z.number().int().positive().max(GAME_CONFIG.MAX_ROUNDS),
   answer: z.string().min(1).max(ANSWER_MAX_LENGTH),
-  clientTimestamp: z.number().int().nonnegative().max(CLIENT_TIMESTAMP_MAX),
+  clientTimestamp: z
+    .number()
+    .int()
+    .nonnegative()
+    .refine(
+      (ts) => ts >= Date.now() - CLIENT_TIMESTAMP_MAX_OFFSET_MS,
+      "clientTimestamp too far in the past",
+    )
+    .refine(
+      (ts) => ts <= Date.now() + CLIENT_TIMESTAMP_MAX_OFFSET_MS,
+      "clientTimestamp too far in the future",
+    ),
 });
 export type SubmitAnswerPayload = z.infer<typeof SubmitAnswerPayloadSchema>;
 

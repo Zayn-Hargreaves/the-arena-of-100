@@ -322,6 +322,50 @@ export class MatchService {
     });
   }
 
+  // Save the round row and its batched answers in a single Prisma
+  // $transaction. Used by GameLoopService.endRound so a partial
+  // failure (e.g. saveAnswers throws after saveRound commits) can
+  // never leave the database in a state where the round row exists
+  // without its answers — which would (a) silently lose answer
+  // history for the round and (b) trip @@unique([matchId, roundNo])
+  // on the next retry after a process restart (Redis still holds
+  // the pre-transition state, the timer re-fires endRound, and
+  // P2002 on the second create would permanently stall the match).
+  //
+  // Returns the created round row so the caller can correlate the
+  // result with subsequent answer writes (the roundId is also
+  // stamped onto every Answer row inside the transaction).
+  async saveRoundAndAnswers(
+    matchId: string,
+    roundNo: number,
+    questionId: string,
+    answers: Array<{
+      userId: string;
+      answer: string;
+      isCorrect: boolean;
+      responseTimeMs: number;
+    }>,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const round = await tx.matchRound.create({
+        data: { matchId, roundNo, questionId },
+      });
+      if (answers.length > 0) {
+        await tx.answer.createMany({
+          data: answers.map((a) => ({
+            matchId,
+            roundId: round.id,
+            userId: a.userId,
+            answer: a.answer,
+            isCorrect: a.isCorrect,
+            responseTimeMs: a.responseTimeMs,
+          })),
+        });
+      }
+      return round;
+    });
+  }
+
   // Save answer
   async saveAnswer(
     matchId: string,
