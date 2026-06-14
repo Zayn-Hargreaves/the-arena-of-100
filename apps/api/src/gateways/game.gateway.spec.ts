@@ -637,5 +637,138 @@ describe("GameGateway", () => {
 
       expect(mockMatchHandler.handleSubmitAnswer).toHaveBeenCalled();
     });
+
+    const emitAndExpectError = (
+      event: ClientEvent,
+      payload: any,
+      expectedErrorField: string,
+    ): Promise<void> => {
+      return new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(
+          () =>
+            reject(new Error(`Timeout waiting for ERROR event on ${event}`)),
+          1000,
+        );
+        clientSocket.once(
+          ServerEvent.ERROR,
+          (err: { code: string; message: string }) => {
+            clearTimeout(timeout);
+            try {
+              expect(err.code).toBe(ErrorCode.INVALID_PAYLOAD);
+              expect(err.message).toContain(expectedErrorField);
+              resolve();
+            } catch (e) {
+              reject(e);
+            }
+          },
+        );
+        clientSocket.emit(event, payload);
+      });
+    };
+
+    it("triggers WsValidationPipe and returns WsValidationError for invalid Authenticate payload", async () => {
+      const malformedPayload = {
+        token: "",
+      };
+
+      await emitAndExpectError(
+        ClientEvent.AUTHENTICATE,
+        malformedPayload,
+        "token",
+      );
+      expect(mockAuthHandler.handleAuthenticate).not.toHaveBeenCalled();
+    });
+
+    it("triggers WsValidationPipe and returns WsValidationError for invalid CreateRoom payload (invalid roomType)", async () => {
+      const malformedPayload = {
+        roomType: "INVALID_TYPE",
+        maxPlayers: 10,
+      };
+
+      await emitAndExpectError(
+        ClientEvent.CREATE_ROOM,
+        malformedPayload,
+        "roomType",
+      );
+      expect(mockRoomHandler.handleCreateRoom).not.toHaveBeenCalled();
+    });
+
+    it("triggers WsValidationPipe and returns WsValidationError for invalid CreateRoom payload (maxPlayers out of bounds)", async () => {
+      const malformedPayload = {
+        roomType: "PUBLIC",
+        maxPlayers: 1,
+      };
+
+      await emitAndExpectError(
+        ClientEvent.CREATE_ROOM,
+        malformedPayload,
+        "maxPlayers",
+      );
+      expect(mockRoomHandler.handleCreateRoom).not.toHaveBeenCalled();
+    });
+
+    it("triggers WsValidationPipe and returns WsValidationError for invalid JoinRoom payload", async () => {
+      const malformedPayload = {
+        roomType: "INVALID_TYPE",
+      };
+
+      await emitAndExpectError(
+        ClientEvent.JOIN_ROOM,
+        malformedPayload,
+        "roomType",
+      );
+      expect(mockRoomHandler.handleJoinRoom).not.toHaveBeenCalled();
+    });
+
+    it("triggers WsValidationPipe and returns WsValidationError for invalid LeaveRoom payload", async () => {
+      const malformedPayload = {};
+
+      await emitAndExpectError(
+        ClientEvent.LEAVE_ROOM,
+        malformedPayload,
+        "roomId",
+      );
+      expect(mockRoomHandler.handleLeaveRoom).not.toHaveBeenCalled();
+    });
+
+    it("triggers WsValidationPipe and returns WsValidationError for invalid StartMatch payload", async () => {
+      const malformedPayload = {
+        roomId: "",
+      };
+
+      await emitAndExpectError(
+        ClientEvent.START_MATCH,
+        malformedPayload,
+        "roomId",
+      );
+      expect(mockMatchHandler.handleStartMatch).not.toHaveBeenCalled();
+    });
+
+    it("triggers WsValidationPipe and returns WsValidationError for invalid RequestSnapshot payload", async () => {
+      const malformedPayload = {
+        matchId: "m1",
+        lastSeenSeqNo: -5,
+      };
+
+      await emitAndExpectError(
+        ClientEvent.REQUEST_SNAPSHOT,
+        malformedPayload,
+        "lastSeenSeqNo",
+      );
+      expect(mockMatchHandler.handleRequestSnapshot).not.toHaveBeenCalled();
+    });
+
+    it("triggers WsValidationPipe and returns WsValidationError for invalid Heartbeat payload", async () => {
+      const malformedPayload = {
+        sentAt: -100,
+      };
+
+      await emitAndExpectError(
+        ClientEvent.HEARTBEAT,
+        malformedPayload,
+        "sentAt",
+      );
+      expect(mockPresenceService.updatePresence).not.toHaveBeenCalled();
+    });
   });
 });

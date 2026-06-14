@@ -3257,7 +3257,9 @@ describe("GameLoopService", () => {
         // state-machine invariant (it must NOT have advanced
         // to ROUND_RESULT).
         vi.useFakeTimers();
-        const errorSpy = vi.spyOn((service as any).logger, "error");
+        const errorSpy = vi
+          .spyOn((service as any).logger, "error")
+          .mockImplementation(() => {});
         const emitSpy = vi.fn();
         (mockServer.to as any).mockReturnValue({ emit: emitSpy });
 
