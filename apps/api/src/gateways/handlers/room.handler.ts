@@ -109,7 +109,7 @@ export class RoomHandler extends BaseHandler {
         roomType: asRoomType(room.type),
         roomStatus: asRoomStatus(room.status),
         currentMatchId: room.currentMatchId,
-        countdownEndsAt: this.gameLoopService.getCountdownEnd(room.id),
+        countdownEndsAt: await this.gameLoopService.getCountdownEnd(room.id),
         joinedAs: room.joinedAs,
         players: await Promise.all(
           room.players.map(async (player) => {
@@ -187,16 +187,50 @@ export class RoomHandler extends BaseHandler {
     try {
       const userId = this.requireAuth(client);
 
-      await this.roomService.leaveRoom(payload.roomId, userId);
+      // C1 fix: capture the post-leave room snapshot so we can detect
+      // IN_GAME and notify the game loop. RoomService.leaveRoom returns
+      // the up-to-date room (it always re-fetches via getRoom at the
+      // end), so this is a single round-trip, no extra DB hit.
+      const updatedRoom = await this.roomService.leaveRoom(
+        payload.roomId,
+        userId,
+      );
       client.leave(`room:${payload.roomId}`);
 
-      server.to(`room:${payload.roomId}`).emit(ServerEvent.PLAYER_LEFT, {
-        roomId: payload.roomId,
-        playerId: userId,
-        reason: "LEFT",
-      } satisfies RoomPlayerLeftPayload);
+      // Two diverging paths:
+      //
+      // 1. IN_GAME / FINISHED rooms have a live match. A voluntary leave
+      //    must mark the player as DISCONNECTED in the match state
+      //    machine, otherwise the SUBMIT_ANSWER gate (which checks
+      //    `status === ACTIVE`) keeps accepting answers from a player
+      //    that has no RoomPlayer row and is no longer subscribed to the
+      //    ROOM channel. This is a cheating vector — see C1 in the bug
+      //    investigation.
+      //
+      // 2. WAITING / COUNTDOWN rooms have no match. We just broadcast
+      //    PLAYER_LEFT so the other players' lobbies update, and call
+      //    handleRoomPlayerLeft which cancels the countdown if the
+      //    player drop brought the room under MIN_PLAYERS_TO_START.
+      if (
+        updatedRoom?.currentMatchId &&
+        (updatedRoom.status === RoomStatus.IN_GAME ||
+          updatedRoom.status === RoomStatus.FINISHED)
+      ) {
+        await this.gameLoopService.handleMatchPlayerLeft(
+          updatedRoom.currentMatchId,
+          payload.roomId,
+          userId,
+          server,
+        );
+      } else {
+        server.to(`room:${payload.roomId}`).emit(ServerEvent.PLAYER_LEFT, {
+          roomId: payload.roomId,
+          playerId: userId,
+          reason: "LEFT",
+        } satisfies RoomPlayerLeftPayload);
 
-      await this.gameLoopService.handleRoomPlayerLeft(payload.roomId, server);
+        await this.gameLoopService.handleRoomPlayerLeft(payload.roomId, server);
+      }
     } catch (error) {
       const code =
         error instanceof RoomError ? error.code : ErrorCode.INTERNAL_ERROR;

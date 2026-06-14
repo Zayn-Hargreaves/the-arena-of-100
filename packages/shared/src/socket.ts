@@ -75,47 +75,23 @@ export enum ServerEvent {
 }
 
 // Client Event Payloads
-export interface JoinRoomPayload {
-  roomCode?: string;
-  roomType?: "PUBLIC" | "PRIVATE";
-}
-
-export interface LeaveRoomPayload {
-  roomId: string;
-}
-
-export interface CreateRoomPayload {
-  roomType: "PUBLIC" | "PRIVATE";
-  maxPlayers?: number;
-  timeLimit?: number;
-  category?: string;
-}
-
-export interface StartMatchPayload {
-  roomId: string;
-}
-
-export interface SubmitAnswerPayload {
-  matchId: string;
-  roundNo: number;
-  answer: string;
-  clientTimestamp: number;
-}
-
-export interface RequestSnapshotPayload {
-  matchId: string;
-  lastSeenSeqNo: number;
-}
-
-export interface AuthenticatePayload {
-  token: string;
-}
-
-export interface HeartbeatPayload {
-  roomId?: string;
-  matchId?: string;
-  sentAt: number;
-}
+//
+// The interfaces below were previously hand-written and have been
+// replaced by `z.infer` types from `./schemas.ts` so the runtime
+// validation (WsValidationPipe) and the compile-time types cannot
+// drift. They are re-exported here under the same names so existing
+// `import { type SubmitAnswerPayload } from "@arena/shared"` keeps
+// working without touching every call site.
+export type {
+  JoinRoomPayload,
+  LeaveRoomPayload,
+  CreateRoomPayload,
+  StartMatchPayload,
+  SubmitAnswerPayload,
+  RequestSnapshotPayload,
+  AuthenticatePayload,
+  HeartbeatPayload,
+} from "./schemas";
 
 // Server Event Payloads
 export interface ErrorPayload {

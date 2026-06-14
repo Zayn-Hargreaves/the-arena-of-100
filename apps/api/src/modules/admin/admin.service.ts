@@ -10,6 +10,17 @@ import { MatchService } from "../match/match.service";
 import { GameLoopService } from "../match/game-loop.service";
 import { normalizeString, questionSeeds } from "../../prisma-seeds/questions";
 
+export interface TerminateRoomResult {
+  success: boolean;
+  partial: boolean;
+  roomId: string;
+  matchId: string | null;
+  message: string;
+  terminatedAt: number;
+  reason?: string;
+  cleanupError?: string;
+}
+
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
@@ -247,7 +258,10 @@ export class AdminService {
    * cleaned by that point, so we cannot roll back — but the caller should
    * still know the DB record is stale and may need a follow-up sweep.
    */
-  async terminateRoom(roomId: string, message?: string) {
+  async terminateRoom(
+    roomId: string,
+    message?: string,
+  ): Promise<TerminateRoomResult> {
     // 1. Resolve room — throws RoomError(ROOM_NOT_FOUND) → 404
     const room = await this.roomService.getRoom(roomId);
     const matchId = room.currentMatchId;
@@ -256,8 +270,51 @@ export class AdminService {
     // Failure here is logged but non-fatal — we still want to clean up
     // the room and its runtime state.
     if (matchId) {
+      // B1 fix: idempotency gate between the natural finish path
+      // (`GameLoopService.finishMatchLoop` triggered by
+      // `checkMatchEnd` when survivors <= 1 or MAX_ROUNDS is hit)
+      // and the admin kill-switch. If a natural finish is already
+      // in flight for this matchId, the timer path is mid-write on
+      // the Match row + mid-emit on MATCH_FINISHED. Letting the
+      // admin path proceed would produce:
+      //
+      //   - two DB writes to the same Match row with conflicting
+      //     winnerId (string from the natural path, null from
+      //     admin termination)
+      //   - two conflicting broadcasts (MATCH_FINISHED with the
+      //     winner, then ROOM_TERMINATED for the same room)
+      //   - a `disbandRoom` call against a Room row the natural
+      //     path is still treating as live
+      //
+      // Aborting the whole kill-switch with a typed reason lets the
+      // admin UI report the situation deterministically and lets the
+      // natural finish complete on its own. The client already
+      // gets a MATCH_FINISHED, so the user-visible end-state is
+      // correct.
+      if (this.gameLoopService.isMatchFinishing(matchId)) {
+        const terminatedAt = Date.now();
+        this.logger.warn(
+          `Admin termination of room ${roomId} aborted: match ${matchId} is already finishing naturally. The natural finish will complete on its own.`,
+        );
+        return {
+          success: false,
+          partial: false,
+          roomId,
+          matchId,
+          reason: "ALREADY_FINISHING",
+          message:
+            "Match is already finishing naturally; admin kill-switch aborted to avoid double-write.",
+          terminatedAt,
+        };
+      }
       try {
-        await this.matchService.finishMatch(matchId, null);
+        // H2 + M4 follow-up: the H2 refactor requires finishMatch to
+        // receive the roomId explicitly (it used to look it up
+        // itself inside the transaction, which Prisma's typed
+        // transaction API makes awkward). The admin path has the
+        // roomId in scope from the resolved room, so this is
+        // straightforward.
+        await this.matchService.finishMatch(matchId, null, roomId, true);
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
         this.logger.error(

@@ -10,11 +10,18 @@ import { AnimatedSprite } from "@/components/ui/animated-sprite";
 import { LeaveMatchModal } from "@/components/game/leave-match-modal";
 import { useSocketStore } from "@/stores/socket-store";
 import { useRouter } from "@/i18n/routing";
-import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useToast } from "@/hooks/use-toast";
 import { Users, ShieldAlert, Swords, LogOut, Trophy, Eye } from "lucide-react";
 import { avatars } from "@/lib/avatars";
+// F4 fix: GAME_CONFIG.MAX_PLAYERS is the source of truth for the
+// "remaining / total" denominator in the header. Previously the
+// page hardcoded `/ 100` and fell back to `?? 100` on the
+// numerator, which produced misleading UI for rooms with a
+// different `maxPlayers` (small dev rooms, future scaling
+// experiments). GAME_CONFIG comes from `@arena/shared` so the
+// game-core and the frontend share the same constant.
+import { GAME_CONFIG } from "@arena/shared";
 
 interface GamePageProps {
   params: Promise<{ matchId: string; locale?: string }>;
@@ -22,9 +29,8 @@ interface GamePageProps {
 
 export default function GamePage({ params }: GamePageProps) {
   const resolvedParams = use(params);
-  const { matchId, locale } = resolvedParams;
+  const { matchId } = resolvedParams;
   const router = useRouter();
-  const pathname = usePathname();
   const { toast } = useToast();
   const {
     match,
@@ -49,9 +55,6 @@ export default function GamePage({ params }: GamePageProps) {
   // — this derivation only drives the UI.
   const isSpectator = room?.joinMode === "SPECTATOR";
 
-  // Extract locale from pathname if not provided
-  const currentLocale = locale || pathname.split("/")[1] || "vi";
-
   // Server-authoritative state
   const [timeLeft, setTimeLeft] = useState(15);
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
@@ -63,6 +66,29 @@ export default function GamePage({ params }: GamePageProps) {
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // F3 fix: split the round-result sequence into two independent
+  // refs. The previous code nested two setTimeout calls under
+  // `timerRef`, which meant:
+  //
+  //   - the outer 1s reveal wrote `timerRef.current`
+  //   - the inner 3s continue ALSO wrote `timerRef.current`,
+  //     overwriting the outer reference
+  //   - `clearTimers` only clears the latest ref, so the outer
+  //     timer could fire after the inner was cleared (or vice
+  //     versa) depending on which one was assigned last
+  //
+  // Splitting into two refs lets each timer be cleared
+  // independently. This matters most when the effect is re-run
+  // mid-sequence (e.g. ROUND_ENDED fires twice in quick
+  // succession, or React 18 strict-mode double-invoke in dev) —
+  // the cleanup function can now cancel both, and a new sequence
+  // can start without orphaning the previous one.
+  const roundResultRevealRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const roundResultContinueRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   // Clear all timers
   const clearTimers = useCallback(() => {
@@ -73,6 +99,17 @@ export default function GamePage({ params }: GamePageProps) {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
+    }
+    // F3 fix: also clear the round-result sequence refs so we
+    // don't leak a pending timer across rapid ROUND_ENDED events
+    // or component unmounts.
+    if (roundResultRevealRef.current) {
+      clearTimeout(roundResultRevealRef.current);
+      roundResultRevealRef.current = null;
+    }
+    if (roundResultContinueRef.current) {
+      clearTimeout(roundResultContinueRef.current);
+      roundResultContinueRef.current = null;
     }
   }, []);
 
@@ -134,42 +171,78 @@ export default function GamePage({ params }: GamePageProps) {
     };
   }, [calculateTimeLeft, roundCompleted, clearTimers, match?.roundEndTime]);
 
-  // Handle round completion (when server sends ROUND_ENDED via lastAnswerResult)
+  // Handle round completion (when server sends ROUND_ENDED).
+  // F7 fix: drive the round-completed effect from server-authoritative
+  // match state (`status === "ROUND_RESULT"` + `roundEndTime === null`)
+  // instead of `lastAnswerResult?.correctAnswer`. The previous signal
+  // was unreliable: if the server sent an empty / missing
+  // `correctAnswer` (e.g. question row missing the answer key), the
+  // truthy check failed and the page never transitioned to
+  // `roundCompleted`, leaving the user stuck on the "select answer"
+  // screen with no progression.
+  //
+  // The new signal is what the server actually means by "round is
+  // over": the state machine transitioned to ROUND_RESULT and the
+  // per-round timer was cleared (`roundEndTime: null`). This is
+  // emitted by the ROUND_ENDED handler in the socket store
+  // (`socket-store.ts:515-555`).
+  const isRoundResultPhase =
+    match?.status === "ROUND_RESULT" && match?.roundEndTime === null;
   useEffect(() => {
-    // When we receive a round ended event (via lastAnswerResult with correctAnswer)
-    if (lastAnswerResult?.correctAnswer && !roundCompleted) {
-      clearTimers();
-      setRoundCompleted(true);
-      setRevealedCorrectAnswer(lastAnswerResult.correctAnswer);
-
-      // Show results for 1 second then transition
-      timerRef.current = setTimeout(() => {
-        // Read the server-authoritative remaining count at fire-time to
-        // avoid a stale closure over the selector value.
-        const newCount = useSocketStore.getState().remainingCount;
-
-        // Check if match should end
-        timerRef.current = setTimeout(() => {
-          if (newCount !== null && newCount <= 12) {
-            router.push(`/result/${matchId}`);
-            return;
-          }
-
-          // Reset for next round (this will be handled by server events)
-          setTimeLeft(15);
-          setSelectedAnswer(null);
-          setRoundCompleted(false);
-          setRevealedCorrectAnswer(null);
-        }, 3000);
-      }, 1000);
+    if (!isRoundResultPhase || roundCompleted) {
+      return;
     }
+
+    clearTimers();
+    setRoundCompleted(true);
+    // The correct answer still comes from `lastAnswerResult` (set by
+    // ROUND_ENDED) — we use it purely for display, not as a trigger.
+    if (lastAnswerResult?.correctAnswer) {
+      setRevealedCorrectAnswer(lastAnswerResult.correctAnswer);
+    }
+
+    // F3 fix: outer 1s reveal → inner 3s continue, each with its
+    // own ref so a mid-sequence re-run or strict-mode double-invoke
+    // can't leave either timer orphaned.
+    roundResultRevealRef.current = setTimeout(() => {
+      // F2 fix: removed the magic-number redirect on
+      // `remainingCount <= 12`. The server-authoritative
+      // `match?.status === "FINISHED"` effect (below) is the
+      // single source of truth for navigating to /result.
+      roundResultContinueRef.current = setTimeout(() => {
+        // Reset for next round. The next ROUND_STARTED broadcast
+        // will populate `match.currentQuestion` and
+        // `match.roundEndTime` from the server, so we only need to
+        // clear local UI state here.
+        setTimeLeft(15);
+        setSelectedAnswer(null);
+        setRoundCompleted(false);
+        setRevealedCorrectAnswer(null);
+      }, 3000);
+    }, 1000);
+
+    return () => {
+      // F3 fix: cleanup both refs so a re-run (or unmount) does
+      // not leak either timer.
+      if (roundResultRevealRef.current) {
+        clearTimeout(roundResultRevealRef.current);
+        roundResultRevealRef.current = null;
+      }
+      if (roundResultContinueRef.current) {
+        clearTimeout(roundResultContinueRef.current);
+        roundResultContinueRef.current = null;
+      }
+    };
   }, [
+    isRoundResultPhase,
     lastAnswerResult,
     roundCompleted,
     clearTimers,
-    matchId,
-    currentLocale,
-    router,
+    // Note: we intentionally do NOT depend on `matchId`,
+    // `currentLocale`, or `router` — the legacy dependency list
+    // was overly broad and contributed to unnecessary re-runs
+    // during the round-result sequence. The new effect only
+    // depends on the state it reads.
   ]);
 
   // Server has force-terminated this room (admin kill-switch). Toast once
@@ -242,9 +315,21 @@ export default function GamePage({ params }: GamePageProps) {
     if (isSpectator) return;
     setSelectedAnswer(option);
 
-    // Submit answer to socket-store
-    if (match?.id) {
-      submitAnswer(match.id, match.currentRoundNo || 1, option);
+    // Submit answer to socket-store.
+    // F6 fix: send the actual `currentRoundNo` (which may be 0
+    // during the COUNTDOWN phase or after a fresh MATCH_STARTED
+    // that has not yet broadcast ROUND_STARTED). The previous
+    // `currentRoundNo || 1` would lie to the wire — sending 1
+    // when the server is actually in round 0. The server's
+    // answer-submit gate already reads the round from the
+    // authoritative state machine and ignores the client value
+    // for state lookup, but the dead data is still misleading
+    // for log analysis and would mask a real client/server
+    // round-mismatch bug if it ever occurred. We now short-
+    // circuit when the round is not yet known (the next
+    // ROUND_STARTED broadcast will re-enable submission).
+    if (match?.id && match.currentRoundNo > 0) {
+      submitAnswer(match.id, match.currentRoundNo, option);
     }
   };
 
@@ -279,13 +364,39 @@ export default function GamePage({ params }: GamePageProps) {
     };
   };
 
-  const questionText = match?.currentQuestion?.content || t("fallbackQuestion");
-  const options = match?.currentQuestion?.options || [
-    "apps/api (NestJS)",
-    "apps/web (Next.js)",
-    "packages/game-core (Domain state machine)",
-    "packages/shared (Types / Events)",
-  ];
+  // F5 fix: when there is no current question yet (late hydration,
+  // pre-ROUND_STARTED, or a snapshot gap), render a loading
+  // skeleton instead of the hardcoded monorepo-package names that
+  // previously showed as "fallback question" content. The
+  // skeleton is purely presentational — it does not change any
+  // business logic — and it makes the empty state honest to the
+  // user.
+  const hasCurrentQuestion = Boolean(match?.currentQuestion);
+  const questionText = hasCurrentQuestion
+    ? (match?.currentQuestion?.content ?? "")
+    : "";
+  const options = hasCurrentQuestion
+    ? (match?.currentQuestion?.options ?? [])
+    : [];
+
+  // F4 fix: the header used to render `remainingCount ??
+  // match?.players?.length ?? 100` over a hardcoded `/ 100`. Both
+  // the numerator's fallback and the denominator's literal are
+  // misleading: dev / small / large rooms have different
+  // `maxPlayers` and the displayed fraction should reflect the
+  // actual room capacity. `room.maxPlayers` is not yet on the
+  // ROOM_JOINED payload (tracked as PR 12 in the plan), so we
+  // fall back to `match.players.length` and finally to
+  // `GAME_CONFIG.MAX_PLAYERS` (the shared constant from
+  // `@arena/game-core`). The numerator uses the authoritative
+  // `remainingCount` (server-broadcast on every ROUND_ENDED)
+  // and falls back to the player array length when the
+  // broadcast has not yet arrived.
+  const maxPlayers =
+    match?.players && match.players.length > 0
+      ? match.players.length
+      : GAME_CONFIG.MAX_PLAYERS;
+  const livePlayerCount = remainingCount ?? match?.players?.length ?? 0;
 
   return (
     <AppShellLayout>
@@ -366,7 +477,7 @@ export default function GamePage({ params }: GamePageProps) {
                 {t("remainingLabel")}
               </span>
               <span className="font-display font-black text-3xl text-candy-blue">
-                {remainingCount ?? match?.players?.length ?? 100} / 100
+                {livePlayerCount} / {maxPlayers}
               </span>
             </div>
           </div>
@@ -387,7 +498,22 @@ export default function GamePage({ params }: GamePageProps) {
               </div>
 
               <h2 className="font-sans font-bold text-lg md:text-2xl text-candy-ink leading-relaxed tracking-wide pt-8">
-                {questionText}
+                {/* F5 fix: render a loading skeleton when the
+                    current question is not yet available, instead
+                    of the previous hardcoded monorepo-package
+                    strings that briefly appeared during late
+                    hydration. The skeleton uses a pulse animation
+                    + i18n string for accessibility. */}
+                {hasCurrentQuestion ? (
+                  questionText
+                ) : (
+                  <div
+                    data-testid="loading-question"
+                    className="animate-pulse text-center text-candy-ink/50 py-4"
+                  >
+                    {t("loadingQuestion")}
+                  </div>
+                )}
               </h2>
             </div>
 
@@ -439,82 +565,94 @@ export default function GamePage({ params }: GamePageProps) {
               </h3>
 
               <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-                {[
-                  {
-                    name: "Zero_Cool",
-                    state: "OK",
-                    round: "18",
-                    id: "sidebar1",
-                  },
-                  {
-                    name: "Acid_Burn",
-                    state: "OK",
-                    round: "18",
-                    id: "sidebar2",
-                  },
-                  {
-                    name: "Lord_Nikon",
-                    state: "ELIMINATED",
-                    round: "14",
-                    id: "sidebar3",
-                  },
-                  {
-                    name: "Cereal_Killer",
-                    state: "OK",
-                    round: "18",
-                    id: "sidebar4",
-                  },
-                  {
-                    name: "Crash_Override",
-                    state: "ELIMINATED",
-                    round: "8",
-                    id: "sidebar5",
-                  },
-                ].map((item, idx) => {
-                  const avatarDetail = getPlayerAvatar(item.name, item.id);
-                  const isAlive = item.state === "OK";
+                {/* F1 fix: the sidebar used to render a hardcoded
+                    list of mock opponents (`Zero_Cool`, `Acid_Burn`,
+                    `Lord_Nikon`, `Cereal_Killer`, `Crash_Override`)
+                    that was a flat-out deception to the user. The
+                    list now reads from the server-authoritative
+                    `match.players` array, with the per-round
+                    ELIMINATED state stamped by the socket store's
+                    ROUND_ENDED + PLAYER_ELIMINATED handlers.
 
-                  return (
-                    <div
-                      key={idx}
-                      className="flex items-center justify-between p-2.5 rounded-xl bg-candy-cloud border-[2px] border-candy-ink text-xs shadow-[2px_2px_0_0_#2B2D42]"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <AvatarFrame size="xs" className="bg-white">
-                          {avatarDetail.isAnimated &&
-                          avatarDetail.spritesheet ? (
-                            <AnimatedSprite
-                              src={avatarDetail.spritesheet}
-                              scale={1.8}
-                              row={0}
-                              speed={120}
-                            />
+                    Sort: alive (ACTIVE / DISCONNECTED) first,
+                    eliminated last. Within each group, keep the
+                    server's relative order (it's deterministic —
+                    based on join order).
+
+                    If `match.players` is empty (e.g. late-joiner
+                    who hasn't received a snapshot yet), fall back
+                    to a neutral "waiting for player list" hint
+                    instead of mock data. */}
+                {(() => {
+                  const players = match?.players ?? [];
+                  if (players.length === 0) {
+                    return (
+                      <div
+                        data-testid="opponents-empty"
+                        className="text-xs text-candy-ink/50 italic px-2 py-3 text-center"
+                      >
+                        {t("opponentsEmpty")}
+                      </div>
+                    );
+                  }
+                  const sorted = [...players].sort((a, b) => {
+                    const aEliminated = a.status === "ELIMINATED";
+                    const bEliminated = b.status === "ELIMINATED";
+                    if (aEliminated !== bEliminated) {
+                      return aEliminated ? 1 : -1;
+                    }
+                    return 0;
+                  });
+                  return sorted.map((player) => {
+                    const avatarDetail = getPlayerAvatar(
+                      player.name,
+                      player.id,
+                    );
+                    const isAlive = player.status !== "ELIMINATED";
+
+                    return (
+                      <div
+                        key={player.id}
+                        data-testid={`opponent-${player.id}`}
+                        className="flex items-center justify-between p-2.5 rounded-xl bg-candy-cloud border-[2px] border-candy-ink text-xs shadow-[2px_2px_0_0_#2B2D42]"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <AvatarFrame size="xs" className="bg-white">
+                            {avatarDetail.isAnimated &&
+                            avatarDetail.spritesheet ? (
+                              <AnimatedSprite
+                                src={avatarDetail.spritesheet}
+                                scale={1.8}
+                                row={0}
+                                speed={120}
+                              />
+                            ) : (
+                              <Avatar
+                                size="xs"
+                                fallback={avatarDetail.seed}
+                                className="border-0 shadow-none"
+                              />
+                            )}
+                          </AvatarFrame>
+                          <span className="font-display font-black text-candy-ink truncate max-w-[80px]">
+                            {player.name}
+                          </span>
+                        </div>
+                        <div className="shrink-0 ml-1">
+                          {isAlive ? (
+                            <span className="text-[9px] font-display font-black text-candy-ink bg-candy-mint border-[1.5px] border-candy-ink px-1.5 py-0.5 rounded-md shadow-[1px_1px_0_0_#2B2D42]">
+                              {t("aliveStatus")}
+                            </span>
                           ) : (
-                            <Avatar
-                              size="xs"
-                              fallback={avatarDetail.seed}
-                              className="border-0 shadow-none"
-                            />
+                            <span className="text-[9px] font-display font-black text-white bg-candy-red border-[1.5px] border-candy-ink px-1.5 py-0.5 rounded-md shadow-[1px_1px_0_0_#2B2D42]">
+                              {t("eliminatedStatus")}
+                            </span>
                           )}
-                        </AvatarFrame>
-                        <span className="font-display font-black text-candy-ink truncate max-w-[80px]">
-                          {item.name}
-                        </span>
+                        </div>
                       </div>
-                      <div className="shrink-0 ml-1">
-                        {isAlive ? (
-                          <span className="text-[9px] font-display font-black text-candy-ink bg-candy-mint border-[1.5px] border-candy-ink px-1.5 py-0.5 rounded-md shadow-[1px_1px_0_0_#2B2D42]">
-                            {t("aliveStatus")}
-                          </span>
-                        ) : (
-                          <span className="text-[9px] font-display font-black text-white bg-candy-red border-[1.5px] border-candy-ink px-1.5 py-0.5 rounded-md shadow-[1px_1px_0_0_#2B2D42]">
-                            {t("eliminatedStatus")}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  });
+                })()}
               </div>
             </div>
 

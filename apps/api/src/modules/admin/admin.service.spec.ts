@@ -85,6 +85,7 @@ describe("AdminService", () => {
   let gameLoopService: {
     stopRoomRuntime: ReturnType<typeof vi.fn>;
     emitRoomTerminated: ReturnType<typeof vi.fn>;
+    isMatchFinishing: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -148,6 +149,7 @@ describe("AdminService", () => {
     gameLoopService = {
       stopRoomRuntime: vi.fn().mockResolvedValue(undefined),
       emitRoomTerminated: vi.fn(),
+      isMatchFinishing: vi.fn().mockReturnValue(false),
     };
 
     service = new AdminService(
@@ -469,8 +471,17 @@ describe("AdminService", () => {
       expect(result.success).toBe(true);
       expect(result.matchId).toBe("m2");
 
-      // finishMatch called with null winner (admin termination)
-      expect(matchService.finishMatch).toHaveBeenCalledWith("m2", null);
+      // finishMatch called with null winner (admin termination) and
+      // the resolved room's id (NOT a hardcoded test value) — the
+      // H2 + M4 refactor moved the roomId into the finishMatch
+      // signature so the transaction can update both the match and
+      // the room atomically.
+      expect(matchService.finishMatch).toHaveBeenCalledWith(
+        "m2",
+        null,
+        "r2",
+        true,
+      );
       // stopRoomRuntime called with the active matchId
       expect(gameLoopService.stopRoomRuntime).toHaveBeenCalledWith("r2", "m2");
       // Emit carries the matchId
@@ -478,6 +489,60 @@ describe("AdminService", () => {
         matchId: "m2",
         message: undefined,
       });
+    });
+
+    // B1 fix: race between natural finish (`GameLoopService.finishMatchLoop`
+    // driven by `checkMatchEnd`) and admin kill-switch. If a natural
+    // finish is in flight for this matchId, the admin path must abort
+    // the whole kill-switch with `ALREADY_FINISHING` so it does not
+    // write the same Match row twice or double-broadcast.
+    it("B1: aborts the kill-switch with ALREADY_FINISHING when a natural finish is in flight", async () => {
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r-finishing",
+        currentMatchId: "m-finishing",
+      });
+      // The natural finish is mid-execution — the guard is held.
+      gameLoopService.isMatchFinishing.mockReturnValueOnce(true);
+
+      const result = await service.terminateRoom("r-finishing", "test");
+
+      // The kill-switch must NOT call finishMatch, must NOT stop
+      // room runtime, must NOT emit ROOM_TERMINATED, must NOT
+      // disband the room. The whole orchestrator must return
+      // early with a typed reason.
+      expect(result.success).toBe(false);
+      expect(result.partial).toBe(false);
+      expect(result.reason).toBe("ALREADY_FINISHING");
+      expect(result.matchId).toBe("m-finishing");
+      expect(result.roomId).toBe("r-finishing");
+      expect(result.terminatedAt).toEqual(expect.any(Number));
+
+      expect(matchService.finishMatch).not.toHaveBeenCalled();
+      expect(gameLoopService.stopRoomRuntime).not.toHaveBeenCalled();
+      expect(gameLoopService.emitRoomTerminated).not.toHaveBeenCalled();
+      expect(roomService.disbandRoom).not.toHaveBeenCalled();
+    });
+
+    it("B1: passes the guard through to a normal termination when no natural finish is in flight", async () => {
+      // Sanity check on the new mock default: when isMatchFinishing
+      // returns false, the existing termination flow runs as before.
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r-normal",
+        currentMatchId: "m-normal",
+      });
+      matchService.finishMatch.mockResolvedValueOnce({ id: "m-normal" } as any);
+      // Default mock returns false; explicitly document that here.
+      gameLoopService.isMatchFinishing.mockReturnValueOnce(false);
+
+      const result = await service.terminateRoom("r-normal");
+
+      expect(result.success).toBe(true);
+      expect(matchService.finishMatch).toHaveBeenCalledWith(
+        "m-normal",
+        null,
+        "r-normal",
+        true,
+      );
     });
 
     it("continues cleanup when match finish throws (non-fatal)", async () => {

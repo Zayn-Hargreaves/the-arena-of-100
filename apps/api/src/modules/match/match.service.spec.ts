@@ -13,13 +13,19 @@ describe("MatchService", () => {
   beforeEach(() => {
     prisma = {
       room: { findUnique: vi.fn(), update: vi.fn() },
-      match: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
+      match: {
+        create: vi.fn(),
+        findUnique: vi.fn(),
+        update: vi.fn(),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
       matchPlayer: {
         createMany: vi.fn(),
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
-      matchRound: { create: vi.fn() },
+      matchRound: { create: vi.fn(), findUnique: vi.fn() },
       answer: { create: vi.fn(), createMany: vi.fn() },
+      question: { findUnique: vi.fn() },
       $transaction: vi.fn(async (ops) => {
         // Execute all operations sequentially for test fidelity
         if (Array.isArray(ops)) {
@@ -197,6 +203,357 @@ describe("MatchService", () => {
       expect(sm).toBeUndefined();
       expect(redis.del).toHaveBeenCalledWith("match:state:bad");
     });
+
+    // L3 coverage: rehydrateCorrectAnswer runs when getStateMachine
+    // restores from Redis. The restored state machine's current round
+    // has the safe shape (no correctAnswer in the Redis JSON) and
+    // must re-attach the answer from the DB so grading works.
+    it("rehydrates the correct answer from the DB for an in-flight ACTIVE round", async () => {
+      // Build a serialized state with currentRound in ACTIVE status
+      // so rehydrateCorrectAnswer actually runs the prisma lookup.
+      const serialized = JSON.stringify({
+        state: {
+          id: "m-rehydrate",
+          roomId: "r-rehydrate",
+          status: MatchStatus.ROUND_ACTIVE,
+          currentRoundNo: 1,
+          totalRounds: 0,
+          players: [
+            [
+              "u1",
+              {
+                id: "u1",
+                name: "A",
+                status: PlayerStatus.ACTIVE,
+                score: 0,
+                totalResponseTimeMs: 0,
+                correctAnswers: 0,
+                isOnline: true,
+              },
+            ],
+            [
+              "u2",
+              {
+                id: "u2",
+                name: "B",
+                status: PlayerStatus.ACTIVE,
+                score: 0,
+                totalResponseTimeMs: 0,
+                correctAnswers: 0,
+                isOnline: true,
+              },
+            ],
+          ],
+          survivingPlayerIds: ["u1", "u2"],
+          eliminatedPlayerIds: [],
+          winnerId: null,
+          startedAt: 0,
+          endedAt: null,
+        },
+        currentRound: {
+          roundNo: 1,
+          question: {
+            id: "q-rehydrate",
+            content: "Q?",
+            options: ["A", "B"],
+            difficulty: "MEDIUM",
+          },
+          startedAt: 1000,
+          endsAt: 2000,
+          status: "ACTIVE",
+          answers: [],
+        },
+        eventLog: [],
+      });
+      vi.mocked(redis.get).mockResolvedValue(serialized);
+      vi.mocked(prisma.question.findUnique).mockResolvedValue({
+        correctAnswer: "A",
+      } as any);
+
+      const sm = await service.getStateMachine("m-rehydrate");
+      expect(sm).toBeDefined();
+      // The DB lookup must have run with the question id from
+      // the in-flight round.
+      expect(prisma.question.findUnique).toHaveBeenCalledWith({
+        where: { id: "q-rehydrate" },
+        select: { correctAnswer: true },
+      });
+      // The restored state machine's round now has the correct
+      // answer attached (L3 re-attach).
+      const restoredRound = sm!.getCurrentRound();
+      expect(restoredRound).not.toBeNull();
+      // The `correctAnswer` field is internal on the round
+      // shape; verify it via the typed access.
+      const internalAnswer = (
+        restoredRound as unknown as {
+          correctAnswer: string;
+        }
+      ).correctAnswer;
+      expect(internalAnswer).toBe("A");
+    });
+
+    it("does not call the DB when the restored round is not ACTIVE", async () => {
+      // Build a serialized state with currentRound in COMPLETED
+      // status. rehydrateCorrectAnswer must short-circuit and
+      // not run the prisma lookup.
+      const serialized = JSON.stringify({
+        state: {
+          id: "m-skip",
+          roomId: "r-skip",
+          status: MatchStatus.ROUND_RESULT,
+          currentRoundNo: 1,
+          totalRounds: 0,
+          players: [
+            [
+              "u1",
+              {
+                id: "u1",
+                name: "A",
+                status: PlayerStatus.ACTIVE,
+                score: 0,
+                totalResponseTimeMs: 0,
+                correctAnswers: 0,
+                isOnline: true,
+              },
+            ],
+          ],
+          survivingPlayerIds: ["u1"],
+          eliminatedPlayerIds: [],
+          winnerId: null,
+          startedAt: 0,
+          endedAt: null,
+        },
+        currentRound: {
+          roundNo: 1,
+          question: {
+            id: "q-skip",
+            content: "Q?",
+            options: ["A", "B"],
+            difficulty: "MEDIUM",
+          },
+          startedAt: 1000,
+          endsAt: 2000,
+          status: "COMPLETED",
+          answers: [],
+        },
+        eventLog: [],
+      });
+      vi.mocked(redis.get).mockResolvedValue(serialized);
+
+      const sm = await service.getStateMachine("m-skip");
+      expect(sm).toBeDefined();
+      expect(prisma.question.findUnique).not.toHaveBeenCalled();
+    });
+
+    // L3 coverage: rehydrateCorrectAnswer's other early-returns
+    // and failure paths. The "happy" and "round not ACTIVE"
+    // tests above cover the common branches. The cases below
+    // pin the structural behavior of the rehydrate path so a
+    // future refactor can't accidentally regress them.
+    it("does not call the DB when the restored state has no current round", async () => {
+      // currentRound: null → rehydrateCorrectAnswer's first
+      // guard (`if (!round) return;`) short-circuits before any
+      // prisma lookup. This covers line 145.
+      const serialized = JSON.stringify({
+        state: {
+          id: "m-noround",
+          roomId: "r-noround",
+          status: MatchStatus.ROUND_RESULT,
+          currentRoundNo: 0,
+          totalRounds: 0,
+          players: [
+            [
+              "u1",
+              {
+                id: "u1",
+                name: "A",
+                status: PlayerStatus.ACTIVE,
+                score: 0,
+                totalResponseTimeMs: 0,
+                correctAnswers: 0,
+                isOnline: true,
+              },
+            ],
+          ],
+          survivingPlayerIds: ["u1"],
+          eliminatedPlayerIds: [],
+          winnerId: null,
+          startedAt: 0,
+          endedAt: null,
+        },
+        currentRound: null,
+        eventLog: [],
+      });
+      vi.mocked(redis.get).mockResolvedValue(serialized);
+
+      const sm = await service.getStateMachine("m-noround");
+      expect(sm).toBeDefined();
+      expect(prisma.question.findUnique).not.toHaveBeenCalled();
+    });
+
+    // NOTE: the `if (!questionId) return;` guard inside
+    // rehydrateCorrectAnswer (line 148) is unreachable through
+    // normal Redis deserialization. The deserializer
+    // (`MatchStateMachine.deserialize` at
+    // `packages/game-core/src/match-state-machine.ts:665-670`)
+    // validates that the question is a non-null object with id,
+    // content, and options before constructing the state machine.
+    // If the question is missing, deserialize throws and
+    // `getStateMachine` catches the error + returns undefined
+    // (lines 117-125) before rehydrateCorrectAnswer runs. The
+    // `!questionId` guard remains as defense-in-depth for any
+    // future code path that constructs a state machine without
+    // going through the deserializer, but we don't exercise it
+    // here to avoid crafting a state shape the deserializer
+    // would reject.
+
+    it("logs an error and degrades gracefully when the question is not found in the DB for an ACTIVE round", async () => {
+      // 2c fix (option A): the questionId is in the state machine, but
+      // the DB row was deleted (e.g. an admin ran
+      // `prisma.question.delete` while the match was in flight).
+      // getStateMachine MUST NOT throw — a throw here propagates
+      // through every hot path and makes the match permanently
+      // unrecoverable. Instead it logs an error and returns a usable
+      // state machine with no attached correct answer; the round will
+      // grade everyone as wrong and the match still completes.
+      const serialized = JSON.stringify({
+        state: {
+          id: "m-orphan-q",
+          roomId: "r-orphan-q",
+          status: MatchStatus.ROUND_ACTIVE,
+          currentRoundNo: 1,
+          totalRounds: 0,
+          players: [
+            [
+              "u1",
+              {
+                id: "u1",
+                name: "A",
+                status: PlayerStatus.ACTIVE,
+                score: 0,
+                totalResponseTimeMs: 0,
+                correctAnswers: 0,
+                isOnline: true,
+              },
+            ],
+          ],
+          survivingPlayerIds: ["u1"],
+          eliminatedPlayerIds: [],
+          winnerId: null,
+          startedAt: 0,
+          endedAt: null,
+        },
+        currentRound: {
+          roundNo: 1,
+          question: {
+            id: "q-orphan",
+            content: "Q?",
+            options: ["A", "B"],
+            difficulty: "MEDIUM",
+          },
+          startedAt: 1000,
+          endsAt: 2000,
+          status: "ACTIVE",
+          answers: [],
+        },
+        eventLog: [],
+      });
+      vi.mocked(redis.get).mockResolvedValue(serialized);
+      // DB returns null (question row missing).
+      vi.mocked(prisma.question.findUnique).mockResolvedValue(null);
+      const errorSpy = vi
+        .spyOn((service as any).logger, "error")
+        .mockImplementation(() => {});
+
+      const sm = await service.getStateMachine("m-orphan-q");
+
+      // The state machine is returned and usable (no throw).
+      expect(sm).toBeDefined();
+      // No correct answer was attached (the round will grade everyone
+      // as wrong, but the match stays recoverable).
+      const round = sm!.getCurrentRound();
+      expect(
+        (round as { correctAnswer?: string } | null)?.correctAnswer,
+      ).toBeUndefined();
+
+      // The error message must include the question id and the
+      // round no so an operator can correlate.
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("q-orphan"),
+      );
+    });
+
+    it("logs an error and degrades gracefully when the prisma.question lookup itself throws for an ACTIVE round", async () => {
+      // 2c fix (option A): the DB lookup for the question row throws
+      // (e.g. a transient Prisma error during rehydrate). getStateMachine
+      // MUST NOT throw — it logs and degrades so the match stays
+      // recoverable; a later getStateMachine call may succeed.
+      const serialized = JSON.stringify({
+        state: {
+          id: "m-db-boom",
+          roomId: "r-db-boom",
+          status: MatchStatus.ROUND_ACTIVE,
+          currentRoundNo: 1,
+          totalRounds: 0,
+          players: [
+            [
+              "u1",
+              {
+                id: "u1",
+                name: "A",
+                status: PlayerStatus.ACTIVE,
+                score: 0,
+                totalResponseTimeMs: 0,
+                correctAnswers: 0,
+                isOnline: true,
+              },
+            ],
+          ],
+          survivingPlayerIds: ["u1"],
+          eliminatedPlayerIds: [],
+          winnerId: null,
+          startedAt: 0,
+          endedAt: null,
+        },
+        currentRound: {
+          roundNo: 1,
+          question: {
+            id: "q-boom",
+            content: "Q?",
+            options: ["A", "B"],
+            difficulty: "MEDIUM",
+          },
+          startedAt: 1000,
+          endsAt: 2000,
+          status: "ACTIVE",
+          answers: [],
+        },
+        eventLog: [],
+      });
+      vi.mocked(redis.get).mockResolvedValue(serialized);
+      vi.mocked(prisma.question.findUnique).mockRejectedValueOnce(
+        new Error("Prisma: connection lost"),
+      );
+      const errorSpy = vi
+        .spyOn((service as any).logger, "error")
+        .mockImplementation(() => {});
+
+      const sm = await service.getStateMachine("m-db-boom");
+
+      // The state machine is returned and usable (no throw).
+      expect(sm).toBeDefined();
+      const round = sm!.getCurrentRound();
+      expect(
+        (round as { correctAnswer?: string } | null)?.correctAnswer,
+      ).toBeUndefined();
+
+      // The error log must include the question id so the
+      // operator can find the bad row.
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("q-boom"),
+        expect.any(Error),
+      );
+    });
   });
 
   describe("persistStateMachine", () => {
@@ -240,15 +597,17 @@ describe("MatchService", () => {
       vi.mocked(prisma.room.update).mockResolvedValue({} as any);
       await service.createMatch("r1");
 
-      vi.mocked(prisma.match.update).mockResolvedValue({
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m1",
         roomId: "r1",
       } as any);
 
-      await service.finishMatch("m1", "u1");
+      await service.finishMatch("m1", "u1", "r1");
 
-      expect(prisma.match.update).toHaveBeenCalledWith({
-        where: { id: "m1" },
+      // 1f/2a fix: the finish write is now idempotent — match.updateMany
+      // with a `status != FINISHED` filter instead of match.update.
+      expect(prisma.match.updateMany).toHaveBeenCalledWith({
+        where: { id: "m1", status: { not: MatchStatus.FINISHED } },
         data: {
           status: MatchStatus.FINISHED,
           winnerId: "u1",
@@ -278,17 +637,17 @@ describe("MatchService", () => {
       vi.mocked(prisma.room.update).mockResolvedValue({} as any);
       await service.createMatch("r1");
 
-      vi.mocked(prisma.match.update).mockResolvedValue({
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m1",
         roomId: "r1",
       } as any);
 
-      // Admin termination path: winnerId === null
-      await service.finishMatch("m1", null);
+      // Admin termination path: winnerId === null, isAdminTermination === true
+      await service.finishMatch("m1", null, "r1", true);
 
-      // Match update records null winner
-      expect(prisma.match.update).toHaveBeenCalledWith({
-        where: { id: "m1" },
+      // Match update records null winner (idempotent updateMany)
+      expect(prisma.match.updateMany).toHaveBeenCalledWith({
+        where: { id: "m1", status: { not: MatchStatus.FINISHED } },
         data: {
           status: MatchStatus.FINISHED,
           winnerId: null,
@@ -302,9 +661,61 @@ describe("MatchService", () => {
       });
       // Redis state cleaned
       expect(redis.del).toHaveBeenCalledWith("match:state:m1");
-      // No score persistence ($transaction NOT called for null-winner path)
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+      // H2 fix: the match+room update is wrapped in $transaction.
+      // The transaction array contains no score updateMany ops
+      // (isAdminTermination is true) but DOES contain match.update +
+      // room.update.
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      const txArg = vi.mocked(prisma.$transaction).mock.calls[0][0];
+      expect(Array.isArray(txArg)).toBe(true);
+      expect(txArg).toHaveLength(2);
       expect(prisma.matchPlayer.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("persists scores for a natural match ending with no winner (isAdminTermination = false)", async () => {
+      // Create match first to populate stateMachines map
+      const room = {
+        id: "r1",
+        players: [
+          { user: { id: "u1", username: "A" } },
+          { user: { id: "u2", username: "B" } },
+        ],
+      };
+      vi.mocked(prisma.room.findUnique).mockResolvedValue(room as any);
+      vi.mocked(prisma.match.create).mockResolvedValue({
+        id: "m1",
+        roomId: "r1",
+      } as any);
+      vi.mocked(prisma.matchPlayer.createMany).mockResolvedValue({
+        count: 2,
+      } as any);
+      vi.mocked(prisma.room.update).mockResolvedValue({} as any);
+      await service.createMatch("r1");
+
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
+        id: "m1",
+        roomId: "r1",
+      } as any);
+
+      // Natural match ending with no winner: winnerId === null, isAdminTermination === false
+      await service.finishMatch("m1", null, "r1", false);
+
+      // Match update records null winner (idempotent updateMany)
+      expect(prisma.match.updateMany).toHaveBeenCalledWith({
+        where: { id: "m1", status: { not: MatchStatus.FINISHED } },
+        data: {
+          status: MatchStatus.FINISHED,
+          winnerId: null,
+          endedAt: expect.any(Date),
+        },
+      });
+      // Room status still updated
+      expect(prisma.room.update).toHaveBeenCalledWith({
+        where: { id: "r1" },
+        data: { status: "FINISHED" },
+      });
+      // Since it ended naturally, buildScoreUpdateOps runs and calls updateMany for players
+      expect(prisma.matchPlayer.updateMany).toHaveBeenCalled();
     });
 
     it("swallows non-Error Redis delete failures when finishing a match", async () => {
@@ -327,19 +738,19 @@ describe("MatchService", () => {
       vi.mocked(prisma.room.update).mockResolvedValue({} as any);
       await service.createMatch("r2");
 
-      vi.mocked(prisma.match.update).mockResolvedValue({
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m2",
         roomId: "r2",
       } as any);
       // Non-Error rejection to cover `String(error)` in the warning path.
       vi.mocked(redis.del).mockRejectedValueOnce("redis del boom (string)");
 
-      await service.finishMatch("m2", "u1");
+      await service.finishMatch("m2", "u1", "r2");
 
       expect(redis.del).toHaveBeenCalledWith("match:state:m2");
-      expect(prisma.match.update).toHaveBeenCalledWith(
+      expect(prisma.match.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "m2" },
+          where: { id: "m2", status: { not: MatchStatus.FINISHED } },
           data: expect.objectContaining({ winnerId: "u1" }),
         }),
       );
@@ -366,16 +777,16 @@ describe("MatchService", () => {
       vi.mocked(prisma.room.update).mockResolvedValue({} as any);
       await service.createMatch("r2b");
 
-      vi.mocked(prisma.match.update).mockResolvedValue({
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m2b",
         roomId: "r2b",
       } as any);
       vi.mocked(redis.del).mockRejectedValueOnce(new Error("redis del boom"));
 
-      await service.finishMatch("m2b", "u1");
+      await service.finishMatch("m2b", "u1", "r2b");
 
       expect(loggerWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Failed to delete Redis state for match m2b:"),
+        expect.stringContaining("Failed to delete Redis state for match m2b"),
       );
     });
 
@@ -398,7 +809,7 @@ describe("MatchService", () => {
       vi.mocked(prisma.room.update).mockResolvedValue({} as any);
       await service.createMatch("r3");
 
-      vi.mocked(prisma.match.update).mockResolvedValue({
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m3",
         roomId: "r3",
       } as any);
@@ -408,15 +819,21 @@ describe("MatchService", () => {
         "score tx boom (string)",
       );
 
-      await service.finishMatch("m3", "u1");
+      // H2 fix: the $transaction failure now propagates. The
+      // function does not silently swallow the error; instead, the
+      // operator sees a clear failure and the in-memory state
+      // stays intact (no half-cleanup).
+      await expect(service.finishMatch("m3", "u1", "r3")).rejects.toThrow(
+        "score tx boom (string)",
+      );
 
       expect(prisma.$transaction).toHaveBeenCalled();
-      expect(prisma.match.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: "m3" },
-          data: expect.objectContaining({ winnerId: "u1" }),
-        }),
-      );
+      // In-memory state was NOT cleaned up on failure.
+      const internalMap = (service as any).stateMachines as Map<
+        string,
+        unknown
+      >;
+      expect(internalMap.has("m3")).toBe(true);
     });
   });
 
@@ -483,6 +900,102 @@ describe("MatchService", () => {
       const result = await service.saveAnswers([]);
       expect(result.count).toBe(0);
       expect(prisma.answer.createMany).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
+  // Atomic round+answers persistence (endRound H2-style fix)
+  // ============================================================
+  describe("saveRoundAndAnswers", () => {
+    it("creates the round row and the batched answers in a single $transaction", async () => {
+      vi.mocked(prisma.matchRound.create).mockResolvedValue({
+        id: "round-1",
+      } as any);
+      vi.mocked(prisma.answer.createMany).mockResolvedValue({
+        count: 2,
+      } as any);
+
+      const answers = [
+        {
+          userId: "u1",
+          answer: "A",
+          isCorrect: true,
+          responseTimeMs: 500,
+        },
+        {
+          userId: "u2",
+          answer: "B",
+          isCorrect: false,
+          responseTimeMs: 800,
+        },
+      ];
+
+      const round = await service.saveRoundAndAnswers("m1", 1, "q1", answers);
+
+      expect(round).toEqual({ id: "round-1" });
+      // The single $transaction callback is the only thing that
+      // touches the DB; the order inside is round first, then
+      // answers, so the foreign-key roundId is established before
+      // any answer row references it.
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.matchRound.create).toHaveBeenCalledWith({
+        data: { matchId: "m1", roundNo: 1, questionId: "q1" },
+      });
+      expect(prisma.answer.createMany).toHaveBeenCalledWith({
+        data: [
+          {
+            matchId: "m1",
+            roundId: "round-1",
+            userId: "u1",
+            answer: "A",
+            isCorrect: true,
+            responseTimeMs: 500,
+          },
+          {
+            matchId: "m1",
+            roundId: "round-1",
+            userId: "u2",
+            answer: "B",
+            isCorrect: false,
+            responseTimeMs: 800,
+          },
+        ],
+      });
+    });
+
+    it("skips the answer batch but still creates the round row when answers is empty", async () => {
+      // An all-timeout round (nobody answered) is a normal case.
+      // The round row must still land so the round counter
+      // advances; the answer batch is a no-op.
+      vi.mocked(prisma.matchRound.create).mockResolvedValue({
+        id: "round-empty",
+      } as any);
+
+      const round = await service.saveRoundAndAnswers("m1", 3, "q3", []);
+
+      expect(round).toEqual({ id: "round-empty" });
+      expect(prisma.matchRound.create).toHaveBeenCalledTimes(1);
+      expect(prisma.answer.createMany).not.toHaveBeenCalled();
+    });
+
+    it("propagates a transaction rollback so partial writes are impossible", async () => {
+      // Regression test: a failure on the answer batch (e.g.
+      // transient Prisma error) MUST NOT leave a stray round row
+      // behind. The two operations live in one $transaction; the
+      // surrounding caller relies on this to avoid the
+      // "ROUND_EVALUATING + P2002 on retry" stall.
+      vi.mocked(prisma.matchRound.create).mockResolvedValue({
+        id: "round-x",
+      } as any);
+      vi.mocked(prisma.answer.createMany).mockRejectedValue(
+        new Error("write conflict"),
+      );
+
+      await expect(
+        service.saveRoundAndAnswers("m1", 1, "q1", [
+          { userId: "u1", answer: "A", isCorrect: true, responseTimeMs: 100 },
+        ]),
+      ).rejects.toThrow("write conflict");
     });
   });
 
@@ -559,6 +1072,13 @@ describe("MatchService", () => {
         id: matchId,
         roomId,
       } as any);
+      vi.mocked(prisma.match.updateMany).mockResolvedValue({
+        count: 1,
+      } as any);
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
+        id: matchId,
+        roomId,
+      } as any);
 
       await service.createMatch(roomId);
     };
@@ -572,13 +1092,39 @@ describe("MatchService", () => {
         { playerId: "u2", answer: "A", isCorrect: true, responseTimeMs: 8000 },
       ]);
 
-      await service.finishMatch("m1", "u1");
+      // Capture the return value of the single, meaningful
+      // `finishMatch` call. The previous version of this test
+      // (code review 2026-06-14) called `finishMatch` a second
+      // time to capture the return value, but by then the state
+      // machine had already been evicted by the first call, so
+      // `buildScoreUpdateOps` returned `[]`. That meant the
+      // assertion only verified the empty-ops path, NOT the
+      // actual `scoreUpdateOps.length > 0` path that the H2
+      // index-lookup fix was written for. The fix: assert the
+      // return value on the same call where `scoreUpdateOps`
+      // contains the two score updates we're verifying below.
+      const finishResult = await service.finishMatch("m1", "u1", "r1");
 
-      // Verify $transaction was invoked with an array of 2 updateMany operations
+      // Verify $transaction was invoked with an array containing
+      // 2 score updateMany operations + match.update + room.update
+      // (4 total). The H2 fix unified score+match+room writes into
+      // a single atomic $transaction.
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       const txArg = vi.mocked(prisma.$transaction).mock.calls[0][0];
       expect(Array.isArray(txArg)).toBe(true);
-      expect(txArg).toHaveLength(2);
+      expect(txArg).toHaveLength(4);
+
+      // Regression for the H2 + scoreUpdateOps spread bug: the
+      // returned match object must be the result of match.update
+      // (at index `scoreUpdateOps.length` = 2), NOT the first
+      // score-updateMany result. With the previous `[match]`
+      // destructuring, this assertion would fail because the
+      // destructured value was `{ count }` from updateMany.
+      // The scoreUpdateOps here is `[u1Update, u2Update]`
+      // (length 2), so the match.update result is at index 2.
+      expect(finishResult).toEqual(
+        expect.objectContaining({ id: "m1", roomId: "r1" }),
+      );
 
       // Inspect each updateMany call's args to verify scores
       const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
@@ -605,13 +1151,22 @@ describe("MatchService", () => {
       expect(internalMap.has("m1")).toBe(true);
       internalMap.delete("m1");
 
-      await service.finishMatch("m1", "u1");
+      await service.finishMatch("m1", "u1", "r1");
 
-      // Should NOT throw, should still update match+room
-      expect(prisma.match.update).toHaveBeenCalled();
-      // Should NOT have called $transaction for score persistence
-      expect(prisma.$transaction).not.toHaveBeenCalled();
-      // updateMany should not have been called
+      // Should still update match+room via the atomic transaction
+      // (H2 fix: the score update and the match/room updates all
+      // run in the SAME $transaction).
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      const txArg = vi.mocked(prisma.$transaction).mock.calls[0][0];
+      expect(Array.isArray(txArg)).toBe(true);
+      // Only the match.updateMany + room.update (no score updateMany
+      // because the state machine was gone, so buildScoreUpdateOps
+      // returned an empty array — and logs a warning, 2d fix).
+      expect(txArg).toHaveLength(2);
+      // 1f/2a fix: the finish write is the idempotent updateMany now.
+      expect(prisma.match.updateMany).toHaveBeenCalled();
+      expect(prisma.room.update).toHaveBeenCalled();
+      // matchPlayer.updateMany should not have been called (no scores to update).
       expect(prisma.matchPlayer.updateMany).not.toHaveBeenCalled();
     });
 
@@ -624,7 +1179,7 @@ describe("MatchService", () => {
         { playerId: "u2", answer: "B", isCorrect: false, responseTimeMs: 500 },
       ]);
 
-      await service.finishMatch("m1", "u1");
+      await service.finishMatch("m1", "u1", "r1");
 
       const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
         .calls as any[][];
@@ -633,7 +1188,13 @@ describe("MatchService", () => {
       expect(u2Call![0].data.score).toBe(0);
     });
 
-    it("continues to update match and room status even if score persistence fails", async () => {
+    it("propagates the transaction error when the atomic write fails (H2)", async () => {
+      // H2 fix follow-up: the previous behaviour was to swallow
+      // the score-write error and continue with match+room updates.
+      // That was the bug — a partial write left the DB inconsistent.
+      // The new contract: $transaction is atomic, so ANY error
+      // rolls back ALL writes and the function throws. Operators
+      // see a clear failure rather than silent data corruption.
       await setupMatch("m1", "r1", ["u1", "u2"]);
 
       // Make $transaction fail
@@ -641,11 +1202,20 @@ describe("MatchService", () => {
         new Error("DB transaction failed"),
       );
 
-      // Should NOT throw — score persistence failure is logged but non-fatal
-      await expect(service.finishMatch("m1", "u1")).resolves.toBeDefined();
+      // The error is propagated; the function does not swallow it.
+      await expect(service.finishMatch("m1", "u1", "r1")).rejects.toThrow(
+        "DB transaction failed",
+      );
 
-      // Match and room updates should still have happened
-      expect(prisma.match.update).toHaveBeenCalled();
+      // The in-memory stateMachines map should NOT have been
+      // touched: cleanup happens only on success. (Otherwise a
+      // failed transaction would leave a half-clean state where
+      // a retry's getStateMachine would return undefined.)
+      const internalMap = (service as any).stateMachines as Map<
+        string,
+        unknown
+      >;
+      expect(internalMap.has("m1")).toBe(true);
     });
 
     it("accumulates score across multiple rounds correctly", async () => {
@@ -675,7 +1245,7 @@ describe("MatchService", () => {
         1,
       );
 
-      await service.finishMatch("m1", "u1");
+      await service.finishMatch("m1", "u1", "r1");
 
       const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
         .calls as any[][];

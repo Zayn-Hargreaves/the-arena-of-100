@@ -12,5 +12,8 @@
   "devDependencies": {
     "@types/node": "^22.10.5",
     "typescript": "^6.0.3"
+  },
+  "peerDependencies": {
+    "zod": "^3.24.1"
   }
 }

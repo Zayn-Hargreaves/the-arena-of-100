@@ -168,6 +168,9 @@ importers:
       prisma:
         specifier: ^7.8.0
         version: 7.8.0(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(magicast@0.3.5)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(typescript@6.0.3)
+      socket.io-client:
+        specifier: ^4.8.1
+        version: 4.8.3
       tsx:
         specifier: ^4.22.1
         version: 4.22.1
@@ -237,6 +240,9 @@ importers:
       tailwindcss-animate:
         specifier: ^1.0.7
         version: 1.0.7(tailwindcss@3.4.19(tsx@4.22.1)(yaml@2.9.0))
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
       zustand:
         specifier: ^5.0.13
         version: 5.0.13(@types/react@19.2.14)(react@19.2.6)
@@ -307,6 +313,10 @@ importers:
         version: 2.1.9(@types/node@22.19.15)(jsdom@25.0.1)(terser@5.46.1)
 
   packages/shared:
+    dependencies:
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
     devDependencies:
       '@types/node':
         specifier: ^22.10.5

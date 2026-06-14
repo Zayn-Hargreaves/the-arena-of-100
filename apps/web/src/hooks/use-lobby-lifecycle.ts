@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RoomStatus } from "@arena/shared";
 import { useSocketStore } from "@/stores/socket-store";
 
@@ -22,15 +22,48 @@ export function useLobbyLifecycle(roomCode: string) {
   const [joinError, setJoinError] = useState<string | null>(null);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
 
+  // F8 fix: in-flight guard for the auto-join effect. The
+  // previous code's effect re-ran whenever the `room` object
+  // changed (which happens on every PLAYER_JOINED / presence
+  // tick — i.e. every ~10s of heartbeat). Each re-run started a
+  // new `autoJoin` async function. The `cancelled` flag it set in
+  // the cleanup only blocked the post-await `setJoining` /
+  // `setJoinError` calls, but it did NOT cancel the in-flight
+  // `await joinRoom(roomCode)`. The result was a second (and
+  // sometimes third) `JOIN_ROOM` emit hitting the server before
+  // the first had resolved — racing the server's join policy
+  // and, on the `WAITING` rejoin path, tripping the
+  // `@@unique([roomId, userId])` constraint.
+  //
+  // The new `joinInFlightRef` is a synchronous gate: we check
+  // it at the start of the effect, and we set/clear it around
+  // the `await joinRoom` call. This makes the effect strictly
+  // single-flight across the entire `room` lifecycle, so a
+  // rapid sequence of presence ticks (or React 18 strict-mode
+  // double-invoke in dev) cannot double-emit.
+  const joinInFlightRef = useRef(false);
+
   // Auto-join when the socket is ready and we are not already in the room.
   useEffect(() => {
     if (!isConnected || (room && room.code === roomCode)) {
       return;
     }
 
+    // F8 fix: short-circuit if an auto-join is already in
+    // flight for this hook instance. This guards against the
+    // re-run-during-await race described above.
+    if (joinInFlightRef.current) {
+      return;
+    }
+
     let cancelled = false;
 
     const autoJoin = async () => {
+      // F8 fix: claim the in-flight slot synchronously, before
+      // the await. This way, even if the effect re-runs the
+      // moment we suspend, the second run sees `current === true`
+      // and exits without emitting.
+      joinInFlightRef.current = true;
       setJoining(true);
       setJoinError(null);
 
@@ -43,6 +76,10 @@ export function useLobbyLifecycle(roomCode: string) {
           );
         }
       } finally {
+        // F8 fix: always release the slot, including on the
+        // cancelled path (so a future legitimate re-join can
+        // proceed after the user has explicitly left the room).
+        joinInFlightRef.current = false;
         if (!cancelled) {
           setJoining(false);
         }

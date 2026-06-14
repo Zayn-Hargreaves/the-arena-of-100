@@ -4,7 +4,7 @@ import { QuestionService } from "../question/question.service";
 import { MatchStateMachine } from "@arena/game-core";
 import { MatchStatus, PlayerStatus } from "@arena/shared";
 import { Server } from "socket.io";
-import { vi, beforeEach, it, expect, describe } from "vitest";
+import { vi, beforeEach, afterEach, it, expect, describe } from "vitest";
 import { RoomService } from "../room/room.service";
 import { createMockRedisService } from "./redis.mock";
 
@@ -44,8 +44,11 @@ describe("GameLoopService Persistence", () => {
       getStateMachine: vi.fn().mockResolvedValue(stateMachine),
       persistStateMachine: vi.fn().mockResolvedValue(undefined),
       finishMatch: vi.fn().mockResolvedValue({}),
-      saveRound: vi.fn().mockResolvedValue({ id: "round-record-123" }),
-      saveAnswers: vi.fn().mockResolvedValue({ count: 2 }),
+      // H2-style endRound fix: round + answers are now persisted
+      // atomically via a single $transaction-backed call.
+      saveRoundAndAnswers: vi
+        .fn()
+        .mockResolvedValue({ id: "round-record-123" }),
     } as unknown as MatchService;
 
     questionService = {
@@ -72,7 +75,25 @@ describe("GameLoopService Persistence", () => {
       questionService,
       roomService,
       createMockRedisService() as any,
+      // B3 fix: GameLoopService now takes a PrismaService for the
+      // `SELECT ... FOR UPDATE` transaction in `launchRoomMatch`.
+      // The persistence suite does not exercise that path, so a
+      // no-op mock with a stub tx client is sufficient.
+      {
+        $transaction: vi.fn().mockImplementation(
+          async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> =>
+            fn({
+              $queryRaw: vi.fn().mockResolvedValue([]),
+              room: { update: vi.fn().mockResolvedValue({}) },
+            }),
+        ),
+        $queryRaw: vi.fn().mockResolvedValue([]),
+      } as any,
     );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe("endRound persistence", () => {
@@ -93,34 +114,25 @@ describe("GameLoopService Persistence", () => {
       stateMachine.submitAnswer("p1", "A", now);
       stateMachine.submitAnswer("p2", "B", now);
 
-      // Mock the saveRound to return a specific round record ID
-      const mockRoundRecord = { id: "round-record-xyz" };
-      (matchService.saveRound as any).mockResolvedValue(mockRoundRecord);
-
       // Execute endRound
       await (service as any).endRound("match-1", "room-1", mockServer);
 
-      // Verify saveRound was called with correct parameters
-      expect(matchService.saveRound).toHaveBeenCalledWith(
+      // Verify saveRoundAndAnswers was called with the round metadata
+      // and the per-player answer map. The answer rows no longer
+      // carry roundId at the call site — it's stamped inside the
+      // transaction when the round row is created.
+      expect(matchService.saveRoundAndAnswers).toHaveBeenCalledWith(
         "match-1", // matchId
         1, // roundNo (first round)
         "q1", // questionId
-      );
-
-      // Verify saveAnswers was called with correct parameters
-      expect(matchService.saveAnswers).toHaveBeenCalledWith(
         expect.arrayContaining([
           expect.objectContaining({
-            matchId: "match-1",
-            roundId: "round-record-xyz",
             userId: "p1",
             answer: "A",
             isCorrect: true,
             responseTimeMs: expect.any(Number),
           }),
           expect.objectContaining({
-            matchId: "match-1",
-            roundId: "round-record-xyz",
             userId: "p2",
             answer: "B",
             isCorrect: false,
@@ -130,42 +142,55 @@ describe("GameLoopService Persistence", () => {
       );
     });
 
-    it("should use the round record ID returned from saveRound when saving answers", async () => {
-      // Setup state machine
+    it("persists round + answers in a single atomic transaction", async () => {
+      // Regression test: a partial failure on the answer batch must
+      // NOT leave a round row in the DB. Previously the two awaits
+      // were separate; a saveAnswers throw after saveRound committed
+      // stranded the match in ROUND_EVALUATING and tripped P2002 on
+      // the next retry.
       stateMachine.transition(MatchStatus.COUNTDOWN);
       stateMachine.transition(MatchStatus.ROUND_ACTIVE);
       stateMachine.startRound({
-        id: "q2",
-        content: "Another test question",
-        options: ["X", "Y", "Z"],
-        correctAnswer: "Y",
-        difficulty: "HARD",
+        id: "q3",
+        content: "Atomic round",
+        options: ["A", "B"],
+        correctAnswer: "A",
+        difficulty: "EASY",
       });
+      stateMachine.submitAnswer("p1", "A", Date.now());
 
-      // Submit one answer
-      stateMachine.submitAnswer("p1", "Y", Date.now());
+      const loggerSpy = vi
+        .spyOn((service as any).logger, "error")
+        .mockImplementation(() => {});
 
-      // Mock saveRound to return a specific round record with unique ID
-      const uniqueRoundId = "unique-round-id-789";
-      const mockRoundRecord = { id: uniqueRoundId };
-      (matchService.saveRound as any).mockResolvedValue(mockRoundRecord);
-
-      // Execute endRound
-      await (service as any).endRound("match-1", "room-1", mockServer);
-
-      // Verify that saveAnswers was called with the exact round ID returned from saveRound
-      expect(matchService.saveAnswers).toHaveBeenCalledWith(
-        expect.arrayContaining([
-          expect.objectContaining({
-            matchId: "match-1",
-            roundId: uniqueRoundId, // This should be the exact ID returned from saveRound
-            userId: "p1",
-            answer: "Y",
-            isCorrect: true,
-            responseTimeMs: expect.any(Number),
-          }),
-        ]),
+      // Simulate a DB failure inside the round-write path. The
+      // service must surface the error (so the surrounding timer
+      // callback logs it) and NOT advance the state machine.
+      (matchService.saveRoundAndAnswers as any).mockRejectedValue(
+        new Error("connection reset"),
       );
+
+      await expect(
+        (service as any).endRound("match-1", "room-1", mockServer),
+      ).rejects.toThrow("connection reset");
+
+      // Verify logger.error was called with the expected error message
+      expect(loggerSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "H3: endRound DB persistence failed for match match-1 round 1",
+        ),
+        expect.any(Error),
+      );
+
+      // The state machine was transitioned to ROUND_EVALUATING
+      // BEFORE the DB call (H3 ordering). It must NOT have been
+      // advanced to ROUND_RESULT — that would orphan a future
+      // retry.
+      expect(stateMachine.getState().status).toBe(MatchStatus.ROUND_EVALUATING);
+      // persistStateMachine must NOT have been called either —
+      // the next timer needs to see ROUND_EVALUATING in Redis to
+      // decide whether to retry.
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
     });
   });
 });

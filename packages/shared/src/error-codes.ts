@@ -19,4 +19,18 @@ export enum ErrorCode {
   // a registered player in the match tries to submit an answer.
   // Server-side gate in MatchHandler.handleSubmitAnswer.
   SPECTATOR_CANNOT_ANSWER = "SPECTATOR_CANNOT_ANSWER",
+  // C2 fix: emitted by the WebSocket validation pipe when a client
+  // event payload fails its Zod schema (wrong type, missing field,
+  // oversized string, object injection in a string field, ...).
+  // The pipe runs before any handler code, so the malformed payload
+  // never reaches the business logic.
+  INVALID_PAYLOAD = "INVALID_PAYLOAD",
+  // M6 fix: a player who has been marked DISCONNECTED in the state
+  // machine (e.g. via socket disconnect or a voluntary LEAVE_ROOM
+  // during IN_GAME) tries to submit an answer. The old generic
+  // "PLAYER_NOT_IN_ROOM" message was misleading because the user
+  // was, in fact, in the room moments earlier. The frontend can
+  // use this distinct code to show "Bạn đã bị ngắt kết nối" and
+  // trigger a reconnect flow.
+  PLAYER_DISCONNECTED = "PLAYER_DISCONNECTED",
 }

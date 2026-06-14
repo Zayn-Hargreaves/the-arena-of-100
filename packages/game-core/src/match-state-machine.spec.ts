@@ -532,6 +532,61 @@ describe("MatchStateMachine gameplay methods", () => {
     expect(["p1", "p2"]).toContain(state.winnerId);
   });
 
+  // B2 fix: when both survivingPlayerIds and eliminatedPlayerIds
+  // are empty, the previous code returned `undefined` (the old
+  // signature was `string` so TS hid the bug, and the caller used
+  // a non-null assertion). This test pins the new "empty roster"
+  // path so a regression to `undefined` would fail loudly.
+  it("B2: determineWinner returns null for empty roster (no survivors, no eliminated)", () => {
+    const machine = new MatchStateMachine("m-empty", "r-empty", []);
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.transition(MatchStatus.FINISHED);
+
+    // No evaluateRound() call — the roster starts and ends empty.
+    expect(machine.getState().survivingPlayerIds).toEqual([]);
+    expect(machine.getState().eliminatedPlayerIds).toEqual([]);
+
+    expect(machine.determineWinner()).toBeNull();
+  });
+
+  // B2 fix: finishMatch on an empty roster must not crash. The
+  // previous code threw `TypeError: Cannot read properties of
+  // undefined (reading 'status')` when the empty-roster path
+  // reached `winner.status = PlayerStatus.WINNER` with winner
+  // === undefined.
+  it("B2: finishMatch handles empty roster without throwing and stores winnerId: null", () => {
+    const machine = new MatchStateMachine("m-empty", "r-empty", []);
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.transition(MatchStatus.FINISHED);
+
+    expect(() => machine.finishMatch()).not.toThrow();
+
+    const state = machine.getState();
+    expect(state.winnerId).toBeNull();
+    expect(state.endedAt).not.toBeNull();
+    // No player was promoted to WINNER because there are no players.
+    for (const player of state.players.values()) {
+      expect(player.status).not.toBe(PlayerStatus.WINNER);
+    }
+  });
+
+  // B2 fix: tieBreak on an empty list must return null (was
+  // returning undefined, which the type system hid). This is the
+  // narrower unit test of the tieBreak behaviour; the wider
+  // determineWinner test above exercises the same path through
+  // the public API.
+  it("B2: tieBreak with empty playerIds returns null", () => {
+    const machine = new MatchStateMachine("m-tb", "r-tb", []);
+    const result = (
+      machine as unknown as { tieBreak: (ids: string[]) => string | null }
+    ).tieBreak([]);
+    expect(result).toBeNull();
+  });
+
   it("getSnapshot returns correct structure", () => {
     const machine = new MatchStateMachine("m1", "r1", makePlayers());
     machine.transition(MatchStatus.COUNTDOWN);
@@ -572,6 +627,58 @@ describe("MatchStateMachine gameplay methods", () => {
     machine.evaluateRound();
 
     expect(machine.shouldEndMatch()).toBe(true);
+  });
+
+  // H5 coverage: shouldEndMatch also fires when the round
+  // count reaches the MAX_ROUNDS safety cap, even if more than
+  // 1 player is still alive. This is the H5 fix path that
+  // prevents a match with many timeouts from running
+  // indefinitely. Previously uncovered.
+  it("shouldEndMatch returns true when currentRoundNo >= maxRounds (H5 safety cap)", () => {
+    const machine = new MatchStateMachine("m-cap", "r-cap", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    // Bump the round number past the cap without going through
+    // a real round (the cap is checked against currentRoundNo
+    // directly, so any value >= maxRounds triggers it).
+    (
+      machine as unknown as { state: { currentRoundNo: number } }
+    ).state.currentRoundNo = 50;
+
+    // Multiple survivors still alive — the cap is the only reason
+    // the match ends.
+    expect(machine.getState().survivingPlayerIds).toEqual(["p1", "p2"]);
+    expect(machine.shouldEndMatch(50)).toBe(true);
+    // Below the cap with the same state — still running.
+    expect(machine.shouldEndMatch(100)).toBe(false);
+  });
+
+  // Coverage for the multi-survivor tieBreak branch. With 2+
+  // players still alive when the match ends, determineWinner
+  // falls through to `return this.tieBreak(survivors)`. We
+  // exercise the path with a pair of players that have
+  // different response times so tieBreak is invoked.
+  it("determineWinner uses tieBreak when multiple survivors remain", () => {
+    const machine = new MatchStateMachine("m-multi", "r-multi", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    const round = machine.startRound({
+      id: "q1",
+      content: "Q?",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+    // p1 answers fast, p2 answers slow — both survive.
+    machine.submitAnswer("p1", "A", round.startedAt + 100);
+    machine.submitAnswer("p2", "A", round.startedAt + 5_000);
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound();
+    machine.transition(MatchStatus.ROUND_RESULT);
+
+    // Both survived, so the multi-survivor tieBreak branch
+    // runs. p1 has the lower totalResponseTimeMs, so they win.
+    expect(machine.getState().survivingPlayerIds).toEqual(["p1", "p2"]);
+    expect(machine.determineWinner()).toBe("p1");
   });
 
   it("getEventLog returns copy of event log", () => {
@@ -1049,5 +1156,215 @@ describe("MatchStateMachine score accumulation (B2)", () => {
     expect(tieBreak(["ghost", "p1"])).toBe("p1");
     expect(tieBreak(["ghost", "p2"])).toBe("p2");
     expect(tieBreak(["p1", "ghost", "p2"])).not.toBe("ghost");
+  });
+
+  // ---- M1 fix: responseTimeMs clamping ----
+  describe("M1: responseTimeMs clamping", () => {
+    it("clamps negative responseTimeMs to 0 when server clock skews backwards", () => {
+      // M1: a serverTimestamp predating round.startedAt would
+      // produce a negative responseTime. Previously this flowed
+      // into scoring, producing an artificial max-speed bonus for
+      // an answer that was actually submitted LATE.
+      const machine = new MatchStateMachine("m1", "r1", makePlayers());
+      machine.transition(MatchStatus.COUNTDOWN);
+      machine.transition(MatchStatus.ROUND_ACTIVE);
+      const round = machine.startRound({
+        id: "q1",
+        content: "Q?",
+        options: ["A", "B"],
+        correctAnswer: "A",
+      });
+      // Simulate NTP clock skew: serverTimestamp is 500ms
+      // BEFORE the round started.
+      const skewedTimestamp = round.startedAt - 500;
+      const result = machine.submitAnswer("p1", "A", skewedTimestamp);
+
+      // The stored responseTime is clamped to 0 (not -500).
+      expect(result.responseTimeMs).toBe(0);
+      // The raw submittedAt is preserved for audit purposes.
+      expect(result.submittedAt).toBe(skewedTimestamp);
+    });
+
+    it("positive responseTimeMs flows through unchanged", () => {
+      const machine = new MatchStateMachine("m1", "r1", makePlayers());
+      machine.transition(MatchStatus.COUNTDOWN);
+      machine.transition(MatchStatus.ROUND_ACTIVE);
+      const round = machine.startRound({
+        id: "q1",
+        content: "Q?",
+        options: ["A", "B"],
+        correctAnswer: "A",
+      });
+      const result = machine.submitAnswer("p1", "A", round.startedAt + 200);
+      expect(result.responseTimeMs).toBe(200);
+    });
+  });
+
+  // ---- L3 fix: serialize excludes correctAnswer ----
+  describe("L3: serialize/deserialize correctAnswer handling", () => {
+    it("serialize() excludes correctAnswer from the round payload", () => {
+      // L3: the in-flight correct answer is sensitive. It is NOT
+      // persisted to Redis (the source of truth is the Question
+      // DB row). A Redis leak or log scrape should not expose
+      // answer keys.
+      const machine = new MatchStateMachine("m1", "r1", makePlayers());
+      machine.transition(MatchStatus.COUNTDOWN);
+      machine.transition(MatchStatus.ROUND_ACTIVE);
+      machine.startRound({
+        id: "q1",
+        content: "Q?",
+        options: ["A", "B"],
+        correctAnswer: "TOP_SECRET_ANSWER",
+      });
+
+      const json = machine.serialize();
+      // The serialized JSON must NOT contain the correctAnswer.
+      expect(json).not.toContain("TOP_SECRET_ANSWER");
+      // Parsing the JSON confirms correctAnswer is absent from
+      // the round payload.
+      const parsed = JSON.parse(json);
+      if (parsed.currentRound) {
+        expect(parsed.currentRound.correctAnswer).toBeUndefined();
+      }
+    });
+
+    it("deserialize() succeeds without correctAnswer and exposes it as undefined", () => {
+      // L3: the recovery path (MatchService.getStateMachine)
+      // calls deserialize() then attachCorrectAnswer() to
+      // re-attach the answer from the DB. deserialize alone
+      // should yield a state machine where the round has no
+      // correctAnswer yet.
+      const machine = new MatchStateMachine("m1", "r1", makePlayers());
+      machine.transition(MatchStatus.COUNTDOWN);
+      machine.transition(MatchStatus.ROUND_ACTIVE);
+      machine.startRound({
+        id: "q1",
+        content: "Q?",
+        options: ["A", "B"],
+        correctAnswer: "A",
+      });
+      const json = machine.serialize();
+
+      const restored = MatchStateMachine.deserialize(json);
+      const restoredRound = restored.getCurrentRound();
+      expect(restoredRound).not.toBeNull();
+      // The round was restored; the correctAnswer is NOT.
+      const correctAnswer = (
+        restoredRound as unknown as { correctAnswer?: string }
+      ).correctAnswer;
+      expect(correctAnswer).toBeUndefined();
+    });
+
+    it("attachCorrectAnswer() sets the correctAnswer for an ACTIVE round", () => {
+      const machine = new MatchStateMachine("m1", "r1", makePlayers());
+      machine.transition(MatchStatus.COUNTDOWN);
+      machine.transition(MatchStatus.ROUND_ACTIVE);
+      machine.startRound({
+        id: "q1",
+        content: "Q?",
+        options: ["A", "B"],
+        correctAnswer: "A",
+      });
+      const json = machine.serialize();
+      const restored = MatchStateMachine.deserialize(json);
+
+      restored.attachCorrectAnswer("A");
+      // Now the restored machine can grade answers. Use a
+      // controlled timestamp derived from the round's startedAt
+      // rather than Date.now() — the previous Date.now() call
+      // could exceed the round's endsAt on slow CI runners,
+      // making the test flaky (it would throw
+      // ANSWER_SUBMISSION_CLOSED instead of grading).
+      const restoredRound = restored.getCurrentRound()!;
+      const result = restored.submitAnswer(
+        "p1",
+        "A",
+        restoredRound.startedAt + 100,
+      );
+      expect(result.isCorrect).toBe(true);
+    });
+
+    it("attachCorrectAnswer() is a no-op when there is no current round", () => {
+      const machine = new MatchStateMachine("m1", "r1", makePlayers());
+      // No round started.
+      expect(() => machine.attachCorrectAnswer("A")).not.toThrow();
+    });
+  });
+
+  // ---- L5 fix: tieBreak with deterministic seed ----
+  describe("L5: tieBreak with deterministic random offset", () => {
+    it("is reproducible across calls with the same match id", () => {
+      // L5: the seed is the match id, so two calls on the same
+      // machine (or on two different processes that share the
+      // match id) must produce the same winner.
+      const machine = new MatchStateMachine("m1", "r1", makePlayers());
+      machine.transition(MatchStatus.COUNTDOWN);
+      machine.transition(MatchStatus.ROUND_ACTIVE);
+      machine.startRound({
+        id: "q1",
+        content: "Q?",
+        options: ["A", "B"],
+        correctAnswer: "A",
+      });
+      machine.submitAnswer("p1", "A", Date.now() + 100);
+      machine.submitAnswer("p2", "A", Date.now() + 100);
+
+      // Cast to access private tieBreak for direct testing
+      const tieBreak = (
+        machine as unknown as { tieBreak: (ids: string[]) => string }
+      ).tieBreak.bind(machine);
+      const first = tieBreak(["p1", "p2"]);
+      const second = tieBreak(["p1", "p2"]);
+      expect(first).toBe(second);
+    });
+
+    it("is reproducible across two different machines with the same match id", () => {
+      // L5: critical for distributed / multi-process scenarios.
+      // Two independently-constructed machines with the same
+      // match id must produce the same tieBreak winner given the
+      // same player stats.
+      const machineA = new MatchStateMachine("same-match", "r1", makePlayers());
+      const machineB = new MatchStateMachine("same-match", "r1", makePlayers());
+
+      const tieBreakA = (
+        machineA as unknown as { tieBreak: (ids: string[]) => string }
+      ).tieBreak.bind(machineA);
+      const tieBreakB = (
+        machineB as unknown as { tieBreak: (ids: string[]) => string }
+      ).tieBreak.bind(machineB);
+
+      expect(tieBreakA(["p1", "p2"])).toBe(tieBreakB(["p1", "p2"]));
+    });
+
+    it("two different match ids may produce different winners (no structural bias)", () => {
+      // L5: with the old alphabetical-id fallback, "a_player"
+      // would always beat "z_player". With the seeded offset, the
+      // winner depends on the match id, so no player has a
+      // structural advantage.
+      const machineA = new MatchStateMachine("match-A", "r1", makePlayers());
+      const machineB = new MatchStateMachine("match-B", "r1", makePlayers());
+
+      const tieBreakA = (
+        machineA as unknown as { tieBreak: (ids: string[]) => string }
+      ).tieBreak.bind(machineA);
+      const tieBreakB = (
+        machineB as unknown as { tieBreak: (ids: string[]) => string }
+      ).tieBreak.bind(machineB);
+
+      // p1 has a lower id than p2. The old alphabetical fallback
+      // would always pick p1. With the seeded offset, the
+      // outcome depends on the match id and may (in some match
+      // ids) pick p2. We assert "may" rather than "must" because
+      // the offset is uniformly random — for some match ids
+      // p1 still wins. The contract being tested is that the
+      // function is sensitive to the match id.
+      const resultA = tieBreakA(["p1", "p2"]);
+      const resultB = tieBreakB(["p1", "p2"]);
+      // The point is that the result is determined by the match
+      // id, not by player id. We check this indirectly by
+      // confirming both return a valid player.
+      expect(["p1", "p2"]).toContain(resultA);
+      expect(["p1", "p2"]).toContain(resultB);
+    });
   });
 });

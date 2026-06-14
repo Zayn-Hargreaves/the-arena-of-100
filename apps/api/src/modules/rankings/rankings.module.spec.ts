@@ -6,10 +6,13 @@ import { RankingsController } from "./rankings.controller";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 
+import { PrismaModule } from "../prisma/prisma.module";
+import { RedisModule } from "../redis/redis.module";
+
 describe("RankingsModule", () => {
   it("compiles and exposes RankingsService + RankingsController", async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [RankingsModule],
+      imports: [PrismaModule, RedisModule, RankingsModule],
     })
       .overrideProvider(PrismaService)
       .useValue({})
