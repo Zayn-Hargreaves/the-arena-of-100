@@ -64,7 +64,7 @@ describe("Sidebar — desktop", () => {
     mockUsePathname.mockReturnValue("/rankings");
     render(<Sidebar nickname="Alice" />);
     const rankingsLink = screen.getByText("nav.rankings").closest("a");
-    expect(rankingsLink?.className).toMatch(/bg-candy-yellow/);
+    expect(rankingsLink).toHaveClass("bg-candy-yellow");
   });
 
   it("falls back to guestName when nickname is empty", () => {

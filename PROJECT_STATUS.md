@@ -273,7 +273,7 @@ Mỗi use case dưới đây gồm trạng thái (✅ Có / 🟡 Dở / ❌ Thi�
 | Priority      | Gap                                  | Use Case Brief | Why Now                                                                                                                                                |
 | ------------- | ------------------------------------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | ✅ 2026-06-14 | Design System Phase 5B closeout      | polish         | Done: shell gradient bỏ ở `app-shell-layout.tsx:34` + `sidebar.tsx:230`; `styles/components.css` audit xác nhận 0 references; visual closeout complete |
-| P2            | Drop-in spectating + transport       | #5, #6         | Sau lobby/heartbeat/kill-switch; cần transport riêng cho mass-spectate                                                                                 |
+| P1            | Drop-in spectating + transport       | #5, #6         | Next PR sau Phase 5B; cần transport riêng cho mass-spectate                                                                                            |
 | P2            | In-match AFK policy                  | #7             | Cần product decision (loại vs. spectator); sweep chỉ phủ lobby                                                                                         |
 | P2            | Frictionless onboarding + moderation | #1             | Privacy/legal risk nếu public; share với kill-switch sanitizer pipeline                                                                                |
 | P2            | Accessibility audit                  | #14            | Compliance                                                                                                                                             |
@@ -297,7 +297,7 @@ Phase đã đóng theo ground truth từ code. Bằng chứng:
 4. **Verify**: vitest infrastructure setup cho web package; AppShellLayout 100% test coverage (10 tests); Sidebar 99.51% (18 tests)
 5. **Out of scope** (deferred sang PR riêng): home page gradient ở `[locale]/page.tsx:193` vì home không dùng AppShellLayout
 
-### PR Kế Tiếp (P2): Drop-in Spectating + Spectator Transport Baseline
+### PR Kế Tiếp (P1): Drop-in Spectating + Spectator Transport Baseline
 
 Scope đề xuất:
 
