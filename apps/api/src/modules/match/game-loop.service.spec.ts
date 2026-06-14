@@ -2168,6 +2168,47 @@ describe("GameLoopService", () => {
         );
         expect(rollbackEmits).toHaveLength(0);
       });
+
+      // The B3 cleanup's inner createError catch wraps the
+      // revert in a nested try/catch (lines 625-630). If
+      // `createMatch` throws AND `roomService.updateRoomStatus`
+      // (the revert) also throws, we hit the nested
+      // `catch (revertError)` branch and log a fallback error.
+      // This is a rare double-failure (DB down + Redis down at
+      // the same time) but the test pins the logging path so a
+      // future refactor can't drop the fallback silently.
+      it("B3 nested cleanup: logs the secondary error when both createMatch AND the revert throw", async () => {
+        // Default mock makes the FOR UPDATE pass (valid launchable
+        // row). createMatch then throws a non-race error.
+        (matchService.createMatch as any) = vi
+          .fn()
+          .mockRejectedValueOnce(new Error("primary failure: DB down"));
+        // The revert path itself also throws. This is the
+        // double-failure scenario.
+        vi.mocked(roomService.updateRoomStatus).mockRejectedValueOnce(
+          new Error("revert failure: DB still down"),
+        );
+        const errorSpy = vi.spyOn((service as any).logger, "error");
+
+        // We expect the original `createError` to be rethrown.
+        await expect(
+          (service as any).launchRoomMatch("r1", mockServer, {
+            isAutoStart: false,
+          }),
+        ).rejects.toThrow("primary failure: DB down");
+
+        // The nested catch (revertError) must have logged the
+        // fallback message. We assert the message substring so a
+        // future wording change in the log doesn't break the
+        // test, but the structural property (the error log fired)
+        // is pinned.
+        const revertLogCall = errorSpy.mock.calls.find((call) =>
+          String(call[0]).includes(
+            "B3 cleanup: failed to revert Room r1 status to WAITING",
+          ),
+        );
+        expect(revertLogCall).toBeDefined();
+      });
     });
 
     // ---- onModuleInit recovery ----

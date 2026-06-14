@@ -339,6 +339,203 @@ describe("MatchService", () => {
       expect(sm).toBeDefined();
       expect(prisma.question.findUnique).not.toHaveBeenCalled();
     });
+
+    // L3 coverage: rehydrateCorrectAnswer's other early-returns
+    // and failure paths. The "happy" and "round not ACTIVE"
+    // tests above cover the common branches. The cases below
+    // pin the structural behavior of the rehydrate path so a
+    // future refactor can't accidentally regress them.
+    it("does not call the DB when the restored state has no current round", async () => {
+      // currentRound: null → rehydrateCorrectAnswer's first
+      // guard (`if (!round) return;`) short-circuits before any
+      // prisma lookup. This covers line 145.
+      const serialized = JSON.stringify({
+        state: {
+          id: "m-noround",
+          roomId: "r-noround",
+          status: MatchStatus.ROUND_RESULT,
+          currentRoundNo: 0,
+          totalRounds: 0,
+          players: [
+            [
+              "u1",
+              {
+                id: "u1",
+                name: "A",
+                status: PlayerStatus.ACTIVE,
+                score: 0,
+                totalResponseTimeMs: 0,
+                correctAnswers: 0,
+                isOnline: true,
+              },
+            ],
+          ],
+          survivingPlayerIds: ["u1"],
+          eliminatedPlayerIds: [],
+          winnerId: null,
+          startedAt: 0,
+          endedAt: null,
+        },
+        currentRound: null,
+        eventLog: [],
+      });
+      vi.mocked(redis.get).mockResolvedValue(serialized);
+
+      const sm = await service.getStateMachine("m-noround");
+      expect(sm).toBeDefined();
+      expect(prisma.question.findUnique).not.toHaveBeenCalled();
+    });
+
+    // NOTE: the `if (!questionId) return;` guard inside
+    // rehydrateCorrectAnswer (line 148) is unreachable through
+    // normal Redis deserialization. The deserializer
+    // (`MatchStateMachine.deserialize` at
+    // `packages/game-core/src/match-state-machine.ts:665-670`)
+    // validates that the question is a non-null object with id,
+    // content, and options before constructing the state machine.
+    // If the question is missing, deserialize throws and
+    // `getStateMachine` catches the error + returns undefined
+    // (lines 117-125) before rehydrateCorrectAnswer runs. The
+    // `!questionId` guard remains as defense-in-depth for any
+    // future code path that constructs a state machine without
+    // going through the deserializer, but we don't exercise it
+    // here to avoid crafting a state shape the deserializer
+    // would reject.
+
+    it("logs a warn + skips attach when the question is not found in the DB", async () => {
+      // Covers the `if (!question)` warn path (lines 155-160):
+      // the questionId is in the state machine, but the DB row
+      // was deleted (e.g. an admin ran `prisma.question.delete`
+      // while the match was in flight). The state machine can
+      // not be graded but the recovery must not throw.
+      const serialized = JSON.stringify({
+        state: {
+          id: "m-orphan-q",
+          roomId: "r-orphan-q",
+          status: MatchStatus.ROUND_ACTIVE,
+          currentRoundNo: 1,
+          totalRounds: 0,
+          players: [
+            [
+              "u1",
+              {
+                id: "u1",
+                name: "A",
+                status: PlayerStatus.ACTIVE,
+                score: 0,
+                totalResponseTimeMs: 0,
+                correctAnswers: 0,
+                isOnline: true,
+              },
+            ],
+          ],
+          survivingPlayerIds: ["u1"],
+          eliminatedPlayerIds: [],
+          winnerId: null,
+          startedAt: 0,
+          endedAt: null,
+        },
+        currentRound: {
+          roundNo: 1,
+          question: {
+            id: "q-orphan",
+            content: "Q?",
+            options: ["A", "B"],
+            difficulty: "MEDIUM",
+          },
+          startedAt: 1000,
+          endsAt: 2000,
+          status: "ACTIVE",
+          answers: [],
+        },
+        eventLog: [],
+      });
+      vi.mocked(redis.get).mockResolvedValue(serialized);
+      // DB returns null (question row missing).
+      vi.mocked(prisma.question.findUnique).mockResolvedValue(null);
+      const warnSpy = vi.spyOn((service as any).logger, "warn");
+
+      const sm = await service.getStateMachine("m-orphan-q");
+      expect(sm).toBeDefined();
+      // The warn message must include the question id and the
+      // round no so an operator can correlate.
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("q-orphan"));
+      // The internal `correctAnswer` field must NOT be set —
+      // the round will fail to grade, which is the correct
+      // failure mode for this scenario.
+      const round = sm!.getCurrentRound();
+      const internalAnswer = (
+        round as unknown as {
+          correctAnswer: string;
+        }
+      ).correctAnswer;
+      expect(internalAnswer).toBeUndefined();
+    });
+
+    it("logs an error and does not throw when the prisma.question lookup itself throws", async () => {
+      // Covers the catch block (lines 165-170): the DB lookup
+      // for the question row throws (e.g. a transient Prisma
+      // error during rehydrate). The recovery must not crash
+      // the match-load path; the state machine is still
+      // returned and can be inspected by the operator.
+      const serialized = JSON.stringify({
+        state: {
+          id: "m-db-boom",
+          roomId: "r-db-boom",
+          status: MatchStatus.ROUND_ACTIVE,
+          currentRoundNo: 1,
+          totalRounds: 0,
+          players: [
+            [
+              "u1",
+              {
+                id: "u1",
+                name: "A",
+                status: PlayerStatus.ACTIVE,
+                score: 0,
+                totalResponseTimeMs: 0,
+                correctAnswers: 0,
+                isOnline: true,
+              },
+            ],
+          ],
+          survivingPlayerIds: ["u1"],
+          eliminatedPlayerIds: [],
+          winnerId: null,
+          startedAt: 0,
+          endedAt: null,
+        },
+        currentRound: {
+          roundNo: 1,
+          question: {
+            id: "q-boom",
+            content: "Q?",
+            options: ["A", "B"],
+            difficulty: "MEDIUM",
+          },
+          startedAt: 1000,
+          endsAt: 2000,
+          status: "ACTIVE",
+          answers: [],
+        },
+        eventLog: [],
+      });
+      vi.mocked(redis.get).mockResolvedValue(serialized);
+      vi.mocked(prisma.question.findUnique).mockRejectedValueOnce(
+        new Error("Prisma: connection lost"),
+      );
+      const errorSpy = vi.spyOn((service as any).logger, "error");
+
+      // Must NOT throw — rehydrate failures are non-fatal.
+      const sm = await service.getStateMachine("m-db-boom");
+      expect(sm).toBeDefined();
+      // The error log must include the question id so the
+      // operator can find the bad row.
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("q-boom"),
+        expect.any(Error),
+      );
+    });
   });
 
   describe("persistStateMachine", () => {

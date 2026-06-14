@@ -101,6 +101,47 @@ describe("AuthHandler", () => {
       });
     });
 
+    // L2 fix: when the validation pipe (WsValidationPipe) throws
+    // a `WsValidationError` (a `RoomError` with code
+    // `INVALID_PAYLOAD`), the handler surfaces that error code
+    // directly to the client instead of mapping it to the
+    // generic `INVALID_TOKEN`. The client can then distinguish
+    // "your payload is malformed" from "your token is bad" and
+    // fix the right thing.
+    //
+    // In the spec we call `handleAuthenticate` directly (the
+    // pipe runs at the gateway layer, before the handler), so
+    // we exercise the handler's catch by mocking `verifyToken`
+    // to throw the same `RoomError(INVALID_PAYLOAD)` that the
+    // pipe would have thrown.
+    it("emits INVALID_PAYLOAD (not INVALID_TOKEN) when a RoomError(INVALID_PAYLOAD) bubbles up", async () => {
+      const { RoomError } = await import("@arena/shared");
+      vi.mocked(authService.verifyToken).mockImplementation(() => {
+        throw new RoomError(ErrorCode.INVALID_PAYLOAD, "Missing token");
+      });
+
+      await handler.handleAuthenticate(client, { token: "bad" });
+
+      // The handler must emit the payload-shape error, NOT
+      // the generic INVALID_TOKEN, so the client knows to
+      // fix the request shape rather than the credentials.
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.INVALID_PAYLOAD,
+        message: expect.stringContaining("Missing token"),
+      });
+      // Defensive: the handler must NOT have emitted
+      // INVALID_TOKEN. A regression to the old code that
+      // would map every error to INVALID_TOKEN would fail
+      // this assertion.
+      const emitCalls = vi.mocked(client.emit).mock.calls;
+      const invalidTokenEmits = emitCalls.filter(
+        (call) =>
+          call[0] === ServerEvent.ERROR &&
+          (call[1] as { code: string }).code === ErrorCode.INVALID_TOKEN,
+      );
+      expect(invalidTokenEmits).toHaveLength(0);
+    });
+
     it("kicks previous socket connection when same user authenticates", async () => {
       vi.mocked(authService.verifyToken).mockReturnValue({
         userId: "u1",

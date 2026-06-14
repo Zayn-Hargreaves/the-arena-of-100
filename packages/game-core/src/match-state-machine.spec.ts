@@ -629,6 +629,58 @@ describe("MatchStateMachine gameplay methods", () => {
     expect(machine.shouldEndMatch()).toBe(true);
   });
 
+  // H5 coverage: shouldEndMatch also fires when the round
+  // count reaches the MAX_ROUNDS safety cap, even if more than
+  // 1 player is still alive. This is the H5 fix path that
+  // prevents a match with many timeouts from running
+  // indefinitely. Previously uncovered.
+  it("shouldEndMatch returns true when currentRoundNo >= maxRounds (H5 safety cap)", () => {
+    const machine = new MatchStateMachine("m-cap", "r-cap", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    // Bump the round number past the cap without going through
+    // a real round (the cap is checked against currentRoundNo
+    // directly, so any value >= maxRounds triggers it).
+    (
+      machine as unknown as { state: { currentRoundNo: number } }
+    ).state.currentRoundNo = 50;
+
+    // Multiple survivors still alive — the cap is the only reason
+    // the match ends.
+    expect(machine.getState().survivingPlayerIds).toEqual(["p1", "p2"]);
+    expect(machine.shouldEndMatch(50)).toBe(true);
+    // Below the cap with the same state — still running.
+    expect(machine.shouldEndMatch(100)).toBe(false);
+  });
+
+  // Coverage for the multi-survivor tieBreak branch. With 2+
+  // players still alive when the match ends, determineWinner
+  // falls through to `return this.tieBreak(survivors)`. We
+  // exercise the path with a pair of players that have
+  // different response times so tieBreak is invoked.
+  it("determineWinner uses tieBreak when multiple survivors remain", () => {
+    const machine = new MatchStateMachine("m-multi", "r-multi", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    const round = machine.startRound({
+      id: "q1",
+      content: "Q?",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+    // p1 answers fast, p2 answers slow — both survive.
+    machine.submitAnswer("p1", "A", round.startedAt + 100);
+    machine.submitAnswer("p2", "A", round.startedAt + 5_000);
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound();
+    machine.transition(MatchStatus.ROUND_RESULT);
+
+    // Both survived, so the multi-survivor tieBreak branch
+    // runs. p1 has the lower totalResponseTimeMs, so they win.
+    expect(machine.getState().survivingPlayerIds).toEqual(["p1", "p2"]);
+    expect(machine.determineWinner()).toBe("p1");
+  });
+
   it("getEventLog returns copy of event log", () => {
     const machine = new MatchStateMachine("m1", "r1", makePlayers());
     machine.transition(MatchStatus.COUNTDOWN);

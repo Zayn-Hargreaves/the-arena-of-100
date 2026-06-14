@@ -3,6 +3,7 @@ import {
   ServerEvent,
   ErrorCode,
   ERROR_MESSAGES,
+  PlayerStatus,
   RoomStatus,
   RoomError,
 } from "@arena/shared";
@@ -228,6 +229,53 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.SPECTATOR_CANNOT_ANSWER,
         message: ERROR_MESSAGES[ErrorCode.SPECTATOR_CANNOT_ANSWER],
+      });
+    });
+
+    // M6 fix: a player who is in the match roster but is
+    // currently DISCONNECTED (e.g. brief network blip, dropped
+    // socket that hasn't yet hit the presence sweep) must get
+    // a distinct error code so the frontend can drive a
+    // reconnect flow instead of an error toast. The
+    // SPECTATOR_CANNOT_ANSWER gate above passes (player IS in
+    // the roster), but this inner guard rejects before the
+    // answer is graded.
+    it("rejects submitAnswer from a DISCONNECTED player with PLAYER_DISCONNECTED (not SPECTATOR_CANNOT_ANSWER)", async () => {
+      const mockMachine = {
+        getCurrentRound: vi.fn().mockReturnValue({ roundNo: 1 }),
+        getState: vi.fn().mockReturnValue({
+          roomId: "r1",
+          players: new Map([
+            [
+              "u1",
+              {
+                id: "u1",
+                status: PlayerStatus.DISCONNECTED,
+              },
+            ],
+          ]),
+        }),
+        submitAnswer: vi.fn(),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+
+      await handler.handleSubmitAnswer(client, {
+        matchId: "m1",
+        answer: "A",
+        roundNo: 1,
+        clientTimestamp: 1234567890,
+      });
+
+      // The state machine must never be invoked — the
+      // disconnect guard fires first.
+      expect(mockMachine.submitAnswer).not.toHaveBeenCalled();
+      // The client must receive PLAYER_DISCONNECTED, not the
+      // spectator error and not the generic MATCH_NOT_FOUND.
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.PLAYER_DISCONNECTED,
+        message: ERROR_MESSAGES[ErrorCode.PLAYER_DISCONNECTED],
       });
     });
 
