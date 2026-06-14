@@ -13,12 +13,17 @@ describe("MatchService", () => {
   beforeEach(() => {
     prisma = {
       room: { findUnique: vi.fn(), update: vi.fn() },
-      match: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
+      match: {
+        create: vi.fn(),
+        findUnique: vi.fn(),
+        update: vi.fn(),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
       matchPlayer: {
         createMany: vi.fn(),
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
-      matchRound: { create: vi.fn() },
+      matchRound: { create: vi.fn(), findUnique: vi.fn() },
       answer: { create: vi.fn(), createMany: vi.fn() },
       question: { findUnique: vi.fn() },
       $transaction: vi.fn(async (ops) => {
@@ -402,12 +407,15 @@ describe("MatchService", () => {
     // here to avoid crafting a state shape the deserializer
     // would reject.
 
-    it("throws an error when the question is not found in the DB for an ACTIVE round", async () => {
-      // Covers the `if (!question)` path (lines 155-160):
-      // the questionId is in the state machine, but the DB row
-      // was deleted (e.g. an admin ran `prisma.question.delete`
-      // while the match was in flight). The state machine recovery
-      // must throw.
+    it("logs an error and degrades gracefully when the question is not found in the DB for an ACTIVE round", async () => {
+      // 2c fix (option A): the questionId is in the state machine, but
+      // the DB row was deleted (e.g. an admin ran
+      // `prisma.question.delete` while the match was in flight).
+      // getStateMachine MUST NOT throw — a throw here propagates
+      // through every hot path and makes the match permanently
+      // unrecoverable. Instead it logs an error and returns a usable
+      // state machine with no attached correct answer; the round will
+      // grade everyone as wrong and the match still completes.
       const serialized = JSON.stringify({
         state: {
           id: "m-orphan-q",
@@ -457,9 +465,16 @@ describe("MatchService", () => {
         .spyOn((service as any).logger, "error")
         .mockImplementation(() => {});
 
-      await expect(service.getStateMachine("m-orphan-q")).rejects.toThrow(
-        "Question q-orphan not found in DB",
-      );
+      const sm = await service.getStateMachine("m-orphan-q");
+
+      // The state machine is returned and usable (no throw).
+      expect(sm).toBeDefined();
+      // No correct answer was attached (the round will grade everyone
+      // as wrong, but the match stays recoverable).
+      const round = sm!.getCurrentRound();
+      expect(
+        (round as { correctAnswer?: string } | null)?.correctAnswer,
+      ).toBeUndefined();
 
       // The error message must include the question id and the
       // round no so an operator can correlate.
@@ -468,11 +483,11 @@ describe("MatchService", () => {
       );
     });
 
-    it("logs an error and throws when the prisma.question lookup itself throws for an ACTIVE round", async () => {
-      // Covers the catch block (lines 165-170): the DB lookup
-      // for the question row throws (e.g. a transient Prisma
-      // error during rehydrate). The recovery must fail-closed
-      // by throwing the error.
+    it("logs an error and degrades gracefully when the prisma.question lookup itself throws for an ACTIVE round", async () => {
+      // 2c fix (option A): the DB lookup for the question row throws
+      // (e.g. a transient Prisma error during rehydrate). getStateMachine
+      // MUST NOT throw — it logs and degrades so the match stays
+      // recoverable; a later getStateMachine call may succeed.
       const serialized = JSON.stringify({
         state: {
           id: "m-db-boom",
@@ -523,9 +538,14 @@ describe("MatchService", () => {
         .spyOn((service as any).logger, "error")
         .mockImplementation(() => {});
 
-      await expect(service.getStateMachine("m-db-boom")).rejects.toThrow(
-        "Prisma: connection lost",
-      );
+      const sm = await service.getStateMachine("m-db-boom");
+
+      // The state machine is returned and usable (no throw).
+      expect(sm).toBeDefined();
+      const round = sm!.getCurrentRound();
+      expect(
+        (round as { correctAnswer?: string } | null)?.correctAnswer,
+      ).toBeUndefined();
 
       // The error log must include the question id so the
       // operator can find the bad row.
@@ -577,15 +597,17 @@ describe("MatchService", () => {
       vi.mocked(prisma.room.update).mockResolvedValue({} as any);
       await service.createMatch("r1");
 
-      vi.mocked(prisma.match.update).mockResolvedValue({
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m1",
         roomId: "r1",
       } as any);
 
       await service.finishMatch("m1", "u1", "r1");
 
-      expect(prisma.match.update).toHaveBeenCalledWith({
-        where: { id: "m1" },
+      // 1f/2a fix: the finish write is now idempotent — match.updateMany
+      // with a `status != FINISHED` filter instead of match.update.
+      expect(prisma.match.updateMany).toHaveBeenCalledWith({
+        where: { id: "m1", status: { not: MatchStatus.FINISHED } },
         data: {
           status: MatchStatus.FINISHED,
           winnerId: "u1",
@@ -615,7 +637,7 @@ describe("MatchService", () => {
       vi.mocked(prisma.room.update).mockResolvedValue({} as any);
       await service.createMatch("r1");
 
-      vi.mocked(prisma.match.update).mockResolvedValue({
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m1",
         roomId: "r1",
       } as any);
@@ -623,9 +645,9 @@ describe("MatchService", () => {
       // Admin termination path: winnerId === null, isAdminTermination === true
       await service.finishMatch("m1", null, "r1", true);
 
-      // Match update records null winner
-      expect(prisma.match.update).toHaveBeenCalledWith({
-        where: { id: "m1" },
+      // Match update records null winner (idempotent updateMany)
+      expect(prisma.match.updateMany).toHaveBeenCalledWith({
+        where: { id: "m1", status: { not: MatchStatus.FINISHED } },
         data: {
           status: MatchStatus.FINISHED,
           winnerId: null,
@@ -670,7 +692,7 @@ describe("MatchService", () => {
       vi.mocked(prisma.room.update).mockResolvedValue({} as any);
       await service.createMatch("r1");
 
-      vi.mocked(prisma.match.update).mockResolvedValue({
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m1",
         roomId: "r1",
       } as any);
@@ -678,9 +700,9 @@ describe("MatchService", () => {
       // Natural match ending with no winner: winnerId === null, isAdminTermination === false
       await service.finishMatch("m1", null, "r1", false);
 
-      // Match update records null winner
-      expect(prisma.match.update).toHaveBeenCalledWith({
-        where: { id: "m1" },
+      // Match update records null winner (idempotent updateMany)
+      expect(prisma.match.updateMany).toHaveBeenCalledWith({
+        where: { id: "m1", status: { not: MatchStatus.FINISHED } },
         data: {
           status: MatchStatus.FINISHED,
           winnerId: null,
@@ -716,7 +738,7 @@ describe("MatchService", () => {
       vi.mocked(prisma.room.update).mockResolvedValue({} as any);
       await service.createMatch("r2");
 
-      vi.mocked(prisma.match.update).mockResolvedValue({
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m2",
         roomId: "r2",
       } as any);
@@ -726,9 +748,9 @@ describe("MatchService", () => {
       await service.finishMatch("m2", "u1", "r2");
 
       expect(redis.del).toHaveBeenCalledWith("match:state:m2");
-      expect(prisma.match.update).toHaveBeenCalledWith(
+      expect(prisma.match.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "m2" },
+          where: { id: "m2", status: { not: MatchStatus.FINISHED } },
           data: expect.objectContaining({ winnerId: "u1" }),
         }),
       );
@@ -755,7 +777,7 @@ describe("MatchService", () => {
       vi.mocked(prisma.room.update).mockResolvedValue({} as any);
       await service.createMatch("r2b");
 
-      vi.mocked(prisma.match.update).mockResolvedValue({
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m2b",
         roomId: "r2b",
       } as any);
@@ -787,7 +809,7 @@ describe("MatchService", () => {
       vi.mocked(prisma.room.update).mockResolvedValue({} as any);
       await service.createMatch("r3");
 
-      vi.mocked(prisma.match.update).mockResolvedValue({
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m3",
         roomId: "r3",
       } as any);
@@ -1050,6 +1072,13 @@ describe("MatchService", () => {
         id: matchId,
         roomId,
       } as any);
+      vi.mocked(prisma.match.updateMany).mockResolvedValue({
+        count: 1,
+      } as any);
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
+        id: matchId,
+        roomId,
+      } as any);
 
       await service.createMatch(roomId);
     };
@@ -1130,13 +1159,14 @@ describe("MatchService", () => {
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       const txArg = vi.mocked(prisma.$transaction).mock.calls[0][0];
       expect(Array.isArray(txArg)).toBe(true);
-      // Only the match.update + room.update (no score updateMany
+      // Only the match.updateMany + room.update (no score updateMany
       // because the state machine was gone, so buildScoreUpdateOps
-      // returned an empty array).
+      // returned an empty array — and logs a warning, 2d fix).
       expect(txArg).toHaveLength(2);
-      expect(prisma.match.update).toHaveBeenCalled();
+      // 1f/2a fix: the finish write is the idempotent updateMany now.
+      expect(prisma.match.updateMany).toHaveBeenCalled();
       expect(prisma.room.update).toHaveBeenCalled();
-      // updateMany should not have been called (no scores to update).
+      // matchPlayer.updateMany should not have been called (no scores to update).
       expect(prisma.matchPlayer.updateMany).not.toHaveBeenCalled();
     });
 

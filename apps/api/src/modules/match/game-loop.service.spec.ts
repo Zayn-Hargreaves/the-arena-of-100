@@ -45,6 +45,9 @@ function createMockPrismaService() {
         },
       ),
     $queryRaw: vi.fn().mockResolvedValue([]),
+    match: {
+      delete: vi.fn().mockResolvedValue({}),
+    },
     // Tests that need to drive the tx client pull this out.
     __tx: txStub,
   };
@@ -1325,11 +1328,13 @@ describe("GameLoopService", () => {
   });
 
   describe("Missing Coverage (Null Guards & Optional Params)", () => {
-    it("should return early in startMatchLoop if stateMachine is not found", async () => {
+    it("should throw RoomError in startMatchLoop if stateMachine is not found", async () => {
       vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
       const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
 
-      await service.startMatchLoop("match-nonexistent", "room-1", mockServer);
+      await expect(
+        service.startMatchLoop("match-nonexistent", "room-1", mockServer),
+      ).rejects.toThrow(RoomError);
 
       expect(loggerErrorSpy).toHaveBeenCalledWith(
         "State machine not found for match match-nonexistent",
@@ -2216,6 +2221,83 @@ describe("GameLoopService", () => {
         );
         expect(revertLogCall).toBeDefined();
       });
+
+      it("B3 nested cleanup: logs the secondary error when both createMatch AND the revert throw a non-Error object", async () => {
+        (matchService.createMatch as any) = vi
+          .fn()
+          .mockRejectedValueOnce(new Error("primary failure: DB down"));
+        vi.mocked(roomService.updateRoomStatus).mockRejectedValueOnce(
+          "revert failure string",
+        );
+        const errorSpy = vi.spyOn((service as any).logger, "error");
+
+        await expect(
+          (service as any).launchRoomMatch("r1", mockServer, {
+            isAutoStart: false,
+          }),
+        ).rejects.toThrow("primary failure: DB down");
+
+        const revertLogCall = errorSpy.mock.calls.find((call) =>
+          String(call[0]).includes(
+            "Failed to revert Room r1 status to WAITING",
+          ),
+        );
+        expect(revertLogCall).toBeDefined();
+        expect(revertLogCall?.[1]).toBeUndefined();
+      });
+
+      it("reverts room status and deletes orphaned match when startMatchLoop throws an error", async () => {
+        const emitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+        vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+          id: "r1",
+          status: RoomStatus.WAITING,
+          currentMatchId: null,
+          players: [{ userId: "p1" }, { userId: "p2" }],
+        } as any);
+
+        (matchService.createMatch as any) = vi
+          .fn()
+          .mockResolvedValue({ id: "m1" });
+
+        vi.spyOn(service as any, "startMatchLoop").mockRejectedValueOnce(
+          new Error("startMatchLoop failed"),
+        );
+
+        const prisma = (service as any).prisma;
+        const matchDeleteSpy = vi.spyOn(prisma.match, "delete");
+        const updateRoomStatusSpy = vi.spyOn(roomService, "updateRoomStatus");
+
+        await expect(
+          (service as any).launchRoomMatch("r1", mockServer, {
+            isAutoStart: false,
+          }),
+        ).rejects.toThrow("startMatchLoop failed");
+
+        // Should clean up the orphaned match
+        expect(matchDeleteSpy).toHaveBeenCalledWith({
+          where: { id: "m1" },
+        });
+
+        // Should revert the room status to WAITING
+        expect(updateRoomStatusSpy).toHaveBeenCalledWith(
+          "r1",
+          RoomStatus.WAITING,
+          null,
+        );
+
+        // Should emit ROOM_STATUS_UPDATED with WAITING and null match ID
+        const rollbackEmits = emitSpy.mock.calls.filter(
+          (call) =>
+            call[0] === ServerEvent.ROOM_STATUS_UPDATED &&
+            (call[1] as { roomStatus: string }).roomStatus ===
+              RoomStatus.WAITING &&
+            (call[1] as { currentMatchId: string | null }).currentMatchId ===
+              null,
+        );
+        expect(rollbackEmits).toHaveLength(1);
+      });
     });
 
     // ---- onModuleInit recovery ----
@@ -3073,6 +3155,18 @@ describe("GameLoopService", () => {
           ),
         );
       });
+
+      it("returns null and logs a warning when Redis throws a non-Error object (string)", async () => {
+        vi.mocked((service as any).redis.getClient().get).mockRejectedValueOnce(
+          "redis down string",
+        );
+        const warnSpy = vi.spyOn((service as any).logger, "warn");
+
+        expect(await service.getCountdownEnd("r1")).toBeNull();
+        expect(warnSpy).toHaveBeenCalledWith(
+          "getCountdownEnd: Redis read failed for room r1: redis down string",
+        );
+      });
     });
 
     // ---- B3: launchRoomMatch OUTER catch race-lost guard ----
@@ -3282,6 +3376,189 @@ describe("GameLoopService", () => {
         expect(endRoundSpy).not.toHaveBeenCalled();
         // We never even reach the state-machine lookup.
         expect(matchService.getStateMachine).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("launchRoomMatch orphaned match cleanup", () => {
+      it("deletes the created match, reverts room status, and re-throws if startMatchLoop throws", async () => {
+        const emitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+        vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+          id: "r1",
+          status: RoomStatus.WAITING,
+          currentMatchId: null,
+          players: [{ userId: "p1" }, { userId: "p2" }],
+        } as any);
+
+        (matchService.createMatch as any) = vi
+          .fn()
+          .mockResolvedValue({ id: "m1" });
+
+        const loopError = new Error("loop initialization failed");
+        vi.spyOn(service as any, "startMatchLoop").mockRejectedValueOnce(
+          loopError,
+        );
+
+        const deleteSpy = vi
+          .spyOn((service as any).prisma.match, "delete")
+          .mockResolvedValueOnce({} as any);
+        const updateRoomStatusSpy = vi.spyOn(roomService, "updateRoomStatus");
+        const warnSpy = vi.spyOn((service as any).logger, "warn");
+
+        await expect(
+          (service as any).launchRoomMatch("r1", mockServer, {
+            isAutoStart: false,
+          }),
+        ).rejects.toThrow("loop initialization failed");
+
+        expect(deleteSpy).toHaveBeenCalledWith({
+          where: { id: "m1" },
+        });
+        expect(warnSpy).toHaveBeenCalledWith(
+          "Deleting orphaned match m1 for room r1",
+        );
+        expect(updateRoomStatusSpy).toHaveBeenCalledWith(
+          "r1",
+          RoomStatus.WAITING,
+          null,
+        );
+
+        const rollbackEmits = emitSpy.mock.calls.filter(
+          (call) =>
+            call[0] === ServerEvent.ROOM_STATUS_UPDATED &&
+            (call[1] as { roomStatus: string }).roomStatus ===
+              RoomStatus.WAITING,
+        );
+        expect(rollbackEmits).toHaveLength(1);
+      });
+
+      it("logs at error level when deleting the orphaned match throws but still reverts room status and throws the original error", async () => {
+        const emitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+        vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+          id: "r1",
+          status: RoomStatus.WAITING,
+          currentMatchId: null,
+          players: [{ userId: "p1" }, { userId: "p2" }],
+        } as any);
+
+        (matchService.createMatch as any) = vi
+          .fn()
+          .mockResolvedValue({ id: "m1" });
+
+        const loopError = new Error("loop initialization failed");
+        vi.spyOn(service as any, "startMatchLoop").mockRejectedValueOnce(
+          loopError,
+        );
+
+        const deleteError = new Error("delete failed");
+        const deleteSpy = vi
+          .spyOn((service as any).prisma.match, "delete")
+          .mockRejectedValueOnce(deleteError);
+        const updateRoomStatusSpy = vi.spyOn(roomService, "updateRoomStatus");
+        const errorSpy = vi.spyOn((service as any).logger, "error");
+
+        await expect(
+          (service as any).launchRoomMatch("r1", mockServer, {
+            isAutoStart: false,
+          }),
+        ).rejects.toThrow("loop initialization failed");
+
+        expect(deleteSpy).toHaveBeenCalledWith({
+          where: { id: "m1" },
+        });
+        expect(errorSpy).toHaveBeenCalledWith(
+          "Failed to delete orphaned match m1:",
+          deleteError,
+        );
+        expect(updateRoomStatusSpy).toHaveBeenCalledWith(
+          "r1",
+          RoomStatus.WAITING,
+          null,
+        );
+
+        const rollbackEmits = emitSpy.mock.calls.filter(
+          (call) =>
+            call[0] === ServerEvent.ROOM_STATUS_UPDATED &&
+            (call[1] as { roomStatus: string }).roomStatus ===
+              RoomStatus.WAITING,
+        );
+        expect(rollbackEmits).toHaveLength(1);
+      });
+
+      it("logs at error level and rethrows when launchRoomMatch primary failure is a non-Error object (string)", async () => {
+        vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+          id: "r1",
+          status: RoomStatus.WAITING,
+          currentMatchId: null,
+          players: [{ userId: "p1" }, { userId: "p2" }],
+        } as any);
+
+        (matchService.createMatch as any) = vi
+          .fn()
+          .mockRejectedValueOnce("primary string failure");
+
+        const errorSpy = vi.spyOn((service as any).logger, "error");
+
+        let thrownErr: any;
+        try {
+          await (service as any).launchRoomMatch("r1", mockServer, {
+            isAutoStart: false,
+          });
+        } catch (err) {
+          thrownErr = err;
+        }
+
+        expect(thrownErr).toBe("primary string failure");
+        expect(errorSpy).toHaveBeenCalledWith(
+          "Launch failed for room r1: primary string failure",
+          undefined,
+        );
+      });
+    });
+
+    describe("timeout callbacks execution", () => {
+      it("executes the actual endRound and checkMatchEnd timeout callbacks successfully without mocks", async () => {
+        vi.useFakeTimers();
+
+        const emitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+        // Set state machine to COUNTDOWN state first
+        stateMachine.transition(MatchStatus.COUNTDOWN);
+
+        // Initialize usedQuestionIds for this match
+        (service as any).usedQuestionIds.set("match-1", new Set());
+
+        const endRoundSpy = vi.spyOn(service as any, "endRound");
+        const checkMatchEndSpy = vi.spyOn(service as any, "checkMatchEnd");
+
+        // 1. Call executeRound directly to transition to ROUND_ACTIVE and set the 15s endRound timer
+        await (service as any).executeRound("match-1", "room-1", mockServer);
+
+        // 2. Fast forward 15s to trigger the endRound timer callback
+        await vi.advanceTimersByTimeAsync(GAME_CONFIG.ROUND_DURATION_MS);
+
+        // Verify endRound was called through the timeout callback (line 957)
+        expect(endRoundSpy).toHaveBeenCalledWith(
+          "match-1",
+          "room-1",
+          mockServer,
+        );
+
+        // 3. Fast forward 3s to trigger the checkMatchEnd timer callback
+        await vi.advanceTimersByTimeAsync(GAME_CONFIG.RESULT_DISPLAY_MS);
+
+        // Verify checkMatchEnd was called through the timeout callback (line 1109)
+        expect(checkMatchEndSpy).toHaveBeenCalledWith(
+          "match-1",
+          "room-1",
+          mockServer,
+        );
+
+        vi.useRealTimers();
       });
     });
   });

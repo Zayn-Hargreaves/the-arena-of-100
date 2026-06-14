@@ -335,17 +335,8 @@ describe("HttpExceptionFilter", () => {
     expect(logArg).not.toContain("at fake:1:1");
   });
 
-  it("propagates logger errors (the filter does NOT wrap the logger call in try/catch)", () => {
-    // Defensive: the order of side effects inside `catch()` is
-    //   1. build logInfo
-    //   2. logger.error/warn(logInfo)
-    //   3. response.status().send(errorResponse)
-    // The logger call comes BEFORE the response send, so a
-    // throwing logger will skip the response entirely. This
-    // is intentional: a misconfigured logger is a server
-    // problem and the operator should see it bubble up
-    // (NestJS will log it through its own fallback).
-    const { host, response } = buildHttpHost();
+  it("handles logger errors gracefully and sends the HTTP error response", () => {
+    const { host, response, request } = buildHttpHost();
     vi.spyOn(
       Logger.prototype as unknown as { warn: () => void },
       "warn",
@@ -355,13 +346,23 @@ describe("HttpExceptionFilter", () => {
 
     const exception = new HttpException("Bad", HttpStatus.BAD_REQUEST);
 
-    // The logger throw propagates to the caller.
+    // The logger throw should be caught and not propagate to the caller.
     expect(() =>
       filter.catch(exception, host as unknown as ArgumentsHost),
-    ).toThrow("logger down");
-    // And the response is NEVER sent (the logger call is the
-    // first side effect and it threw).
-    expect(response.status).not.toHaveBeenCalled();
-    expect(response.send).not.toHaveBeenCalled();
+    ).not.toThrow();
+
+    // The response should STILL be sent.
+    expect(response.status).toHaveBeenCalledWith(400);
+    expect(response.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: false,
+        error: expect.objectContaining({
+          statusCode: 400,
+          message: "Bad",
+          path: request.url,
+          timestamp: expect.any(String),
+        }),
+      }),
+    );
   });
 });

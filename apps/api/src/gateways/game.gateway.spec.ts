@@ -562,8 +562,13 @@ describe("GameGateway", () => {
       };
 
       const errorPromise = new Promise<{ code: string; message: string }>(
-        (resolve) => {
+        (resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("Timeout waiting for ERROR event")),
+            1000,
+          );
           clientSocket.on(ServerEvent.ERROR, (err) => {
+            clearTimeout(timeout);
             resolve(err);
           });
         },
@@ -586,8 +591,13 @@ describe("GameGateway", () => {
       };
 
       const errorPromise = new Promise<{ code: string; message: string }>(
-        (resolve) => {
+        (resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("Timeout waiting for ERROR event")),
+            1000,
+          );
           clientSocket.on(ServerEvent.ERROR, (err) => {
+            clearTimeout(timeout);
             resolve(err);
           });
         },
@@ -609,8 +619,14 @@ describe("GameGateway", () => {
         clientTimestamp: Date.now(),
       };
 
-      const handlerCalled = new Promise<void>((resolve) => {
+      const handlerCalled = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(
+          () =>
+            reject(new Error("Timeout waiting for handleSubmitAnswer call")),
+          1000,
+        );
         mockMatchHandler.handleSubmitAnswer.mockImplementationOnce(async () => {
+          clearTimeout(timeout);
           resolve();
         });
       });

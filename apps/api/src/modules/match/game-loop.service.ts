@@ -713,7 +713,10 @@ export class GameLoopService implements OnModuleInit {
     const stateMachine = await this.matchService.getStateMachine(matchId);
     if (!stateMachine) {
       this.logger.error(`State machine not found for match ${matchId}`);
-      return;
+      throw new RoomError(
+        ErrorCode.MATCH_NOT_FOUND,
+        `State machine not found for match ${matchId}`,
+      );
     }
 
     await this.roomService.updateRoomStatus(
@@ -1053,6 +1056,9 @@ export class GameLoopService implements OnModuleInit {
             }),
           ),
         );
+
+        // 6. Persist state machine (now that DB writes succeeded).
+        await this.matchService.persistStateMachine(matchId);
       } catch (dbError) {
         // H3 fix: a DB failure here must not silently advance the
         // state machine. We log the error at error level (operators
@@ -1066,9 +1072,6 @@ export class GameLoopService implements OnModuleInit {
         );
         throw dbError;
       }
-
-      // 6. Persist state machine (now that DB writes succeeded).
-      await this.matchService.persistStateMachine(matchId);
 
       // 7. Transition to ROUND_RESULT — safe now that DB is consistent.
       stateMachine.transition(MatchStatus.ROUND_RESULT);
@@ -1357,13 +1360,18 @@ export class GameLoopService implements OnModuleInit {
     const stateMachine = await this.matchService.getStateMachine(matchId);
 
     if (stateMachine) {
-      // 2. Mark the player as DISCONNECTED in the state machine. This
-      //    is the same path the actual socket-disconnect handler uses;
-      //    we re-use it so behaviour stays consistent (reconnect still
-      //    possible, evaluateRound skips them, submitAnswer gate
-      //    rejects).
-      stateMachine.disconnectPlayer(userId);
-      await this.matchService.persistStateMachine(matchId);
+      // 2. Verify if the player is in the match roster.
+      const state = stateMachine.getState();
+      const player = state.players.get(userId);
+      if (player) {
+        // Mark the player as DISCONNECTED in the state machine. This
+        // is the same path the actual socket-disconnect handler uses;
+        // we re-use it so behaviour stays consistent (reconnect still
+        // possible, evaluateRound skips them, submitAnswer gate
+        // rejects).
+        stateMachine.disconnectPlayer(userId);
+        await this.matchService.persistStateMachine(matchId);
+      }
     } else {
       this.logger.warn(
         `handleMatchPlayerLeft: no state machine for match ${matchId} (likely already finished); skipping state update`,

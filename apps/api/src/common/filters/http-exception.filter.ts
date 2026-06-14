@@ -60,10 +60,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
     );
     const logInfo = `${request.method} ${request.url} ${status} - ${logMessage}`;
 
-    if (status >= 500) {
-      this.logger.error(logInfo);
-    } else {
-      this.logger.warn(logInfo);
+    try {
+      if (status >= 500) {
+        this.logger.error(logInfo);
+      } else {
+        this.logger.warn(logInfo);
+      }
+    } catch {
+      // Gracefully handle logging failure so response is still sent
     }
 
     response.status(status).send(errorResponse);
