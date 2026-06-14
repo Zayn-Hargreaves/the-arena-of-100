@@ -54,7 +54,7 @@ describe("JwtAuthGuard", () => {
     );
     (guard as unknown as GuardInternals).logger = new Logger(
       JwtAuthGuard.name,
-      false,
+      { timestamp: false },
     );
   });
 

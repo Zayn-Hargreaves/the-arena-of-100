@@ -70,6 +70,27 @@
       "resetConfirm": "Cảnh báo: Bạn sắp giải phóng toàn bộ active lobbies và Redis game sessions. Tiếp tục?",
       "resetSuccess": "Đã xóa cache Redis và reset máy chủ Socket.io!",
       "migrationsUpToDate": "Prisma Migrations đã đồng bộ ở phiên bản mới nhất!"
+    },
+    "terminateRoom": {
+      "title": "KILL SWITCH — ĐÓNG PHÒNG ĐƠN LẺ",
+      "label": "NHẬP MÃ HOẶC ID PHÒNG",
+      "roomIdPlaceholder": "VD: 6 ký tự mã phòng hoặc UUID",
+      "messageLabel": "LÝ DO ĐÓNG (TÙY CHỌN, TỐI ĐA 200 KÝ TỰ)",
+      "messagePlaceholder": "VD: Bỏ hoang, vi phạm, bảo trì...",
+      "submit": "ĐÓNG PHÒNG NGAY",
+      "submitting": "ĐANG ĐÓNG PHÒNG...",
+      "warning": "CẢNH BÁO: Hành động này sẽ kick toàn bộ người chơi trong phòng ra ngoài, hủy match đang chạy, xóa phòng khỏi database và Redis. Không thể hoàn tác.",
+      "modal": {
+        "title": "Xác nhận Kill Switch?",
+        "description": "Bạn sắp đóng phòng này vĩnh viễn. Tất cả người chơi sẽ bị đá ra ngay lập tức."
+      },
+      "errors": {
+        "roomIdRequired": "Vui lòng nhập mã phòng hoặc ID.",
+        "rateLimited": "Bạn thao tác quá nhanh. Vui lòng đợi 1 phút rồi thử lại."
+      },
+      "success": "Đã đóng phòng thành công. Người chơi đã được thông báo.",
+      "partialTitle": "Đóng phòng một phần",
+      "partialDescription": "Phòng đã được ngắt khỏi runtime và người chơi đã được thông báo, nhưng dọn database thất bại. Có thể cần reset hệ thống: {error}"
     }
   },
   "Sidebar": {
@@ -125,6 +146,10 @@
     "matchFinishedOverlay": {
       "title": "TRẬN ĐẤU KẾT THÚC!",
       "subtitle": "Đang chuyển đến trang kết quả..."
+    },
+    "termination": {
+      "toastTitle": "Phòng đã bị đóng",
+      "toastDefault": "Phòng đã bị quản trị viên đóng. Bạn sẽ được đưa về trang chủ."
     }
   },
   "profile": {
@@ -221,6 +246,62 @@
     "actions": {
       "back": "Quay lại cài đặt",
       "leave": "Rời phòng"
+    },
+    "startControls": {
+      "countdown": "ĐANG ĐẾM NGƯỢC {seconds}s",
+      "starting": "ĐANG KHỞI TẠO...",
+      "inGame": "ĐANG CHUYỂN TRẬN...",
+      "waiting": "BẮT ĐẦU TRẬN ĐẤU"
+    },
+    "countdownOverlay": {
+      "starting": "CHUẨN BỊ VÀO TRẬN!",
+      "inGame": "ĐANG CHUYỂN TRẬN...",
+      "startingHint": "Vui lòng không rời khỏi màn hình này",
+      "inGameHint": "Server đang đồng bộ trạng thái trận đấu...",
+      "secondsUnit": "giây"
+    },
+    "leaveModal": {
+      "title": "Rời phòng?",
+      "hostDescription": "Bạn là Host. Nếu bạn rời phòng, phòng sẽ bị giải tán và tất cả người chơi sẽ bị đá ra.",
+      "memberDescription": "Bạn có chắc chắn muốn rời phòng này? Bạn sẽ cần nhập lại mã phòng để quay lại.",
+      "hostWarning": "Hành động này không thể hoàn tác. Phòng sẽ bị xóa vĩnh viễn.",
+      "memberWarning": "Tiến trình của bạn trong phòng này sẽ bị mất.",
+      "close": "Đóng",
+      "cancel": "Hủy",
+      "confirm": "Xác nhận rời phòng"
+    },
+    "playerGrid": {
+      "empty": "Đang chờ người chơi tham gia...",
+      "emptyHint": "Chia sẻ mã phòng để bắt đầu",
+      "youHost": "BẠN (HOST)",
+      "you": "BẠN",
+      "host": "HOST",
+      "ready": "ĐÃ SẴN SÀNG",
+      "offline": "Mất kết nối"
+    },
+    "page": {
+      "opponentsCount": "Đối thủ hiện tại",
+      "opponentsSection": "ĐỐI THỦ TRONG PHÒNG",
+      "joining": "Đang vào phòng...",
+      "reconnecting": "Đang kết nối lại...",
+      "joinError": "Không thể vào phòng: {message}",
+      "joinFailedFallback": "Không thể tham gia phòng. Vui lòng thử lại.",
+      "tipsTitle": "Gợi ý:",
+      "tipsBody": "Chia sẻ Mã Phòng với bạn bè để họ cùng tham chiến. Chỉ người trả lời nhanh nhất và chính xác nhất mới sống sót qua 100 vòng đấu!"
+    },
+    "status": {
+      "countdown": "Trận đấu sẽ bắt đầu sau {seconds}s",
+      "starting": "Đang đồng bộ người chơi và câu hỏi...",
+      "inGame": "Đã có match, đang chuyển màn chơi...",
+      "privateNeedPlayers": "Cần ít nhất 2 người để host bắt đầu trận đấu",
+      "privateCanStart": "Host có thể bắt đầu trận đấu bất cứ lúc nào",
+      "publicNeedPlayers": "Cần thêm người chơi để tự động bắt đầu",
+      "publicCanStart": "Đủ người chơi, server sẽ tự bắt đầu trận đấu"
+    },
+    "termination": {
+      "toastTitle": "Phòng đã bị đóng",
+      "toastDefault": "Phòng đã bị quản trị viên đóng. Bạn sẽ được đưa về trang chính.",
+      "redirecting": "Đang đưa bạn về trang chính..."
     }
   }
 }

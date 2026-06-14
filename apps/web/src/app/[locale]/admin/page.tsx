@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { useSocketStore } from "@/stores/socket-store";
 import { API_URL, apiFetch } from "@/lib/api";
+import { ApiError, apiSendJson } from "@/lib/api-client";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +19,7 @@ import {
   AlertTriangle,
   ShieldCheck,
   Terminal,
+  Skull,
 } from "lucide-react";
 
 // ── Response Types (mirrors API) ───────────────────────────
@@ -40,6 +42,7 @@ type ServiceStatus = "loading" | "connected" | "disconnected" | "error";
 
 export default function AdminPage() {
   const t = useTranslations("admin");
+  const tTerminate = useTranslations("admin.terminateRoom");
   const router = useRouter();
   const { toast } = useToast();
   const { accessToken, userRole } = useSocketStore();
@@ -50,6 +53,10 @@ export default function AdminPage() {
   const [seeding, setSeeding] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
+  const [terminateRoomId, setTerminateRoomId] = useState("");
+  const [terminateMessage, setTerminateMessage] = useState("");
+  const [terminating, setTerminating] = useState(false);
+  const [showTerminateModal, setShowTerminateModal] = useState(false);
   const [metrics, setMetrics] = useState({
     cpuUsage: 0,
     memoryUsageMb: 0,
@@ -189,6 +196,86 @@ export default function AdminPage() {
       });
     } finally {
       setResetting(false);
+    }
+  };
+
+  // Phase 4 of the admin kill-switch: open the confirm modal only when
+  // a roomId is provided. The actual terminate call lives in
+  // `performTerminateRoom` so the user must explicitly confirm.
+  const handleTerminateRoomClick = () => {
+    if (!terminateRoomId.trim()) {
+      toast({
+        title: tTerminate("errors.roomIdRequired"),
+        variant: "error",
+      });
+      return;
+    }
+    setShowTerminateModal(true);
+  };
+
+  const performTerminateRoom = async () => {
+    const trimmedRoomId = terminateRoomId.trim();
+    setShowTerminateModal(false);
+
+    setTerminating(true);
+    try {
+      // apiSendJson throws ApiError on non-2xx, including 429 from the
+      // backend throttle (5/min). We catch it explicitly to surface a
+      // localized rate-limit message instead of a raw error string.
+      // A 2xx response may still carry `partial: true` if the backend's
+      // DB disband step failed after the room channel was already notified
+      // and timers/Redis were cleaned — that case needs a different toast
+      // AND must preserve the inputs so the operator can retry once the
+      // underlying DB issue is resolved.
+      const response = await apiSendJson<{
+        success: boolean;
+        partial?: boolean;
+        cleanupError?: string;
+        roomId: string;
+        matchId: string | null;
+        message: string;
+      }>(
+        `/admin/rooms/${encodeURIComponent(trimmedRoomId)}/terminate`,
+        "POST",
+        {
+          message: terminateMessage.trim() || undefined,
+        },
+        accessToken ?? undefined,
+      );
+
+      if (response.partial) {
+        toast({
+          title: tTerminate("partialTitle"),
+          description: tTerminate("partialDescription", {
+            error: response.cleanupError ?? "unknown",
+          }),
+        });
+        // Preserve inputs on partial failure so the operator can
+        // investigate the DB inconsistency and retry without retyping
+        // the roomId / message.
+      } else {
+        toast({
+          title: tTerminate("success"),
+        });
+        // Clear inputs only on full success so the next call does not
+        // accidentally re-target the same room.
+        setTerminateRoomId("");
+        setTerminateMessage("");
+      }
+    } catch (error) {
+      const isRateLimited = error instanceof ApiError && error.status === 429;
+      toast({
+        title: isRateLimited
+          ? tTerminate("errors.rateLimited")
+          : "Terminate Failed",
+        description:
+          error instanceof Error
+            ? error.message
+            : "An error occurred during termination",
+        variant: "error",
+      });
+    } finally {
+      setTerminating(false);
     }
   };
 
@@ -417,6 +504,73 @@ export default function AdminPage() {
             </div>
           </div>
         </div>
+
+        {/* Kill Switch — terminate a single room (Phase 4) */}
+        <div className="bg-white border-[3px] border-candy-ink rounded-3xl p-6 space-y-6 shadow-[6px_6px_0_0_#2B2D42]">
+          <h3 className="font-display font-black text-base text-candy-ink uppercase tracking-wider flex items-center gap-2 border-b-[3px] border-candy-ink pb-3">
+            <Skull className="w-5 h-5 text-candy-red" />
+            {tTerminate("title")}
+          </h3>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <label
+                htmlFor="terminate-room-id"
+                className="block text-xs font-mono font-black uppercase text-candy-ink/80"
+              >
+                {tTerminate("label")}
+              </label>
+              <input
+                id="terminate-room-id"
+                type="text"
+                value={terminateRoomId}
+                onChange={(e) => setTerminateRoomId(e.target.value)}
+                placeholder={tTerminate("roomIdPlaceholder")}
+                disabled={terminating}
+                className="w-full h-12 px-4 bg-candy-cloud border-[3px] border-candy-ink rounded-2xl font-mono text-sm font-bold uppercase text-candy-ink shadow-[2.5px_2.5px_0_0_#000] outline-none focus:ring-2 focus:ring-candy-ink focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label
+                htmlFor="terminate-message"
+                className="block text-xs font-mono font-black uppercase text-candy-ink/80"
+              >
+                {tTerminate("messageLabel")}
+              </label>
+              <input
+                id="terminate-message"
+                type="text"
+                maxLength={200}
+                value={terminateMessage}
+                onChange={(e) => setTerminateMessage(e.target.value)}
+                placeholder={tTerminate("messagePlaceholder")}
+                disabled={terminating}
+                className="w-full h-12 px-4 bg-candy-cloud border-[3px] border-candy-ink rounded-2xl font-mono text-sm text-candy-ink shadow-[2.5px_2.5px_0_0_#000] outline-none focus:ring-2 focus:ring-candy-ink focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+            <div className="p-4 bg-candy-red/5 border-[2.5px] border-candy-ink rounded-2xl shadow-[2.5px_2.5px_0_0_#000] flex-1">
+              <p className="text-[11px] leading-relaxed text-candy-ink font-mono font-black uppercase">
+                {tTerminate("warning")}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleTerminateRoomClick}
+              disabled={terminating}
+              className="shrink-0 flex items-center justify-center h-12 px-6 bg-candy-red border-[3px] border-candy-ink rounded-2xl font-display font-black text-sm uppercase text-white shadow-[4px_4px_0_0_#000] hover:bg-red-600 active:translate-y-0.5 active:shadow-[2px_2px_0_0_#000] transition-all disabled:opacity-50 disabled:pointer-events-none"
+            >
+              <Skull
+                className={`w-4 h-4 mr-3 shrink-0 ${terminating ? "animate-pulse" : ""}`}
+              />
+              {terminating ? tTerminate("submitting") : tTerminate("submit")}
+            </button>
+          </div>
+        </div>
       </div>
       <Modal
         open={showResetModal}
@@ -435,6 +589,29 @@ export default function AdminPage() {
           <Button
             variant="ghost"
             onClick={() => setShowResetModal(false)}
+            className="flex-1"
+          >
+            Cancel
+          </Button>
+        </div>
+      </Modal>
+      <Modal
+        open={showTerminateModal}
+        onOpenChange={setShowTerminateModal}
+        title={tTerminate("modal.title")}
+        description={tTerminate("modal.description")}
+      >
+        <div className="flex gap-3 mt-4">
+          <Button
+            variant="danger"
+            onClick={performTerminateRoom}
+            className="flex-1"
+          >
+            Confirm
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => setShowTerminateModal(false)}
             className="flex-1"
           >
             Cancel

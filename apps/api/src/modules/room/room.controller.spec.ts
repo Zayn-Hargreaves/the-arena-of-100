@@ -19,6 +19,8 @@ describe("RoomController", () => {
     status: RoomStatus.WAITING,
     hostId: "user-id-host",
     maxPlayers: 100,
+    timeLimit: 15,
+    category: "ALL",
     currentMatchId: null as string | null,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -27,12 +29,17 @@ describe("RoomController", () => {
   // Mock room with simple players list (for joinRoom)
   const mockRoomWithPlayers = {
     ...mockRoom,
+    joined: true,
     players: [
       {
         id: "room-player-id",
         roomId: "room-id-123",
         userId: "user-id-host",
         joinedAt: new Date(),
+        user: {
+          id: "user-id-host",
+          username: "host_player",
+        },
       },
     ],
   };
@@ -164,7 +171,9 @@ describe("RoomController", () => {
     const roomId = "room-id-123";
 
     it("should leave a room successfully using request context userId", async () => {
-      vi.mocked(service.leaveRoom).mockResolvedValue(undefined);
+      vi.mocked(service.leaveRoom).mockResolvedValue(
+        mockRoomWithDetailedPlayers,
+      );
 
       const result = await controller.leave(roomId, mockReq);
 

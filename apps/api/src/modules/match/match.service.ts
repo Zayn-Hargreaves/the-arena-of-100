@@ -158,29 +158,34 @@ export class MatchService {
   }
 
   // Save match result
-  async finishMatch(matchId: string, winnerId: string) {
-    // B2: Persist accumulated scores from in-memory state machine BEFORE cleanup
-    const stateMachine = this.stateMachines.get(matchId);
-    if (stateMachine) {
-      const playerScores = stateMachine.getPlayerScores();
-      if (playerScores.length > 0) {
-        try {
-          await this.prisma.$transaction(
-            playerScores.map((p) =>
-              this.prisma.matchPlayer.updateMany({
-                where: { matchId, userId: p.userId },
-                data: { score: p.score },
-              }),
-            ),
-          );
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          this.logger.error(
-            `Failed to persist match player scores for match ${matchId}: ${message}`,
-            error instanceof Error ? error.stack : undefined,
-          );
-          // Do not throw — match result is still valid even if score persistence fails
+  async finishMatch(matchId: string, winnerId: string | null) {
+    // B2: Persist accumulated scores from in-memory state machine BEFORE cleanup.
+    // Skipped for admin termination (winnerId === null) — the match was
+    // force-stopped and the state machine reference is dropped without
+    // computing final scores.
+    if (winnerId !== null) {
+      const stateMachine = this.stateMachines.get(matchId);
+      if (stateMachine) {
+        const playerScores = stateMachine.getPlayerScores();
+        if (playerScores.length > 0) {
+          try {
+            await this.prisma.$transaction(
+              playerScores.map((p) =>
+                this.prisma.matchPlayer.updateMany({
+                  where: { matchId, userId: p.userId },
+                  data: { score: p.score },
+                }),
+              ),
+            );
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            this.logger.error(
+              `Failed to persist match player scores for match ${matchId}: ${message}`,
+              error instanceof Error ? error.stack : undefined,
+            );
+            // Do not throw — match result is still valid even if score persistence fails
+          }
         }
       }
     }
@@ -211,7 +216,9 @@ export class MatchService {
       );
     }
 
-    this.logger.log(`Match finished: ${matchId}, winner: ${winnerId}`);
+    this.logger.log(
+      `Match finished: ${matchId}${winnerId ? `, winner: ${winnerId}` : " (admin termination, no winner)"}`,
+    );
     return match;
   }
 

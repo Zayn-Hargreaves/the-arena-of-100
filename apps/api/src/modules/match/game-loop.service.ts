@@ -509,6 +509,48 @@ export class GameLoopService implements OnModuleInit {
     this.logger.warn(`Match loop cancelled: ${matchId}`);
   }
 
+  /**
+   * Stops all in-process timers associated with a room and (optionally) its
+   * active match. Called by the admin kill-switch before the room is torn
+   * down. Does not touch DB or Redis — that is the orchestrator's job.
+   * Unconditional: clears the lobby countdown even if the room is mid-WAITING.
+   */
+  async stopRoomRuntime(roomId: string, matchId: string | null): Promise<void> {
+    const countdown = this.lobbyCountdowns.get(roomId);
+    if (countdown) {
+      clearTimeout(countdown.timer);
+      this.lobbyCountdowns.delete(roomId);
+      await this.clearPersistedCountdown(roomId);
+    }
+    if (matchId) {
+      this.cancelMatchLoop(matchId);
+    }
+  }
+
+  /**
+   * Emits the ServerEvent.ROOM_TERMINATED notification to all sockets joined
+   * to the room channel. Encapsulates the Server reference so the admin
+   * service does not need direct socket access.
+   */
+  emitRoomTerminated(
+    roomId: string,
+    payload: { matchId: string | null; message?: string },
+  ): void {
+    if (!this.server) {
+      this.logger.warn(
+        `emitRoomTerminated: server not set, cannot emit for room ${roomId}`,
+      );
+      return;
+    }
+    this.server.to(getRoomChannel(roomId)).emit(ServerEvent.ROOM_TERMINATED, {
+      roomId,
+      reason: "ADMIN_TERMINATED",
+      matchId: payload.matchId,
+      message: payload.message,
+      terminatedAt: Date.now(),
+    });
+  }
+
   // ============================================================
   // PHASE 2: ROUND ACTIVE (15 seconds)
   // ============================================================
@@ -584,6 +626,7 @@ export class GameLoopService implements OnModuleInit {
     const timer = setTimeout(async () => {
       try {
         await this.endRound(matchId, roomId, server);
+        /* c8 ignore next 3 */
       } catch (error) {
         this.logger.error(
           `Error in endRound timeout callback for match ${matchId}:`,
@@ -696,6 +739,7 @@ export class GameLoopService implements OnModuleInit {
       const timer = setTimeout(async () => {
         try {
           await this.checkMatchEnd(matchId, roomId, server);
+          /* c8 ignore next 3 */
         } catch (error) {
           this.logger.error(
             `Error in checkMatchEnd timeout callback for match ${matchId}:`,

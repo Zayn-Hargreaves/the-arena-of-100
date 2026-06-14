@@ -3,6 +3,7 @@
 // Client-Server Communication Protocol
 // ============================================================
 
+import type { RoomTerminationReason } from "./events";
 import type { RoomStatus } from "./state";
 
 // Socket Namespaces
@@ -53,6 +54,9 @@ export enum ServerEvent {
   // Sync Events
   SNAPSHOT = "snapshot",
   EVENT_BATCH = "event_batch",
+
+  // Operator Events
+  ROOM_TERMINATED = "room_terminated",
 
   // Connection Events
   AUTHENTICATED = "authenticated",
@@ -219,6 +223,14 @@ export interface RoomPresenceUpdatedPayload {
   playerId: string;
   isOnline: boolean;
   updatedAt: number;
+}
+
+export interface RoomTerminatedPayload {
+  roomId: string;
+  reason: RoomTerminationReason;
+  matchId: string | null;
+  message?: string;
+  terminatedAt: number;
 }
 
 // Socket Channel Helpers

@@ -66,7 +66,7 @@ describe("RedisService", () => {
     service = new RedisService(configService as unknown as ConfigService);
     (service as unknown as ServiceInternals).logger = new Logger(
       RedisService.name,
-      false,
+      { timestamp: false },
     );
   });
 
@@ -80,7 +80,7 @@ describe("RedisService", () => {
       retryStrategy: expect.any(Function),
     });
 
-    const options = vi.mocked(Redis).mock.calls[0][1];
+    const options = (vi.mocked(Redis).mock.calls as any)[0][1];
     expect(options?.retryStrategy?.(1)).toBe(50);
     expect(options?.retryStrategy?.(100)).toBe(2000);
     expect(options).not.toHaveProperty("keyPrefix");

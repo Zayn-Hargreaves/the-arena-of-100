@@ -12,6 +12,9 @@ const sizeClasses = {
   lg: "w-10 h-10",
 };
 
+// Note: sm and md intentionally share `border-2` so the smaller spinners
+// keep a proportionally thicker border for visual balance. lg drops to
+// `border-4` only because its larger size would otherwise feel heavy.
 const borderWidthClasses = {
   sm: "border-2",
   md: "border-2",

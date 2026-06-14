@@ -320,8 +320,8 @@ describe("AuthHandler", () => {
       expect(presenceService.updatePresence).toHaveBeenCalledWith("r1", "u1");
       // updatePresence must run before the ROOM_JOINED emit so the player
       // list sent to the client reflects the user as online.
-      const updatePresenceOrder =
-        presenceService.updatePresence.mock.invocationCallOrder[0];
+      const updatePresenceOrder = vi.mocked(presenceService.updatePresence).mock
+        .invocationCallOrder[0];
       const emitOrder = (client.emit as any).mock.invocationCallOrder.find(
         (n: number) => n > updatePresenceOrder,
       );

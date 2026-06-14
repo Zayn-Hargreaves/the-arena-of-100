@@ -15,6 +15,7 @@ export enum RoomEventType {
   ROOM_COUNTDOWN_CANCELLED = "ROOM_COUNTDOWN_CANCELLED",
   PLAYER_PRESENCE_UPDATED = "PLAYER_PRESENCE_UPDATED",
   ROOM_SETTINGS_UPDATED = "ROOM_SETTINGS_UPDATED",
+  ROOM_TERMINATED = "ROOM_TERMINATED",
   MATCH_STARTED = "MATCH_STARTED",
 }
 
@@ -96,6 +97,19 @@ export interface PlayerPresenceUpdatedEventPayload {
   updatedAt: number;
 }
 
+export type RoomTerminationReason =
+  | "ADMIN_TERMINATED"
+  | "SYSTEM_MAINTENANCE"
+  | "INACTIVITY_TIMEOUT";
+
+export interface RoomTerminatedEventPayload {
+  roomId: string;
+  reason: RoomTerminationReason;
+  matchId: string | null;
+  message?: string;
+  terminatedAt: number;
+}
+
 // Match Event Payloads
 export interface MatchCreatedPayload {
   matchId: string;
@@ -173,7 +187,8 @@ export type RoomEvent =
   | BaseEvent<RoomStatusUpdatedEventPayload>
   | BaseEvent<RoomCountdownStartedEventPayload>
   | BaseEvent<RoomCountdownCancelledEventPayload>
-  | BaseEvent<PlayerPresenceUpdatedEventPayload>;
+  | BaseEvent<PlayerPresenceUpdatedEventPayload>
+  | BaseEvent<RoomTerminatedEventPayload>;
 
 export type MatchEvent =
   | BaseEvent<MatchCreatedPayload>

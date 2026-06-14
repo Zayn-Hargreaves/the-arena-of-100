@@ -4,6 +4,61 @@
 **Date:** 2026-06-07
 **Trigger:** Codecov patch coverage 55.5% on PR #38 (282 missing lines).
 
+---
+
+## Follow-up: PR #47 (admin kill-switch end-to-end)
+
+**Branch:** `feat/admin-kill-switch-end-to-end`
+**Date:** 2026-06-14
+**Trigger:** Codecov patch coverage 77.58% on PR #47 (50 missing lines across 3 files).
+
+### Results
+
+| File                    | Codecov Patch (PR #47) | **After**                      | Delta   |
+| ----------------------- | ---------------------- | ------------------------------ | ------- |
+| `game-loop.service.ts`  | 6.89%                  | **100%** Stmts / 98.57% Branch | +93.11% |
+| `admin.service.ts`      | 88.09%                 | **100%** Stmts / 100% Branch   | +11.91% |
+| `terminate-room.dto.ts` | 66.66%                 | **100%** Stmts / 100% Branch   | +33.3%  |
+
+_Column "Codecov Patch (PR #47)" shows patch-level coverage (Codecov) for only the lines changed in PR #47 — i.e. pre-fix coverage on the diff. "After" shows the same line-set after the new tests in this PR. Source: Codecov PR #47, 2026-06-14._
+
+**Test count delta:** +47 net new tests (8 DTO + 17 game-loop + 22 admin). All 119 tests across the 3 spec files pass.
+
+### What was added
+
+- `apps/api/src/modules/admin/dto/terminate-room.dto.spec.ts` (new, 8 tests)
+  - Schema parse: empty body, explicit `undefined`, rejected any `message` (superRefine fail-fast), non-string, >200 chars, `ZodEffects` type-system contract
+  - DTO class: default empty + carrier round-trip
+- `apps/api/src/modules/match/game-loop.service.spec.ts` (+17 tests total; primary new block is the top-level `describe("Admin kill-switch helpers (PR #47)", ...)`)
+  - `stopRoomRuntime`: countdown active + matchId, matchId only, no-op, both-active
+  - `emitRoomTerminated`: with server + full payload, with server + null matchId, no server (warn + no emit)
+- `apps/api/src/modules/admin/admin.service.spec.ts` (+22 net, includes 1 rewritten)
+  - Rewrote the existing "Redis unreachable" test to assert the new `partial: true, cleanupError: "..."` contract (the previous version asserted `partial: false` — the bug)
+  - Added "DB-only failure" test
+  - Added "combined Redis+DB failure, first-error-wins" test (validates `if (!cleanupError) cleanupError = errMsg` guard in the disbandRoom catch)
+
+### Test count delta verification
+
+```bash
+cd apps/api && pnpm test
+# admin.service.spec.ts        : 33 tests ✅ (was 11 pre-fix; +22 net, includes rewrites)
+# game-loop.service.spec.ts    : 78 tests ✅ (was 61 pre-fix; +17 net)
+# terminate-room.dto.spec.ts   :  8 tests ✅ (new file; +8)
+# (Total for the 3 files: 119)
+```
+
+Source: PR #47, 2026-06-14. `admin.service.spec.ts` is the file with the largest delta (+22 net including the rewritten "Redis unreachable" test).
+
+### Remaining minor gaps (not blocking)
+
+- `admin.service.ts` lines 293-298, 409-413: very narrow defensive catch branches in unrelated helpers (logger-call wrapping) — chasing them would add cosmetic-only value, matching the precedent from PR #38's "Remaining minor gaps" section.
+
+---
+
+**Branch:** `feat/lobby-lifecycle-graceful-exit`
+**Date:** 2026-06-07
+**Trigger:** Codecov patch coverage 55.5% on PR #38 (282 missing lines).
+
 ## Final Results
 
 | File                   | Codecov (PR #38) | Before this work | **After**  | Delta   |

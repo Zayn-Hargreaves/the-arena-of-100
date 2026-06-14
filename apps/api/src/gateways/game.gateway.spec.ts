@@ -285,7 +285,10 @@ describe("GameGateway", () => {
         client.data.userId = "u1";
         (client.rooms as Set<string>).add("room:r1");
 
-        await gateway.handleHeartbeat(client, { roomId: "r1" });
+        await gateway.handleHeartbeat(client, {
+          roomId: "r1",
+          sentAt: Date.now(),
+        });
 
         expect(presenceService.updatePresence).toHaveBeenCalledWith("r1", "u1");
       });
@@ -294,21 +297,30 @@ describe("GameGateway", () => {
         client.data.userId = "u1";
         (client.rooms as Set<string>).add("room:r2");
 
-        await gateway.handleHeartbeat(client, { roomId: "r1" });
+        await gateway.handleHeartbeat(client, {
+          roomId: "r1",
+          sentAt: Date.now(),
+        });
 
         expect(presenceService.updatePresence).not.toHaveBeenCalled();
       });
 
       it("ignores the event when userId is missing", async () => {
         client.data = {};
-        await gateway.handleHeartbeat(client, { roomId: "r1" });
+        await gateway.handleHeartbeat(client, {
+          roomId: "r1",
+          sentAt: Date.now(),
+        });
 
         expect(presenceService.updatePresence).not.toHaveBeenCalled();
       });
 
       it("ignores the event when roomId is missing", async () => {
         client.data.userId = "u1";
-        await gateway.handleHeartbeat(client, { roomId: "" });
+        await gateway.handleHeartbeat(client, {
+          roomId: "",
+          sentAt: Date.now(),
+        });
 
         expect(presenceService.updatePresence).not.toHaveBeenCalled();
       });
@@ -322,7 +334,7 @@ describe("GameGateway", () => {
         const warnSpy = vi.spyOn(gateway["logger"], "warn");
 
         await expect(
-          gateway.handleHeartbeat(client, { roomId: "r1" }),
+          gateway.handleHeartbeat(client, { roomId: "r1", sentAt: Date.now() }),
         ).resolves.not.toThrow();
 
         expect(warnSpy.mock.calls[0][0]).toMatch(/u1.*r1/);

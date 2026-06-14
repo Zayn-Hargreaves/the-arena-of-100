@@ -4,6 +4,9 @@ import { AdminController } from "./admin.controller";
 import { AdminService } from "./admin.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
+import { QuestionService } from "../question/question.service";
+import { AuthService } from "../auth/auth.service";
+import { ConfigService } from "@nestjs/config";
 import { describe, it, expect } from "vitest";
 
 describe("AdminModule", () => {
@@ -15,6 +18,12 @@ describe("AdminModule", () => {
       .useValue({})
       .overrideProvider(RedisService)
       .useValue({})
+      .overrideProvider(QuestionService)
+      .useValue({})
+      .overrideProvider(AuthService)
+      .useValue({})
+      .overrideProvider(ConfigService)
+      .useValue({ get: () => "test-value" })
       .compile();
 
     const adminController = moduleRef.get<AdminController>(AdminController);

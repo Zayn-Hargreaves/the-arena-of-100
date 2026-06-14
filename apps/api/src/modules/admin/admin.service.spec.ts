@@ -3,6 +3,10 @@ import { Logger } from "@nestjs/common";
 import { AdminService } from "./admin.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
+import { RoomService } from "../room/room.service";
+import { MatchService } from "../match/match.service";
+import { GameLoopService } from "../match/game-loop.service";
+import { ErrorCode, RoomError } from "@arena/shared";
 import { Role } from "@prisma/client";
 import type { Question } from "../../prisma-seeds/questions";
 
@@ -69,6 +73,18 @@ describe("AdminService", () => {
   let redisClient: {
     scan: ReturnType<typeof vi.fn>;
     del: ReturnType<typeof vi.fn>;
+    srem: ReturnType<typeof vi.fn>;
+  };
+  let roomService: {
+    getRoom: ReturnType<typeof vi.fn>;
+    disbandRoom: ReturnType<typeof vi.fn>;
+  };
+  let matchService: {
+    finishMatch: ReturnType<typeof vi.fn>;
+  };
+  let gameLoopService: {
+    stopRoomRuntime: ReturnType<typeof vi.fn>;
+    emitRoomTerminated: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -116,19 +132,35 @@ describe("AdminService", () => {
     redisClient = {
       scan: vi.fn().mockResolvedValue(["0", []]),
       del: vi.fn().mockResolvedValue(0),
+      srem: vi.fn().mockResolvedValue(0),
     };
     redis = {
       getClient: vi.fn().mockReturnValue(redisClient),
     };
 
+    roomService = {
+      getRoom: vi.fn(),
+      disbandRoom: vi.fn().mockResolvedValue(undefined),
+    };
+    matchService = {
+      finishMatch: vi.fn().mockResolvedValue({}),
+    };
+    gameLoopService = {
+      stopRoomRuntime: vi.fn().mockResolvedValue(undefined),
+      emitRoomTerminated: vi.fn(),
+    };
+
     service = new AdminService(
       prisma as unknown as PrismaService,
       redis as unknown as RedisService,
+      roomService as unknown as RoomService,
+      matchService as unknown as MatchService,
+      gameLoopService as unknown as GameLoopService,
     );
     // Silence logger output during tests
     (service as unknown as ServiceInternals).logger = new Logger(
       AdminService.name,
-      false,
+      { timestamp: false },
     );
   });
 
@@ -199,6 +231,9 @@ describe("AdminService", () => {
         const fresh = new FreshAdminService(
           prisma as unknown as PrismaService,
           redis as unknown as RedisService,
+          roomService as unknown as RoomService,
+          matchService as unknown as MatchService,
+          gameLoopService as unknown as GameLoopService,
         );
 
         const result = await fresh.syncQuestions(false);
@@ -375,6 +410,527 @@ describe("AdminService", () => {
       expect(redisClient.del).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
       expect(result.message).toContain("System reset complete");
+    });
+  });
+
+  describe("terminateRoom", () => {
+    it("throws ROOM_NOT_FOUND when room does not exist", async () => {
+      roomService.getRoom.mockRejectedValueOnce(
+        new RoomError(ErrorCode.ROOM_NOT_FOUND),
+      );
+
+      await expect(service.terminateRoom("r-missing")).rejects.toMatchObject({
+        code: ErrorCode.ROOM_NOT_FOUND,
+      });
+
+      // No cleanup should have run on a missing room
+      expect(matchService.finishMatch).not.toHaveBeenCalled();
+      expect(gameLoopService.stopRoomRuntime).not.toHaveBeenCalled();
+      expect(gameLoopService.emitRoomTerminated).not.toHaveBeenCalled();
+      expect(roomService.disbandRoom).not.toHaveBeenCalled();
+    });
+
+    it("terminates a room with no active match", async () => {
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r1",
+        currentMatchId: null,
+      });
+
+      const result = await service.terminateRoom("r1", "abandoned by host");
+
+      expect(result.success).toBe(true);
+      expect(result.roomId).toBe("r1");
+      expect(result.matchId).toBeNull();
+      expect(result.message).toBe("Room terminated by admin");
+      expect(typeof result.terminatedAt).toBe("number");
+
+      // No match to finish
+      expect(matchService.finishMatch).not.toHaveBeenCalled();
+      // But room runtime still stopped (no match, no countdown expected)
+      expect(gameLoopService.stopRoomRuntime).toHaveBeenCalledWith("r1", null);
+      // Emit still fires
+      expect(gameLoopService.emitRoomTerminated).toHaveBeenCalledWith("r1", {
+        matchId: null,
+        message: "abandoned by host",
+      });
+      // Room disbanded
+      expect(roomService.disbandRoom).toHaveBeenCalledWith("r1");
+    });
+
+    it("terminates a room with an active match (passes null winner)", async () => {
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r2",
+        currentMatchId: "m2",
+      });
+      matchService.finishMatch.mockResolvedValueOnce({ id: "m2" } as any);
+
+      const result = await service.terminateRoom("r2");
+
+      expect(result.success).toBe(true);
+      expect(result.matchId).toBe("m2");
+
+      // finishMatch called with null winner (admin termination)
+      expect(matchService.finishMatch).toHaveBeenCalledWith("m2", null);
+      // stopRoomRuntime called with the active matchId
+      expect(gameLoopService.stopRoomRuntime).toHaveBeenCalledWith("r2", "m2");
+      // Emit carries the matchId
+      expect(gameLoopService.emitRoomTerminated).toHaveBeenCalledWith("r2", {
+        matchId: "m2",
+        message: undefined,
+      });
+    });
+
+    it("continues cleanup when match finish throws (non-fatal)", async () => {
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r3",
+        currentMatchId: "m3",
+      });
+      matchService.finishMatch.mockRejectedValueOnce(
+        new Error("DB transaction failed"),
+      );
+
+      // Should NOT throw — match finish failure is logged but non-fatal
+      const result = await service.terminateRoom("r3");
+
+      expect(result.success).toBe(true);
+      expect(result.matchId).toBe("m3");
+      // Runtime + emit + disband still run
+      expect(gameLoopService.stopRoomRuntime).toHaveBeenCalledWith("r3", "m3");
+      expect(gameLoopService.emitRoomTerminated).toHaveBeenCalled();
+      expect(roomService.disbandRoom).toHaveBeenCalledWith("r3");
+    });
+
+    it("logs string rejections when match finish throws", async () => {
+      const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r3b",
+        currentMatchId: "m3b",
+      });
+      matchService.finishMatch.mockRejectedValueOnce("finish boom (string)");
+
+      await service.terminateRoom("r3b");
+
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Failed to finish match m3b during admin termination of room r3b:",
+        ),
+        undefined,
+      );
+    });
+
+    it("cleans explicit Redis keys including SCAN'd presence keys", async () => {
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r4",
+        currentMatchId: "m4",
+      });
+      matchService.finishMatch.mockResolvedValueOnce({ id: "m4" } as any);
+      // SCAN returns 2 presence keys, then terminates
+      redisClient.scan.mockResolvedValueOnce([
+        "0",
+        ["room:presence:r4:u1", "room:presence:r4:u2"],
+      ]);
+
+      await service.terminateRoom("r4");
+
+      expect(redisClient.scan).toHaveBeenCalledWith(
+        "0",
+        "MATCH",
+        "room:presence:r4:*",
+        "COUNT",
+        1000,
+      );
+      // DEL is called once with the full key set spread as separate args
+      expect(redisClient.del).toHaveBeenCalledTimes(1);
+      const delCallArgs = vi.mocked(redisClient.del).mock.calls[0];
+      expect(delCallArgs).toEqual(
+        expect.arrayContaining([
+          "room:r4",
+          "room:r4:players",
+          "room:r4:playerCount",
+          "room:countdown:r4",
+          "room:presence:r4:u1",
+          "room:presence:r4:u2",
+          "match:state:m4",
+        ]),
+      );
+      // Lobby countdowns index SREM runs unconditionally
+      expect(redisClient.srem).toHaveBeenCalledWith("room:countdowns", "r4");
+    });
+
+    it("skips DEL when no keys to remove but still SREMs the index", async () => {
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r5",
+        currentMatchId: null,
+      });
+      // No presence keys, no match keys
+      redisClient.scan.mockResolvedValueOnce(["0", []]);
+
+      await service.terminateRoom("r5");
+
+      // Presence SCAN was called
+      expect(redisClient.scan).toHaveBeenCalledWith(
+        "0",
+        "MATCH",
+        "room:presence:r5:*",
+        "COUNT",
+        1000,
+      );
+      // The base keys ARE still deleted (room:r5, room:r5:players, etc.)
+      expect(redisClient.del).toHaveBeenCalledTimes(1);
+      // SREM still runs
+      expect(redisClient.srem).toHaveBeenCalledWith("room:countdowns", "r5");
+    });
+
+    it("returns partial result when disbandRoom throws (DB cleanup failed)", async () => {
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r6",
+        currentMatchId: null,
+      });
+      // Disband fails — represents a DB inconsistency: room channel already
+      // notified, timers stopped, Redis cleaned, but DB record remains.
+      roomService.disbandRoom.mockRejectedValueOnce(
+        new Error("FK constraint violation"),
+      );
+
+      // Must NOT throw — caller still needs the partial result.
+      const result = await service.terminateRoom("r6");
+
+      // Partial-success signaling
+      expect(result.success).toBe(false);
+      expect(result.partial).toBe(true);
+      expect(result.roomId).toBe("r6");
+      expect(result.message).toContain("partial");
+      expect(result.cleanupError).toBe("FK constraint violation");
+      expect(typeof result.terminatedAt).toBe("number");
+
+      // Cleanup steps still ran (they run BEFORE disband in the orchestrator)
+      expect(gameLoopService.stopRoomRuntime).toHaveBeenCalledWith("r6", null);
+      expect(gameLoopService.emitRoomTerminated).toHaveBeenCalledWith("r6", {
+        matchId: null,
+        message: undefined,
+      });
+    });
+
+    it("returns partial result when cleanupRoomRedisKeys throws (Redis unreachable)", async () => {
+      // Reproduces the orchestrator pattern gap: if Redis is down at step 5,
+      // a non-defensive call would skip the DB disband at step 6 and leave
+      // the admin UI without the { partial } signal. PR #47 review.
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r7",
+        currentMatchId: null,
+      });
+      // Make SCAN throw — represents Redis being unreachable mid-termination.
+      redisClient.scan.mockImplementationOnce(() => {
+        throw new Error("Redis connection lost");
+      });
+
+      // Must NOT throw — the kill-switch is best-effort per step.
+      const result = await service.terminateRoom("r7");
+
+      // DB disband MUST still run (the whole point of the defensive wrap).
+      expect(roomService.disbandRoom).toHaveBeenCalledWith("r7");
+      // Steps 3 & 4 still ran before the Redis failure.
+      expect(gameLoopService.stopRoomRuntime).toHaveBeenCalledWith("r7", null);
+      expect(gameLoopService.emitRoomTerminated).toHaveBeenCalledWith("r7", {
+        matchId: null,
+        message: undefined,
+      });
+      // Disband succeeded, but Redis cleanup failed → the response is
+      // still a partial result. The admin UI needs this signal so it
+      // can flag the kill-switch as needing a follow-up sweep.
+      expect(result.success).toBe(false);
+      expect(result.partial).toBe(true);
+      expect(result.cleanupError).toBe("Redis connection lost");
+      expect(result.message).toContain("partial");
+    });
+
+    it("returns partial result when only disbandRoom throws (Redis cleanup OK)", async () => {
+      // DB disband fails but Redis cleanup ran fine — partial must still
+      // be true (the DB record is stale and the admin UI needs to know).
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r8",
+        currentMatchId: "m8",
+      });
+      matchService.finishMatch.mockResolvedValueOnce({ id: "m8" } as any);
+      // Disband fails — DB record remains
+      roomService.disbandRoom.mockRejectedValueOnce(
+        new Error("FK constraint violation"),
+      );
+      // Redis cleanup succeeds (default mocks)
+
+      const result = await service.terminateRoom("r8");
+
+      expect(result.partial).toBe(true);
+      expect(result.cleanupError).toBe("FK constraint violation");
+    });
+
+    it("merges both Redis and DB failures into a single partial result (first-error wins)", async () => {
+      // Both cleanupRoomRedisKeys AND disbandRoom fail. The first error
+      // encountered should populate cleanupError so the caller can act
+      // on a stable field; both are logged.
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r9",
+        currentMatchId: "m9",
+      });
+      matchService.finishMatch.mockResolvedValueOnce({ id: "m9" } as any);
+      redisClient.scan.mockImplementationOnce(() => {
+        throw new Error("Redis connection lost");
+      });
+      roomService.disbandRoom.mockRejectedValueOnce(
+        new Error("FK constraint violation"),
+      );
+
+      const result = await service.terminateRoom("r9");
+
+      expect(result.partial).toBe(true);
+      // First error encountered (Redis) wins — see `if (!cleanupError)`
+      // guard in disbandRoom catch block.
+      expect(result.cleanupError).toBe("Redis connection lost");
+      expect(result.success).toBe(false);
+    });
+
+    it("continues cleanup when emitRoomTerminated itself throws (defensive step 4)", async () => {
+      // Step 4 wraps emitRoomTerminated in try/catch. The helper itself
+      // already guards `!this.server` (warn + return) but a misbehaving
+      // socket.io adapter could still throw on the actual emit. The
+      // orchestrator must log the error and keep going.
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r10",
+        currentMatchId: null,
+      });
+      gameLoopService.emitRoomTerminated.mockImplementationOnce(() => {
+        throw { code: "ADAPTER_DOWN" };
+      });
+
+      // Must NOT throw — the kill-switch is best-effort per step.
+      const result = await service.terminateRoom("r10");
+
+      // Steps 5 and 6 must still run.
+      expect(roomService.disbandRoom).toHaveBeenCalledWith("r10");
+      // Disband succeeded but emitRoomTerminated failed → response is partial.
+      expect(result.success).toBe(false);
+      expect(result.partial).toBe(true);
+      expect(result.cleanupError).toBe("[object Object]");
+    });
+
+    it("logs Error stacks when emitRoomTerminated throws an Error", async () => {
+      const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r10b",
+        currentMatchId: null,
+      });
+      gameLoopService.emitRoomTerminated.mockImplementationOnce(() => {
+        throw new Error("adapter down");
+      });
+
+      await service.terminateRoom("r10b");
+
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "emitRoomTerminated failed during admin termination of room r10b",
+        ),
+        expect.any(String),
+      );
+    });
+
+    it("logs Error stacks for stopRoomRuntime without a matchId", async () => {
+      const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r12c",
+        currentMatchId: null,
+      });
+      gameLoopService.stopRoomRuntime.mockRejectedValueOnce(
+        new Error("runtime stop boom"),
+      );
+
+      await service.terminateRoom("r12c");
+
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "stopRoomRuntime failed during admin termination of room r12c:",
+        ),
+        expect.any(String),
+      );
+    });
+
+    it("logs Error stacks for emitRoomTerminated without a matchId", async () => {
+      const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r10c",
+        currentMatchId: null,
+      });
+      gameLoopService.emitRoomTerminated.mockImplementationOnce(() => {
+        throw new Error("adapter down");
+      });
+
+      await service.terminateRoom("r10c");
+
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "emitRoomTerminated failed during admin termination of room r10c:",
+        ),
+        expect.any(String),
+      );
+    });
+
+    it("logs Error stacks for emitRoomTerminated with a matchId", async () => {
+      const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r10d",
+        currentMatchId: "m10d",
+      });
+      gameLoopService.emitRoomTerminated.mockImplementationOnce(() => {
+        throw new Error("adapter down");
+      });
+
+      await service.terminateRoom("r10d");
+
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "emitRoomTerminated failed during admin termination of room r10d (match m10d):",
+        ),
+        expect.any(String),
+      );
+    });
+
+    it("continues cleanup when Redis srem for the lobby-countdowns index throws (best-effort)", async () => {
+      // `cleanupRoomRedisKeys` wraps the `srem` of the lobby-countdowns
+      // index in try/catch. If SREM itself rejects (e.g. transient Redis
+      // hiccup), the rest of the kill-switch (DB disband, partial signal)
+      // must not be affected — the warning is logged but the operation
+      // continues.
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r11",
+        currentMatchId: "m11",
+      });
+      matchService.finishMatch.mockResolvedValueOnce({ id: "m11" } as any);
+      // SREM for the lobby-countdowns index rejects — represents a
+      // transient Redis hiccup on the best-effort SREM path.
+      redisClient.srem.mockImplementationOnce(() => {
+        throw new Error("transient srem error");
+      });
+
+      // Must NOT throw — srem is best-effort, not aborting.
+      const result = await service.terminateRoom("r11");
+
+      // DB disband still ran.
+      expect(roomService.disbandRoom).toHaveBeenCalledWith("r11");
+      // No SREM error reached the response — srem is a best-effort
+      // index cleanup, not part of the partial-success contract.
+      expect(result.partial).toBe(false);
+      expect(result.success).toBe(true);
+    });
+
+    it("continues cleanup when stopRoomRuntime itself throws (defensive step 3)", async () => {
+      // Step 3 wraps stopRoomRuntime in try/catch. If the runtime stop
+      // itself throws (e.g. the Redis call inside clearPersistedCountdown
+      // rejects in a way the helper does not handle), the orchestrator
+      // must log the error and proceed to steps 4–6.
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r12",
+        currentMatchId: "m12",
+      });
+      matchService.finishMatch.mockResolvedValueOnce({ id: "m12" } as any);
+      // Throwing a string (not an Error) to also cover the
+      // `error instanceof Error ? ... : String(error)` else branch at
+      // admin.service.ts:279. The orchestrator must not assume the
+      // rejected value is an Error instance.
+      gameLoopService.stopRoomRuntime.mockRejectedValueOnce(
+        "runtime stop boom (string)",
+      );
+
+      // Must NOT throw — the kill-switch is best-effort per step.
+      const result = await service.terminateRoom("r12");
+
+      // Steps 4-6 must still run.
+      expect(gameLoopService.emitRoomTerminated).toHaveBeenCalledWith("r12", {
+        matchId: "m12",
+        message: undefined,
+      });
+      expect(roomService.disbandRoom).toHaveBeenCalledWith("r12");
+      // Disband succeeded but stopRoomRuntime failed → response is partial.
+      expect(result.success).toBe(false);
+      expect(result.partial).toBe(true);
+      expect(result.cleanupError).toBe("runtime stop boom (string)");
+    });
+
+    it("logs Error stacks when stopRoomRuntime throws an Error", async () => {
+      const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r12b",
+        currentMatchId: "m12b",
+      });
+      gameLoopService.stopRoomRuntime.mockRejectedValueOnce(
+        new Error("runtime stop boom"),
+      );
+
+      await service.terminateRoom("r12b");
+
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "stopRoomRuntime failed during admin termination of room r12b (match m12b)",
+        ),
+        expect.any(String),
+      );
+    });
+
+    it("coerces non-Error throws from cleanupRoomRedisKeys into cleanupError (string rejection)", async () => {
+      // Branch coverage for `error instanceof Error ? ... : String(error)`.
+      // Throwing a non-Error (here: a plain string) exercises the
+      // `String(error)` fallback at admin.service.ts:321 and proves the
+      // orchestrator does not assume rejected values are Error instances.
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r13",
+        currentMatchId: null,
+      });
+      redisClient.scan.mockImplementationOnce(() => {
+        throw "Redis connection lost (string)";
+      });
+
+      const result = await service.terminateRoom("r13");
+
+      expect(result.partial).toBe(true);
+      // String(error) fallback produces the raw string message
+      expect(result.cleanupError).toBe("Redis connection lost (string)");
+    });
+
+    it("coerces non-Error throws from disbandRoom into cleanupError (object rejection)", async () => {
+      // Branch coverage for the disbandRoom catch at admin.service.ts:336-337.
+      // Throwing a non-Error (here: a plain object with a `message` field)
+      // exercises the `String(error)` fallback.
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r14",
+        currentMatchId: null,
+      });
+      roomService.disbandRoom.mockImplementationOnce(() => {
+        throw { message: "non-error rejection" };
+      });
+
+      const result = await service.terminateRoom("r14");
+
+      expect(result.partial).toBe(true);
+      // String(error) on a plain object = "[object Object]"
+      expect(result.cleanupError).toBe("[object Object]");
+    });
+
+    it("coerces non-Error throws from Redis srem into the warn log (object rejection)", async () => {
+      // Branch coverage for the srem catch at admin.service.ts:409.
+      // Throwing a non-Error (here: a plain object) exercises the
+      // `String(error)` fallback in the warn formatter.
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r15",
+        currentMatchId: "m15",
+      });
+      matchService.finishMatch.mockResolvedValueOnce({ id: "m15" } as any);
+      redisClient.srem.mockImplementationOnce(() => {
+        throw { code: "TRANSIENT" };
+      });
+
+      const result = await service.terminateRoom("r15");
+
+      // srem failure is best-effort — must not abort the kill-switch.
+      expect(result.success).toBe(true);
+      expect(result.partial).toBe(false);
     });
   });
 });

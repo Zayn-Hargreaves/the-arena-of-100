@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useEffect, useState, use } from "react";
+import React, { useEffect, useRef, useState, use } from "react";
+import { useTranslations } from "next-intl";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
-import { Users, AlertCircle, Gamepad } from "lucide-react";
+import { Users, AlertCircle } from "lucide-react";
 import { useSocketStore } from "@/stores/socket-store";
 import { useRouter } from "@/i18n/routing";
+import { useToast } from "@/hooks/use-toast";
 import { RoomStatus } from "@arena/shared";
 import { RoomCodeCard } from "@/components/atoms/room-code-card";
 import {
@@ -12,7 +14,9 @@ import {
   LobbyPlayerGrid,
   LeaveRoomModal,
   LobbyCountdownOverlay,
+  LobbyStartControls,
 } from "@/components/lobby";
+import { useLobbyLifecycle } from "@/hooks/use-lobby-lifecycle";
 
 interface LobbyPageProps {
   params: Promise<{ roomCode: string }>;
@@ -21,55 +25,36 @@ interface LobbyPageProps {
 export default function LobbyPage({ params }: LobbyPageProps) {
   const { roomCode } = use(params);
   const router = useRouter();
+  const { toast } = useToast();
+  const {
+    match,
+    leaveRoom,
+    startMatch,
+    roomTerminated,
+    roomTerminationMessage,
+  } = useSocketStore();
+  const [showLeaveModal, setShowLeaveModal] = useState(false);
+  const t = useTranslations("lobby.page");
+  const tStatus = useTranslations("lobby.status");
+  const tPlayerGrid = useTranslations("lobby.playerGrid");
+  const tTermination = useTranslations("lobby.termination");
+
   const {
     room,
     userId,
-    username,
     isConnected,
-    joinRoom,
-    startMatch,
-    match,
-    leaveRoom,
-  } = useSocketStore();
-
-  const [joining, setJoining] = useState(false);
-  const [joinError, setJoinError] = useState<string | null>(null);
-  const [countdownNow, setCountdownNow] = useState(() => Date.now());
-  const [showLeaveModal, setShowLeaveModal] = useState(false);
-
-  // Auto join room if not already in store
-  useEffect(() => {
-    if (!isConnected || (room && room.code === roomCode)) return;
-
-    let cancelled = false;
-
-    const autoJoin = async () => {
-      setJoining(true);
-      setJoinError(null);
-
-      try {
-        await joinRoom(roomCode);
-      } catch (error) {
-        if (!cancelled) {
-          setJoinError(
-            error instanceof Error
-              ? error.message
-              : "Không thể tham gia phòng. Vui lòng thử lại.",
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setJoining(false);
-        }
-      }
-    };
-
-    void autoJoin();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isConnected, roomCode, room, joinRoom]);
+    isHost,
+    isPrivateRoom,
+    roomStatus,
+    countdownRemainingSeconds,
+    isStarting,
+    isInGame,
+    playersList,
+    canHostStart,
+    joining,
+    joinError,
+    roomHostId,
+  } = useLobbyLifecycle(roomCode);
 
   // Redirect to active game screen once match starts
   useEffect(() => {
@@ -78,20 +63,32 @@ export default function LobbyPage({ params }: LobbyPageProps) {
     }
   }, [match, router]);
 
+  // Server has force-terminated this room (admin kill-switch). Toast once
+  // and bounce the user back to the home page. useRef guards against
+  // React strict-mode double-invoke and any future re-renders.
+  const terminationNotifiedRef = useRef(false);
   useEffect(() => {
-    if (!room?.countdownEndsAt) {
-      return;
-    }
+    if (!roomTerminated || terminationNotifiedRef.current) return;
+    terminationNotifiedRef.current = true;
 
-    setCountdownNow(Date.now());
-    const interval = window.setInterval(() => {
-      setCountdownNow(Date.now());
-    }, 250);
+    toast({
+      title: tTermination("toastTitle"),
+      description: roomTerminationMessage ?? tTermination("toastDefault"),
+      variant: "error",
+    });
+
+    const redirectTimer = window.setTimeout(() => {
+      router.push("/");
+    }, 1500);
 
     return () => {
-      window.clearInterval(interval);
+      window.clearTimeout(redirectTimer);
+      useSocketStore.setState({
+        roomTerminated: false,
+        roomTerminationMessage: null,
+      });
     };
-  }, [room?.countdownEndsAt]);
+  }, [roomTerminated, roomTerminationMessage, router, toast, tTermination]);
 
   const handleStartGame = () => {
     if (room?.id) {
@@ -106,82 +103,31 @@ export default function LobbyPage({ params }: LobbyPageProps) {
     }
   };
 
-  const roomHostId = room?.hostId ?? null;
-  const isHost = Boolean(userId && roomHostId && userId === roomHostId);
-  const isPrivateRoom = room?.roomType === "PRIVATE";
-  const roomStatus = room?.status ?? RoomStatus.WAITING;
-  const countdownRemainingMs = room?.countdownEndsAt
-    ? Math.max(room.countdownEndsAt - countdownNow, 0)
-    : 0;
-  const countdownRemainingSeconds = Math.ceil(countdownRemainingMs / 1000);
-
-  const isStarting =
-    roomStatus === RoomStatus.COUNTDOWN || roomStatus === RoomStatus.STARTING;
-  const isInGame = roomStatus === RoomStatus.IN_GAME;
-
-  const realPlayers = room?.players ?? [];
-  const playersList =
-    process.env.NODE_ENV === "development" && realPlayers.length === 0
-      ? [
-          {
-            id: userId || "1",
-            name: username || "Bạn",
-            status: "READY",
-            score: 0,
-            isOnline: true,
-          },
-          {
-            id: "mock2",
-            name: "Alpha_Net",
-            status: "READY",
-            score: 0,
-            isOnline: true,
-          },
-          {
-            id: "mock3",
-            name: "Glitch_Runner",
-            status: "READY",
-            score: 0,
-            isOnline: true,
-          },
-          {
-            id: "mock4",
-            name: "Neon_Ghost",
-            status: "READY",
-            score: 0,
-            isOnline: true,
-          },
-          {
-            id: "mock5",
-            name: "Pixel_Hustler",
-            status: "READY",
-            score: 0,
-            isOnline: true,
-          },
-        ]
-      : realPlayers;
-
-  const canHostStart =
-    isHost &&
-    isPrivateRoom &&
-    roomStatus === RoomStatus.WAITING &&
-    playersList.length >= 2 &&
-    !joining;
+  // The hook surfaces either a real Error.message or the sentinel key
+  // "lobby.unknownError" (when the thrown value is not an Error instance).
+  // Resolve the sentinel through next-intl so the user sees a localized
+  // fallback rather than a raw key. Also normalize an empty Error.message
+  // (some Error subclasses throw with "") to undefined so the rendering
+  // branch can fall back to the localized message.
+  const displayJoinError =
+    joinError === "lobby.unknownError" || !joinError
+      ? t("joinFailedFallback")
+      : joinError;
 
   const roomStatusMessage =
     roomStatus === RoomStatus.COUNTDOWN
-      ? `Trận đấu sẽ bắt đầu sau ${countdownRemainingSeconds}s`
+      ? tStatus("countdown", { seconds: countdownRemainingSeconds })
       : roomStatus === RoomStatus.STARTING
-        ? "Đang đồng bộ người chơi và câu hỏi..."
+        ? tStatus("starting")
         : roomStatus === RoomStatus.IN_GAME
-          ? "Đã có match, đang chuyển màn chơi..."
+          ? tStatus("inGame")
           : isPrivateRoom
             ? playersList.length < 2
-              ? "Cần ít nhất 2 người để host bắt đầu trận đấu"
-              : "Host có thể bắt đầu trận đấu bất cứ lúc nào"
+              ? tStatus("privateNeedPlayers")
+              : tStatus("privateCanStart")
             : playersList.length < 2
-              ? "Cần thêm người chơi để tự động bắt đầu"
-              : "Đủ người chơi, server sẽ tự bắt đầu trận đấu";
+              ? tStatus("publicNeedPlayers")
+              : tStatus("publicCanStart");
 
   return (
     <AppShellLayout>
@@ -215,7 +161,7 @@ export default function LobbyPage({ params }: LobbyPageProps) {
               <div className="flex items-center justify-between p-4 border-b-[3px] border-candy-ink/10">
                 <span className="text-sm font-bold text-candy-ink/80 flex items-center gap-2">
                   <Users className="w-4 h-4 text-candy-pink stroke-[2.5]" />
-                  Đối thủ hiện tại
+                  {t("opponentsCount")}
                 </span>
                 <span className="font-display font-black text-xl text-candy-pink">
                   {playersList.length} / 100
@@ -229,41 +175,33 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                 />
                 <span className="font-sans font-bold text-candy-ink/70">
                   {joinError
-                    ? `Không thể vào phòng: ${joinError}`
+                    ? t("joinError", {
+                        message: displayJoinError ?? t("joinFailedFallback"),
+                      })
                     : joining
-                      ? "Đang vào phòng..."
+                      ? t("joining")
                       : isConnected
                         ? roomStatusMessage
-                        : "Đang kết nối lại..."}
+                        : t("reconnecting")}
                 </span>
               </div>
 
               {/* Giant Host Launch Action */}
-              {isHost && isPrivateRoom && (
-                <button
-                  onClick={handleStartGame}
-                  disabled={!canHostStart}
-                  className="w-full h-14 bg-candy-mint text-candy-ink border-[3.5px] border-candy-ink shadow-[6px_6px_0_0_#2B2D42] rounded-2xl hover:translate-y-[-2px] hover:shadow-[8px_8px_0_0_#2B2D42] active:translate-y-[4px] active:shadow-[2px_2px_0_0_#2B2D42] font-display font-black text-sm tracking-widest uppercase flex items-center justify-center cursor-pointer transition-all select-none disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Gamepad className="w-5 h-5 mr-2 animate-bounce stroke-[2.5]" />
-                  {roomStatus === RoomStatus.COUNTDOWN
-                    ? `ĐANG ĐẾM NGƯỢC ${countdownRemainingSeconds}s`
-                    : roomStatus === RoomStatus.STARTING
-                      ? "ĐANG KHỞI TẠO..."
-                      : roomStatus === RoomStatus.IN_GAME
-                        ? "ĐANG CHUYỂN TRẬN..."
-                        : "BẮT ĐẦU TRẬN ĐẤU"}
-                </button>
-              )}
+              <LobbyStartControls
+                isHost={isHost}
+                isPrivateRoom={isPrivateRoom}
+                canHostStart={canHostStart}
+                roomStatus={roomStatus}
+                countdownRemainingSeconds={countdownRemainingSeconds}
+                onStart={handleStartGame}
+              />
             </div>
 
             {/* Quick Tips */}
             <div className="p-4 rounded-2xl border-[3px] border-candy-ink bg-[#FFF8E7] flex gap-3 shadow-[4px_4px_0_0_#2B2D42]">
               <AlertCircle className="w-5 h-5 text-candy-yellow shrink-0 mt-0.5 stroke-[2.5]" />
               <p className="text-xs font-semibold leading-relaxed text-candy-ink">
-                <strong>Gợi ý:</strong> Chia sẻ Mã Phòng với bạn bè để họ cùng
-                tham chiến. Chỉ người trả lời nhanh nhất và chính xác nhất mới
-                sống sót qua 100 vòng đấu!
+                <strong>{t("tipsTitle")}</strong> {t("tipsBody")}
               </p>
             </div>
           </div>
@@ -272,14 +210,14 @@ export default function LobbyPage({ params }: LobbyPageProps) {
           <div className="lg:col-span-2 space-y-4">
             <h3 className="font-display font-black text-lg text-candy-ink uppercase tracking-wider flex items-center gap-2 drop-shadow-[0_2px_0_rgba(0,0,0,0.05)]">
               <Users className="w-5 h-5 text-candy-pink stroke-[2.5]" />
-              ĐỐI THỦ TRONG PHÒNG
+              {t("opponentsSection")}
             </h3>
 
             <LobbyPlayerGrid
               players={playersList}
               currentUserId={userId}
               hostId={roomHostId}
-              emptyStateMessage="Đang chờ người chơi tham gia..."
+              emptyStateMessage={tPlayerGrid("empty")}
             />
           </div>
         </div>
