@@ -24,6 +24,11 @@ describe("RoomService", () => {
         // Used by the WAITING join branch to count players under the
         // FOR UPDATE row lock.
         count: vi.fn().mockResolvedValue(0),
+        // Used by the WAITING join branch to re-check membership under
+        // the row lock. Defaults to null (no concurrent insert) so
+        // existing tests don't need to mock it unless they want to
+        // exercise the double-join no-op-rejoin path.
+        findFirst: vi.fn().mockResolvedValue(null),
       },
       // $transaction supports two forms:
       //   1. Array form (legacy) — used by some tests for disbandRoom.
@@ -316,6 +321,57 @@ describe("RoomService", () => {
         code: ErrorCode.ROOM_NOT_FOUND,
       });
       expect(prisma.roomPlayer.create).not.toHaveBeenCalled();
+    });
+
+    it("converts a double-join race (same user from two requests) into a no-op rejoin under the lock", async () => {
+      // Regression for the P2002 race: two near-simultaneous join
+      // requests for the SAME *new* user both pass the outer
+      // `isExistingPlayer` check (the second one sees the pre-tx
+      // read before the first commits). The FOR UPDATE lock
+      // serialises them. The second transaction's in-tx
+      // findFirst re-check then sees the row inserted by the first
+      // and treats it as a no-op rejoin (same outcome as the
+      // early-return reconnect path). Without this, the second
+      // create would violate `@@unique([roomId, userId])` and
+      // surface as INTERNAL_ERROR.
+      vi.mocked(prisma.room.findUnique).mockResolvedValue({
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.WAITING,
+        maxPlayers: 100,
+        // First request's view: this user is not yet a player
+        // (because the first request hasn't committed yet).
+        players: [],
+      } as any);
+      // The lock is acquired.
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { id: "r1", maxPlayers: 100 },
+      ] as any);
+      // The in-tx membership re-check sees the row inserted by
+      // the concurrent (first) request.
+      vi.mocked(prisma.roomPlayer.findFirst).mockResolvedValue({
+        id: "rp-concurrent",
+      } as any);
+      vi.spyOn(service, "getRoom").mockResolvedValue({ id: "r1" } as any);
+
+      const result = await service.joinRoom("ABC", "u2");
+
+      // The rejoin path: no create, no Redis mutation, returns
+      // PLAYER with `joined: false` (same shape as the early-
+      // return reconnect path).
+      expect(prisma.roomPlayer.create).not.toHaveBeenCalled();
+      // Early-return from findFirst: the capacity check (count) is
+      // intentionally skipped, otherwise the no-op rejoin would
+      // touch the DB and could falsely trip ROOM_FULL on a room
+      // that's already at capacity from the first request.
+      expect(prisma.roomPlayer.count).not.toHaveBeenCalled();
+      expect(redis.sadd).not.toHaveBeenCalled();
+      expect(redis.incr).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        id: "r1",
+        joined: false,
+        joinedAs: "PLAYER",
+      });
     });
 
     it("no-op rejoin for an existing player in WAITING room returns PLAYER", async () => {

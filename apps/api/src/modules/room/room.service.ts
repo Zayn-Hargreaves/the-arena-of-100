@@ -143,7 +143,19 @@ export class RoomService {
     // FOR UPDATE holds the row lock until commit/rollback, so the
     // second concurrent transaction blocks here, then re-evaluates
     // the count against the freshly-committed row.
+    //
+    // Additionally, the `isExistingPlayer` check is repeated INSIDE
+    // the transaction. Two near-simultaneous requests for the same
+    // *new* user (e.g. double-click / reconnect race) both see
+    // `isExistingPlayer = false` from the outer pre-transaction
+    // read. The FOR UPDATE lock serialises them, but the second
+    // transaction would otherwise try to insert a duplicate
+    // RoomPlayer and trip `@@unique([roomId, userId])` (Prisma
+    // P2002) — which surfaces as INTERNAL_ERROR. Re-checking under
+    // the lock turns the second insert into a no-op rejoin (same
+    // outcome as the early-return path for an existing player).
     if (room.status === RoomStatus.WAITING) {
+      let didCreate = false;
       await this.prisma.$transaction(async (tx) => {
         // Acquire a row-level lock on the Room. Tagged-template
         // parameter binding escapes the cuid safely; we never
@@ -164,6 +176,21 @@ export class RoomService {
         }
         const maxPlayers = lockedRoom[0].maxPlayers;
 
+        // Re-check membership under the row lock. Handles the
+        // double-join race: a concurrent transaction may have
+        // inserted the same (roomId, userId) between our outer
+        // read and the lock acquisition.
+        const existing = await tx.roomPlayer.findFirst({
+          where: { roomId: room.id, userId },
+          select: { id: true },
+        });
+        if (existing) {
+          // No-op rejoin under the lock. Fall through with
+          // didCreate = false; the caller will see `joined: false`
+          // (same shape as the early-return reconnect path above).
+          return;
+        }
+
         // Count players under the row lock. Counting is cheaper
         // than re-fetching the include graph and is sufficient for
         // the capacity check.
@@ -180,31 +207,42 @@ export class RoomService {
             userId,
           },
         });
+        didCreate = true;
       });
 
-      await this.redis.sadd(`room:${room.id}:players`, userId);
+      // Only update Redis state if this transaction actually created
+      // a RoomPlayer row. The no-op rejoin path (double-join race)
+      // deliberately skips the sadd/incr/mirror to keep the cached
+      // playerCount consistent with the authoritative DB.
+      if (didCreate) {
+        await this.redis.sadd(`room:${room.id}:players`, userId);
 
-      // Atomically bump the player-count counter. INCR is safe for joins
-      // (the count can only go up) and avoids the getJSON->modify->setJSON
-      // race that loses concurrent increments.
-      const newCount = await this.redis.incr(`room:${room.id}:playerCount`);
+        // Atomically bump the player-count counter. INCR is safe for joins
+        // (the count can only go up) and avoids the getJSON->modify->setJSON
+        // race that loses concurrent increments.
+        const newCount = await this.redis.incr(`room:${room.id}:playerCount`);
 
-      // Best-effort: mirror the new count into the cached room JSON. The
-      // counter is the source of truth; the JSON is for cheap reads.
-      const cached = await this.redis.getJSON<{ playerCount: number }>(
-        `room:${room.id}`,
-      );
-      if (cached) {
-        cached.playerCount = newCount;
-        await this.redis.setJSON(`room:${room.id}`, cached, 3600);
+        // Best-effort: mirror the new count into the cached room JSON. The
+        // counter is the source of truth; the JSON is for cheap reads.
+        const cached = await this.redis.getJSON<{ playerCount: number }>(
+          `room:${room.id}`,
+        );
+        if (cached) {
+          cached.playerCount = newCount;
+          await this.redis.setJSON(`room:${room.id}`, cached, 3600);
+        }
+
+        this.logger.log(`Player ${userId} joined room ${roomCode}`);
+      } else {
+        this.logger.log(
+          `Player ${userId} no-op rejoin room ${roomCode} (concurrent insert won the race)`,
+        );
       }
-
-      this.logger.log(`Player ${userId} joined room ${roomCode}`);
 
       const updatedRoom = await this.getRoom(room.id);
       return {
         ...updatedRoom,
-        joined: true,
+        joined: didCreate,
         joinedAs: "PLAYER" as JoinMode,
       };
     }

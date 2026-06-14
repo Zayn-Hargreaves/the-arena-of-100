@@ -37,6 +37,7 @@ export default function GamePage({ params }: GamePageProps) {
     roomTerminated,
     roomTerminationMessage,
     room,
+    requestSnapshot,
   } = useSocketStore();
   const t = useTranslations("Game");
   const tTermination = useTranslations("Game.termination");
@@ -74,6 +75,30 @@ export default function GamePage({ params }: GamePageProps) {
       intervalRef.current = null;
     }
   }, []);
+
+  // Drop-in spectating baseline: hydrate the match UI on mount when
+  // the store has no match state yet. This is the case the
+  // REQUEST_SNAPSHOT backend path was added for — a late-joiner
+  // enters an IN_GAME room as SPECTATOR, navigates from the lobby
+  // to /game/[matchId], and lands with `match === null` because no
+  // ROUND_STARTED has fired for them yet. Without this, they see a
+  // blank/stale screen until the next round starts.
+  //
+  // We only fire when `match` is null: for an active player who
+  // already received MATCH_STARTED/ROUND_STARTED, the local state
+  // is fresh and a redundant snapshot would wipe the in-flight
+  // `lastAnswerResult` / `remainingCount` (the SNAPSHOT handler
+  // resets those to null). The `snapshotHydratedRef` guard makes
+  // the intent explicit and survives React 18 strict-mode double-
+  // invoke during development.
+  const snapshotHydratedRef = useRef(false);
+  useEffect(() => {
+    if (snapshotHydratedRef.current) return;
+    if (match) return;
+    if (!matchId) return;
+    snapshotHydratedRef.current = true;
+    requestSnapshot(matchId, 0);
+  }, [matchId, match, requestSnapshot]);
 
   // Calculate time left based on server timestamp
   const calculateTimeLeft = useCallback(() => {
