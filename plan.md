@@ -445,28 +445,18 @@ Success target:
 - Replace mock opponent list with real store-backed match/player data
 - Keep shell untouched
 
-### PR 3: Drop-In Spectating Backend Entry
+### PR 3: Mass-Spectator Transport Scaling
 
 Reason:
 
-- `RoomService.joinRoom` still rejects non-`WAITING` rooms at `room.service.ts:103-105`
-- GitNexus shows `joinRoom` touches `RoomHandler`, `RoomController`, and gateway join flows
+- Drop-in spectating baseline đã reuse `room:[id]` channel + `getSnapshot` cho late-joiner (đã xong trong Phase 11, branch `feat/drop-in-spectating-baseline`)
+- Baseline này đủ unblock sản phẩm; SSE/namespace riêng chỉ cần khi scale lên hàng nghìn spectator / room
 
 Success target:
 
-- Allow late join to ongoing or finished room as spectator
-- Keep this PR backend-contract-first
-
-### PR 4: Spectator Transport And UI
-
-Reason:
-
-- Late join and spectator transport should not be bundled with join policy
-- This likely touches shared events, socket store, and game/result UI
-
-Success target:
-
-- Dedicated spectator transport path
+- Dedicated spectator transport path (SSE hoặc Socket.io namespace)
+- Batched low-frequency spectator updates
+- Clear player vs spectator transport boundaries ở `game.gateway.ts` + `match.handler.ts`
 - Clear player vs spectator responsibilities
 
 ### PR 5: In-Match AFK Policy

@@ -131,17 +131,55 @@ export class RoomService {
       };
     }
 
-    // 2. WAITING — normal player join. Enforce maxPlayers.
+    // 2. WAITING — normal player join. Enforce maxPlayers atomically.
+    //
+    // The capacity check and the roomPlayer.create are wrapped in a
+    // single Prisma transaction that begins with `SELECT ... FOR
+    // UPDATE` on the parent Room row. Under PostgreSQL's default
+    // READ COMMITTED isolation, a plain SELECT does NOT acquire any
+    // row lock, so two concurrent join transactions could each read
+    // `players.length = maxPlayers - 1`, both pass the capacity
+    // check, and both insert — overshooting maxPlayers. The explicit
+    // FOR UPDATE holds the row lock until commit/rollback, so the
+    // second concurrent transaction blocks here, then re-evaluates
+    // the count against the freshly-committed row.
     if (room.status === RoomStatus.WAITING) {
-      if (room.players.length >= room.maxPlayers) {
-        throw new RoomError(ErrorCode.ROOM_FULL);
-      }
+      await this.prisma.$transaction(async (tx) => {
+        // Acquire a row-level lock on the Room. Tagged-template
+        // parameter binding escapes the cuid safely; we never
+        // interpolate user input.
+        const lockedRoom = await tx.$queryRaw<
+          Array<{ id: string; maxPlayers: number }>
+        >`
+          SELECT id, "maxPlayers"
+          FROM "Room"
+          WHERE id = ${room.id}
+          FOR UPDATE
+        `;
+        if (lockedRoom.length === 0) {
+          // Room was deleted between the outer read and the
+          // in-transaction lock acquisition. Treat as not-found so
+          // the caller gets a typed error.
+          throw new RoomError(ErrorCode.ROOM_NOT_FOUND);
+        }
+        const maxPlayers = lockedRoom[0].maxPlayers;
 
-      await this.prisma.roomPlayer.create({
-        data: {
-          roomId: room.id,
-          userId,
-        },
+        // Count players under the row lock. Counting is cheaper
+        // than re-fetching the include graph and is sufficient for
+        // the capacity check.
+        const currentPlayers = await tx.roomPlayer.count({
+          where: { roomId: room.id },
+        });
+        if (currentPlayers >= maxPlayers) {
+          throw new RoomError(ErrorCode.ROOM_FULL);
+        }
+
+        await tx.roomPlayer.create({
+          data: {
+            roomId: room.id,
+            userId,
+          },
+        });
       });
 
       await this.redis.sadd(`room:${room.id}:players`, userId);

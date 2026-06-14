@@ -1,7 +1,7 @@
 # Arena of 100 - Project Status and Usecases
 
 > Cập nhật 2026-06-14 dựa trên code + GitNexus.
-> Bản 2026-06-06 từng nói "Lobby lifecycle / heartbeat / graceful exit / admin kill-switch còn thiếu"; thực tế code đã hoàn thành baseline ở PR #38 + PR #47. Cùng ngày cũng đóng PR Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`): thêm `PlayerStatus.SPECTATOR` enum + `JoinMode` payload + backend join policy 4-way matrix + server-side submit gate + frontend spectator UI. Bản này reclassify lại trạng thái theo code thật.
+> Bản 2026-06-06 từng nói "Lobby lifecycle / heartbeat / graceful exit / admin kill-switch còn thiếu"; thực tế code đã hoàn thành baseline ở PR #38 + PR #47. Cùng ngày cũng đóng PR Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`): thêm `JoinMode = "PLAYER" | "SPECTATOR"` payload + `RoomJoinedPayload.joinedAs` + backend join policy 4-way matrix + server-side submit gate + frontend spectator UI. Bản này reclassify lại trạng thái theo code thật.
 
 ## Trạng Thái Thật Của Dự Án
 
@@ -52,7 +52,7 @@
 - Lobby i18n migration (`next-intl` namespaces `lobby.*` cho cả 5 components + hook + page)
 - Candy 3D Jelly UI Phase 1-4 + Phase 5A (mobile overlay, escape/backdrop, skip-link) + Phase 5B closeout (2026-06-14)
 - Sidebar + AppShell + Sidebar mobile (gradient cũ đã bỏ ở `app-shell-layout.tsx:34` + `sidebar.tsx:230`; `styles/components.css` confirmed absent)
-- **Drop-in spectating baseline (PR `feat/drop-in-spectating-baseline`, 2026-06-14)** — `PlayerStatus.SPECTATOR` enum, `JoinMode` payload, `RoomService.joinRoom` 4-way matrix, `MatchHandler.handleSubmitAnswer` server gate, `MatchHandler.handleRequestSnapshot` allow-list với no-correctAnswer regression test, frontend spectator UI trên lobby + game page. Reuse `room:[id]` channel. Coverage per-file ≥90% cho tất cả file sửa. 661/661 unit tests pass.
+- **Drop-in spectating baseline (PR `feat/drop-in-spectating-baseline`, 2026-06-14)** — `JoinMode = "PLAYER" | "SPECTATOR"` payload (`RoomJoinedPayload.joinedAs`), `RoomService.joinRoom` 4-way matrix, `MatchHandler.handleSubmitAnswer` server gate, `MatchHandler.handleRequestSnapshot` allow-list với no-correctAnswer regression test, frontend spectator UI trên lobby + game page. Reuse `room:[id]` channel. Coverage per-file ≥90% cho tất cả file sửa. 661/661 unit tests pass.
 
 ### 🟡 Một Số Phần Còn Dở (Mock / Hardcoded)
 
@@ -60,7 +60,7 @@
 
 ### 🔴 Use Case Còn Thiếu (theo brief, chưa có implementation)
 
-1. ~~**Drop-in Spectating**~~ ✅ Done 2026-06-14 — `RoomService.joinRoom` cho phép late-joiner vào `IN_GAME`/`FINISHED` với `PlayerStatus.SPECTATOR` (no DB write, no playerCount bump). `MatchHandler.handleSubmitAnswer` server gate. Frontend spectator UI ở lobby + game page. Mass-spectator SSE channel vẫn deferred (PR kế tiếp)
+1. ~~**Drop-in Spectating**~~ ✅ Done 2026-06-14 — `RoomService.joinRoom` cho phép late-joiner vào `IN_GAME`/`FINISHED` với `JoinMode = "SPECTATOR"` (no DB write, no playerCount bump). `MatchHandler.handleSubmitAnswer` server gate. Frontend spectator UI ở lobby + game page. Mass-spectator SSE channel vẫn deferred (PR kế tiếp)
 2. **In-match AFK policy** — sweep mới chỉ áp dụng cho lobby (`PresenceService.sweep` gọi `removePlayerBatch` + `handleRoomPlayerLeft`). Trong match, round-miss chưa có detection
 3. **Mass-spectator isolation infra** — drop-in baseline đã reuse `room:[id]` channel. SSE channel/namespace riêng cho spectator vẫn chưa có
 4. **Host kick player** — `PlayerStatus.KICKED` đã có ở shared types nhưng backend hook (`kickPlayer`) chưa wire vào room handler/admin endpoint
@@ -119,7 +119,7 @@ Mỗi use case dưới đây gồm trạng thái (✅ Có / 🟡 Dở / ❌ Thi�
 #### 5. Drop-in Spectating
 
 - ✅ Reject khi `room.status !== WAITING` đã được mở rộng: IN_GAME/FINISHED cho phép join as SPECTATOR (no DB write, no playerCount bump). `RoomService.joinRoom` 4-way matrix; COUNTDOWN/STARTING vẫn reject. (`apps/api/src/modules/room/room.service.ts:93-180`)
-- ✅ Auto-transition sang spectator mode: `PlayerStatus.SPECTATOR` enum; `JoinMode` payload (`joinedAs: "PLAYER" | "SPECTATOR"`); lobby + game page UI đã wire
+- ✅ Auto-transition sang spectator mode: `JoinMode` payload (`joinedAs: "PLAYER" | "SPECTATOR"` trong `RoomJoinedPayload`); lobby + game page UI đã wire
 - ✅ Snapshot path an toàn: `MatchHandler.handleRequestSnapshot` reuse `MatchStateMachine.getSnapshot` (đã client-safe, không leak `correctAnswer`); regression test verify
 - ❌ Mass-spectator isolation infra: vẫn chưa có (SSE channel/namespace riêng) — deferred sang PR kế tiếp
 
@@ -272,21 +272,21 @@ Mỗi use case dưới đây gồm trạng thái (✅ Có / 🟡 Dở / ❌ Thi�
 
 ## Critical UX Gaps — Mức Ưu Tiên PR
 
-| Priority      | Gap                                  | Use Case Brief | Why Now                                                                                                                                                                                                       |
-| ------------- | ------------------------------------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ✅ 2026-06-14 | Design System Phase 5B closeout      | polish         | Done: shell gradient bỏ ở `app-shell-layout.tsx:34` + `sidebar.tsx:230`; `styles/components.css` audit xác nhận 0 references; visual closeout complete                                                        |
-| ✅ 2026-06-14 | Drop-in spectating baseline          | #5, #6         | Done: `PlayerStatus.SPECTATOR` enum + `RoomService.joinRoom` 4-way matrix + `MatchHandler.handleSubmitAnswer` server gate + frontend spectator UI. Reuse `room:[id]` channel. Mass-spectator SSE vẫn deferred |
-| P1            | In-match AFK policy                  | #7             | Cần product decision (loại vs. spectator); sweep chỉ phủ lobby                                                                                                                                                |
-| P2            | Mass-spectator SSE scaling           | #5             | Baseline xong; cần batched low-frequency updates + clear transport boundary khi scale lên                                                                                                                     |
-| P2            | Frictionless onboarding + moderation | #1             | Privacy/legal risk nếu public; share với kill-switch sanitizer pipeline                                                                                                                                       |
-| P2            | Accessibility audit                  | #14            | Compliance                                                                                                                                                                                                    |
-| P2            | Optimistic UI rollback đầy đủ        | #16            | Game feel, không block ship MVP                                                                                                                                                                               |
-| P2            | Content moderation + sanitizer       | #1, #17        | Unlock custom termination message; cần shared profanity pipeline                                                                                                                                              |
-| P3            | Host kick player                     | #2             | API đã có, hook chưa wire vào room handler / admin                                                                                                                                                            |
-| P3            | Post-match rematch + share           | #12            | Retention                                                                                                                                                                                                     |
-| P3            | Sudden death + tie-break UI          | #11            | Game feel giai đoạn cuối                                                                                                                                                                                      |
-| P3            | Asset preloading                     | #9             | Chỉ cần khi có media assets thật                                                                                                                                                                              |
-| P3            | Surrender in-match                   | #8             | Optional; cho phép player rời khi đang IN_GAME                                                                                                                                                                |
+| Priority      | Gap                                  | Use Case Brief | Why Now                                                                                                                                                                                                                           |
+| ------------- | ------------------------------------ | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ✅ 2026-06-14 | Design System Phase 5B closeout      | polish         | Done: shell gradient bỏ ở `app-shell-layout.tsx:34` + `sidebar.tsx:230`; `styles/components.css` audit xác nhận 0 references; visual closeout complete                                                                            |
+| ✅ 2026-06-14 | Drop-in spectating baseline          | #5, #6         | Done: `JoinMode` payload (`RoomJoinedPayload.joinedAs`) + `RoomService.joinRoom` 4-way matrix + `MatchHandler.handleSubmitAnswer` server gate + frontend spectator UI. Reuse `room:[id]` channel. Mass-spectator SSE vẫn deferred |
+| P1            | In-match AFK policy                  | #7             | Cần product decision (loại vs. spectator); sweep chỉ phủ lobby                                                                                                                                                                    |
+| P2            | Mass-spectator SSE scaling           | #5             | Baseline xong; cần batched low-frequency updates + clear transport boundary khi scale lên                                                                                                                                         |
+| P2            | Frictionless onboarding + moderation | #1             | Privacy/legal risk nếu public; share với kill-switch sanitizer pipeline                                                                                                                                                           |
+| P2            | Accessibility audit                  | #14            | Compliance                                                                                                                                                                                                                        |
+| P2            | Optimistic UI rollback đầy đủ        | #16            | Game feel, không block ship MVP                                                                                                                                                                                                   |
+| P2            | Content moderation + sanitizer       | #1, #17        | Unlock custom termination message; cần shared profanity pipeline                                                                                                                                                                  |
+| P3            | Host kick player                     | #2             | API đã có, hook chưa wire vào room handler / admin                                                                                                                                                                                |
+| P3            | Post-match rematch + share           | #12            | Retention                                                                                                                                                                                                                         |
+| P3            | Sudden death + tie-break UI          | #11            | Game feel giai đoạn cuối                                                                                                                                                                                                          |
+| P3            | Asset preloading                     | #9             | Chỉ cần khi có media assets thật                                                                                                                                                                                                  |
+| P3            | Surrender in-match                   | #8             | Optional; cho phép player rời khi đang IN_GAME                                                                                                                                                                                    |
 
 ## Strategic Recommendations
 
@@ -304,7 +304,7 @@ Phase đã đóng theo ground truth từ code. Bằng chứng:
 
 PR `feat/drop-in-spectating-baseline` — cho phép late-joiner vào `IN_GAME`/`FINISHED` với tư cách `SPECTATOR` (read-only). Baseline reuse `room:[id]` channel + `MatchStateMachine.getSnapshot` (đã client-safe).
 
-1. **Contract baseline**: thêm `PlayerStatus.SPECTATOR` enum + `JoinMode` payload (`joinedAs: "PLAYER" | "SPECTATOR"`) trong `packages/shared/src/{state,socket}.ts` + `SPECTATOR_CANNOT_ANSWER` error code
+1. **Contract baseline**: thêm `JoinMode` payload (`joinedAs: "PLAYER" | "SPECTATOR"` trong `RoomJoinedPayload` + `RoomCreatedPayload`) trong `packages/shared/src/socket.ts` + `SPECTATOR_CANNOT_ANSWER` error code
 2. **Backend join policy**: `RoomService.joinRoom` 4-way matrix (WAITING+new→PLAYER, WAITING+existing→PLAYER reconnect, IN_GAME/FINISHED+existing→PLAYER reconnect, IN_GAME/FINISHED+new→SPECTATOR no-DB-write, COUNTDOWN/STARTING→reject)
 3. **Backend submit gate**: `MatchHandler.handleSubmitAnswer` check `stateMachine.getState().players.has(userId)` → throw `SPECTATOR_CANNOT_ANSWER` cho non-player
 4. **Snapshot safety**: `MatchHandler.handleRequestSnapshot` allow-list cho spectator path + regression test verify no `correctAnswer` leak

@@ -266,7 +266,7 @@ export default function GamePage({ params }: GamePageProps) {
     <AppShellLayout>
       {isEliminated && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-none">
-          <div className="jelly-card p-6 rounded-3xl border-[4px] border-candy-ink bg-white shadow-[8px_8px_0_0_2B2D42] text-center space-y-3 animate-bounce-in pointer-events-auto">
+          <div className="jelly-card p-6 rounded-3xl border-[4px] border-candy-ink bg-white shadow-[8px_8px_0_0_#2B2D42] text-center space-y-3 animate-bounce-in pointer-events-auto">
             <div className="flex justify-center">
               <Trophy className="w-12 h-12 text-candy-yellow animate-bounce stroke-[2] fill-candy-ink/10" />
             </div>

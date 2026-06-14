@@ -85,6 +85,7 @@ describe("RoomHandler", () => {
             isOnline: true,
           },
         ],
+        joinedAs: "PLAYER",
       });
     });
 
@@ -166,6 +167,7 @@ describe("RoomHandler", () => {
             isOnline: true,
           },
         ],
+        joinedAs: "PLAYER",
       });
     });
   });

@@ -59,6 +59,9 @@ export class RoomHandler extends BaseHandler {
             isOnline: true,
           },
         ],
+        // The host is always a player; mirrors RoomJoinedPayload
+        // shape so the frontend can rely on a single `joinMode` field.
+        joinedAs: "PLAYER",
       } satisfies RoomCreatedPayload);
 
       this.logger.log(`Room created via socket: ${room.code}`);

@@ -98,7 +98,7 @@
 - [x] **Phase 8 — Frontend Audit Sweep** — Home page a11y (`htmlFor`/id, tap-targets >44px), Not-Found surfaces có skip-link, tạo `AvatarFrame` reusable để dedupe avatar/sprite framing giữa `LobbyPlayerGrid` và `GamePage` sidebar
 - [x] **Phase 9 — Tie-Break (baseline)** — backend `MatchStateMachine.tieBreak` đã có sort theo `totalResponseTimeMs` → `correctAnswers` → alphabetical fallback (deterministic). UI chưa expose riêng
 - [x] **Phase 10 — Spectator Baseline (eliminated only)** — `socket-store` có `isEliminated`, handle `PLAYER_ELIMINATED`; `GamePage` render "Chế độ khán giả" với overlay khi `isEliminated === true`. Drop-in spectating (vào `IN_GAME`/`FINISHED`) chưa có
-- [x] **Phase 11 — Drop-in Spectating Baseline** (`feat/drop-in-spectating-baseline`, 2026-06-14) — cho phép late-joiner vào `IN_GAME`/`FINISHED` với `PlayerStatus.SPECTATOR` (read-only). Reuse `room:[id]` channel + `MatchStateMachine.getSnapshot` (client-safe, không leak `correctAnswer`). Server-side gate `SPECTATOR_CANNOT_ANSWER` ở `MatchHandler.handleSubmitAnswer`. Frontend: lobby banner + auto-redirect `/result/[matchId]` cho FINISHED + spectator UI trên game page. Coverage per-file ≥90% cho tất cả file sửa. Xem section chi tiết bên dưới (Phase 11).
+- [x] **Phase 11 — Drop-in Spectating Baseline** (`feat/drop-in-spectating-baseline`, 2026-06-14) — cho phép late-joiner vào `IN_GAME`/`FINISHED` với `JoinMode = "SPECTATOR"` (read-only). Reuse `room:[id]` channel + `MatchStateMachine.getSnapshot` (client-safe, không leak `correctAnswer`). Server-side gate `SPECTATOR_CANNOT_ANSWER` ở `MatchHandler.handleSubmitAnswer`. Frontend: lobby banner + auto-redirect `/result/[matchId]` cho FINISHED + spectator UI trên game page. Coverage per-file ≥90% cho tất cả file sửa. Xem section chi tiết bên dưới (Phase 11).
 
 ### ✅ Phase 11 — Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`, 2026-06-14) — Hoàn thành
 
@@ -106,7 +106,7 @@ Drop-in spectating cho phép late-joiner vào phòng `IN_GAME` hoặc `FINISHED`
 
 #### Contract baseline (Phase 1)
 
-- [x] `packages/shared/src/state.ts` — thêm `PlayerStatus.SPECTATOR = "SPECTATOR"` (first-class role)
+- [x] `packages/shared/src/socket.ts` — thêm `type JoinMode = "PLAYER" | "SPECTATOR"` + `joinedAs: JoinMode` trong `RoomJoinedPayload` + `RoomCreatedPayload` (spectator role ở transport layer, không phải `PlayerStatus` enum)
 - [x] `packages/shared/src/socket.ts` — thêm `type JoinMode = "PLAYER" | "SPECTATOR"` + `joinedAs: JoinMode` vào `RoomJoinedPayload` + `RoomCreatedPayload`
 - [x] `packages/shared/src/error-codes.ts` — thêm `SPECTATOR_CANNOT_ANSWER`; `index.ts` — thêm message VN
 - [x] `pnpm --filter @arena/shared typecheck` pass
@@ -223,13 +223,13 @@ Drop-in spectating cho phép late-joiner vào phòng `IN_GAME` hoặc `FINISHED`
 - [ ] In-match AFK policy chưa quyết (loại vs. chuyển spectator)
 - [ ] `RoomService.getActiveRooms` dùng Prisma `findMany` (OK cho 1 instance, cần cache hoặc stream nếu scale)
 - [ ] `correctAnswer` có thể leak qua `stateMachine.startRound` (đã strip ở broadcast nhưng cần audit thêm)
-- [ ] `SocketNamespace` chưa có SPECTATOR entry riêng (drop-in spectating sẽ cần)
+- [ ] `SocketNamespace` chưa có SPECTATOR entry riêng (mass-spectator scaling, PR 2 — `Plan.md` PR 3)
 - [ ] `packages/config` directory trống
 - [x] **Design system Phase 5B đã đóng (2026-06-14)** — shell gradient đã bỏ ở `app-shell-layout.tsx:34` + mobile overlay ở `sidebar.tsx:230`; `styles/components.css` audit xác nhận 0 live references; visual closeout done
 - [ ] **Admin kill-switch message sanitizer** — deferred tới khi profanity/content-moderation pipeline lands
 - [ ] **Admin kill-switch append-only audit event** — `AdminService.terminateRoom` (`apps/api/src/modules/admin/admin.service.ts:250-362`) mutate DB (finishMatch + disbandRoom) + Redis + timers + emit `ROOM_TERMINATED` nhưng KHÔNG ghi `EventLog` row. Vi phạm `.github/instructions/review.instructions.md:36` + `memory-bank/codingGuidelines.md:247`. Cần: append immutable audit event (roomId, matchId, adminUserId, reason, timestamp) trước/song song với `disbandRoom`. Owner: TBD, ticket: TBD
 - [ ] **Host kick player** — backend hook (`PlayerStatus.KICKED` đã có ở shared types) chưa wire vào room handler / admin endpoint
-- [ ] **Drop-in spectating** — `RoomService.joinRoom` còn reject khi `room.status !== WAITING`
+- [x] **Drop-in spectating** — ✅ Done 2026-06-14 trong PR `feat/drop-in-spectating-baseline`. Xem `Phase 11` section. Còn lại: mass-spectator transport scaling (PR kế tiếp)
 
 ### 🟢 Nice-to-Have
 
@@ -297,10 +297,8 @@ Drop-in spectating cho phép late-joiner vào phòng `IN_GAME` hoặc `FINISHED`
 
 ## What's Next (Priority Order)
 
-1. **PR tiếp theo — Drop-in spectating + spectator transport baseline (đề xuất)**
-   - `RoomService.joinRoom` cho phép late-joiner vào `IN_GAME`/`FINISHED` với `PlayerStatus.SPECTATOR`
-   - Socket channel/namespace riêng cho spectator
-2. **PR sau — In-match AFK policy** (sau khi có product decision: loại vs. spectator)
+1. **PR tiếp theo — In-match AFK policy** (P1, product — chờ product decision loại vs. chuyển spectator)
+2. **PR sau — Mass-spectator transport scaling** (SSE channel riêng + batched updates) — xem `plan.md` PR 3
 3. **PR sau — Content moderation + message sanitizer + device fingerprint**
 4. **Optimistic UI rollback** (game feel, không block ship MVP)
 5. **Post-match rematch + share** (retention)

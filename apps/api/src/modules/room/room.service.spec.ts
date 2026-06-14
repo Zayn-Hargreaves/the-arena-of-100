@@ -17,8 +17,25 @@ describe("RoomService", () => {
         update: vi.fn(),
         delete: vi.fn(),
       },
-      roomPlayer: { create: vi.fn(), deleteMany: vi.fn(), findMany: vi.fn() },
-      $transaction: vi.fn((x) => Promise.all(x)),
+      roomPlayer: {
+        create: vi.fn(),
+        deleteMany: vi.fn(),
+        findMany: vi.fn(),
+        // Used by the WAITING join branch to count players under the
+        // FOR UPDATE row lock.
+        count: vi.fn().mockResolvedValue(0),
+      },
+      // $transaction supports two forms:
+      //   1. Array form (legacy) — used by some tests for disbandRoom.
+      //   2. Function form (interactive) — used by joinRoom for atomic
+      //      capacity checks. We invoke the function with the same
+      //      `prisma` mock so `tx.$queryRaw` and `tx.roomPlayer.count`
+      //      resolve through the same vi.fn() instances the test setup
+      //      already configures.
+      $transaction: vi.fn((arg) =>
+        typeof arg === "function" ? arg(prisma) : Promise.all(arg),
+      ),
+      $queryRaw: vi.fn(),
     } as unknown as PrismaService;
     redis = {
       setJSON: vi.fn(),
@@ -70,12 +87,24 @@ describe("RoomService", () => {
         players: [],
       };
       vi.mocked(prisma.room.findUnique).mockResolvedValue(mockRoom as any);
+      // WAITING branch: lock + count + create. The host is the only
+      // existing RoomPlayer, so count returns 1.
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { id: "r1", maxPlayers: 100 },
+      ] as any);
+      vi.mocked(prisma.roomPlayer.count).mockResolvedValue(1);
       vi.mocked(prisma.roomPlayer.create).mockResolvedValue({} as any);
       vi.mocked(redis.getJSON).mockResolvedValue({ playerCount: 1 });
       vi.spyOn(service, "getRoom").mockResolvedValue({ id: "r1" } as any);
 
       const result = await service.joinRoom("ABC", "u2");
 
+      // The FOR UPDATE lock must have been acquired as the first
+      // statement inside the transaction.
+      expect(prisma.$queryRaw).toHaveBeenCalled();
+      expect(prisma.roomPlayer.count).toHaveBeenCalledWith({
+        where: { roomId: "r1" },
+      });
       expect(prisma.roomPlayer.create).toHaveBeenCalled();
       expect(redis.sadd).toHaveBeenCalledWith("room:r1:players", "u2");
       expect(result).toEqual({ id: "r1", joined: true, joinedAs: "PLAYER" });
@@ -214,9 +243,79 @@ describe("RoomService", () => {
         maxPlayers: 1,
         players: [{ userId: "u1" }],
       } as any);
+      // The WAITING branch locks the Room row then counts players
+      // under that lock; the count is the source of truth for the
+      // capacity check.
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { id: "r1", maxPlayers: 1 },
+      ] as any);
+      vi.mocked(prisma.roomPlayer.count).mockResolvedValue(1);
+
       await expect(service.joinRoom("ABC", "u2")).rejects.toMatchObject({
         code: ErrorCode.ROOM_FULL,
       });
+    });
+
+    it("re-validates capacity under the FOR UPDATE row lock so concurrent joins cannot overshoot maxPlayers", async () => {
+      // Regression for the TOCTOU race: a plain `tx.room.findUnique`
+      // under READ COMMITTED would only issue a regular SELECT, so
+      // two concurrent join requests could each read
+      // `players.length = maxPlayers - 1`, both pass the check, and
+      // both insert — overshooting maxPlayers. The fix wraps the
+      // check + insert in a transaction whose first statement is
+      // `SELECT ... FOR UPDATE` on the Room row; the second
+      // concurrent request blocks at the lock until the first
+      // commits, then re-evaluates capacity against the freshly
+      // committed count.
+      //
+      // Here we simulate "another concurrent request filled the room
+      // between the initial read and the in-tx count": the initial
+      // findUnique shows maxPlayers=2, the FOR UPDATE lock returns
+      // the same row, but the subsequent count (taken under the lock,
+      // after the concurrent insert committed) returns 2 — so we
+      // expect ROOM_FULL and no roomPlayer.create.
+      vi.mocked(prisma.room.findUnique).mockResolvedValue({
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.WAITING,
+        maxPlayers: 2,
+        players: [{ userId: "u1" }],
+      } as any);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { id: "r1", maxPlayers: 2 },
+      ] as any);
+      vi.mocked(prisma.roomPlayer.count).mockResolvedValue(2); // full
+
+      await expect(service.joinRoom("ABC", "u2")).rejects.toMatchObject({
+        code: ErrorCode.ROOM_FULL,
+      });
+      // The lock acquisition must have happened, then the in-tx
+      // count read the saturated value, then ROOM_FULL was thrown —
+      // and the create must NOT have been called.
+      expect(prisma.$queryRaw).toHaveBeenCalled();
+      expect(prisma.roomPlayer.count).toHaveBeenCalled();
+      expect(prisma.roomPlayer.create).not.toHaveBeenCalled();
+    });
+
+    it("throws ROOM_NOT_FOUND when the room is deleted between the outer read and the FOR UPDATE lock", async () => {
+      // Edge case: the outer findUnique returned the row, but the
+      // row was deleted by another transaction before this one could
+      // acquire the lock. The service should surface a typed
+      // ROOM_NOT_FOUND instead of crashing on the empty result.
+      vi.mocked(prisma.room.findUnique).mockResolvedValue({
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.WAITING,
+        maxPlayers: 100,
+        players: [],
+      } as any);
+      // FOR UPDATE returns no rows.
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([] as any);
+
+      await expect(service.joinRoom("ABC", "u2")).rejects.toMatchObject({
+        code: ErrorCode.ROOM_NOT_FOUND,
+      });
+      expect(prisma.roomPlayer.create).not.toHaveBeenCalled();
     });
 
     it("no-op rejoin for an existing player in WAITING room returns PLAYER", async () => {
