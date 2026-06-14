@@ -223,7 +223,7 @@ Drop-in spectating cho phép late-joiner vào phòng `IN_GAME` hoặc `FINISHED`
 - [ ] In-match AFK policy chưa quyết (loại vs. chuyển spectator)
 - [ ] `RoomService.getActiveRooms` dùng Prisma `findMany` (OK cho 1 instance, cần cache hoặc stream nếu scale)
 - [ ] `correctAnswer` có thể leak qua `stateMachine.startRound` (đã strip ở broadcast nhưng cần audit thêm)
-- [ ] `SocketNamespace` chưa có SPECTATOR entry riêng (mass-spectator scaling, PR 2 — `Plan.md` PR 3)
+- [ ] `SocketNamespace` chưa có SPECTATOR entry riêng (mass-spectator scaling, PR 3 ở `plan.md`)
 - [ ] `packages/config` directory trống
 - [x] **Design system Phase 5B đã đóng (2026-06-14)** — shell gradient đã bỏ ở `app-shell-layout.tsx:34` + mobile overlay ở `sidebar.tsx:230`; `styles/components.css` audit xác nhận 0 live references; visual closeout done
 - [ ] **Admin kill-switch message sanitizer** — deferred tới khi profanity/content-moderation pipeline lands
