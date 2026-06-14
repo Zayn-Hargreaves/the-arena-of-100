@@ -491,6 +491,9 @@ export class GameLoopService implements OnModuleInit {
       throw new RoomError(ErrorCode.NOT_ENOUGH_PLAYERS);
     }
 
+    let match:
+      | Awaited<ReturnType<typeof this.matchService.createMatch>>
+      | undefined = undefined;
     try {
       // B3 fix: atomic guard against the double-launch race.
       //
@@ -596,41 +599,7 @@ export class GameLoopService implements OnModuleInit {
       // "launch failed because someone else got there first"
       // outcome without us silently destroying the winner's
       // progress.
-      let match: Awaited<ReturnType<typeof this.matchService.createMatch>>;
-      try {
-        match = await this.matchService.createMatch(roomId);
-      } catch (createError) {
-        const isRaceLost =
-          createError instanceof RoomError &&
-          createError.code === ErrorCode.ROOM_ALREADY_STARTED;
-        if (isRaceLost) {
-          this.logger.warn(
-            `B3 race-lost: createMatch for room ${roomId} reported ROOM_ALREADY_STARTED — another thread won the launch. Skipping revert to avoid overwriting the winning thread's state.`,
-          );
-          throw createError;
-        }
-        this.logger.error(
-          `B3 cleanup: createMatch threw after we set Room ${roomId} to STARTING; reverting room status and cleaning orphan state.`,
-          createError instanceof Error ? createError.stack : undefined,
-        );
-        try {
-          await this.roomService.updateRoomStatus(roomId, RoomStatus.WAITING);
-          server
-            .to(getRoomChannel(roomId))
-            .emit(ServerEvent.ROOM_STATUS_UPDATED, {
-              roomId,
-              roomStatus: RoomStatus.WAITING,
-              currentMatchId: null,
-              updatedAt: Date.now(),
-            });
-        } catch (revertError) {
-          this.logger.error(
-            `B3 cleanup: failed to revert Room ${roomId} status to WAITING after createMatch failure.`,
-            revertError instanceof Error ? revertError.stack : undefined,
-          );
-        }
-        throw createError;
-      }
+      match = await this.matchService.createMatch(roomId);
 
       server.to(channel).emit(ServerEvent.MATCH_STARTING, {
         matchId: match.id,
@@ -660,21 +629,73 @@ export class GameLoopService implements OnModuleInit {
       // the caller (which can be admin tooling, the host
       // force-start handler, or the auto-start timer).
       const isRaceLost =
-        error instanceof RoomError &&
-        error.code === ErrorCode.ROOM_ALREADY_STARTED;
+        error instanceof RoomError
+          ? error.code === ErrorCode.ROOM_ALREADY_STARTED
+          : (error as Record<string, unknown>)?.code ===
+            ErrorCode.ROOM_ALREADY_STARTED;
       if (isRaceLost) {
         this.logger.warn(
           `B3 race-lost: launchRoomMatch for room ${roomId} aborted because another thread won the launch. The winning thread's state (STARTING/IN_GAME) is preserved.`,
         );
         throw error;
       }
-      await this.roomService.updateRoomStatus(roomId, RoomStatus.WAITING);
-      server.to(getRoomChannel(roomId)).emit(ServerEvent.ROOM_STATUS_UPDATED, {
-        roomId,
-        roomStatus: RoomStatus.WAITING,
-        currentMatchId: null,
-        updatedAt: Date.now(),
-      });
+
+      const isRoomNotFound =
+        error instanceof RoomError
+          ? error.code === ErrorCode.ROOM_NOT_FOUND
+          : (error as Record<string, unknown>)?.code ===
+              ErrorCode.ROOM_NOT_FOUND ||
+            (error as Record<string, unknown>)?.message ===
+              ErrorCode.ROOM_NOT_FOUND;
+      if (isRoomNotFound) {
+        this.logger.warn(
+          `Room ${roomId} not found during launch. Skipping revert/broadcast.`,
+        );
+        throw error;
+      }
+
+      this.logger.error(
+        `Launch failed for room ${roomId}: ${error instanceof Error ? error.message : String(error)}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+
+      // Clean up orphaned match in DB if created
+      if (match) {
+        try {
+          this.logger.warn(
+            `Deleting orphaned match ${match.id} for room ${roomId}`,
+          );
+          await this.prisma.match.delete({
+            where: { id: match.id },
+          });
+        } catch (cleanupError) {
+          this.logger.error(
+            `Failed to delete orphaned match ${match.id}:`,
+            cleanupError,
+          );
+        }
+      }
+
+      try {
+        await this.roomService.updateRoomStatus(
+          roomId,
+          RoomStatus.WAITING,
+          null,
+        );
+        server
+          .to(getRoomChannel(roomId))
+          .emit(ServerEvent.ROOM_STATUS_UPDATED, {
+            roomId,
+            roomStatus: RoomStatus.WAITING,
+            currentMatchId: null,
+            updatedAt: Date.now(),
+          });
+      } catch (revertError) {
+        this.logger.error(
+          `Failed to revert Room ${roomId} status to WAITING after launch failure.`,
+          revertError instanceof Error ? revertError.stack : undefined,
+        );
+      }
       throw error;
     }
   }

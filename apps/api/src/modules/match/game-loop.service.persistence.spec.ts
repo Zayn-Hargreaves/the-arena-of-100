@@ -4,7 +4,7 @@ import { QuestionService } from "../question/question.service";
 import { MatchStateMachine } from "@arena/game-core";
 import { MatchStatus, PlayerStatus } from "@arena/shared";
 import { Server } from "socket.io";
-import { vi, beforeEach, it, expect, describe } from "vitest";
+import { vi, beforeEach, afterEach, it, expect, describe } from "vitest";
 import { RoomService } from "../room/room.service";
 import { createMockRedisService } from "./redis.mock";
 
@@ -92,6 +92,10 @@ describe("GameLoopService Persistence", () => {
     );
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   describe("endRound persistence", () => {
     it("should save round and answers with correct parameters", async () => {
       // Setup: transition through required states and submit answers
@@ -155,6 +159,10 @@ describe("GameLoopService Persistence", () => {
       });
       stateMachine.submitAnswer("p1", "A", Date.now());
 
+      const loggerSpy = vi
+        .spyOn((service as any).logger, "error")
+        .mockImplementation(() => {});
+
       // Simulate a DB failure inside the round-write path. The
       // service must surface the error (so the surrounding timer
       // callback logs it) and NOT advance the state machine.
@@ -165,6 +173,14 @@ describe("GameLoopService Persistence", () => {
       await expect(
         (service as any).endRound("match-1", "room-1", mockServer),
       ).rejects.toThrow("connection reset");
+
+      // Verify logger.error was called with the expected error message
+      expect(loggerSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "H3: endRound DB persistence failed for match match-1 round 1",
+        ),
+        expect.any(Error),
+      );
 
       // The state machine was transitioned to ROUND_EVALUATING
       // BEFORE the DB call (H3 ordering). It must NOT have been

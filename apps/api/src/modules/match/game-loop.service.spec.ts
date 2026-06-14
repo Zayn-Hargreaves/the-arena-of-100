@@ -1997,6 +1997,7 @@ describe("GameLoopService", () => {
         expect(roomService.updateRoomStatus).toHaveBeenLastCalledWith(
           "r1",
           RoomStatus.WAITING,
+          null,
         );
         const rollback = emitSpy.mock.calls.find(
           (call) =>
@@ -2208,7 +2209,7 @@ describe("GameLoopService", () => {
         // is pinned.
         const revertLogCall = errorSpy.mock.calls.find((call) =>
           String(call[0]).includes(
-            "B3 cleanup: failed to revert Room r1 status to WAITING",
+            "Failed to revert Room r1 status to WAITING",
           ),
         );
         expect(revertLogCall).toBeDefined();
@@ -2349,12 +2350,14 @@ describe("GameLoopService", () => {
         });
         // mockImplementation lets us return a different value per
         // key, which the two roomIds in smembers require.
-        vi.mocked(redis.getClient().get).mockImplementation(async (key) => {
-          if (typeof key !== "string") return null;
-          if (key.endsWith("rExpired")) return String(pastEnd);
-          if (key.endsWith("rFuture")) return String(futureEnd);
-          return null;
-        });
+        vi.mocked(redis.getClient().get).mockImplementation(
+          async (key: string) => {
+            if (typeof key !== "string") return null;
+            if (key.endsWith("rExpired")) return String(pastEnd);
+            if (key.endsWith("rFuture")) return String(futureEnd);
+            return null;
+          },
+        );
 
         await svc.onModuleInit();
         expect((svc as any).pendingRecovery).toHaveLength(2);
@@ -2386,11 +2389,13 @@ describe("GameLoopService", () => {
           smembers: ["rExpired"],
         });
         vi.mocked(redis.getClient().smembers).mockResolvedValue(["rExpired"]);
-        vi.mocked(redis.getClient().get).mockImplementation(async (key) => {
-          if (typeof key !== "string") return null;
-          if (key.endsWith("rExpired")) return String(pastEnd);
-          return null;
-        });
+        vi.mocked(redis.getClient().get).mockImplementation(
+          async (key: string) => {
+            if (typeof key !== "string") return null;
+            if (key.endsWith("rExpired")) return String(pastEnd);
+            return null;
+          },
+        );
         const launchSpy = vi
           .spyOn(svc as any, "launchRoomMatch")
           .mockResolvedValue({ id: "m1" });
@@ -2928,6 +2933,353 @@ describe("GameLoopService", () => {
             ),
           );
         });
+      });
+    });
+  });
+
+  // ============================================================
+  // PR #50 patch coverage — Codecov flagged 19 missing lines
+  // across these branches. Each `it` block below pins ONE
+  // new branch introduced by the B1 / B2 / B3 / C4 / H1 / H3 /
+  // H4 / H5 / L6 / M5 race-and-recovery hardening on this PR.
+  // Grouped by file region so a future regression points
+  // straight at the relevant cluster.
+  // ============================================================
+  describe("PR #50 patch coverage — new race/recovery branches", () => {
+    // ---- C4: drainPendingRecovery (setServer-side) ----
+    describe("drainPendingRecovery", () => {
+      it("returns early when the buffer is empty (no work to do)", async () => {
+        // New branch: `if (this.pendingRecovery.length === 0) return;`
+        // at game-loop.service.ts:109. Calling setServer on a fresh
+        // service must not invoke armLobbyCountdownTimer or
+        // launchRoomMatch.
+        const armSpy = vi.spyOn(service as any, "armLobbyCountdownTimer");
+        const launchSpy = vi.spyOn(service as any, "launchRoomMatch");
+
+        service.setServer(mockServer as unknown as Server);
+        await Promise.resolve();
+
+        expect(armSpy).not.toHaveBeenCalled();
+        expect(launchSpy).not.toHaveBeenCalled();
+        expect((service as any).pendingRecovery).toEqual([]);
+      });
+
+      it("logs and swallows a launch failure for an expired entry in the buffer", async () => {
+        // New branch: the .catch() on the fire-and-forget
+        // `void this.launchRoomMatch(...)` inside drainPendingRecovery
+        // for `entry.expired === true` (game-loop.service.ts:119-123).
+        // Pin the contract: a rejected launchRoomMatch must NOT
+        // bubble up; the error is logged at error level.
+        const launchError = new Error("drain launch boom");
+        vi.spyOn(service as any, "launchRoomMatch").mockRejectedValue(
+          launchError,
+        );
+        (service as any).pendingRecovery.push({
+          roomId: "rExpired",
+          countdownEndsAt: Date.now() - 1000,
+          expired: true,
+        });
+        const errorSpy = vi.spyOn((service as any).logger, "error");
+
+        service.setServer(mockServer as unknown as Server);
+        // Flush the void promise chain several times — the
+        // rejected promise is detached.
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(errorSpy).toHaveBeenCalledWith(
+          "Pending-recovery launch failed for room rExpired:",
+          launchError,
+        );
+        // The buffer is drained atomically even on the failure
+        // path — we never leave the entry behind.
+        expect((service as any).pendingRecovery).toEqual([]);
+      });
+    });
+
+    // ---- C4: onModuleInit no-server, non-expired ----
+    describe("onModuleInit no-server, non-expired branch", () => {
+      it("buffers a NON-expired future countdown into pendingRecovery when no server is wired up", async () => {
+        // New branch: the `else` arm of the `if (this.server)` check
+        // in the non-expired arm of onModuleInit
+        // (game-loop.service.ts:207-216). The expired no-server
+        // arm is already covered by the existing C4 test; the
+        // non-expired arm was missing.
+        const futureEnd = Date.now() + 60_000;
+        vi.mocked(
+          (service as any).redis.getClient().smembers,
+        ).mockResolvedValueOnce(["rFuture"] as any);
+        vi.mocked((service as any).redis.getClient().get).mockResolvedValueOnce(
+          String(futureEnd),
+        );
+        // No setServer call → server is undefined.
+
+        await service.onModuleInit();
+
+        expect((service as any).pendingRecovery).toEqual([
+          {
+            roomId: "rFuture",
+            countdownEndsAt: futureEnd,
+            expired: false,
+          },
+        ]);
+      });
+    });
+
+    // ---- H4: getCountdownEnd Redis fallback ----
+    describe("getCountdownEnd Redis fallback", () => {
+      it("returns the parsed countdownEndsAt from Redis when in-memory is empty (Redis hit)", async () => {
+        // New branch: the `client.get(...) → parse → return parsed`
+        // happy path at game-loop.service.ts:391-394. The in-memory
+        // hit path is already covered; the Redis hit path was not.
+        const endsAt = Date.now() + 10_000;
+        vi.mocked((service as any).redis.getClient().get).mockResolvedValueOnce(
+          String(endsAt),
+        );
+
+        expect(await service.getCountdownEnd("r1")).toBe(endsAt);
+      });
+
+      it("returns null when Redis returns a non-numeric string (parseInt → NaN)", async () => {
+        // New branch: the `Number.isFinite(parsed) ? parsed : null`
+        // ternary at game-loop.service.ts:394. A corrupt Redis
+        // payload must be treated as "no countdown" — the
+        // alternative (return NaN and crash downstream arithmetic)
+        // is worse.
+        vi.mocked((service as any).redis.getClient().get).mockResolvedValueOnce(
+          "not-a-number",
+        );
+
+        expect(await service.getCountdownEnd("r1")).toBeNull();
+      });
+
+      it("returns null and logs a warning when Redis throws", async () => {
+        // New branch: the `catch (error)` arm at
+        // game-loop.service.ts:395-402. A Redis outage must not
+        // crash the WS handler that called `getCountdownEnd`
+        // (e.g. AuthHandler.handleAuthenticate's reconnect path).
+        vi.mocked((service as any).redis.getClient().get).mockRejectedValueOnce(
+          new Error("redis down"),
+        );
+        const warnSpy = vi.spyOn((service as any).logger, "warn");
+
+        expect(await service.getCountdownEnd("r1")).toBeNull();
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "getCountdownEnd: Redis read failed for room r1: redis down",
+          ),
+        );
+      });
+    });
+
+    // ---- B3: launchRoomMatch OUTER catch race-lost guard ----
+    describe("launchRoomMatch outer-catch race-lost guard", () => {
+      it("does NOT revert room status when the FOR UPDATE row reports ROOM_ALREADY_STARTED (B3 race-lost)", async () => {
+        // New branch: the OUTER `catch (error) { if (isRaceLost) ... }`
+        // arm at game-loop.service.ts:662-669. The INNER catch's
+        // race-lost guard (around createMatch) is already covered
+        // by the "B3 race-lost (createMatch)" test; the outer
+        // catch's guard — reached when the transaction itself
+        // throws ROOM_ALREADY_STARTED (e.g. another thread
+        // committed STARTING between our outer read and our
+        // FOR UPDATE) — was missing.
+        const prisma = (service as any).prisma;
+        vi.spyOn(prisma.__tx, "$queryRaw").mockResolvedValueOnce([
+          {
+            id: "r1",
+            status: RoomStatus.STARTING,
+            currentMatchId: null,
+          },
+        ]);
+        const updateRoomStatusSpy = vi.spyOn(roomService, "updateRoomStatus");
+        const emitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+        await expect(
+          (service as any).launchRoomMatch("r1", mockServer, {
+            isAutoStart: false,
+          }),
+        ).rejects.toMatchObject({ code: ErrorCode.ROOM_ALREADY_STARTED });
+
+        // CRITICAL: the outer catch's race-lost branch must NOT
+        // call updateRoomStatus(WAITING) — the winning thread
+        // owns the room and has already set it to STARTING.
+        expect(updateRoomStatusSpy).not.toHaveBeenCalled();
+        const rollbackEmits = emitSpy.mock.calls.filter(
+          (call) =>
+            call[0] === ServerEvent.ROOM_STATUS_UPDATED &&
+            (call[1] as { roomStatus: string }).roomStatus ===
+              RoomStatus.WAITING,
+        );
+        expect(rollbackEmits).toHaveLength(0);
+      });
+    });
+
+    // ---- M5: executeCountdown defence-in-depth ----
+    describe("executeCountdown M5 defence-in-depth", () => {
+      it("logs and skips executeRound when the state machine is gone in the timer callback", async () => {
+        // New branch: the `if (!sm) { this.logger.log(...); return; }`
+        // arm at game-loop.service.ts:768-774. The M5 fix is
+        // defence-in-depth against a race where `stopRoomRuntime`
+        // tears down the match between setTimeout firing and the
+        // callback body reaching the state-machine lookup.
+        vi.useFakeTimers();
+        const executeRoundSpy = vi
+          .spyOn(service as any, "executeRound")
+          .mockResolvedValue(undefined);
+        const logSpy = vi.spyOn((service as any).logger, "log");
+
+        // Force the in-callback `getStateMachine` to return
+        // undefined (simulating a torn-down match).
+        vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(
+          undefined as any,
+        );
+
+        (service as any).executeCountdown("match-1", "room-1", mockServer);
+        await vi.advanceTimersByTimeAsync(GAME_CONFIG.COUNTDOWN_DURATION_MS);
+
+        expect(executeRoundSpy).not.toHaveBeenCalled();
+        expect(logSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "executeCountdown callback: state machine gone for match match-1",
+          ),
+        );
+
+        vi.useRealTimers();
+      });
+    });
+
+    // ---- H3: endRound DB persistence failure rethrows ----
+    describe("endRound H3 DB failure rethrows", () => {
+      it("logs at error level and re-throws when saveRoundAndAnswers throws (state stays in ROUND_EVALUATING)", async () => {
+        // New branch: the `catch (dbError)` block at
+        // game-loop.service.ts:1035-1047. The persistence
+        // spec covers that the call rejects, but the
+        // `logger.error` call inside the catch is only
+        // exercised here. We assert both the log and the
+        // state-machine invariant (it must NOT have advanced
+        // to ROUND_RESULT).
+        vi.useFakeTimers();
+        const errorSpy = vi.spyOn((service as any).logger, "error");
+        const emitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+        stateMachine.transition(MatchStatus.COUNTDOWN);
+        stateMachine.transition(MatchStatus.ROUND_ACTIVE);
+        stateMachine.startRound({
+          id: "q1",
+          content: "Q",
+          options: ["A", "B"],
+          correctAnswer: "A",
+          difficulty: "MEDIUM",
+        });
+        stateMachine.submitAnswer("p1", "A", Date.now());
+
+        vi.mocked(matchService.saveRoundAndAnswers).mockRejectedValueOnce(
+          new Error("db connection reset"),
+        );
+
+        await expect(
+          (service as any).endRound("match-1", "room-1", mockServer),
+        ).rejects.toThrow("db connection reset");
+
+        // The H3 fix guarantees the state machine is NOT
+        // advanced to ROUND_RESULT — the next round timer
+        // (or admin) can retry from ROUND_EVALUATING.
+        expect(stateMachine.getState().status).toBe(
+          MatchStatus.ROUND_EVALUATING,
+        );
+        expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+        // No ROUND_ENDED / MATCH_FINISHED broadcast — the
+        // round did not complete.
+        expect(emitSpy).not.toHaveBeenCalledWith(
+          ServerEvent.ROUND_ENDED,
+          expect.anything(),
+        );
+        // The H3 log line fired at error level (operators
+        // must see this).
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "H3: endRound DB persistence failed for match match-1 round 1",
+          ),
+          expect.any(Error),
+        );
+
+        vi.useRealTimers();
+      });
+    });
+
+    // ---- B2: finishMatchLoopInner null-winner logging ----
+    describe("finishMatchLoopInner null-winner logging", () => {
+      it("logs a warning when finishMatchLoopInner completes with winnerId: null (B2)", async () => {
+        // New branch: the `if (winnerId === null) { logger.warn(...) }`
+        // arm at game-loop.service.ts:1237-1240. The existing
+        // B2 test asserts the wire payload and the DB call,
+        // but does NOT assert the log line. Operators rely
+        // on this log to detect matches that finished with
+        // an empty roster or unresolvable tie-break.
+        vi.useFakeTimers();
+        const warnSpy = vi.spyOn((service as any).logger, "warn");
+        const emitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+        // Force winnerId: null via the state machine.
+        vi.spyOn(stateMachine, "determineWinner").mockReturnValue(
+          null as unknown as string,
+        );
+
+        stateMachine.transition(MatchStatus.COUNTDOWN);
+        stateMachine.transition(MatchStatus.ROUND_ACTIVE);
+        stateMachine.transition(MatchStatus.ROUND_EVALUATING);
+        stateMachine.transition(MatchStatus.ROUND_RESULT);
+
+        await (service as any).finishMatchLoop("match-1", "room-1", mockServer);
+
+        // The wire payload carries winnerId: null (existing
+        // B2 assertion, restated for clarity).
+        expect(emitSpy).toHaveBeenCalledWith(
+          ServerEvent.MATCH_FINISHED,
+          expect.objectContaining({ winnerId: null }),
+        );
+        // The null-winner log line fires.
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining("Match match-1 finished with no winner"),
+        );
+
+        vi.useRealTimers();
+      });
+    });
+
+    // ---- H1: checkEarlyTermination explicit guard ----
+    describe("checkEarlyTermination H1 explicit guard", () => {
+      it("returns early without calling endRound when endingRounds already contains the matchId", async () => {
+        // New branch: the `if (this.endingRounds.has(matchId))
+        // return;` arm at game-loop.service.ts:1400-1402. The
+        // H1 fix pinned the guard at the entry of
+        // checkEarlyTermination (it was previously only in
+        // endRound, which is still a no-op when the second
+        // caller reaches it). The guard must short-circuit
+        // BEFORE we hit the state machine / executeRound.
+        const endRoundSpy = vi
+          .spyOn(service as any, "endRound")
+          .mockResolvedValue(undefined);
+
+        // Pre-mark the matchId as already-ending.
+        (service as any).endingRounds.add("match-1");
+        try {
+          await service.checkEarlyTermination(
+            "match-1",
+            "room-1",
+            mockServer as unknown as Server,
+          );
+        } finally {
+          (service as any).endingRounds.delete("match-1");
+        }
+
+        expect(endRoundSpy).not.toHaveBeenCalled();
+        // We never even reach the state-machine lookup.
+        expect(matchService.getStateMachine).not.toHaveBeenCalled();
       });
     });
   });

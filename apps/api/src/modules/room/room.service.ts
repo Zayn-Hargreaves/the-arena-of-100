@@ -49,8 +49,12 @@ export class RoomService {
     // controllers) and we never want a single room to claim a
     // 100k-player broadcast budget. Clamp here so the persisted
     // value is always within bounds.
+    const playersInput =
+      typeof maxPlayers === "number" && !Number.isNaN(maxPlayers)
+        ? maxPlayers
+        : GAME_CONFIG.MAX_PLAYERS;
     const safeMaxPlayers = Math.min(
-      Math.max(2, Math.floor(maxPlayers ?? GAME_CONFIG.MAX_PLAYERS)),
+      Math.max(2, Math.floor(playersInput)),
       GAME_CONFIG.MAX_PLAYERS,
     );
 

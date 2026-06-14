@@ -596,11 +596,9 @@ export class MatchStateMachine {
           // we deliberately destructure-out the field without
           // binding it (the leading-underscore convention marks
           // it as intentionally unused).
-          const {
-            // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            correctAnswer: _omitCorrectAnswer,
-            ...rest
-          } = this.currentRound as RoundState & { correctAnswer: string };
+          const { correctAnswer: _omitCorrectAnswer, ...rest } = this
+            .currentRound as RoundState & { correctAnswer: string };
+          void _omitCorrectAnswer;
           return {
             ...rest,
             answers: Array.from(this.currentRound.answers.entries()),

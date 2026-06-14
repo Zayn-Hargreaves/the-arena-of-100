@@ -37,7 +37,7 @@ export type AuthenticatePayload = z.infer<typeof AuthenticatePayloadSchema>;
 // maxPlayers is bounded to GAME_CONFIG.MAX_PLAYERS to avoid a 100k-player
 // room that would OOM the broadcast loop in endRound. (See M2 in the
 // bug-investigation report.)
-const MAX_PLAYERS_MAX = 100;
+const MAX_PLAYERS_MAX = GAME_CONFIG.MAX_PLAYERS;
 
 export const CreateRoomPayloadSchema = z.object({
   roomType: z.enum(["PUBLIC", "PRIVATE"]),

@@ -153,10 +153,9 @@ export class MatchService {
         select: { correctAnswer: true },
       });
       if (!question) {
-        this.logger.warn(
-          `rehydrateCorrectAnswer: Question ${questionId} not found in DB; state machine will not be able to grade round ${round.roundNo}`,
-        );
-        return;
+        const errorMsg = `rehydrateCorrectAnswer: Question ${questionId} not found in DB; state machine will not be able to grade round ${round.roundNo}`;
+        this.logger.error(errorMsg);
+        throw new Error(errorMsg);
       }
       sm.attachCorrectAnswer(question.correctAnswer);
       this.logger.log(
@@ -167,6 +166,7 @@ export class MatchService {
         `rehydrateCorrectAnswer: DB lookup failed for question ${questionId}`,
         error,
       );
+      throw error;
     }
   }
 

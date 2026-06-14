@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@arena/shared": "workspace:*",
+    "zod": "^3.24.1",
     "@radix-ui/react-dialog": "^1.1.5",
     "@radix-ui/react-toast": "^1.2.5",
     "@radix-ui/react-tooltip": "^1.1.7",

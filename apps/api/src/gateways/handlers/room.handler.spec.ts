@@ -12,6 +12,7 @@ describe("RoomHandler", () => {
   let gameLoopService: {
     maybeStartPublicCountdown: ReturnType<typeof vi.fn>;
     handleRoomPlayerLeft: ReturnType<typeof vi.fn>;
+    handleMatchPlayerLeft: ReturnType<typeof vi.fn>;
     getCountdownEnd: ReturnType<typeof vi.fn>;
   };
   let client: Socket;

@@ -402,12 +402,12 @@ describe("MatchService", () => {
     // here to avoid crafting a state shape the deserializer
     // would reject.
 
-    it("logs a warn + skips attach when the question is not found in the DB", async () => {
-      // Covers the `if (!question)` warn path (lines 155-160):
+    it("throws an error when the question is not found in the DB for an ACTIVE round", async () => {
+      // Covers the `if (!question)` path (lines 155-160):
       // the questionId is in the state machine, but the DB row
       // was deleted (e.g. an admin ran `prisma.question.delete`
-      // while the match was in flight). The state machine can
-      // not be graded but the recovery must not throw.
+      // while the match was in flight). The state machine recovery
+      // must throw.
       const serialized = JSON.stringify({
         state: {
           id: "m-orphan-q",
@@ -453,31 +453,26 @@ describe("MatchService", () => {
       vi.mocked(redis.get).mockResolvedValue(serialized);
       // DB returns null (question row missing).
       vi.mocked(prisma.question.findUnique).mockResolvedValue(null);
-      const warnSpy = vi.spyOn((service as any).logger, "warn");
+      const errorSpy = vi
+        .spyOn((service as any).logger, "error")
+        .mockImplementation(() => {});
 
-      const sm = await service.getStateMachine("m-orphan-q");
-      expect(sm).toBeDefined();
-      // The warn message must include the question id and the
+      await expect(service.getStateMachine("m-orphan-q")).rejects.toThrow(
+        "Question q-orphan not found in DB",
+      );
+
+      // The error message must include the question id and the
       // round no so an operator can correlate.
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("q-orphan"));
-      // The internal `correctAnswer` field must NOT be set —
-      // the round will fail to grade, which is the correct
-      // failure mode for this scenario.
-      const round = sm!.getCurrentRound();
-      const internalAnswer = (
-        round as unknown as {
-          correctAnswer: string;
-        }
-      ).correctAnswer;
-      expect(internalAnswer).toBeUndefined();
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("q-orphan"),
+      );
     });
 
-    it("logs an error and does not throw when the prisma.question lookup itself throws", async () => {
+    it("logs an error and throws when the prisma.question lookup itself throws for an ACTIVE round", async () => {
       // Covers the catch block (lines 165-170): the DB lookup
       // for the question row throws (e.g. a transient Prisma
-      // error during rehydrate). The recovery must not crash
-      // the match-load path; the state machine is still
-      // returned and can be inspected by the operator.
+      // error during rehydrate). The recovery must fail-closed
+      // by throwing the error.
       const serialized = JSON.stringify({
         state: {
           id: "m-db-boom",
@@ -524,11 +519,14 @@ describe("MatchService", () => {
       vi.mocked(prisma.question.findUnique).mockRejectedValueOnce(
         new Error("Prisma: connection lost"),
       );
-      const errorSpy = vi.spyOn((service as any).logger, "error");
+      const errorSpy = vi
+        .spyOn((service as any).logger, "error")
+        .mockImplementation(() => {});
 
-      // Must NOT throw — rehydrate failures are non-fatal.
-      const sm = await service.getStateMachine("m-db-boom");
-      expect(sm).toBeDefined();
+      await expect(service.getStateMachine("m-db-boom")).rejects.toThrow(
+        "Prisma: connection lost",
+      );
+
       // The error log must include the question id so the
       // operator can find the bad row.
       expect(errorSpy).toHaveBeenCalledWith(
