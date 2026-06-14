@@ -620,8 +620,8 @@ describe("MatchService", () => {
         roomId: "r1",
       } as any);
 
-      // Admin termination path: winnerId === null
-      await service.finishMatch("m1", null, "r1");
+      // Admin termination path: winnerId === null, isAdminTermination === true
+      await service.finishMatch("m1", null, "r1", true);
 
       // Match update records null winner
       expect(prisma.match.update).toHaveBeenCalledWith({
@@ -641,13 +641,59 @@ describe("MatchService", () => {
       expect(redis.del).toHaveBeenCalledWith("match:state:m1");
       // H2 fix: the match+room update is wrapped in $transaction.
       // The transaction array contains no score updateMany ops
-      // (winnerId is null) but DOES contain match.update +
+      // (isAdminTermination is true) but DOES contain match.update +
       // room.update.
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       const txArg = vi.mocked(prisma.$transaction).mock.calls[0][0];
       expect(Array.isArray(txArg)).toBe(true);
       expect(txArg).toHaveLength(2);
       expect(prisma.matchPlayer.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("persists scores for a natural match ending with no winner (isAdminTermination = false)", async () => {
+      // Create match first to populate stateMachines map
+      const room = {
+        id: "r1",
+        players: [
+          { user: { id: "u1", username: "A" } },
+          { user: { id: "u2", username: "B" } },
+        ],
+      };
+      vi.mocked(prisma.room.findUnique).mockResolvedValue(room as any);
+      vi.mocked(prisma.match.create).mockResolvedValue({
+        id: "m1",
+        roomId: "r1",
+      } as any);
+      vi.mocked(prisma.matchPlayer.createMany).mockResolvedValue({
+        count: 2,
+      } as any);
+      vi.mocked(prisma.room.update).mockResolvedValue({} as any);
+      await service.createMatch("r1");
+
+      vi.mocked(prisma.match.update).mockResolvedValue({
+        id: "m1",
+        roomId: "r1",
+      } as any);
+
+      // Natural match ending with no winner: winnerId === null, isAdminTermination === false
+      await service.finishMatch("m1", null, "r1", false);
+
+      // Match update records null winner
+      expect(prisma.match.update).toHaveBeenCalledWith({
+        where: { id: "m1" },
+        data: {
+          status: MatchStatus.FINISHED,
+          winnerId: null,
+          endedAt: expect.any(Date),
+        },
+      });
+      // Room status still updated
+      expect(prisma.room.update).toHaveBeenCalledWith({
+        where: { id: "r1" },
+        data: { status: "FINISHED" },
+      });
+      // Since it ended naturally, buildScoreUpdateOps runs and calls updateMany for players
+      expect(prisma.matchPlayer.updateMany).toHaveBeenCalled();
     });
 
     it("swallows non-Error Redis delete failures when finishing a match", async () => {

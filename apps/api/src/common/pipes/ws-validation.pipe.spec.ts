@@ -23,53 +23,67 @@ describe("WsValidationPipe", () => {
   describe("transform", () => {
     it("returns the parsed payload on success", () => {
       const pipe = buildPipe();
-      const result = pipe.transform({ name: "Alice", age: 30 });
+      const result = pipe.transform(
+        { name: "Alice", age: 30 },
+        { type: "body" },
+      );
       expect(result).toEqual({ name: "Alice", age: 30 });
     });
 
     it("strips unknown keys by default (Zod default behaviour)", () => {
       const pipe = buildPipe();
-      const result = pipe.transform({
-        name: "Alice",
-        extra: "should be dropped",
-      });
+      const result = pipe.transform(
+        {
+          name: "Alice",
+          extra: "should be dropped",
+        },
+        { type: "body" },
+      );
       expect(result).toEqual({ name: "Alice" });
     });
 
     it("throws WsValidationError on missing required field", () => {
       const pipe = buildPipe();
-      expect(() => pipe.transform({ age: 30 })).toThrow(WsValidationError);
-    });
-
-    it("throws WsValidationError on wrong type", () => {
-      const pipe = buildPipe();
-      expect(() => pipe.transform({ name: 123 })).toThrow(WsValidationError);
-    });
-
-    it("throws WsValidationError on oversized string", () => {
-      const pipe = buildPipe();
-      expect(() => pipe.transform({ name: "x".repeat(65) })).toThrow(
+      expect(() => pipe.transform({ age: 30 }, { type: "body" })).toThrow(
         WsValidationError,
       );
     });
 
+    it("throws WsValidationError on wrong type", () => {
+      const pipe = buildPipe();
+      expect(() => pipe.transform({ name: 123 }, { type: "body" })).toThrow(
+        WsValidationError,
+      );
+    });
+
+    it("throws WsValidationError on oversized string", () => {
+      const pipe = buildPipe();
+      expect(() =>
+        pipe.transform({ name: "x".repeat(65) }, { type: "body" }),
+      ).toThrow(WsValidationError);
+    });
+
     it("throws WsValidationError on null payload", () => {
       const pipe = buildPipe();
-      expect(() => pipe.transform(null)).toThrow(WsValidationError);
+      expect(() => pipe.transform(null, { type: "body" })).toThrow(
+        WsValidationError,
+      );
     });
 
     it("throws WsValidationError on non-object payload (e.g. string)", () => {
       const pipe = buildPipe();
       // C2 fix target: a client sending `"hello"` as the entire
       // SUBMIT_ANSWER payload must be rejected, not coerced.
-      expect(() => pipe.transform("hello")).toThrow(WsValidationError);
+      expect(() => pipe.transform("hello", { type: "body" })).toThrow(
+        WsValidationError,
+      );
     });
 
     it("the thrown error has code = INVALID_PAYLOAD", () => {
       const pipe = buildPipe();
       try {
-        pipe.transform({});
-        fail("Expected WsValidationError to be thrown");
+        pipe.transform({}, { type: "body" });
+        expect.fail("Expected WsValidationError to be thrown");
       } catch (error) {
         expect(error).toBeInstanceOf(WsValidationError);
         expect((error as WsValidationError).code).toBe(
@@ -81,8 +95,8 @@ describe("WsValidationPipe", () => {
     it("the thrown error message contains the field path", () => {
       const pipe = buildPipe();
       try {
-        pipe.transform({ age: "not-a-number" });
-        fail("Expected WsValidationError to be thrown");
+        pipe.transform({ age: "not-a-number" }, { type: "body" });
+        expect.fail("Expected WsValidationError to be thrown");
       } catch (error) {
         expect((error as WsValidationError).message).toContain("age");
       }
@@ -98,12 +112,12 @@ describe("WsValidationPipe", () => {
       const AlwaysFail = z.never();
       const pipe = new WsValidationPipe(AlwaysFail);
       try {
-        pipe.transform("anything");
-        fail("Expected WsValidationError to be thrown");
+        pipe.transform("anything", { type: "body" });
+        expect.fail("Expected WsValidationError to be thrown");
       } catch (error) {
         // z.never() rejects with "Expected never, received string".
         // The pipe must surface that as the user-facing message.
-        expect((error as WsValidationError).message).toMatch(/never|Invalid/);
+        expect((error as WsValidationError).message).toMatch(/never/);
       }
     });
 
@@ -113,8 +127,8 @@ describe("WsValidationPipe", () => {
       // RoomError`) route it to ErrorCode.INVALID_PAYLOAD without
       // any per-handler changes.
       try {
-        buildPipe().transform({});
-        fail("Expected WsValidationError");
+        buildPipe().transform({}, { type: "body" });
+        expect.fail("Expected WsValidationError");
       } catch (error) {
         expect(error).toBeInstanceOf(RoomError);
         expect((error as WsValidationError).code).toBe(

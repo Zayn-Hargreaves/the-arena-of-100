@@ -235,13 +235,18 @@ export class MatchService {
   // one-shot match query. This keeps the transaction list short
   // and avoids a `findUnique` inside `$transaction` (which is
   // awkward in Prisma's typed transaction API).
-  async finishMatch(matchId: string, winnerId: string | null, roomId: string) {
+  async finishMatch(
+    matchId: string,
+    winnerId: string | null,
+    roomId: string,
+    isAdminTermination = false,
+  ) {
     // B2: Persist accumulated scores from in-memory state machine BEFORE cleanup.
-    // Skipped for admin termination (winnerId === null) — the match was
-    // force-stopped and the state machine reference is dropped without
-    // computing final scores.
-    const scoreUpdateOps =
-      winnerId !== null ? await this.buildScoreUpdateOps(matchId) : [];
+    // Skipped for admin termination — the match was force-stopped and the state
+    // machine reference is dropped without computing final scores.
+    const scoreUpdateOps = !isAdminTermination
+      ? await this.buildScoreUpdateOps(matchId)
+      : [];
 
     // H2: ONE transaction. Either all of {scores, match, room} commit
     // or none do. If Prisma throws, the database is left untouched.

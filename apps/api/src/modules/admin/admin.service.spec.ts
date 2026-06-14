@@ -476,7 +476,12 @@ describe("AdminService", () => {
       // H2 + M4 refactor moved the roomId into the finishMatch
       // signature so the transaction can update both the match and
       // the room atomically.
-      expect(matchService.finishMatch).toHaveBeenCalledWith("m2", null, "r2");
+      expect(matchService.finishMatch).toHaveBeenCalledWith(
+        "m2",
+        null,
+        "r2",
+        true,
+      );
       // stopRoomRuntime called with the active matchId
       expect(gameLoopService.stopRoomRuntime).toHaveBeenCalledWith("r2", "m2");
       // Emit carries the matchId
@@ -536,6 +541,7 @@ describe("AdminService", () => {
         "m-normal",
         null,
         "r-normal",
+        true,
       );
     });
 

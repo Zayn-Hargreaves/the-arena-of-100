@@ -494,6 +494,7 @@ describe("GameLoopService", () => {
       "match-1",
       winnerId,
       "room-1",
+      false,
     );
 
     // Check that state was persisted
@@ -1600,6 +1601,7 @@ describe("GameLoopService", () => {
         "match-1",
         null,
         "room-1",
+        false,
       );
 
       // MATCH_FINISHED wire payload carries the explicit null

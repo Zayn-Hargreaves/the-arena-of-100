@@ -1238,7 +1238,7 @@ export class GameLoopService implements OnModuleInit {
     // point because the match was created from a room) so the
     // finishMatch transaction can update the Room row in the same
     // atomic batch.
-    await this.matchService.finishMatch(matchId, winnerId, roomId);
+    await this.matchService.finishMatch(matchId, winnerId, roomId, false);
 
     // 4. Broadcast MATCH_FINISHED
     const channel = getRoomChannel(roomId);

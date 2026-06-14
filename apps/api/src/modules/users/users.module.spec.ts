@@ -5,10 +5,12 @@ import { UsersService } from "./users.service";
 import { UsersController } from "./users.controller";
 import { PrismaService } from "../prisma/prisma.service";
 
+import { PrismaModule } from "../prisma/prisma.module";
+
 describe("UsersModule", () => {
   it("compiles and exposes UsersService + UsersController", async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [UsersModule],
+      imports: [PrismaModule, UsersModule],
     })
       .overrideProvider(PrismaService)
       .useValue({})

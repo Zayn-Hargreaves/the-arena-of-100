@@ -10,6 +10,17 @@ import { MatchService } from "../match/match.service";
 import { GameLoopService } from "../match/game-loop.service";
 import { normalizeString, questionSeeds } from "../../prisma-seeds/questions";
 
+export interface TerminateRoomResult {
+  success: boolean;
+  partial: boolean;
+  roomId: string;
+  matchId: string | null;
+  message: string;
+  terminatedAt: number;
+  reason?: string;
+  cleanupError?: string;
+}
+
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
@@ -247,7 +258,10 @@ export class AdminService {
    * cleaned by that point, so we cannot roll back — but the caller should
    * still know the DB record is stale and may need a follow-up sweep.
    */
-  async terminateRoom(roomId: string, message?: string) {
+  async terminateRoom(
+    roomId: string,
+    message?: string,
+  ): Promise<TerminateRoomResult> {
     // 1. Resolve room — throws RoomError(ROOM_NOT_FOUND) → 404
     const room = await this.roomService.getRoom(roomId);
     const matchId = room.currentMatchId;
@@ -300,7 +314,7 @@ export class AdminService {
         // transaction API makes awkward). The admin path has the
         // roomId in scope from the resolved room, so this is
         // straightforward.
-        await this.matchService.finishMatch(matchId, null, roomId);
+        await this.matchService.finishMatch(matchId, null, roomId, true);
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
         this.logger.error(

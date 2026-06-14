@@ -1,6 +1,8 @@
 import { Socket, Server } from "socket.io";
 import {
   ServerEvent,
+  ClientEvent,
+  ErrorCode,
   SubmitAnswerPayloadSchema,
   CreateRoomPayloadSchema,
   AuthenticatePayloadSchema,
@@ -11,12 +13,17 @@ import {
   StartMatchPayloadSchema,
 } from "@arena/shared";
 import { GameGateway } from "./game.gateway";
-import { AuthHandler } from "./handlers/auth.handler";
-import { RoomHandler } from "./handlers/room.handler";
-import { MatchHandler } from "./handlers/match.handler";
+import { AuthHandler, RoomHandler, MatchHandler } from "./handlers";
 import { AuthService } from "../modules/auth/auth.service";
 import { PresenceService } from "../modules/match/presence.service";
 import { GameLoopService } from "../modules/match/game-loop.service";
+import { io as ioClient, Socket as ClientSocket } from "socket.io-client";
+import { Test, TestingModule } from "@nestjs/testing";
+import { INestApplication } from "@nestjs/common";
+import {
+  FastifyAdapter,
+  NestFastifyApplication,
+} from "@nestjs/platform-fastify";
 
 describe("GameGateway", () => {
   let gateway: GameGateway;
@@ -463,6 +470,156 @@ describe("GameGateway", () => {
 
         expect(warnSpy.mock.calls[0][0]).toMatch(/u1.*r1/);
       });
+    });
+  });
+
+  describe("GameGateway WsValidationPipe Integration", () => {
+    let app: INestApplication;
+    let clientSocket: ClientSocket;
+    let port: number;
+
+    const mockAuthHandler = {
+      handleAuthenticate: vi.fn(),
+      handleDisconnect: vi.fn(),
+    };
+    const mockRoomHandler = {
+      handleCreateRoom: vi.fn(),
+      handleJoinRoom: vi.fn(),
+      handleLeaveRoom: vi.fn(),
+    };
+    const mockMatchHandler = {
+      handleStartMatch: vi.fn(),
+      handleSubmitAnswer: vi.fn(),
+      handleRequestSnapshot: vi.fn(),
+    };
+    const mockAuthService = {
+      verifyToken: vi.fn(),
+    };
+    const mockPresenceService = {
+      setServer: vi.fn(),
+      updatePresence: vi.fn(),
+    };
+    const mockGameLoopService = {
+      setServer: vi.fn(),
+    };
+
+    beforeAll(async () => {
+      const moduleFixture: TestingModule = await Test.createTestingModule({
+        providers: [
+          GameGateway,
+          { provide: AuthHandler, useValue: mockAuthHandler },
+          { provide: RoomHandler, useValue: mockRoomHandler },
+          { provide: MatchHandler, useValue: mockMatchHandler },
+          { provide: AuthService, useValue: mockAuthService },
+          { provide: PresenceService, useValue: mockPresenceService },
+          { provide: GameLoopService, useValue: mockGameLoopService },
+        ],
+      }).compile();
+
+      app = moduleFixture.createNestApplication<NestFastifyApplication>(
+        new FastifyAdapter(),
+      );
+      await app.listen(0);
+      const address = app.getHttpServer().address();
+      port = typeof address === "string" ? 0 : address.port;
+    });
+
+    afterAll(async () => {
+      await app.close();
+    });
+
+    beforeEach(async () => {
+      vi.clearAllMocks();
+      mockAuthService.verifyToken.mockReturnValue({
+        userId: "user-123",
+        username: "test-user",
+      });
+
+      clientSocket = ioClient(`http://localhost:${port}/game`, {
+        autoConnect: false,
+        transports: ["websocket"],
+        auth: { token: "valid-token" },
+      });
+
+      clientSocket.connect();
+      await new Promise<void>((resolve, reject) => {
+        clientSocket.on("connect", () => resolve());
+        clientSocket.on("connect_error", (err) => reject(err));
+      });
+    });
+
+    afterEach(() => {
+      if (clientSocket.connected) {
+        clientSocket.disconnect();
+      }
+    });
+
+    it("triggers WsValidationPipe and returns WsValidationError for malformed SubmitAnswer", async () => {
+      const malformedPayload = {
+        roundNo: 1,
+        answer: "A",
+        clientTimestamp: Date.now(),
+      };
+
+      const errorPromise = new Promise<{ code: string; message: string }>(
+        (resolve) => {
+          clientSocket.on(ServerEvent.ERROR, (err) => {
+            resolve(err);
+          });
+        },
+      );
+
+      clientSocket.emit(ClientEvent.SUBMIT_ANSWER, malformedPayload);
+
+      const error = await errorPromise;
+      expect(error.code).toBe(ErrorCode.INVALID_PAYLOAD);
+      expect(error.message).toContain("matchId");
+      expect(mockMatchHandler.handleSubmitAnswer).not.toHaveBeenCalled();
+    });
+
+    it("triggers WsValidationPipe and returns WsValidationError for oversized SubmitAnswer", async () => {
+      const malformedPayload = {
+        matchId: "m1",
+        roundNo: 1,
+        answer: "x".repeat(2000),
+        clientTimestamp: Date.now(),
+      };
+
+      const errorPromise = new Promise<{ code: string; message: string }>(
+        (resolve) => {
+          clientSocket.on(ServerEvent.ERROR, (err) => {
+            resolve(err);
+          });
+        },
+      );
+
+      clientSocket.emit(ClientEvent.SUBMIT_ANSWER, malformedPayload);
+
+      const error = await errorPromise;
+      expect(error.code).toBe(ErrorCode.INVALID_PAYLOAD);
+      expect(error.message).toContain("answer");
+      expect(mockMatchHandler.handleSubmitAnswer).not.toHaveBeenCalled();
+    });
+
+    it("does not trigger WsValidationPipe for valid SubmitAnswer and reaches handler", async () => {
+      const validPayload = {
+        matchId: "m1",
+        roundNo: 1,
+        answer: "A",
+        clientTimestamp: Date.now(),
+      };
+
+      const handlerCalled = new Promise<void>((resolve) => {
+        mockMatchHandler.handleSubmitAnswer.mockImplementationOnce(async () => {
+          resolve();
+        });
+      });
+
+      clientSocket.emit(ClientEvent.SUBMIT_ANSWER, validPayload);
+
+      await handlerCalled;
+
+      expect(mockMatchHandler.handleSubmitAnswer).toHaveBeenCalled();
     });
   });
 });

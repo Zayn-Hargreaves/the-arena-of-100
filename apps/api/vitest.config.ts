@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import swc from "unplugin-swc";
 import path from "path";
 
 export default defineConfig({
@@ -11,6 +12,16 @@ export default defineConfig({
       "@arena/shared": path.resolve(__dirname, "../../packages/shared/src"),
     },
   },
+  plugins: [
+    swc.vite({
+      module: { type: "es6" },
+      jsc: {
+        target: "es2022",
+        parser: { syntax: "typescript", decorators: true },
+        transform: { decoratorMetadata: true },
+      },
+    }),
+  ],
   test: {
     globals: true,
     environment: "node",

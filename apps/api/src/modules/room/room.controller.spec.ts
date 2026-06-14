@@ -30,6 +30,7 @@ describe("RoomController", () => {
   const mockRoomWithPlayers = {
     ...mockRoom,
     joined: true,
+    joinedAs: "PLAYER" as const,
     players: [
       {
         id: "room-player-id",
