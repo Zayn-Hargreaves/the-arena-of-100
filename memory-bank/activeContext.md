@@ -5,7 +5,7 @@
 
 ## Current Focus
 
-- Nhánh hiện tại: `fix/match-race-frontend-correctness` (đã merge 2026-06-14, xem `Phase 12` ở `memory-bank/progress.md`). Branch kế tiếp ưu tiên: in-match AFK policy (đang chờ product decision loại vs. chuyển spectator).
+- Nhánh hiện tại: `main` (PR `fix/match-race-frontend-correctness` đã merge 2026-06-14, xem `Phase 12` ở `memory-bank/progress.md`; PR docs update cho post-merge audit đang ở staged — branch đề xuất `chore/post-merge-audit-docs`). Branch kế tiếp ưu tiên (theo kết quả verification 2026-06-18 + plan.md): **PR 2B — Gateway + Schema Validation Tightening** (L2 + L3 — blast radius thấp, scope khu trú 2 file, fix dứt điểm follow-up post-merge). Sau đó: in-match AFK policy (đang chờ product decision loại vs. chuyển spectator).
 - Trọng tâm review gần nhất:
   - backend `GameLoopService.finishMatchLoop` B1 idempotency guard (`finishingMatches` Set) + `isMatchFinishing(matchId)` public method
   - backend `MatchStateMachine` B2 `winnerId: string | null` widening + empty-roster early-return trong `tieBreak` / `determineWinner` / `finishMatch`
@@ -85,7 +85,7 @@
   - **Frontend (F6)**: bỏ `currentRoundNo || 1` dead data; `submitAnswer` chỉ emit khi `match.currentRoundNo > 0`
   - **Frontend (F7)**: round-completed effect drive từ `match.status === "ROUND_RESULT" && match.roundEndTime === null` (server-authoritative) thay vì `lastAnswerResult?.correctAnswer` (có thể rỗng khi question row missing answer key)
   - **Frontend (F8)**: `use-lobby-lifecycle.ts` thêm `joinInFlightRef` chống double-emit `JOIN_ROOM` khi `room` object đổi do presence/PLAYER_JOINED re-trigger effect; `cancelled` cũ vẫn giữ cho `setJoining` / `setJoinError`
-  - **Tests**: 712/712 unit pass (was 661, +51), 68/68 game-core, 31/31 web (was 28, +3 F8), 11/11 E2E; coverage per-file ≥90% cho mọi file production sửa
+  - **Tests**: 772/772 unit pass (was 661 → 712 → 772 qua các commit `fix(bug): fix comment` post-merge), 70/70 game-core, 31/31 web (was 28, +3 F8), 11/11 E2E; coverage per-file ≥90% cho mọi file production sửa (verify 2026-06-18: `game-loop.service.ts` 100%/`admin.service.ts` 100%/`match.service.ts` 96.22%/`match-state-machine.ts` 100%)
 
 ## Architecture Assessment Summary
 
@@ -97,7 +97,7 @@
 
 ### 🟡 Significant Gaps (cập nhật 2026-06-14)
 
-1. ~~Missing Test Coverage~~ — Bây giờ có spec cho game-core, game-loop (kể cả persistence + admin helpers), auth, room, question, admin, handlers, common pipes/interceptors, presence, users, rankings, terminate-room DTO. 716/716 pass sau Phase 12 (B1-B3 + F8 + B3 race-lost test mới).
+1. ~~Missing Test Coverage~~ — Bây giờ có spec cho game-core, game-loop (kể cả persistence + admin helpers), auth, room, question, admin, handlers, common pipes/interceptors, presence, users, rankings, terminate-room DTO. **772/772 api + 70/70 game-core + 31/31 web + 11/11 E2E pass** (test run 2026-06-18; bản cũ 2026-06-14 báo 712/68/31 — đã lệch do các commit `fix(bug): fix comment` post-merge thêm test path cho B4-B7/L1).
 2. ~~No Round Timer Management~~ [RESOLVED] — `GameLoopService` đã enforce 15s timeout.
 3. **Gateway ↔ Service Coupling** — gateway vẫn gọi service trực tiếp; use-case layer chưa tách hẳn. Đã chấp nhận cho MVP.
 4. ~~Frontend Only Has Landing Page~~ [RESOLVED] — Có lobby/game/result/profile/rankings/settings/admin/room-create/not-found.

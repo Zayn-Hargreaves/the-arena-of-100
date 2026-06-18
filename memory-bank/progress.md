@@ -2,7 +2,7 @@
 
 ## Current Status: ✅ Lobby + Heartbeat + Graceful Exit + Admin Kill-Switch + Design System Phase 5B + Drop-in Spectating Baseline + Match Race + Frontend Correctness Hardening Done → In-match AFK Next
 
-> Cập nhật 2026-06-14 dựa trên code + GitNexus. So với bản 2026-06-06, các mốc lobby/heartbeat/graceful-exit/admin kill-switch đã hoàn thành baseline và chuyển trạng thái. Design System Phase 5B closeout cũng đã hoàn thành 2026-06-14 (ground truth từ code: `app-shell-layout.tsx:34` và `sidebar.tsx:230` không còn shell gradient; `styles/components.css` đã được xác nhận không còn reference). PR Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`) cũng đã hoàn thành 2026-06-14. Cùng ngày cũng close PR `fix/match-race-frontend-correctness` — 3 race bug backend (B1-B3) + 8 correctness bug frontend (F1-F8) đã sửa với 51 test mới (tổng 712 unit + 11 E2E backend; 68 game-core; 31 web) và coverage per-file ≥90% cho mọi file production sửa (`game-loop.service.ts` 96.25%, `admin.service.ts` 100%, `match.service.ts` 95.53%, `match-state-machine.ts` 98.63%). Xem section `Phase 12` bên dưới.
+> Cập nhật 2026-06-18 dựa trên code + GitNexus + test run thực tế. So với bản 2026-06-14, các mốc lobby/heartbeat/graceful-exit/admin kill-switch đã hoàn thành baseline và chuyển trạng thái. Design System Phase 5B closeout cũng đã hoàn thành 2026-06-14 (ground truth từ code: `app-shell-layout.tsx:34` và `sidebar.tsx:230` không còn shell gradient; `styles/components.css` đã được xác nhận không còn reference). PR Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`) cũng đã hoàn thành 2026-06-14. Cùng ngày cũng close PR `fix/match-race-frontend-correctness` — 3 race bug backend (B1-B3) + 8 correctness bug frontend (F1-F8) đã sửa với 51 test mới. Sau merge, post-merge audit phát hiện thêm 7 follow-up bug (B4-B7, L1-L3); 5 trong 7 đã được land trong cùng ngày qua chuỗi commit `fix(bug): fix comment` (`87d3bb9`, `e9b9c42`, `d069a76`, `67abaa7`, `69b9ab6`, `d049035`, `126641c`); 2 còn pending (L2 + L3 — PR 2B). Test count thực tế 2026-06-18: **772/772 unit api + 70/70 game-core + 31/31 web + 11/11 E2E** pass (sau rebuild `packages/shared/dist` cho `GAME_CONFIG.SCORE_*` constants). Coverage per-file ≥90% cho mọi file production sửa (`game-loop.service.ts` 100%/100%, `admin.service.ts` 100%/100%, `match.service.ts` 96.22%/90.76%, `match-state-machine.ts` 100%/92.12%). Xem section `Phase 12` bên dưới.
 > Các file liên quan: `PROJECT_STATUS.md` và `activeContext.md` cũng được đồng bộ trong cùng lần cập nhật này.
 
 ### ✅ Completed (Phase 0: Planning & Setup)
@@ -123,12 +123,12 @@ PR gộp duy nhất đóng 3 race bug backend (B1, B2, B3) + 8 correctness bug f
 
 #### Verification
 
-- [x] **712/712** unit tests pass (was 661, **+51 net tests**: 4 B1 + 2 B2 + 4 B3 + 1 B1 admin abort + 2 L3 rehydrate coverage + …). 11/11 E2E tests pass. 68/68 game-core tests pass. 31/31 web tests pass (was 28, +3 F8).
-- [x] **Coverage per-file ≥90%** cho 4 file production sửa:
-  - `game-loop.service.ts` **96.25%** stmts / 94.44% branch
+- [x] **712/712 → 772/772** unit tests pass (api) qua các PR fix(bug) post-merge
+- [x] **Coverage per-file ≥90%** cho 4 file production sửa (cập nhật 2026-06-18 từ coverage report thực tế):
+  - `game-loop.service.ts` **100%** stmts / 100% branch (was 96.25% trước fix(bug) post-merge)
   - `admin.service.ts` **100%** / 100%
-  - `match.service.ts` **95.53%** / 92.59%
-  - `match-state-machine.ts` **98.63%** / 88.8% (≈90% branch — hash seed + map.entries edge cases)
+  - `match.service.ts` **96.22%** / 90.76% (was 95.53%)
+  - `match-state-machine.ts` **100%** / 92.12% (was 98.63% / 88.8% — coverage tăng do L1/L3 fix thêm test path)
 - [x] **Server-authoritative guarantee** khôi phục: client không tự redirect kết thúc trận, chỉ tin `MATCH_FINISHED` broadcast từ server.
 - [x] **Socket protocol không đổi**: không thêm event mới, không đổi payload shape, không bump version. `winnerId: string | null` đã có sẵn.
 - [x] **Shared types không đổi**: `@arena/shared/src/**` nguyên vẹn (F4 dùng `GAME_CONFIG.MAX_PLAYERS` đã có).
@@ -308,17 +308,17 @@ Drop-in spectating cho phép late-joiner vào phòng `IN_GAME` hoặc `FINISHED`
 
 ## Architecture Assessment Scores (cập nhật 2026-06-14)
 
-| Dimension                | Score      | Notes                                                                                                                                        |
-| ------------------------ | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Monorepo Structure       | 10/10      | Turborepo + Remote Caching                                                                                                                   |
-| Package Boundaries       | 9/10       | Clean separation, đúng dependency flow                                                                                                       |
-| Domain Logic (game-core) | 9/10       | Có serialize/deserialize, immutability, persistence, deterministic tie-break                                                                 |
-| Backend Architecture     | 9/10       | Handlers rõ ràng; lobby/heartbeat baseline done; admin kill-switch baseline done; **race fixes (B1, B2, B3) landed 2026-06-14**              |
-| Frontend Architecture    | 8.5/10     | Lobby/Game/Result done; spectator baseline (eliminated + drop-in) done; **F1-F8 correctness fixes landed 2026-06-14**; Profile/Rankings real |
-| Infrastructure           | 8/10       | Docker + Redis + Throttler + CI/E2E; chưa có multi-instance adapter                                                                          |
-| DevOps/CI-CD             | 10/10      | GitHub Actions pipeline configured; E2E job có cache strategy gọn + fail artifacts                                                           |
-| Testing                  | 9.5/10     | 712 unit + 11 E2E; coverage 95.05% stmts backend; **+51 net tests for B1-B3 + 3 for F8**                                                     |
-| **Overall**              | **8.7/10** | Lobby/heartbeat/graceful-exit/admin kill-switch baseline + race fixes + frontend correctness all done                                        |
+| Dimension                | Score      | Notes                                                                                                                                                                                                                                                         |
+| ------------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Monorepo Structure       | 10/10      | Turborepo + Remote Caching                                                                                                                                                                                                                                    |
+| Package Boundaries       | 9/10       | Clean separation, đúng dependency flow                                                                                                                                                                                                                        |
+| Domain Logic (game-core) | 9/10       | Có serialize/deserialize, immutability, persistence, deterministic tie-break                                                                                                                                                                                  |
+| Backend Architecture     | 9/10       | Handlers rõ ràng; lobby/heartbeat baseline done; admin kill-switch baseline done; **race fixes (B1, B2, B3) landed 2026-06-14**                                                                                                                               |
+| Frontend Architecture    | 8.5/10     | Lobby/Game/Result done; spectator baseline (eliminated + drop-in) done; **F1-F8 correctness fixes landed 2026-06-14**; Profile/Rankings real                                                                                                                  |
+| Infrastructure           | 8/10       | Docker + Redis + Throttler + CI/E2E; chưa có multi-instance adapter                                                                                                                                                                                           |
+| DevOps/CI-CD             | 10/10      | GitHub Actions pipeline configured; E2E job có cache strategy gọn + fail artifacts                                                                                                                                                                            |
+| Testing                  | 9.5/10     | 772 unit api + 70 game-core + 31 web + 11 E2E; coverage 100% stmts `game-loop.service.ts` / 100% `admin.service.ts` / 96.22% `match.service.ts` / 100% `match-state-machine.ts`; **+51 net tests for B1-B3 + 3 for F8 + post-merge B4-B7/L1 (~+8 test path)** |
+| **Overall**              | **8.7/10** | Lobby/heartbeat/graceful-exit/admin kill-switch baseline + race fixes + frontend correctness all done                                                                                                                                                         |
 
 ## Milestones
 
@@ -349,7 +349,7 @@ Drop-in spectating cho phép late-joiner vào phòng `IN_GAME` hoặc `FINISHED`
 - CSRF + rate limiting + Zod validation đã wire xuyên suốt
 - Frontend pages: home (`/`), `/room/create`, `/lobby/[roomCode]`, `/game/[matchId]`, `/result/[matchId]`, `/profile`, `/rankings`, `/settings`, `/admin`
 - Socket-store với auto-reconnect logic, room lifecycle events, ROOM_TERMINATED handling, eliminated spectator state
-- 716/716 unit tests (api) + 68/68 unit tests (game-core) + 31/31 unit tests (web) + 11/11 E2E tests pass; API coverage 95.05% statements
+- 772/772 unit tests (api) + 70/70 unit tests (game-core) + 31/31 unit tests (web) + 11/11 E2E tests pass; API coverage 99.05% statements (verify bằng `pnpm --filter @arena/api test:coverage --run` sau khi rebuild `packages/shared/dist` cho `GAME_CONFIG.SCORE_*` constants — 2026-06-18)
 
 ## What's Next (Priority Order)
 
