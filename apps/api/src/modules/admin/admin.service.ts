@@ -41,153 +41,191 @@ export class AdminService {
    *   admin.controller.ts) and this service throws on missing input.
    */
   async syncQuestions(clearExisting: boolean = true, adminUserId: string) {
+    if (!adminUserId || adminUserId.trim() === "") {
+      throw new Error("syncQuestions: adminUserId is required");
+    }
     this.logger.log(
       `Starting programmatically sync questions (clearExisting: ${clearExisting})...`,
     );
 
-    if (clearExisting) {
-      this.logger.warn(
-        "Deleting all existing questions, tags, and dependencies...",
-      );
-      // Prisma relations will handle cascading delete on QuestionTag, MatchRound questions are kept or protected.
-      // Since match_rounds have on_delete: Restrict/Cascade, we'll perform a clean delete.
-      // To avoid foreign key constraint violations if there are active matches referencing questions,
-      // we must clear matches, rounds, answers first, or skip clearing those if it's production.
-      // For general sync, clearing questions and tags is fully supported.
-      await this.prisma.questionTag.deleteMany();
-      await this.prisma.question.deleteMany();
-      await this.prisma.tag.deleteMany();
-    }
-
+    // PR 3 (Finding 4 follow-up): accumulators for the audit row.
+    // Declared outside the try so the finally block can reference
+    // them on the partial-failure path (when a mid-seed DB error
+    // leaves some counts populated and others at their default).
     let seededQuestions = 0;
     let seededTags = 0;
     let seededQuestionTags = 0;
+    let allTagNamesArray: string[] = [];
+    let success = false;
+    let errorMessage: string | undefined;
 
-    // Collect all unique tag names
-    const allTagNames = new Set<string>();
-    for (const question of questionSeeds) {
-      const targetTags = question.tags
-        ? question.tags.map((t) => normalizeString(t))
-        : [];
-      targetTags.forEach((tagName) => allTagNames.add(tagName));
-    }
+    try {
+      if (clearExisting) {
+        this.logger.warn(
+          "Deleting all existing questions, tags, and dependencies...",
+        );
+        // Prisma relations will handle cascading delete on QuestionTag, MatchRound questions are kept or protected.
+        // Since match_rounds have on_delete: Restrict/Cascade, we'll perform a clean delete.
+        // To avoid foreign key constraint violations if there are active matches referencing questions,
+        // we must clear matches, rounds, answers first, or skip clearing those if it's production.
+        // For general sync, clearing questions and tags is fully supported.
+        await this.prisma.questionTag.deleteMany();
+        await this.prisma.question.deleteMany();
+        await this.prisma.tag.deleteMany();
+      }
 
-    const allTagNamesArray = Array.from(allTagNames);
+      // Collect all unique tag names
+      const allTagNames = new Set<string>();
+      for (const question of questionSeeds) {
+        const targetTags = question.tags
+          ? question.tags.map((t) => normalizeString(t))
+          : [];
+        targetTags.forEach((tagName) => allTagNames.add(tagName));
+      }
 
-    // Batch create or fetch tags
-    if (allTagNamesArray.length > 0) {
-      await this.prisma.tag.createMany({
-        data: allTagNamesArray.map((name) => ({ name })),
-        skipDuplicates: true,
-      });
-    }
+      allTagNamesArray = Array.from(allTagNames);
 
-    const existingTags = await this.prisma.tag.findMany();
-    const tagMap = new Map(existingTags.map((tag) => [tag.name, tag]));
-    seededTags = existingTags.length;
+      // Batch create or fetch tags
+      if (allTagNamesArray.length > 0) {
+        await this.prisma.tag.createMany({
+          data: allTagNamesArray.map((name) => ({ name })),
+          skipDuplicates: true,
+        });
+      }
 
-    for (const question of questionSeeds) {
-      const normalizedContent = question.content.trim();
+      const existingTags = await this.prisma.tag.findMany();
+      const tagMap = new Map(existingTags.map((tag) => [tag.name, tag]));
+      seededTags = existingTags.length;
 
-      // Check if question already exists
-      const existingQuestion = await this.prisma.question.findFirst({
-        where: {
-          content: normalizedContent,
+      for (const question of questionSeeds) {
+        const normalizedContent = question.content.trim();
+
+        // Check if question already exists
+        const existingQuestion = await this.prisma.question.findFirst({
+          where: {
+            content: normalizedContent,
+          },
+        });
+
+        let createdQuestion;
+        if (existingQuestion) {
+          // Update existing question
+          createdQuestion = await this.prisma.question.update({
+            where: { id: existingQuestion.id },
+            data: {
+              options: question.options as string[],
+              correctAnswer: question.correctAnswer,
+              difficulty: question.difficulty,
+              category: question.category,
+              explanation: question.explanation,
+              active: true,
+            },
+          });
+        } else {
+          // Create new question
+          createdQuestion = await this.prisma.question.create({
+            data: {
+              content: normalizedContent,
+              options: question.options as string[],
+              correctAnswer: question.correctAnswer,
+              difficulty: question.difficulty,
+              category: question.category,
+              explanation: question.explanation,
+              active: true,
+            },
+          });
+        }
+        seededQuestions++;
+
+        // Sync tags
+        const targetTags = question.tags
+          ? question.tags.map((t) => normalizeString(t))
+          : [];
+
+        const resolvedTags = targetTags
+          .map((name) => tagMap.get(name))
+          .filter((t): t is (typeof existingTags)[0] => !!t);
+
+        if (resolvedTags.length > 0) {
+          // Find existing question tags to avoid duplicate inserts
+          const existingQuestionTags = await this.prisma.questionTag.findMany({
+            where: { questionId: createdQuestion.id },
+          });
+          const existingTagIds = new Set(
+            existingQuestionTags.map((qt) => qt.tagId),
+          );
+          const tagsToCreate = resolvedTags.filter(
+            (tag) => !existingTagIds.has(tag.id),
+          );
+
+          if (tagsToCreate.length > 0) {
+            await this.prisma.questionTag.createMany({
+              data: tagsToCreate.map((tag) => ({
+                questionId: createdQuestion.id,
+                tagId: tag.id,
+              })),
+              skipDuplicates: true,
+            });
+            seededQuestionTags += tagsToCreate.length;
+          }
+        }
+      }
+
+      // Upsert admin user for safety
+      await this.prisma.user.upsert({
+        where: { username: "admin" },
+        update: { role: "ADMIN" },
+        create: {
+          username: "admin",
+          role: "ADMIN",
         },
       });
 
-      let createdQuestion;
-      if (existingQuestion) {
-        // Update existing question
-        createdQuestion = await this.prisma.question.update({
-          where: { id: existingQuestion.id },
-          data: {
-            options: question.options as string[],
-            correctAnswer: question.correctAnswer,
-            difficulty: question.difficulty,
-            category: question.category,
-            explanation: question.explanation,
-            active: true,
-          },
-        });
-      } else {
-        // Create new question
-        createdQuestion = await this.prisma.question.create({
-          data: {
-            content: normalizedContent,
-            options: question.options as string[],
-            correctAnswer: question.correctAnswer,
-            difficulty: question.difficulty,
-            category: question.category,
-            explanation: question.explanation,
-            active: true,
-          },
-        });
-      }
-      seededQuestions++;
+      this.logger.log(
+        `Programmatic question sync successful: ${seededQuestions} questions, ${seededTags} tags, ${seededQuestionTags} tag relationships.`,
+      );
 
-      // Sync tags
-      const targetTags = question.tags
-        ? question.tags.map((t) => normalizeString(t))
-        : [];
-
-      const resolvedTags = targetTags
-        .map((name) => tagMap.get(name))
-        .filter((t): t is (typeof existingTags)[0] => !!t);
-
-      if (resolvedTags.length > 0) {
-        // Find existing question tags to avoid duplicate inserts
-        const existingQuestionTags = await this.prisma.questionTag.findMany({
-          where: { questionId: createdQuestion.id },
-        });
-        const existingTagIds = new Set(
-          existingQuestionTags.map((qt) => qt.tagId),
-        );
-        const tagsToCreate = resolvedTags.filter(
-          (tag) => !existingTagIds.has(tag.id),
-        );
-
-        if (tagsToCreate.length > 0) {
-          await this.prisma.questionTag.createMany({
-            data: tagsToCreate.map((tag) => ({
-              questionId: createdQuestion.id,
-              tagId: tag.id,
-            })),
-            skipDuplicates: true,
-          });
-          seededQuestionTags += tagsToCreate.length;
-        }
-      }
+      success = true;
+    } catch (error) {
+      // PR 3 (Finding 4 follow-up): log the failure with a stack
+      // trace so the operator can correlate it with the audit row
+      // the finally block will write. The error is re-thrown below
+      // (outside the try/finally) so the controller still returns
+      // 500 — the audit row is forensic, not a status override.
+      errorMessage = error instanceof Error ? error.message : String(error);
+      const errStack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(
+        `syncQuestions failed (clearExisting: ${clearExisting}): ${errorMessage}`,
+        errStack,
+      );
+    } finally {
+      // PR 3: append a best-effort audit row on BOTH success and
+      // failure. The seed/sync operation mutates (or replaces, when
+      // clearExisting=true) the question bank that every match
+      // depends on, so it deserves an audit row even when the
+      // operation aborts partway (e.g. after a successful clear but
+      // before the seed completes — the bank would be left empty
+      // with no record of who triggered the wipe). appendAudit is
+      // best-effort and never throws (see helper).
+      await this.appendAudit({
+        adminUserId,
+        eventType: "ADMIN_SYNC_QUESTIONS",
+        payload: {
+          success,
+          clearExisting,
+          questionsCount: seededQuestions,
+          tagsCount: allTagNamesArray.length,
+          relationshipsCount: seededQuestionTags,
+          ...(errorMessage ? { error: errorMessage } : {}),
+        },
+      });
     }
 
-    // Upsert admin user for safety
-    await this.prisma.user.upsert({
-      where: { username: "admin" },
-      update: { role: "ADMIN" },
-      create: {
-        username: "admin",
-        role: "ADMIN",
-      },
-    });
-
-    this.logger.log(
-      `Programmatic question sync successful: ${seededQuestions} questions, ${seededTags} tags, ${seededQuestionTags} tag relationships.`,
-    );
-
-    // PR 3: append a best-effort audit row. The seed/sync operation
-    // mutates (or replaces, when clearExisting=true) the question
-    // bank that every match depends on, so it deserves an audit row
-    // even though the operation is non-destructive per se.
-    await this.appendAudit({
-      adminUserId,
-      eventType: "ADMIN_SYNC_QUESTIONS",
-      payload: {
-        clearExisting,
-        questionsCount: seededQuestions,
-        tagsCount: allTagNamesArray.length,
-        relationshipsCount: seededQuestionTags,
-      },
-    });
+    if (!success) {
+      throw new Error(
+        `syncQuestions failed: ${errorMessage ?? "unknown error"}`,
+      );
+    }
 
     return {
       success: true,
@@ -203,85 +241,145 @@ export class AdminService {
    *   for the audit row. Required.
    */
   async resetSystem(adminUserId: string) {
+    if (!adminUserId || adminUserId.trim() === "") {
+      throw new Error("resetSystem: adminUserId is required");
+    }
     this.logger.warn(
       "system-wide reset triggered! Purging all room, player, match state...",
     );
 
-    // Delete DB entries in dependent order.
-    // PR 3: each deleteMany now returns `{ count }` so we can capture
-    // the exact number of rows wiped per table for the audit row.
-    // Counts are merged into a follow-up audit row written AFTER
-    // the deletes complete (the count is only meaningful once the
-    // deletes have run).
-    const answersDeleted = await this.prisma.answer.deleteMany();
-    const matchRoundsDeleted = await this.prisma.matchRound.deleteMany();
-    const matchPlayersDeleted = await this.prisma.matchPlayer.deleteMany();
-    const matchesDeleted = await this.prisma.match.deleteMany();
-    const roomPlayersDeleted = await this.prisma.roomPlayer.deleteMany();
-    const roomsDeleted = await this.prisma.room.deleteMany();
-
-    // Clear active lobby/match Redis keys using non-blocking SCAN approach
-    const client = this.redis.getClient();
-    let totalDeleted = 0;
-
-    // Helper function to scan and delete keys in batches
-    const scanAndDelete = async (pattern: string): Promise<number> => {
-      let cursor = "0";
-      let deletedCount = 0;
-
-      do {
-        const result = await client.scan(
-          cursor,
-          "MATCH",
-          pattern,
-          "COUNT",
-          1000,
-        );
-        cursor = result[0];
-        const keys = result[1];
-
-        if (keys.length > 0) {
-          const deleted = await client.del(...keys);
-          deletedCount += deleted;
-        }
-      } while (cursor !== "0");
-
-      return deletedCount;
+    // PR 3 (Finding 4 follow-up): accumulators declared outside the
+    // try so the finally block can reference them on the
+    // partial-failure path. Defaults are zeros so the audit row is
+    // well-formed even when the failure happens before any work
+    // completed.
+    let dbDeleted = {
+      answers: 0,
+      matchRounds: 0,
+      matchPlayers: 0,
+      matches: 0,
+      roomPlayers: 0,
+      rooms: 0,
     };
+    let redisKeysDeleted = { room: 0, match: 0, total: 0 };
+    let success = false;
+    let errorMessage: string | undefined;
 
-    // Scan and delete both room and match keys
-    const roomDeleted = await scanAndDelete("room:*");
-    const matchDeleted = await scanAndDelete("match:*");
-    totalDeleted = roomDeleted + matchDeleted;
+    try {
+      // Delete DB entries in dependent order, atomically.
+      // PR 3: each deleteMany now returns `{ count }` so we can capture
+      // the exact number of rows wiped per table for the audit row.
+      // Counts are merged into a follow-up audit row written AFTER
+      // the deletes complete (the count is only meaningful once the
+      // deletes have run).
+      //
+      // Wrapped in $transaction(array) so either every table is purged
+      // or none is — preventing a half-reset state if a mid-sequence
+      // delete fails (e.g. FK violation, transient DB error). Pattern
+      // mirrors match.service.ts finishMatch.
+      const [
+        answersDeleted,
+        matchRoundsDeleted,
+        matchPlayersDeleted,
+        matchesDeleted,
+        roomPlayersDeleted,
+        roomsDeleted,
+      ] = await this.prisma.$transaction([
+        this.prisma.answer.deleteMany(),
+        this.prisma.matchRound.deleteMany(),
+        this.prisma.matchPlayer.deleteMany(),
+        this.prisma.match.deleteMany(),
+        this.prisma.roomPlayer.deleteMany(),
+        this.prisma.room.deleteMany(),
+      ]);
 
-    if (totalDeleted > 0) {
-      this.logger.log(
-        `Purged ${totalDeleted} Redis keys from cache (${roomDeleted} room keys, ${matchDeleted} match keys).`,
-      );
+      dbDeleted = {
+        answers: answersDeleted.count,
+        matchRounds: matchRoundsDeleted.count,
+        matchPlayers: matchPlayersDeleted.count,
+        matches: matchesDeleted.count,
+        roomPlayers: roomPlayersDeleted.count,
+        rooms: roomsDeleted.count,
+      };
+
+      // Clear active lobby/match Redis keys using non-blocking SCAN approach
+      const client = this.redis.getClient();
+
+      // Helper function to scan and delete keys in batches
+      const scanAndDelete = async (pattern: string): Promise<number> => {
+        let cursor = "0";
+        let deletedCount = 0;
+
+        do {
+          const result = await client.scan(
+            cursor,
+            "MATCH",
+            pattern,
+            "COUNT",
+            1000,
+          );
+          cursor = result[0];
+          const keys = result[1];
+
+          if (keys.length > 0) {
+            const deleted = await client.del(...keys);
+            deletedCount += deleted;
+          }
+        } while (cursor !== "0");
+
+        return deletedCount;
+      };
+
+      // Scan and delete both room and match keys
+      const roomDeleted = await scanAndDelete("room:*");
+      const matchDeleted = await scanAndDelete("match:*");
+      const totalDeleted = roomDeleted + matchDeleted;
+      redisKeysDeleted = {
+        room: roomDeleted,
+        match: matchDeleted,
+        total: totalDeleted,
+      };
+
+      if (totalDeleted > 0) {
+        this.logger.log(
+          `Purged ${totalDeleted} Redis keys from cache (${roomDeleted} room keys, ${matchDeleted} match keys).`,
+        );
+      }
+
+      success = true;
+    } catch (error) {
+      // PR 3 (Finding 4 follow-up): log the failure with a stack
+      // trace so the operator can correlate it with the audit row
+      // the finally block will write. The error is re-thrown below
+      // (outside the try/finally) so the controller still returns
+      // 500 — the audit row is forensic, not a status override.
+      errorMessage = error instanceof Error ? error.message : String(error);
+      const errStack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(`resetSystem failed: ${errorMessage}`, errStack);
+    } finally {
+      // PR 3: write a follow-up audit row that captures the delete
+      // counts AND the success/failure status. Audit rows are
+      // intentionally NOT deleted by resetSystem, so the last reset
+      // footprint stays queryable after the purge — including
+      // failed resets, so the operator can see who tried to reset
+      // and why it failed (with whatever partial counts the work
+      // reached before throwing). appendAudit is best-effort and
+      // never throws (see helper).
+      await this.appendAudit({
+        adminUserId,
+        eventType: "ADMIN_RESET_SYSTEM",
+        payload: {
+          success,
+          dbDeleted,
+          redisKeysDeleted,
+          ...(errorMessage ? { error: errorMessage } : {}),
+        },
+      });
     }
 
-    // PR 3: write a follow-up audit row that captures the delete
-    // counts. Audit rows are intentionally NOT deleted by resetSystem,
-    // so the last reset footprint stays queryable after the purge.
-    await this.appendAudit({
-      adminUserId,
-      eventType: "ADMIN_RESET_SYSTEM",
-      payload: {
-        dbDeleted: {
-          answers: answersDeleted.count,
-          matchRounds: matchRoundsDeleted.count,
-          matchPlayers: matchPlayersDeleted.count,
-          matches: matchesDeleted.count,
-          roomPlayers: roomPlayersDeleted.count,
-          rooms: roomsDeleted.count,
-        },
-        redisKeysDeleted: {
-          room: roomDeleted,
-          match: matchDeleted,
-          total: totalDeleted,
-        },
-      },
-    });
+    if (!success) {
+      throw new Error(`resetSystem failed: ${errorMessage ?? "unknown error"}`);
+    }
 
     return {
       success: true,
@@ -310,6 +408,9 @@ export class AdminService {
     adminUserId: string,
     message?: string,
   ): Promise<TerminateRoomResult> {
+    if (!adminUserId || adminUserId.trim() === "") {
+      throw new Error("terminateRoom: adminUserId is required");
+    }
     // PR 3: default reason for the audit row. Overridden to
     // "ALREADY_FINISHING" if the B1 guard aborts the kill-switch.
     let reasonForAudit: string = "KILL_SWITCH";

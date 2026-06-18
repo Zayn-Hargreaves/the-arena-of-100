@@ -29,10 +29,19 @@ ALTER TABLE "event_logs" ALTER COLUMN "matchId" DROP NOT NULL;
 --    match deletion while audit rows exist) to onDelete: SetNull
 --    (preserves the audit row with matchId = null when the match is
 --    removed). Admin audit must outlive the entity it references.
+--
+--    Added with NOT VALID so PostgreSQL does not perform a full table
+--    scan-and-validate against existing rows at ADD CONSTRAINT time
+--    (would hold an ACCESS EXCLUSIVE lock on event_logs and stall
+--    concurrent writes on a hot table). The constraint is enforced
+--    for new/updated rows immediately; a follow-up VALIDATE
+--    CONSTRAINT can be run off-peak to retroactively check the
+--    existing rows. Idempotent on an empty table.
 ALTER TABLE "event_logs" DROP CONSTRAINT IF EXISTS "event_logs_matchId_fkey";
 ALTER TABLE "event_logs"
   ADD CONSTRAINT "event_logs_matchId_fkey"
-  FOREIGN KEY ("matchId") REFERENCES "matches"("id") ON DELETE SET NULL;
+  FOREIGN KEY ("matchId") REFERENCES "matches"("id") ON DELETE SET NULL
+  NOT VALID;
 
 -- 5. Add the new admin-audit columns.
 ALTER TABLE "event_logs" ADD COLUMN IF NOT EXISTS "roomId"      TEXT;
@@ -41,9 +50,19 @@ ALTER TABLE "event_logs" ADD COLUMN IF NOT EXISTS "adminUserId" TEXT;
 -- 6. Add the adminUser FK with onDelete: SetNull. The audit row
 --    outlives the admin who triggered it; the original cuid remains
 --    available in the payload JSON for forensic recovery.
+--
+--    NOT VALID for the same reason as the matchId FK above
+--    (avoids full table validation lock on ADD CONSTRAINT).
+--
+--    DROP CONSTRAINT IF EXISTS mirrors the idempotent handling of
+--    the matchId FK in step 4 — required so the migration can be
+--    safely re-run or partially re-executed without a "constraint
+--    already exists" error.
+ALTER TABLE "event_logs" DROP CONSTRAINT IF EXISTS "event_logs_adminUserId_fkey";
 ALTER TABLE "event_logs"
   ADD CONSTRAINT "event_logs_adminUserId_fkey"
-  FOREIGN KEY ("adminUserId") REFERENCES "users"("id") ON DELETE SET NULL;
+  FOREIGN KEY ("adminUserId") REFERENCES "users"("id") ON DELETE SET NULL
+  NOT VALID;
 
 -- 7. Add the four query indexes. `createdAt` is the second column on
 --    every index because the GET /admin/audit-events query always

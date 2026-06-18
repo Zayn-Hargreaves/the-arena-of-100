@@ -73,6 +73,7 @@ describe("AdminService", () => {
     match: { deleteMany: ReturnType<typeof vi.fn> };
     roomPlayer: { deleteMany: ReturnType<typeof vi.fn> };
     room: { deleteMany: ReturnType<typeof vi.fn> };
+    $transaction: ReturnType<typeof vi.fn>;
   };
   let redis: { getClient: ReturnType<typeof vi.fn> };
   let redisClient: {
@@ -142,6 +143,13 @@ describe("AdminService", () => {
       match: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
       roomPlayer: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
       room: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      // Array-form $transaction: run every op and resolve with the
+      // resolved values in order. Mirrors Prisma's real behavior for
+      // a non-interactive transaction so the existing
+      // `invocationCallOrder` assertions on deleteMany still pass.
+      $transaction: vi
+        .fn()
+        .mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops)),
     };
 
     redisClient = {
@@ -252,7 +260,7 @@ describe("AdminService", () => {
           gameLoopService as unknown as GameLoopService,
         );
 
-        const result = await fresh.syncQuestions(false);
+        const result = await fresh.syncQuestions(false, "u-admin");
 
         expect(prisma.tag.createMany).not.toHaveBeenCalled();
         expect(result.tagsCount).toBe(0);
@@ -353,6 +361,50 @@ describe("AdminService", () => {
         create: { username: "admin", role: Role.ADMIN },
       });
     });
+
+    it("throws when adminUserId is empty", async () => {
+      await expect(service.syncQuestions(false, "")).rejects.toThrow(
+        "adminUserId is required",
+      );
+    });
+
+    it("throws when adminUserId is only whitespace", async () => {
+      await expect(service.syncQuestions(false, "   ")).rejects.toThrow(
+        "adminUserId is required",
+      );
+    });
+
+    it("writes a failure audit row when the seed work throws, then re-throws", async () => {
+      // Simulate a mid-seed DB error after the clearExisting branch
+      // has already wiped the question bank. The original code
+      // threw without writing an audit row, leaving the bank empty
+      // with no forensic record. The try/catch/finally fix must
+      // still write the audit row (success: false) before
+      // propagating the error.
+      prisma.questionTag.deleteMany.mockResolvedValueOnce({ count: 7 });
+      prisma.question.deleteMany.mockResolvedValueOnce({ count: 5 });
+      prisma.tag.deleteMany.mockRejectedValueOnce(new Error("DB lost"));
+
+      await expect(service.syncQuestions(true, "u-fail-admin")).rejects.toThrow(
+        "syncQuestions failed",
+      );
+
+      // Audit row still written exactly once, with success: false
+      expect(prisma.eventLog.create).toHaveBeenCalledTimes(1);
+      expect(prisma.eventLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            adminUserId: "u-fail-admin",
+            eventType: "ADMIN_SYNC_QUESTIONS",
+            payload: expect.objectContaining({
+              success: false,
+              clearExisting: true,
+              error: "DB lost",
+            }),
+          }),
+        }),
+      );
+    });
   });
 
   describe("resetSystem", () => {
@@ -425,9 +477,71 @@ describe("AdminService", () => {
       expect(result.success).toBe(true);
       expect(result.message).toContain("System reset complete");
     });
+
+    it("throws when adminUserId is empty", async () => {
+      await expect(service.resetSystem("")).rejects.toThrow(
+        "adminUserId is required",
+      );
+    });
+
+    it("throws when adminUserId is only whitespace", async () => {
+      await expect(service.resetSystem("   ")).rejects.toThrow(
+        "adminUserId is required",
+      );
+    });
+
+    it("writes a failure audit row when the $transaction throws, then re-throws", async () => {
+      // The atomic $transaction rejects. The original code would
+      // throw without writing an audit row, so the operator would
+      // not know who tried to reset the system and why it failed.
+      // The try/catch/finally fix must still write the audit row
+      // (success: false, zero counts) before propagating.
+      vi.mocked(prisma.$transaction).mockRejectedValueOnce(
+        new Error("FK violation: matches.questions"),
+      );
+
+      await expect(service.resetSystem("u-fail-admin")).rejects.toThrow(
+        "resetSystem failed",
+      );
+
+      expect(prisma.eventLog.create).toHaveBeenCalledTimes(1);
+      expect(prisma.eventLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            adminUserId: "u-fail-admin",
+            eventType: "ADMIN_RESET_SYSTEM",
+            payload: expect.objectContaining({
+              success: false,
+              dbDeleted: {
+                answers: 0,
+                matchRounds: 0,
+                matchPlayers: 0,
+                matches: 0,
+                roomPlayers: 0,
+                rooms: 0,
+              },
+              redisKeysDeleted: { room: 0, match: 0, total: 0 },
+              error: "FK violation: matches.questions",
+            }),
+          }),
+        }),
+      );
+    });
   });
 
   describe("terminateRoom", () => {
+    it("throws when adminUserId is empty", async () => {
+      await expect(service.terminateRoom("r-1", "", undefined)).rejects.toThrow(
+        "adminUserId is required",
+      );
+    });
+
+    it("throws when adminUserId is only whitespace", async () => {
+      await expect(
+        service.terminateRoom("r-1", "   ", undefined),
+      ).rejects.toThrow("adminUserId is required");
+    });
+
     it("throws ROOM_NOT_FOUND when room does not exist", async () => {
       roomService.getRoom.mockRejectedValueOnce(
         new RoomError(ErrorCode.ROOM_NOT_FOUND),
@@ -558,8 +672,8 @@ describe("AdminService", () => {
 
       const result = await service.terminateRoom(
         "r-normal",
-        undefined,
         "u-admin",
+        undefined,
       );
 
       expect(result.success).toBe(true);
