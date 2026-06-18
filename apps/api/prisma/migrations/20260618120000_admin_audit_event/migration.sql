@@ -64,7 +64,26 @@ ALTER TABLE "event_logs"
   FOREIGN KEY ("adminUserId") REFERENCES "users"("id") ON DELETE SET NULL
   NOT VALID;
 
--- 7. Add the four query indexes. `createdAt` is the second column on
+-- 7. Enforce the "at least one scope" invariant at the DB level.
+--    matchId, roomId, and adminUserId are all nullable so each row
+--    can carry the scope it actually has (match-only, room-only,
+--    admin-only, or any combination). The application layer
+--    (appendAudit, see admin.service.ts) always sets adminUserId
+--    in practice, but a CHECK constraint here is defense-in-depth
+--    against future code paths, manual SQL, or replica drift that
+--    would otherwise produce an unqueryable orphaned row. The
+--    query layer (getAuditEvents) already filters by
+--    `adminUserId: { not: null }`, so this constraint codifies the
+--    contract the application already assumes.
+ALTER TABLE "event_logs"
+  ADD CONSTRAINT "event_logs_at_least_one_scope_chk"
+  CHECK (
+    ("matchId" IS NOT NULL)
+    OR ("roomId" IS NOT NULL)
+    OR ("adminUserId" IS NOT NULL)
+  );
+
+-- 8. Add the four query indexes. `createdAt` is the second column on
 --    every index because the GET /admin/audit-events query always
 --    orders by it. Composite order matches the WHERE/ORDER BY shape.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "event_logs_admin_user_id_created_at_idx"

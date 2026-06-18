@@ -53,7 +53,6 @@ export class AdminService {
     // them on the partial-failure path (when a mid-seed DB error
     // leaves some counts populated and others at their default).
     let seededQuestions = 0;
-    let seededTags = 0;
     let seededQuestionTags = 0;
     let allTagNamesArray: string[] = [];
     let success = false;
@@ -95,7 +94,6 @@ export class AdminService {
 
       const existingTags = await this.prisma.tag.findMany();
       const tagMap = new Map(existingTags.map((tag) => [tag.name, tag]));
-      seededTags = existingTags.length;
 
       for (const question of questionSeeds) {
         const normalizedContent = question.content.trim();
@@ -182,7 +180,7 @@ export class AdminService {
       });
 
       this.logger.log(
-        `Programmatic question sync successful: ${seededQuestions} questions, ${seededTags} tags, ${seededQuestionTags} tag relationships.`,
+        `Programmatic question sync successful: ${seededQuestions} questions, ${allTagNamesArray.length} tags, ${seededQuestionTags} tag relationships.`,
       );
 
       success = true;
