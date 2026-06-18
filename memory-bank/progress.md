@@ -169,7 +169,7 @@ Housekeeping PR gộp 3 concern cleanup-style cùng blast radius thấp còn l�
 #### L3 — Tighten validation bounds (packages/shared/src/schemas.ts)
 
 - [x] **`CLIENT_TIMESTAMP_MAX_OFFSET_MS`**: `365 * 24 * 60 * 60 * 1000` (1 năm) → `5 * 60 * 1000` (5 phút). Rationale: `ROUND_DURATION_MS = 15_000`, 5 phút = 20x round duration = đủ headroom cho NTP drift + mobile sleep recovery + network buffering. Comment giải thích invariant + headroom.
-- [x] **`lastSeenSeqNo`**: `Number.MAX_SAFE_INTEGER` → `GAME_CONFIG.MAX_ROUNDS * 2` (= 100). Rationale: mỗi round sinh tối đa ~2 EventLog row liên quan đến snapshot, `MAX_ROUNDS = 50` → ceiling = 100. Comment giải thích invariant.
+- [x] **`lastSeenSeqNo`**: `Number.MAX_SAFE_INTEGER` → `GAME_CONFIG.MAX_ROUNDS * 2` (= 100). Rationale: giá trị hiện tại là pass-through echo (`MatchStateMachine.getSnapshot` chỉ trả về verbatim trong snapshot payload, không filter event). Cả 2 call site đều hardcode `0`. Cap 100 là sanity bound chống hostile fuzz input (sentinels, bit-flips, junk) — KHÔNG phải tight upper bound trên event log size. Một match 100 player có thể sinh hàng nghìn event (xem `match-state-machine.ts`: `ANSWER_SUBMITTED` × players × rounds + `STATE_TRANSITION` / `ROUND_EVALUATED` / `TIE_BREAK` / `MATCH_FINISHED` / `PLAYER_DISCONNECTED` / `PLAYER_RECONNECTED`). Comment giải thích invariant + cảnh báo nếu sau này implement real delta filtering thì phải re-derive cap.
 - [x] **Không đổi** `roundNo` bound (line 106 đã cap ở `MAX_ROUNDS`), `token` (line 32, MAX 4096), `maxPlayers` (line 44, MAX_PLAYERS_MAX) — tất cả đã đúng.
 - [x] **Regression tests mới** (`game.gateway.spec.ts:373-419`):
   - `SUBMIT_ANSWER rejects clientTimestamp 1 year in the past` (verify old bound không còn accepted)

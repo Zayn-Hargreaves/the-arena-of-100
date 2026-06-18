@@ -124,14 +124,29 @@ export type SubmitAnswerPayload = z.infer<typeof SubmitAnswerPayloadSchema>;
 
 export const RequestSnapshotPayloadSchema = z.object({
   matchId: idSchema,
-  // lastSeenSeqNo is the cursor the client uses to ask for a snapshot
-  // delta from a specific event-log position. The sequence is bounded
-  // by the maximum number of events a single match can produce: each
-  // round generates at most ~2 EventLog rows related to snapshot
-  // delivery (round start + round end), so MAX_ROUNDS * 2 is a tight
-  // upper bound. The previous Number.MAX_SAFE_INTEGER ceiling was a
-  // leftover that would have accepted obviously bogus cursors (e.g.
-  // sentinels, bit-flips, or hostile fuzz inputs).
+  // lastSeenSeqNo is the cursor the client sends when asking for a
+  // snapshot. NOTE: it is currently a pass-through echo, not a real
+  // event-log cursor — `MatchStateMachine.getSnapshot` returns the
+  // value verbatim in the snapshot payload and does not filter
+  // events. Both current call sites hardcode 0 (the client hydrate
+  // path in `game/[matchId]/page.tsx` and the server reconnect path
+  // in `auth.handler.ts`).
+  //
+  // The `MAX_ROUNDS * 2` (= 100) cap is therefore a sanity bound
+  // against hostile fuzz inputs (sentinels, bit-flips, obviously
+  // bogus cursors) rather than a tight upper bound on the number
+  // of event-log entries a match can produce. A 100-player match
+  // with N round transitions, up to 100 `ANSWER_SUBMITTED` events
+  // per round, plus `STATE_TRANSITION` / `ROUND_EVALUATED` /
+  // `TIE_BREAK` / `MATCH_FINISHED` / `PLAYER_DISCONNECTED` /
+  // `PLAYER_RECONNECTED` events (see `match-state-machine.ts`) can
+  // generate thousands of log entries — far above 100. The
+  // previous `Number.MAX_SAFE_INTEGER` ceiling was a leftover that
+  // would have accepted obviously bogus cursors.
+  //
+  // If a future change implements real delta-based filtering using
+  // this field as a real cursor, the cap must be re-derived from
+  // the actual per-match event-log size and the comment updated.
   lastSeenSeqNo: z
     .number()
     .int()
