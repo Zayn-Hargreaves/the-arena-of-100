@@ -61,7 +61,12 @@ describe("AdminService", () => {
       findMany: ReturnType<typeof vi.fn>;
     };
     user: { upsert: ReturnType<typeof vi.fn> };
-    eventLog: { deleteMany: ReturnType<typeof vi.fn> };
+    eventLog: {
+      deleteMany: ReturnType<typeof vi.fn>;
+      create: ReturnType<typeof vi.fn>;
+      findMany: ReturnType<typeof vi.fn>;
+      count: ReturnType<typeof vi.fn>;
+    };
     answer: { deleteMany: ReturnType<typeof vi.fn> };
     matchRound: { deleteMany: ReturnType<typeof vi.fn> };
     matchPlayer: { deleteMany: ReturnType<typeof vi.fn> };
@@ -121,7 +126,16 @@ describe("AdminService", () => {
           role: Role.ADMIN,
         }),
       },
-      eventLog: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      eventLog: {
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        create: vi
+          .fn()
+          .mockImplementation(({ data }) =>
+            Promise.resolve({ id: "evt-new", ...data }),
+          ),
+        findMany: vi.fn().mockResolvedValue([]),
+        count: vi.fn().mockResolvedValue(0),
+      },
       answer: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
       matchRound: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
       matchPlayer: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
@@ -177,7 +191,7 @@ describe("AdminService", () => {
         { id: "t2", name: "tag two" },
       ]);
 
-      const result = await service.syncQuestions();
+      const result = await service.syncQuestions(true, "u-admin");
 
       expect(prisma.questionTag.deleteMany).toHaveBeenCalledTimes(1);
       expect(prisma.question.deleteMany).toHaveBeenCalledTimes(1);
@@ -192,7 +206,7 @@ describe("AdminService", () => {
         { id: "t2", name: "tag two" },
       ]);
 
-      await service.syncQuestions(false);
+      await service.syncQuestions(false, "u-admin");
 
       expect(prisma.questionTag.deleteMany).not.toHaveBeenCalled();
       expect(prisma.question.deleteMany).not.toHaveBeenCalled();
@@ -257,7 +271,7 @@ describe("AdminService", () => {
       // For questionTag.findMany (existing question tags) - none
       prisma.questionTag.findMany.mockResolvedValue([]);
 
-      const result = await service.syncQuestions(false);
+      const result = await service.syncQuestions(false, "u-admin");
 
       expect(prisma.question.create).toHaveBeenCalledTimes(2);
       expect(prisma.question.update).not.toHaveBeenCalled();
@@ -277,7 +291,7 @@ describe("AdminService", () => {
       prisma.question.findFirst.mockResolvedValueOnce(null);
       prisma.questionTag.findMany.mockResolvedValue([]);
 
-      await service.syncQuestions(false);
+      await service.syncQuestions(false, "u-admin");
 
       expect(prisma.question.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -300,7 +314,7 @@ describe("AdminService", () => {
         { questionId: "q-new", tagId: "t1" },
       ]);
 
-      const result = await service.syncQuestions(false);
+      const result = await service.syncQuestions(false, "u-admin");
 
       expect(prisma.questionTag.createMany).toHaveBeenCalledWith({
         data: [{ questionId: "q-new", tagId: "t2" }],
@@ -322,7 +336,7 @@ describe("AdminService", () => {
         { questionId: "q-new", tagId: "t2" },
       ]);
 
-      const result = await service.syncQuestions(false);
+      const result = await service.syncQuestions(false, "u-admin");
 
       expect(prisma.questionTag.createMany).not.toHaveBeenCalled();
       expect(result.relationshipsCount).toBe(0);
@@ -331,7 +345,7 @@ describe("AdminService", () => {
     it("upserts the admin user after seeding", async () => {
       prisma.tag.findMany.mockResolvedValueOnce([]);
 
-      await service.syncQuestions(false);
+      await service.syncQuestions(false, "u-admin");
 
       expect(prisma.user.upsert).toHaveBeenCalledWith({
         where: { username: "admin" },
@@ -343,9 +357,8 @@ describe("AdminService", () => {
 
   describe("resetSystem", () => {
     it("purges all dependent Prisma tables in correct order", async () => {
-      await service.resetSystem();
+      await service.resetSystem("u-admin");
 
-      expect(prisma.eventLog.deleteMany).toHaveBeenCalledTimes(1);
       expect(prisma.answer.deleteMany).toHaveBeenCalledTimes(1);
       expect(prisma.matchRound.deleteMany).toHaveBeenCalledTimes(1);
       expect(prisma.matchPlayer.deleteMany).toHaveBeenCalledTimes(1);
@@ -353,11 +366,10 @@ describe("AdminService", () => {
       expect(prisma.roomPlayer.deleteMany).toHaveBeenCalledTimes(1);
       expect(prisma.room.deleteMany).toHaveBeenCalledTimes(1);
 
-      // Enforce the deletion order: eventLog → answer → matchRound →
+      // Enforce the deletion order: answer → matchRound →
       // matchPlayer → match → roomPlayer → room. A reordering would
       // risk violating FK constraints on dependent tables.
       const order = [
-        prisma.eventLog.deleteMany.mock.invocationCallOrder[0],
         prisma.answer.deleteMany.mock.invocationCallOrder[0],
         prisma.matchRound.deleteMany.mock.invocationCallOrder[0],
         prisma.matchPlayer.deleteMany.mock.invocationCallOrder[0],
@@ -383,7 +395,7 @@ describe("AdminService", () => {
         .mockResolvedValueOnce(0)
         .mockResolvedValueOnce(1);
 
-      const result = await service.resetSystem();
+      const result = await service.resetSystem("u-admin");
 
       expect(redisClient.scan).toHaveBeenCalledWith(
         "0",
@@ -407,7 +419,7 @@ describe("AdminService", () => {
     it("returns success message when no Redis keys are present", async () => {
       redisClient.scan.mockResolvedValue(["0", []]);
 
-      const result = await service.resetSystem();
+      const result = await service.resetSystem("u-admin");
 
       expect(redisClient.del).not.toHaveBeenCalled();
       expect(result.success).toBe(true);
@@ -421,7 +433,9 @@ describe("AdminService", () => {
         new RoomError(ErrorCode.ROOM_NOT_FOUND),
       );
 
-      await expect(service.terminateRoom("r-missing")).rejects.toMatchObject({
+      await expect(
+        service.terminateRoom("r-missing", "u-admin", undefined),
+      ).rejects.toMatchObject({
         code: ErrorCode.ROOM_NOT_FOUND,
       });
 
@@ -438,7 +452,11 @@ describe("AdminService", () => {
         currentMatchId: null,
       });
 
-      const result = await service.terminateRoom("r1", "abandoned by host");
+      const result = await service.terminateRoom(
+        "r1",
+        "u-admin",
+        "abandoned by host",
+      );
 
       expect(result.success).toBe(true);
       expect(result.roomId).toBe("r1");
@@ -466,7 +484,7 @@ describe("AdminService", () => {
       });
       matchService.finishMatch.mockResolvedValueOnce({ id: "m2" } as any);
 
-      const result = await service.terminateRoom("r2");
+      const result = await service.terminateRoom("r2", "u-admin", undefined);
 
       expect(result.success).toBe(true);
       expect(result.matchId).toBe("m2");
@@ -504,7 +522,11 @@ describe("AdminService", () => {
       // The natural finish is mid-execution — the guard is held.
       gameLoopService.isMatchFinishing.mockReturnValueOnce(true);
 
-      const result = await service.terminateRoom("r-finishing", "test");
+      const result = await service.terminateRoom(
+        "r-finishing",
+        "test",
+        "u-admin",
+      );
 
       // The kill-switch must NOT call finishMatch, must NOT stop
       // room runtime, must NOT emit ROOM_TERMINATED, must NOT
@@ -534,7 +556,11 @@ describe("AdminService", () => {
       // Default mock returns false; explicitly document that here.
       gameLoopService.isMatchFinishing.mockReturnValueOnce(false);
 
-      const result = await service.terminateRoom("r-normal");
+      const result = await service.terminateRoom(
+        "r-normal",
+        undefined,
+        "u-admin",
+      );
 
       expect(result.success).toBe(true);
       expect(matchService.finishMatch).toHaveBeenCalledWith(
@@ -555,7 +581,7 @@ describe("AdminService", () => {
       );
 
       // Should NOT throw — match finish failure is logged but non-fatal
-      const result = await service.terminateRoom("r3");
+      const result = await service.terminateRoom("r3", "u-admin", undefined);
 
       expect(result.success).toBe(true);
       expect(result.matchId).toBe("m3");
@@ -573,7 +599,7 @@ describe("AdminService", () => {
       });
       matchService.finishMatch.mockRejectedValueOnce("finish boom (string)");
 
-      await service.terminateRoom("r3b");
+      await service.terminateRoom("r3b", "u-admin", undefined);
 
       expect(loggerErrorSpy).toHaveBeenCalledWith(
         expect.stringContaining(
@@ -595,7 +621,7 @@ describe("AdminService", () => {
         ["room:presence:r4:u1", "room:presence:r4:u2"],
       ]);
 
-      await service.terminateRoom("r4");
+      await service.terminateRoom("r4", "u-admin", undefined);
 
       expect(redisClient.scan).toHaveBeenCalledWith(
         "0",
@@ -630,7 +656,7 @@ describe("AdminService", () => {
       // No presence keys, no match keys
       redisClient.scan.mockResolvedValueOnce(["0", []]);
 
-      await service.terminateRoom("r5");
+      await service.terminateRoom("r5", "u-admin", undefined);
 
       // Presence SCAN was called
       expect(redisClient.scan).toHaveBeenCalledWith(
@@ -658,7 +684,7 @@ describe("AdminService", () => {
       );
 
       // Must NOT throw — caller still needs the partial result.
-      const result = await service.terminateRoom("r6");
+      const result = await service.terminateRoom("r6", "u-admin", undefined);
 
       // Partial-success signaling
       expect(result.success).toBe(false);
@@ -690,7 +716,7 @@ describe("AdminService", () => {
       });
 
       // Must NOT throw — the kill-switch is best-effort per step.
-      const result = await service.terminateRoom("r7");
+      const result = await service.terminateRoom("r7", "u-admin", undefined);
 
       // DB disband MUST still run (the whole point of the defensive wrap).
       expect(roomService.disbandRoom).toHaveBeenCalledWith("r7");
@@ -723,7 +749,7 @@ describe("AdminService", () => {
       );
       // Redis cleanup succeeds (default mocks)
 
-      const result = await service.terminateRoom("r8");
+      const result = await service.terminateRoom("r8", "u-admin", undefined);
 
       expect(result.partial).toBe(true);
       expect(result.cleanupError).toBe("FK constraint violation");
@@ -745,7 +771,7 @@ describe("AdminService", () => {
         new Error("FK constraint violation"),
       );
 
-      const result = await service.terminateRoom("r9");
+      const result = await service.terminateRoom("r9", "u-admin", undefined);
 
       expect(result.partial).toBe(true);
       // First error encountered (Redis) wins — see `if (!cleanupError)`
@@ -768,7 +794,7 @@ describe("AdminService", () => {
       });
 
       // Must NOT throw — the kill-switch is best-effort per step.
-      const result = await service.terminateRoom("r10");
+      const result = await service.terminateRoom("r10", "u-admin", undefined);
 
       // Steps 5 and 6 must still run.
       expect(roomService.disbandRoom).toHaveBeenCalledWith("r10");
@@ -788,7 +814,7 @@ describe("AdminService", () => {
         throw new Error("adapter down");
       });
 
-      await service.terminateRoom("r10b");
+      await service.terminateRoom("r10b", "u-admin", undefined);
 
       expect(loggerErrorSpy).toHaveBeenCalledWith(
         expect.stringContaining(
@@ -808,7 +834,7 @@ describe("AdminService", () => {
         new Error("runtime stop boom"),
       );
 
-      await service.terminateRoom("r12c");
+      await service.terminateRoom("r12c", "u-admin", undefined);
 
       expect(loggerErrorSpy).toHaveBeenCalledWith(
         expect.stringContaining(
@@ -828,7 +854,7 @@ describe("AdminService", () => {
         throw new Error("adapter down");
       });
 
-      await service.terminateRoom("r10c");
+      await service.terminateRoom("r10c", "u-admin", undefined);
 
       expect(loggerErrorSpy).toHaveBeenCalledWith(
         expect.stringContaining(
@@ -848,7 +874,7 @@ describe("AdminService", () => {
         throw new Error("adapter down");
       });
 
-      await service.terminateRoom("r10d");
+      await service.terminateRoom("r10d", "u-admin", undefined);
 
       expect(loggerErrorSpy).toHaveBeenCalledWith(
         expect.stringContaining(
@@ -876,7 +902,7 @@ describe("AdminService", () => {
       });
 
       // Must NOT throw — srem is best-effort, not aborting.
-      const result = await service.terminateRoom("r11");
+      const result = await service.terminateRoom("r11", "u-admin", undefined);
 
       // DB disband still ran.
       expect(roomService.disbandRoom).toHaveBeenCalledWith("r11");
@@ -905,7 +931,7 @@ describe("AdminService", () => {
       );
 
       // Must NOT throw — the kill-switch is best-effort per step.
-      const result = await service.terminateRoom("r12");
+      const result = await service.terminateRoom("r12", "u-admin", undefined);
 
       // Steps 4-6 must still run.
       expect(gameLoopService.emitRoomTerminated).toHaveBeenCalledWith("r12", {
@@ -929,7 +955,7 @@ describe("AdminService", () => {
         new Error("runtime stop boom"),
       );
 
-      await service.terminateRoom("r12b");
+      await service.terminateRoom("r12b", "u-admin", undefined);
 
       expect(loggerErrorSpy).toHaveBeenCalledWith(
         expect.stringContaining(
@@ -952,7 +978,7 @@ describe("AdminService", () => {
         throw "Redis connection lost (string)";
       });
 
-      const result = await service.terminateRoom("r13");
+      const result = await service.terminateRoom("r13", "u-admin", undefined);
 
       expect(result.partial).toBe(true);
       // String(error) fallback produces the raw string message
@@ -971,7 +997,7 @@ describe("AdminService", () => {
         throw { message: "non-error rejection" };
       });
 
-      const result = await service.terminateRoom("r14");
+      const result = await service.terminateRoom("r14", "u-admin", undefined);
 
       expect(result.partial).toBe(true);
       // String(error) on a plain object = "[object Object]"
@@ -991,11 +1017,221 @@ describe("AdminService", () => {
         throw { code: "TRANSIENT" };
       });
 
-      const result = await service.terminateRoom("r15");
+      const result = await service.terminateRoom("r15", "u-admin", undefined);
 
       // srem failure is best-effort — must not abort the kill-switch.
       expect(result.success).toBe(true);
       expect(result.partial).toBe(false);
+    });
+  });
+
+  // ============================================================
+  // PR 3: Admin Audit Event tests
+  // ============================================================
+  describe("admin audit (PR 3)", () => {
+    it("terminateRoom appends an ADMIN_TERMINATE_ROOM audit row with the captured adminUserId", async () => {
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r-audit",
+        currentMatchId: "m-audit",
+      });
+      matchService.finishMatch.mockResolvedValueOnce({ id: "m-audit" } as any);
+
+      await service.terminateRoom("r-audit", "u-test-admin", "abandoned");
+
+      // eventLog.create called once with the audit row
+      expect(prisma.eventLog.create).toHaveBeenCalledTimes(1);
+      expect(prisma.eventLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            roomId: "r-audit",
+            matchId: "m-audit",
+            adminUserId: "u-test-admin",
+            eventType: "ADMIN_TERMINATE_ROOM",
+            payload: expect.objectContaining({
+              success: true,
+              partial: false,
+              reason: "KILL_SWITCH",
+            }),
+          }),
+        }),
+      );
+    });
+
+    it("terminateRoom appends an audit row with reason=ALREADY_FINISHING when the B1 guard aborts", async () => {
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r-finishing",
+        currentMatchId: "m-finishing",
+      });
+      gameLoopService.isMatchFinishing.mockReturnValueOnce(true);
+
+      await service.terminateRoom("r-finishing", "u-test-admin", "test");
+
+      expect(prisma.eventLog.create).toHaveBeenCalledTimes(1);
+      expect(prisma.eventLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            roomId: "r-finishing",
+            matchId: "m-finishing",
+            adminUserId: "u-test-admin",
+            eventType: "ADMIN_TERMINATE_ROOM",
+            payload: expect.objectContaining({
+              success: false,
+              partial: false,
+              reason: "ALREADY_FINISHING",
+            }),
+          }),
+        }),
+      );
+    });
+
+    it("appendAudit failure does not block the kill-switch result (best-effort)", async () => {
+      // Simulate the DB rejecting the audit insert. The kill-switch
+      // must still return a normal TerminateRoomResult to the caller.
+      roomService.getRoom.mockResolvedValueOnce({
+        id: "r-audit-fail",
+        currentMatchId: null,
+      });
+      prisma.eventLog.create.mockRejectedValueOnce(
+        new Error("DB write failed"),
+      );
+
+      const result = await service.terminateRoom(
+        "r-audit-fail",
+        "u-test-admin",
+        undefined,
+      );
+
+      // Kill-switch returned a normal result (not partial, not thrown)
+      expect(result.success).toBe(true);
+      expect(result.partial).toBe(false);
+      expect(result.roomId).toBe("r-audit-fail");
+      // Audit insert was attempted
+      expect(prisma.eventLog.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("resetSystem writes a completed audit row with delete counts", async () => {
+      // Each deleteMany returns a non-zero count to verify the
+      // completed-row payload surfaces the actual numbers.
+      prisma.answer.deleteMany.mockResolvedValueOnce({ count: 50 });
+      prisma.matchRound.deleteMany.mockResolvedValueOnce({ count: 12 });
+      prisma.matchPlayer.deleteMany.mockResolvedValueOnce({ count: 5 });
+      prisma.match.deleteMany.mockResolvedValueOnce({ count: 2 });
+      prisma.roomPlayer.deleteMany.mockResolvedValueOnce({ count: 10 });
+      prisma.room.deleteMany.mockResolvedValueOnce({ count: 1 });
+
+      await service.resetSystem("u-test-admin");
+
+      expect(prisma.eventLog.create).toHaveBeenCalledTimes(1);
+      expect(prisma.eventLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            adminUserId: "u-test-admin",
+            eventType: "ADMIN_RESET_SYSTEM",
+            payload: expect.objectContaining({
+              dbDeleted: expect.objectContaining({
+                answers: 50,
+                matchRounds: 12,
+                matchPlayers: 5,
+                matches: 2,
+                roomPlayers: 10,
+                rooms: 1,
+              }),
+            }),
+          }),
+        }),
+      );
+    });
+
+    it("resetSystem still writes the audit row even if the audit insert fails (best-effort)", async () => {
+      prisma.eventLog.create.mockRejectedValueOnce(
+        new Error("audit write failed"),
+      );
+
+      await expect(service.resetSystem("u-test-admin")).resolves.toEqual(
+        expect.objectContaining({
+          success: true,
+        }),
+      );
+
+      expect(prisma.eventLog.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("syncQuestions appends an ADMIN_SYNC_QUESTIONS audit row with the seed stats", async () => {
+      prisma.tag.findMany.mockResolvedValueOnce([
+        { id: "t1", name: "tag one" },
+        { id: "t2", name: "tag two" },
+      ]);
+
+      const result = await service.syncQuestions(true, "u-test-admin");
+
+      // Existing return shape intact
+      expect(result.success).toBe(true);
+      // Audit row written
+      expect(prisma.eventLog.create).toHaveBeenCalledTimes(1);
+      expect(prisma.eventLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            adminUserId: "u-test-admin",
+            eventType: "ADMIN_SYNC_QUESTIONS",
+            payload: expect.objectContaining({
+              clearExisting: true,
+              questionsCount: 2,
+              tagsCount: 2,
+              relationshipsCount: 2,
+            }),
+          }),
+        }),
+      );
+    });
+
+    it("getAuditEvents forwards filter params to findMany + count", async () => {
+      const fakeEvents = [
+        { id: "evt-1", eventType: "ADMIN_TERMINATE_ROOM" },
+        { id: "evt-2", eventType: "ADMIN_TERMINATE_ROOM" },
+      ];
+      prisma.eventLog.findMany.mockResolvedValueOnce(fakeEvents);
+      prisma.eventLog.count.mockResolvedValueOnce(7);
+
+      const result = await service.getAuditEvents({
+        limit: 50,
+        offset: 10,
+        roomId: "r-filter",
+        eventType: "ADMIN_TERMINATE_ROOM",
+      });
+
+      expect(result.events).toEqual(fakeEvents);
+      expect(result.total).toBe(7);
+      expect(prisma.eventLog.findMany).toHaveBeenCalledWith({
+        where: {
+          adminUserId: { not: null },
+          roomId: "r-filter",
+          eventType: "ADMIN_TERMINATE_ROOM",
+        },
+        orderBy: { createdAt: "desc" },
+        skip: 10,
+        take: 50,
+      });
+      expect(prisma.eventLog.count).toHaveBeenCalledWith({
+        where: {
+          adminUserId: { not: null },
+          roomId: "r-filter",
+          eventType: "ADMIN_TERMINATE_ROOM",
+        },
+      });
+    });
+
+    it("getAuditEvents omits absent filters from the where clause", async () => {
+      prisma.eventLog.findMany.mockResolvedValueOnce([]);
+      prisma.eventLog.count.mockResolvedValueOnce(0);
+
+      await service.getAuditEvents({ limit: 25, offset: 0 });
+
+      expect(prisma.eventLog.findMany).toHaveBeenCalledWith({
+        where: { adminUserId: { not: null } },
+        orderBy: { createdAt: "desc" },
+        skip: 0,
+        take: 25,
+      });
     });
   });
 });

@@ -148,7 +148,7 @@ PR gộp duy nhất đóng 3 race bug backend (B1, B2, B3) + 8 correctness bug f
 #### Out of scope (deferred sang PR riêng)
 
 - PR 2: Mass-Spectator Transport Scaling
-- PR 3: Admin Kill-Switch Append-Only Audit Event (vẫn chưa có)
+- PR 3: Admin Kill-Switch Append-Only Audit Event (đang thực hiện)
 - PR 4: In-Match AFK Policy (P1, product — pending decision)
 - PR 5: Optimistic Answer Rollback đầy đủ (F6 chỉ bỏ dead data, chưa có idempotency key)
 - PR 6: Home Page Shell Gradient Cleanup
@@ -212,6 +212,31 @@ Housekeeping PR gộp 3 concern cleanup-style cùng blast radius thấp còn l�
 - **PR 5 (Optimistic UI Rollback đầy đủ)** — game feel, không block MVP.
 - **PR 7 (Content Moderation + Message Sanitizer + Device Fingerprint)** — chờ shared profanity pipeline.
 - **PR 8-12** (rematch, accessibility, k6 load, Playwright, `Room.maxPlayers` payload).
+
+### ✅ Phase 14 — Admin Kill-Switch Append-Only Audit Event (`feat/admin-audit-event-log`, 2026-06-18) — In Progress
+
+`AdminService` giờ ghi audit rows cho terminate/reset/sync, `AdminController` truyền `req.user.userId`, và `GET /admin/audit-events` đã có query DTO + pagination/filter. EventLog được mở rộng để lưu room/admin scope, audit rows được giữ lại qua reset.
+
+#### Schema + service
+
+- [x] `apps/api/prisma/schema.prisma` — `EventLog` thêm `roomId`, `adminUserId`; `matchId` nullable; `onDelete: SetNull`; indexes mới cho `roomId/adminUserId/eventType + createdAt`
+- [x] `apps/api/prisma/migrations/20260618120000_admin_audit_event/migration.sql` — migration áp dụng thành công trên dev DB
+- [x] `apps/api/src/modules/admin/admin.service.ts` — `appendAudit` best-effort helper + audit calls cho `terminateRoom`, `resetSystem`, `syncQuestions` + `getAuditEvents`
+- [x] `apps/api/src/modules/admin/admin.controller.ts` — capture `req.user.userId` + `GET /admin/audit-events`
+
+#### Tests + verification
+
+- [x] `apps/api/src/modules/admin/admin.service.spec.ts` — 43 tests (thêm audit append/query coverage)
+- [x] `apps/api/src/modules/admin/admin.controller.spec.ts` — 11 tests
+- [x] `apps/api/src/modules/admin/dto/get-audit-events.dto.spec.ts` — 4 tests
+- [x] `pnpm --filter @arena/api test` pass: **792/792** unit tests
+- [x] `pnpm --filter @arena/api test:coverage` pass: `admin.controller.ts` **100%** stmts / **100%** branch / **100%** funcs / **100%** lines; `admin.service.ts` **100%** stmts / **96.43%** branch / **100%** funcs / **100%** lines
+
+#### Notes
+
+- Audit append is best-effort and never blocks admin actions
+- Reset keeps audit rows queryable; it no longer purges `event_logs`
+- `GET /admin/audit-events` is backend-only for now; no frontend panel in this PR
 
 ### ✅ Phase 11 — Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`, 2026-06-14) — Hoàn thành
 
