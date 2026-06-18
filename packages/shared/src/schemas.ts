@@ -76,20 +76,25 @@ export type StartMatchPayload = z.infer<typeof StartMatchPayloadSchema>;
 // report.)
 const ANSWER_MAX_LENGTH = 1024;
 
-// clientTimestamp upper bound: ~1 year of slack beyond the moment
+// clientTimestamp upper bound: ~5 minutes of slack beyond the moment
 // the validation runs. Catches client clock-skew (browsers with
 // wildly wrong system clocks, mobile devices in poor-network states)
 // and obvious garbage payloads without rejecting the legitimate
-// "slightly out of sync" case. Number.MAX_SAFE_INTEGER was previously
-// used here, which allowed timestamps thousands of years in the
-// past or future — clearly a payload corruption indicator.
+// "slightly out of sync" case. The previous 1-year bound was a
+// permissive default that accepted clearly corrupt payloads — any
+// client clock more than a few minutes off is almost certainly a bug
+// or a tampering attempt.
 //
 // `.refine()` is required (not a frozen `Date.now() + OFFSET`
 // constant) so a long-running server process keeps using the
 // current clock as the reference, not a value baked in at module
-// load. Otherwise a server up >1 year would start rejecting every
+// load. Otherwise a server up >5 minutes would start rejecting every
 // legitimate SUBMIT_ANSWER whose timestamp is in the present.
-const CLIENT_TIMESTAMP_MAX_OFFSET_MS = 365 * 24 * 60 * 60 * 1000;
+//
+// Headroom rationale: ROUND_DURATION_MS = 15s. 5 minutes = 20x
+// round duration = more than enough for legitimate NTP drift, mobile
+// sleep recovery, and network buffering combined.
+const CLIENT_TIMESTAMP_MAX_OFFSET_MS = 5 * 60 * 1000;
 
 export const SubmitAnswerPayloadSchema = z.object({
   matchId: idSchema,
@@ -119,7 +124,34 @@ export type SubmitAnswerPayload = z.infer<typeof SubmitAnswerPayloadSchema>;
 
 export const RequestSnapshotPayloadSchema = z.object({
   matchId: idSchema,
-  lastSeenSeqNo: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  // lastSeenSeqNo is the cursor the client sends when asking for a
+  // snapshot. NOTE: it is currently a pass-through echo, not a real
+  // event-log cursor — `MatchStateMachine.getSnapshot` returns the
+  // value verbatim in the snapshot payload and does not filter
+  // events. Both current call sites hardcode 0 (the client hydrate
+  // path in `game/[matchId]/page.tsx` and the server reconnect path
+  // in `auth.handler.ts`).
+  //
+  // The `MAX_ROUNDS * 2` (= 100) cap is therefore a sanity bound
+  // against hostile fuzz inputs (sentinels, bit-flips, obviously
+  // bogus cursors) rather than a tight upper bound on the number
+  // of event-log entries a match can produce. A 100-player match
+  // with N round transitions, up to 100 `ANSWER_SUBMITTED` events
+  // per round, plus `STATE_TRANSITION` / `ROUND_EVALUATED` /
+  // `TIE_BREAK` / `MATCH_FINISHED` / `PLAYER_DISCONNECTED` /
+  // `PLAYER_RECONNECTED` events (see `match-state-machine.ts`) can
+  // generate thousands of log entries — far above 100. The
+  // previous `Number.MAX_SAFE_INTEGER` ceiling was a leftover that
+  // would have accepted obviously bogus cursors.
+  //
+  // If a future change implements real delta-based filtering using
+  // this field as a real cursor, the cap must be re-derived from
+  // the actual per-match event-log size and the comment updated.
+  lastSeenSeqNo: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(GAME_CONFIG.MAX_ROUNDS * 2),
 });
 export type RequestSnapshotPayload = z.infer<
   typeof RequestSnapshotPayloadSchema

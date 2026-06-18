@@ -11,23 +11,17 @@ import {
 import { Logger, UseFilters } from "@nestjs/common";
 import { Server, Socket } from "socket.io";
 import {
+  // Types
   ClientEvent,
   ServerEvent,
-  type JoinRoomPayload,
-  type CreateRoomPayload,
-  type SubmitAnswerPayload,
-  type RequestSnapshotPayload,
-  type LeaveRoomPayload,
-  type HeartbeatPayload,
   type AuthenticatePayload,
-} from "@arena/shared";
-import { AuthHandler, RoomHandler, MatchHandler } from "./handlers";
-import { AuthService } from "../modules/auth/auth.service";
-import { PresenceService } from "../modules/match/presence.service";
-import { GameLoopService } from "../modules/match/game-loop.service";
-import { WsValidationPipe } from "../common/pipes/ws-validation.pipe";
-import { WsExceptionFilter } from "../common/filters/ws-exception.filter";
-import {
+  type CreateRoomPayload,
+  type HeartbeatPayload,
+  type JoinRoomPayload,
+  type LeaveRoomPayload,
+  type RequestSnapshotPayload,
+  type SubmitAnswerPayload,
+  // Zod schemas (used by per-event validation pipes below)
   AuthenticatePayloadSchema,
   CreateRoomPayloadSchema,
   HeartbeatPayloadSchema,
@@ -37,6 +31,12 @@ import {
   StartMatchPayloadSchema,
   SubmitAnswerPayloadSchema,
 } from "@arena/shared";
+import { AuthHandler, RoomHandler, MatchHandler } from "./handlers";
+import { AuthService } from "../modules/auth/auth.service";
+import { PresenceService } from "../modules/match/presence.service";
+import { GameLoopService } from "../modules/match/game-loop.service";
+import { WsValidationPipe } from "../common/pipes/ws-validation.pipe";
+import { WsExceptionFilter } from "../common/filters/ws-exception.filter";
 
 // Per-event validation pipe instances. Each one is a thin wrapper around
 // the corresponding Zod schema. Cached at module level so a single
@@ -146,7 +146,13 @@ export class GameGateway
   }
 
   async handleDisconnect(@ConnectedSocket() client: Socket) {
-    this.authHandler.handleDisconnect(client);
+    // L2 fix: handleDisconnect is async (queries active rooms, notifies
+    // match). Awaiting here means any error from the handler propagates
+    // through Nest's lifecycle instead of being swallowed as an
+    // unhandled rejection. The handler itself has internal try/catch
+    // around the room/match lookup, so a rejection here would only come
+    // from a programming bug — and we want those to surface, not hide.
+    await this.authHandler.handleDisconnect(client);
   }
 
   @SubscribeMessage(ClientEvent.AUTHENTICATE)
