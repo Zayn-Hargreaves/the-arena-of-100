@@ -184,7 +184,7 @@ export class AdminService {
       payload: {
         clearExisting,
         questionsCount: seededQuestions,
-        tagsCount: seededTags,
+        tagsCount: allTagNamesArray.length,
         relationshipsCount: seededQuestionTags,
       },
     });
@@ -192,7 +192,7 @@ export class AdminService {
     return {
       success: true,
       questionsCount: seededQuestions,
-      tagsCount: seededTags,
+      tagsCount: allTagNamesArray.length,
       relationshipsCount: seededQuestionTags,
     };
   }

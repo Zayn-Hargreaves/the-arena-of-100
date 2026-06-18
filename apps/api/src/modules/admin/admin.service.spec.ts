@@ -524,8 +524,8 @@ describe("AdminService", () => {
 
       const result = await service.terminateRoom(
         "r-finishing",
-        "test",
         "u-admin",
+        "test",
       );
 
       // The kill-switch must NOT call finishMatch, must NOT stop
