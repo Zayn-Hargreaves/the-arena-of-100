@@ -1,11 +1,11 @@
 # Active Context: Arena of 100
 
 > Cập nhật 2026-06-18 dựa trên code + GitNexus.
-> Bản 2026-06-06 từng liệt kê lobby lifecycle / heartbeat / graceful exit / kill-switch là "chưa có"; thực tế code đã hoàn thành baseline ở PR #38 (lobby/heartbeat/graceful exit) và PR #47 (admin kill-switch), nay đồng bộ lại. 2026-06-14 cũng đóng PR Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`): thêm `JoinMode` payload (`RoomJoinedPayload.joinedAs`) + backend join policy 4-way matrix + server-side submit gate + frontend spectator UI. Cùng ngày cũng close PR `fix/match-race-frontend-correctness`: 3 race bug backend (B1-B3) + 8 correctness bug frontend (F1-F8). 2026-06-18 close PR `chore/gateway-schema-tightening-home-gradient`: L2 + L3 (gateway import dedupe + await handleDisconnect; tighten `clientTimestamp` + `lastSeenSeqNo` validation bounds) + PR 6 (drop redundant home page gradient). Xem `Recent Changes` và `Phase 12/13` dưới đây.
+> Bản 2026-06-06 từng liệt kê lobby lifecycle / heartbeat / graceful exit / kill-switch là "chưa có"; thực tế code đã hoàn thành baseline ở PR #38 (lobby/heartbeat/graceful exit) và PR #47 (admin kill-switch), nay đồng bộ lại. 2026-06-14 cũng đóng PR Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`): thêm `JoinMode` payload (`RoomJoinedPayload.joinedAs`) + backend join policy 4-way matrix + server-side submit gate + frontend spectator UI. Cùng ngày cũng close PR `fix/match-race-frontend-correctness`: 3 race bug backend (B1-B3) + 8 correctness bug frontend (F1-F8). 2026-06-18 close PR `chore/gateway-schema-tightening-home-gradient`: L2 + L3 (gateway import dedupe + await handleDisconnect; tighten `clientTimestamp` + `lastSeenSeqNo` validation bounds) + PR 6 (drop redundant home page gradient). Hiện đang làm PR 3 — Admin Kill-Switch Append-Only Audit Event. Xem `Recent Changes` và `Phase 12/13/14` dưới đây.
 
 ## Current Focus
 
-- Nhánh hiện tại: `main` (PR `fix/match-race-frontend-correctness` merged 2026-06-14; PR `chore/gateway-schema-tightening-home-gradient` ready for review ở branch `chore/gateway-schema-tightening-home-gradient` — xem `Phase 13` ở `memory-bank/progress.md`). Branch kế tiếp ưu tiên: **PR 3 — Admin Kill-Switch Audit Event** (P1 compliance gap — `AdminService.terminateRoom` mutate DB + Redis + timers + emit `ROOM_TERMINATED` nhưng KHÔNG ghi `EventLog` row, vi phạm `review.instructions.md:36`). Cần schema migration (thêm `roomId`, `adminUserId`, `reason` columns) + capture userId từ controller. Sau đó: in-match AFK policy (đang chờ product decision loại vs. chuyển spectator).
+- Nhánh hiện tại: `feat/admin-audit-event-log` (PR 3 — Admin Kill-Switch Append-Only Audit Event đang implementation; xem `Phase 14` ở `memory-bank/progress.md`). PR kế tiếp sau đó vẫn là in-match AFK policy (đang chờ product decision loại vs. chuyển spectator).
 - Trọng tâm review gần nhất:
   - backend `GameLoopService.finishMatchLoop` B1 idempotency guard (`finishingMatches` Set) + `isMatchFinishing(matchId)` public method
   - backend `MatchStateMachine` B2 `winnerId: string | null` widening + empty-roster early-return trong `tieBreak` / `determineWinner` / `finishMatch`
@@ -14,7 +14,7 @@
   - frontend `socket-store.ts` F1 `match.players[i].status` stamping từ PLAYER_ELIMINATED + ROUND_ENDED
   - frontend `game/[matchId]/page.tsx` F1-F7: sidebar real data, bỏ magic number, tách 2 timer ref, dynamic maxPlayers, loading state, currentRoundNo guard, round-end signal mới
   - frontend `use-lobby-lifecycle.ts` F8 `joinInFlightRef` chống double-emit
-- Trạng thái thật của code: lobby/heartbeat/graceful exit/admin kill-switch/Design System Phase 5B/drop-in spectating/3 race fix + 8 frontend fix đều baseline-done. Còn lại 4 product gap: in-match AFK, mass-spectator scaling, content moderation, optimistic rollback.
+- Trạng thái thật của code: lobby/heartbeat/graceful exit/admin kill-switch/Design System Phase 5B/drop-in spectating/3 race fix + 8 frontend fix đều baseline-done. PR 3 audit trail đang được thêm. Còn lại 4 product gap: in-match AFK, mass-spectator scaling, content moderation, optimistic rollback.
 - Mục tiêu lần cập nhật này:
   - Khẳng định các mốc đã xong (lobby baseline, heartbeat, graceful exit, admin kill-switch, profile/rankings real APIs, spectator baseline khi bị loại, drop-in spectating, race fixes, frontend correctness).
   - Liệt kê các gap còn lại (in-match AFK, mass-spectator scaling, content moderation, optimistic rollback, home page gradient).
@@ -91,6 +91,11 @@
   - **L3**: `schemas.ts:97` `CLIENT_TIMESTAMP_MAX_OFFSET_MS` từ 1 năm → 5 phút (headroom 20x `ROUND_DURATION_MS`); `schemas.ts:135-139` `lastSeenSeqNo.max(Number.MAX_SAFE_INTEGER)` → `GAME_CONFIG.MAX_ROUNDS * 2` (= 100)
   - **PR 6**: `apps/web/src/app/[locale]/page.tsx:193` drop `bg-gradient-to-br from-[#FFF0F5] via-[#E6E6FA] to-[#E0F2FE]` (đã có cùng gradient ở `body` `globals.css:22`)
   - **Tests**: 779/779 unit pass (was 772, +7 net: 1 cho L2 await error propagation + 6 cho L3 bound tightening); coverage per-file ≥90%: `game.gateway.ts` 100%/93.1%, `schemas.ts` 100%/100%; web 31/31 + game-core 70/70 + shared 3/3 + E2E 11/11 không break
+- **Admin Kill-Switch Audit Event (PR `feat/admin-audit-event-log`, 2026-06-18, in progress)**
+  - `EventLog` được mở rộng để lưu `roomId`, `adminUserId`, `matchId?`; audit rows không còn bị purge khi reset
+  - `AdminService` append audit rows cho `terminateRoom`, `resetSystem`, `syncQuestions`; thêm `getAuditEvents`
+  - `AdminController` truyền `req.user.userId` xuống service và expose `GET /admin/audit-events`
+  - `apps/api` full suite pass **792/792**; coverage: `admin.controller.ts` 100/100/100/100, `admin.service.ts` 100/96.43/100/100
 
 ## Architecture Assessment Summary
 
@@ -102,7 +107,7 @@
 
 ### 🟡 Significant Gaps (cập nhật 2026-06-14)
 
-1. ~~Missing Test Coverage~~ — Bây giờ có spec cho game-core, game-loop (kể cả persistence + admin helpers), auth, room, question, admin, handlers, common pipes/interceptors, presence, users, rankings, terminate-room DTO. **779/779 api + 70/70 game-core + 31/31 web + 11/11 E2E pass** (test run 2026-06-18 sau PR `chore/gateway-schema-tightening-home-gradient` thêm 7 test mới cho L2/L3; bản cũ 2026-06-14 báo 712/68/31 — đã lệch do các commit `fix(bug): fix comment` post-merge + Phase 13).
+1. ~~Missing Test Coverage~~ — Bây giờ có spec cho game-core, game-loop (kể cả persistence + admin helpers), auth, room, question, admin, handlers, common pipes/interceptors, presence, users, rankings, terminate-room DTO. **792/792 api + 70/70 game-core + 31/31 web + 11/11 E2E pass** (test run 2026-06-18 sau PR `feat/admin-audit-event-log`; bản cũ 2026-06-18 báo 779/779 — lệch do PR 3 audit coverage).
 2. ~~No Round Timer Management~~ [RESOLVED] — `GameLoopService` đã enforce 15s timeout.
 3. **Gateway ↔ Service Coupling** — gateway vẫn gọi service trực tiếp; use-case layer chưa tách hẳn. Đã chấp nhận cho MVP.
 4. ~~Frontend Only Has Landing Page~~ [RESOLVED] — Có lobby/game/result/profile/rankings/settings/admin/room-create/not-found.
@@ -114,7 +119,7 @@
 ### 🟢 Architecture Score (cập nhật 2026-06-18)
 
 - Monorepo: 10/10, Package Boundaries: 9/10, Domain Logic: 9/10
-- Backend: **9/10** (race fixes B1, B2, B3 landed 2026-06-14 — `finishMatchLoop` idempotency, `winnerId` null guard, `launchRoomMatch` FOR UPDATE; L2/L3 + home gradient landed 2026-06-18 — gateway await + import dedupe + tighter validation bounds), Frontend: **8.5/10** (F1-F8 correctness hardening landed — sidebar real data, bỏ magic number, timer leak fix, dynamic maxPlayers, loading state, currentRoundNo guard, round-end signal, auto-join guard), Infra: 8/10, Testing: **9.5/10** (779 unit + 11 E2E + 31 web + 70 game-core; per-file ≥90% coverage gate đạt cho mọi file production sửa)
+- Backend: **9/10** (race fixes B1, B2, B3 landed 2026-06-14 — `finishMatchLoop` idempotency, `winnerId` null guard, `launchRoomMatch` FOR UPDATE; L2/L3 + home gradient landed 2026-06-18 — gateway await + import dedupe + tighter validation bounds; PR 3 audit trail đang in progress), Frontend: **8.5/10** (F1-F8 correctness hardening landed — sidebar real data, bỏ magic number, timer leak fix, dynamic maxPlayers, loading state, currentRoundNo guard, round-end signal, auto-join guard), Infra: 8/10, Testing: **9.5/10** (792 unit + 11 E2E + 31 web + 70 game-core; per-file ≥90% coverage gate đạt cho mọi file production sửa)
 - **Overall: ~8.8/10**
 
 ## Active Decisions (selected highlights)
