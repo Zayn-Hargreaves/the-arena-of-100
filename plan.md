@@ -1,4 +1,4 @@
-# Plan: Next PR — Match Race + Frontend Correctness Hardening — ✅ MERGED 2026-06-14
+​# Plan: Next PR — Match Race + Frontend Correctness Hardening — ✅ MERGED 2026-06-14
 
 > **Trạng thái (2026-06-14)**: PR `fix/match-race-frontend-correctness` đã merge.
 > 3 bug backend (B1, B2, B3) + 8 bug frontend (F1-F8) đã sửa với 51 test mới (tổng 712 backend + 68 game-core + 31 web + 11 E2E), coverage per-file ≥90% cho 4 file production sửa. Xem `memory-bank/progress.md` section "Phase 12 — Match Race + Frontend Correctness Hardening" để có evidence đầy đủ.
@@ -28,6 +28,51 @@
 > - Docs: `memory-bank/progress.md`, `memory-bank/activeContext.md`
 >
 > Plan này là **plan gộp duy nhất** — backend B1-B3 + frontend F1-F8 trong 1 PR, vì user xác nhận muốn sửa 1 thể. Bám theo format plan cũ (PR Snapshot, Tracking Board, Reality Check, GitNexus Context, Hard Constraints, Success Criteria, Out Of Scope, phases, Definition Of Done, Explicit Deferrals). Phases được group theo concern: backend xong trước, frontend 🔴 tiếp, frontend 🟡 cuối.
+
+## Post-Merge Audit Addendum (2026-06-14, later same day)
+
+Sau khi PR này đã merge, review bổ sung bằng đọc code + GitNexus context/impact trên code live cho thấy plan gốc **chưa capture hết** một nhóm bug backend thuộc nhánh recovery/idempotency. Chúng không phủ định giá trị của B1-B3 + F1-F8; nhưng nếu coi PR này là “đã khóa toàn bộ correctness gap”, thì đó là đánh giá thiếu.
+
+### Omitted backend follow-up bugs
+
+- **B4** (🔴) `apps/api/src/modules/match/match.service.ts:253-307` — `finishMatch` khi đó chỉ được bảo vệ bởi guard in-memory ở `GameLoopService.finishMatchLoop` (B1). Guard đó không sống qua **process restart** hoặc **multi-process deployment**, nên một finisher thứ hai vẫn có thể overwrite `winnerId` / `endedAt` ở DB.
+- **B5** (🔴) `apps/api/src/modules/match/match.service.ts:390-459` — `saveRoundAndAnswers` atomic nhưng chưa idempotent. Nếu `endRound` retry sau khi commit thành công vòng trước, `matchRound.create` có thể đụng `@@unique([matchId, roundNo])` với `P2002` và làm match kẹt vĩnh viễn.
+- **B6** (🔴) `apps/api/src/modules/match/match.service.ts:144-185` — `rehydrateCorrectAnswer` nằm dưới `getStateMachine`, mà `getStateMachine` lại chạy trên hầu hết hot path (`submit answer`, `snapshot`, `disconnect`, `reconnect`, timer callbacks). Throw khi thiếu `Question` hoặc Prisma lookup lỗi sẽ làm recovered match **permanently unrecoverable**.
+- **B7** (🟡) `apps/api/src/modules/match/match.service.ts:341-364` — `buildScoreUpdateOps` trả `[]` âm thầm nếu state machine đã mất. Kết quả: match vẫn finish nhưng **không persist final scores**, và operator không có log để phát hiện.
+
+### Additional low-risk follow-ups found after merge
+
+- **L1** (🟡) `packages/game-core/src/match-state-machine.ts:399-447` — tie-break deterministic nhưng vẫn phụ thuộc **thứ tự `playerIds` array**, không hoàn toàn phụ thuộc stats + `matchId` như comment gợi ý.
+- **L2** (🟢) `apps/api/src/gateways/game.gateway.ts:13-39` và `:148-150` — duplicate import block từ `@arena/shared`; `handleDisconnect` không `await` `authHandler.handleDisconnect(client)`. Blast radius thấp, chủ yếu cleanup/defensive consistency.
+- **L3** (🟢) `packages/shared/src/schemas.ts:79-123` — `clientTimestamp` vẫn cho phép ±1 năm skew; `RequestSnapshotPayload.lastSeenSeqNo` vẫn mở tới `Number.MAX_SAFE_INTEGER`. Không phải blocker, nhưng vẫn là validation nới lỏng hơn mức thực tế cần.
+
+### GitNexus evidence used for this addendum
+
+- `MatchService.rehydrateCorrectAnswer` context cho thấy symbol này nằm trên rất nhiều execution flow nóng: `handleAuthenticate`, `handleDisconnect`, `handleSubmitAnswer`, `handleRequestSnapshot`, `executeRound`, `endRound`, `checkMatchEnd`, `finishMatchLoop`, `checkEarlyTermination`.
+- `MatchService.finishMatch` context/impact cho thấy symbol này vẫn là điểm hợp lưu giữa `GameLoopService.finishMatchLoop` và `AdminService.terminateRoom`, nên idempotency chỉ ở in-memory là chưa đủ.
+- `GameGateway.handleDisconnect` impact là **LOW**, nên follow-up L2 được ghi nhận là cleanup nhỏ chứ không phải blocker correctness ngang B4-B7.
+
+### Verification 2026-06-14 (later same day, post-addendum)
+
+Đọc lại code + GitNexus context/impact sau khi addendum được viết cho thấy **5 trong 7 follow-up bug đã được land trong cùng ngày** qua chuỗi commit "fix(bug): fix comment" (`87d3bb9`, `e9b9c42`, `d069a76`, `67abaa7`, `69b9ab6`, `d049035`, `126641c`). PR 2A và PR 2C trong "Explicit Deferrals" bên dưới vì thế cần đánh dấu lại trạng thái; PR 2B vẫn còn nguyên scope.
+
+| ID     | Trạng thái code live (2026-06-14) | Bằng chứng                                                                                                                                                                                                                                           |
+| ------ | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **B4** | ✅ **RESOLVED**                   | `match.service.ts:285-308` — `updateMany` với `where: { id: matchId, status: { not: MatchStatus.FINISHED } }`; nếu `count: 0` (đã FINISHED) thì log warn + return `findUnique` mà không overwrite. Comment `1f/2a fix` ở line 276.                   |
+| **B5** | ✅ **RESOLVED**                   | `match.service.ts:390-450` — `saveRoundAndAnswers` có pre-check `matchRound.findUnique` trong transaction; P2002 catch block trả về existing round như idempotent no-op. Comment `2b fix`.                                                           |
+| **B6** | ✅ **RESOLVED**                   | `match.service.ts:143-185` — full try/catch bao quanh `prisma.question.findUnique`; cả 2 nhánh (question not found, DB lookup throw) đều `logger.error` + return; match vẫn recoverable. Comment `2c fix`.                                           |
+| **B7** | ✅ **RESOLVED**                   | `match.service.ts:341-355` — `buildScoreUpdateOps` log `logger.warn` (không silent) khi state machine đã mất, kèm hint "Redis expiry or partial cleanup". Comment `2d fix`.                                                                          |
+| **L1** | ✅ **RESOLVED**                   | `match-state-machine.ts:384-411` — `tieBreak` dùng `mulberry32` PRNG seeded bằng `hashStringToSeed(state.id)`; mỗi playerId nhận offset deterministic từ PRNG, sort theo (response time → correctAnswers → offset → alphabetical). Comment `L5 fix`. |
+| **L2** | 🔴 **STILL PENDING**              | `game.gateway.ts:148-150` vẫn `this.authHandler.handleDisconnect(client);` không `await`; import block trùng giữa `:13-23` (types) và `:30-39` (schemas). PR 2B còn nguyên scope.                                                                    |
+| **L3** | 🔴 **STILL PENDING**              | `schemas.ts:92` vẫn `CLIENT_TIMESTAMP_MAX_OFFSET_MS = 365 * 24 * 60 * 60 * 1000` (1 năm); `schemas.ts:122` vẫn `lastSeenSeqNo.max(Number.MAX_SAFE_INTEGER)`. PR 2B còn nguyên scope.                                                                 |
+
+**Kết luận cho next PR**: trong số 3 PR defer (PR 2A, 2B, 2C):
+
+- **PR 2C (Tie-Break Determinism)**: bãi bỏ — L1 đã fix, không còn gap.
+- **PR 2A (Match Recovery + DB Idempotency)**: bãi bỏ — B4, B5, B6, B7 đã fix; nếu review sau merge vẫn thấy recovery gap thì mở PR mới, không tận dụng scope cũ.
+- **PR 2B (Gateway + Schema Validation)**: **vẫn còn 2/3 scope cần làm** (L2 + L3) — đây là follow-up PR khả thi nhất hiện tại.
+
+Ngoài ra, các gap ngoài addendum cũ vẫn pending: PR 3 (Admin Audit Event), PR 4 (In-match AFK), PR 5 (Optimistic Rollback), PR 6 (Home Page Gradient — `apps/web/src/app/[locale]/page.tsx:193` còn `bg-gradient-to-br from-[#FFF0F5] via-[#E6E6FA] to-[#E0F2FE]`), PR 7 (Content Moderation), PR 8-12.
 
 ## PR Snapshot
 
@@ -796,6 +841,50 @@ Success target:
 - Dedicated spectator transport path (SSE hoặc Socket.io namespace)
 - Batched low-frequency spectator updates
 - Clear player vs spectator transport boundaries ở `game.gateway.ts` + `match.handler.ts`
+
+### PR 2A: ~~Match Recovery + DB Idempotency Hardening~~ — **CANCELLED 2026-06-14 (already fixed)**
+
+> Cập nhật 2026-06-14: Bug B4, B5, B6, B7 trong scope PR này đã được fix trong code live qua chuỗi commit post-merge (`87d3bb9`, `e9b9c42`, `d069a76`, `67abaa7`, `69b9ab6`, `d049035`, `126641c`). Bằng chứng ở section "Verification 2026-06-14" bên trên. PR này bãi bỏ; nếu review sau merge tìm thấy gap mới thì mở PR mới với scope mới, không tận dụng scope cũ.
+
+~~Reason:~~
+
+- ~~PR gốc đã fix B1 ở tầng orchestration (`finishingMatches` in-memory) nhưng chưa khóa đủ ở **DB layer**.~~
+- ~~Review sau merge phát hiện `finishMatch`, `saveRoundAndAnswers`, `rehydrateCorrectAnswer`, `buildScoreUpdateOps` vẫn còn recovery/idempotency gaps ngoài phạm vi B1-B3 ban đầu.~~
+
+~~Success target:~~
+
+- ~~`finishMatch` idempotent ở DB layer (`status != FINISHED` guard / equivalent)~~
+- ~~`saveRoundAndAnswers` retry-safe, không bị `P2002` stall sau commit~~
+- ~~`rehydrateCorrectAnswer` degrade gracefully thay vì brick recovered match~~
+- ~~score-persistence miss phải có operator-visible warning, không silent~~
+
+### PR 2B: Gateway + Schema Validation Tightening — **P1, ready to execute (2026-06-14)**
+
+> Cập nhật 2026-06-14: L2 + L3 vẫn pending trong code live (verified). Đây là follow-up PR khả thi nhất hiện tại. Scope thu hẹp chỉ còn L2 + L3; nếu thấy thêm gap khác trong quá trình review thì mở rộng thành section riêng.
+
+Reason:
+
+- `GameGateway.handleDisconnect` hiện là fire-and-forget; duplicate imports ở gateway là dấu hiệu cleanup chưa xong.
+- Validation ở `packages/shared/src/schemas.ts` vẫn còn nới lỏng hơn mức runtime thực tế cần.
+
+Success target:
+
+- Quyết định rõ `await` hay intentionally fire-and-forget cho disconnect path
+- Dedupe import blocks ở gateway
+- Re-evaluate bound cho `clientTimestamp` và `lastSeenSeqNo` dựa trên runtime invariants thật
+
+### PR 2C: ~~Tie-Break Determinism Independent of Array Order~~ — **CANCELLED 2026-06-14 (already fixed)**
+
+> Cập nhật 2026-06-14: L1 đã fix trong `match-state-machine.ts:384-411` bằng `mulberry32` PRNG seeded với `hashStringToSeed(state.id)`. Tie-break giờ reproducible theo (response time → correctAnswers → deterministic offset → alphabetical). PR này bãi bỏ.
+
+~~Reason:~~
+
+- ~~Tie-break hiện deterministic nhưng vẫn phụ thuộc thứ tự `playerIds` array trong state machine restore path.~~
+
+~~Success target:~~
+
+- ~~Seed/offset per player dựa trên `hash(matchId + playerId)` hoặc equivalent~~
+- ~~Winner reproducible theo **stats + matchId**, không phụ thuộc incidental array ordering~~
 
 ### PR 3: Admin Kill-Switch Audit Event
 

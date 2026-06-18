@@ -1,16 +1,16 @@
 # Arena of 100 - Project Status and Usecases
 
-> Cập nhật 2026-06-14 dựa trên code + GitNexus.
-> Bản 2026-06-06 từng nói "Lobby lifecycle / heartbeat / graceful exit / admin kill-switch còn thiếu"; thực tế code đã hoàn thành baseline ở PR #38 + PR #47. Cùng ngày cũng đóng PR Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`): thêm `JoinMode = "PLAYER" | "SPECTATOR"` payload + `RoomJoinedPayload.joinedAs` + backend join policy 4-way matrix + server-side submit gate + frontend spectator UI. Bản này reclassify lại trạng thái theo code thật.
+> Cập nhật 2026-06-18 dựa trên code + GitNexus + test run thực tế.
+> Bản 2026-06-14 từng nói "Lobby lifecycle / heartbeat / graceful exit / admin kill-switch còn thiếu"; thực tế code đã hoàn thành baseline ở PR #38 + PR #47. Ngày 2026-06-14 cũng đóng PR Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`): thêm `JoinMode = "PLAYER" | "SPECTATOR"` payload + `RoomJoinedPayload.joinedAs` + backend join policy 4-way matrix + server-side submit gate + frontend spectator UI. Cùng ngày cũng close PR `fix/match-race-frontend-correctness`: 3 race bug backend (B1-B3) + 8 correctness bug frontend (F1-F8) — bao gồm sửa sidebar mock (F1), bỏ magic number redirect (F2), tách timer ref (F3), dynamic maxPlayers (F4), loading state (F5), bỏ `currentRoundNo || 1` (F6), round-end signal rõ (F7), auto-join guard (F8). Sau merge, post-merge audit phát hiện thêm 7 follow-up bug (B4-B7, L1-L3); 5 trong 7 (B4-B7, L1) đã land trong cùng ngày qua chuỗi commit `fix(bug): fix comment`; 2 còn pending (L2 + L3). Bản này reclassify lại trạng thái theo code thật.
 
 ## Trạng Thái Thật Của Dự Án
 
 - Tổng quan: monorepo pnpm + Turborepo, NestJS Fastify + Socket.io backend, Next.js 15 + React 19 + Zustand frontend, Prisma + PostgreSQL + Redis.
-- Nhánh/focus gần nhất: `feat/drop-in-spectating-baseline` (PR Drop-in Spectating Baseline, 2026-06-14, chờ review/merge).
-- Trạng thái baseline đã hoàn thành: core gameplay loop, lobby state machine, heartbeat/presence sweep, graceful exit + spectator baseline (eliminated + drop-in), admin kill-switch, profile/rankings real APIs, Design System Phase 5B.
-- Gap còn thật (xem phần `Critical UX Gaps` bên dưới): in-match AFK policy, mass-spectator transport scaling, content moderation pipeline, optimistic UI rollback, k6 load test.
+- Nhánh/focus gần nhất: `main` (PR `fix/match-race-frontend-correctness` đã merge 2026-06-14; PR docs update cho post-merge audit ở staged). Test count thực tế 2026-06-18: **772/772 unit api + 70/70 game-core + 31/31 web + 11/11 E2E** (sau rebuild `packages/shared/dist` cho `GAME_CONFIG.SCORE_*`).
+- Trạng thái baseline đã hoàn thành: core gameplay loop, lobby state machine, heartbeat/presence sweep, graceful exit + spectator baseline (eliminated + drop-in), admin kill-switch, profile/rankings real APIs, Design System Phase 5B, **match race fixes (B1-B3) + frontend correctness (F1-F8)**, **post-merge idempotency/recovery hardening (B4-B7) + tie-break determinism (L1)**.
+- Gap còn thật (xem phần `Critical UX Gaps` bên dưới): gateway handleDisconnect + duplicate imports (L2), schema validation tightening (L3), in-match AFK policy, mass-spectator transport scaling, content moderation pipeline, optimistic UI rollback, k6 load test, home page gradient cleanup.
 
-### ✅ Đã Có Trong Code (verified 2026-06-14)
+### ✅ Đã Có Trong Code (verified 2026-06-18)
 
 - Monorepo, package boundaries (`shared`, `game-core`, `api`, `web`)
 - Prisma schema + Docker Compose
@@ -33,7 +33,7 @@
 - Zod validation + Zod response serialization (đã bỏ `class-validator` / `class-transformer`)
 - `RoomError` + `ErrorCode` cho type-safe error handling
 - `PresenceService.sweep` (5s interval) — auto-disband private room nếu host stale, batch remove non-host stale, `STALE`/`HOST_STALE` reasons
-- Test footprint rộng: 587/587 unit + 11/11 E2E pass. API coverage 94.98% statements
+- Test footprint rộng: **772/772 unit api + 70/70 unit game-core + 31/31 unit web + 11/11 E2E pass** (test run 2026-06-18). API coverage ~99% statements (`game-loop.service.ts` 100%, `admin.service.ts` 100%, `match.service.ts` 96.22%, `match-state-machine.ts` 100%)
   - `packages/game-core/src/{match-state-machine,scoring}.spec.ts`
   - `apps/api/src/modules/match/{game-loop.service.spec.ts, game-loop.service.persistence.spec.ts, match.module.spec.ts, match.service.spec.ts, presence.service.spec.ts}`
   - `apps/api/src/gateways/handlers/{auth,room,match,base}.handler.spec.ts`
@@ -53,10 +53,15 @@
 - Candy 3D Jelly UI Phase 1-4 + Phase 5A (mobile overlay, escape/backdrop, skip-link) + Phase 5B closeout (2026-06-14)
 - Sidebar + AppShell + Sidebar mobile (gradient cũ đã bỏ ở `app-shell-layout.tsx:34` + `sidebar.tsx:230`; `styles/components.css` confirmed absent)
 - **Drop-in spectating baseline (PR `feat/drop-in-spectating-baseline`, 2026-06-14)** — `JoinMode = "PLAYER" | "SPECTATOR"` payload (`RoomJoinedPayload.joinedAs`), `RoomService.joinRoom` 4-way matrix, `MatchHandler.handleSubmitAnswer` server gate, `MatchHandler.handleRequestSnapshot` allow-list với no-correctAnswer regression test, frontend spectator UI trên lobby + game page. Reuse `room:[id]` channel. Coverage per-file ≥90% cho tất cả file sửa. 661/661 unit tests pass.
+- **Match Race + Frontend Correctness Hardening (PR `fix/match-race-frontend-correctness`, 2026-06-14)** — 11 bug trong 1 PR: 3 race backend (B1-B3) + 8 frontend correctness (F1-F8). Backend: `GameLoopService.finishingMatches` Set (B1); `MatchStateMachine.tieBreak/determineWinner` return `string | null` (B2); `launchRoomMatch` dùng `prisma.$transaction` + `SELECT ... FOR UPDATE` (B3). Frontend: `game page` sidebar render `match.players` thật thay vì 5 mock cứng (F1); bỏ magic number `newCount <= 12` redirect (F2); tách 2 timer ref `roundResultRevealRef`/`roundResultContinueRef` (F3); `maxPlayers` động qua `GAME_CONFIG.MAX_PLAYERS` (F4); loading skeleton thay fallback question (F5); bỏ `currentRoundNo || 1` (F6); round-end signal dùng `match.roundEndTime === null && match.status === "ROUND_RESULT"` (F7); `use-lobby-lifecycle.ts` `joinInFlightRef` chống double-emit (F8). 712→772 unit tests (51 net mới + post-merge hardening), 70 game-core, 31 web, 11 E2E pass. Coverage per-file ≥90% (`game-loop.service.ts` 100%, `admin.service.ts` 100%, `match.service.ts` 96.22%, `match-state-machine.ts` 100%).
+- **Post-merge Idempotency + Recovery Hardening (chain commit `fix(bug): fix comment` 2026-06-14)** — 5 follow-up bug từ post-merge audit: B4 (`finishMatch` `updateMany` với `status: { not: FINISHED }` cho DB-layer idempotency), B5 (`saveRoundAndAnswers` pre-check + P2002 catch), B6 (`rehydrateCorrectAnswer` try/catch graceful degradation), B7 (`buildScoreUpdateOps` warn log thay silent), L1 (tie-break dùng `mulberry32` PRNG seeded bằng `hashStringToSeed(state.id)`). All landed trong cùng ngày.
 
 ### 🟡 Một Số Phần Còn Dở (Mock / Hardcoded)
 
-- `GamePage` sidebar còn danh sách player mock hardcode (lines 366-443: `Zero_Cool`, `Acid_Burn`, ...). Cần wire với `match.players` từ socket-store
+- (Đã giải quyết trong PR `fix/match-race-frontend-correctness`) ~~`GamePage` sidebar còn danh sách player mock hardcode (lines 366-443: `Zero_Cool`, `Acid_Burn`, ...). Cần wire với `match.players` từ socket-store~~ → ✅ giờ render `match.players` thật từ `socket-store.ts` (`PLAYER_ELIMINATED` + `ROUND_ENDED` handlers stamp `status = "ELIMINATED"`)
+- `apps/web/src/app/[locale]/page.tsx:193` vẫn có `bg-gradient-to-br from-[#FFF0F5] via-[#E6E6FA] to-[#E0F2FE]` redundant với `body` gradient — PR 6 (home page shell gradient cleanup) defer
+- `apps/api/src/gateways/game.gateway.ts:148-150` `handleDisconnect` không `await` `authHandler.handleDisconnect(client)`; import block trùng (`:13-23` types, `:30-39` schemas) — PR 2B defer
+- `packages/shared/src/schemas.ts:92` `CLIENT_TIMESTAMP_MAX_OFFSET_MS` = 1 năm; `:122` `lastSeenSeqNo.max(Number.MAX_SAFE_INTEGER)` — PR 2B defer
 
 ### 🔴 Use Case Còn Thiếu (theo brief, chưa có implementation)
 
@@ -311,7 +316,48 @@ PR `feat/drop-in-spectating-baseline` — cho phép late-joiner vào `IN_GAME`/`
 5. **Frontend**: `socket-store.ts` thêm `joinMode: JoinMode`; `lobby/[roomCode]/page.tsx` thêm spectator banner + "Vào xem"/"Xem kết quả" CTA + auto-redirect `/result/[matchId]` cho FINISHED + suppress `LobbyStartControls`; `game/[matchId]/page.tsx` render spectator UI + `handleSelectAnswer` short-circuit
 6. **i18n**: thêm `lobby.spectator.*` + `Game.dropInSpectator.*` (8 keys mới) vào `messages/{en,vi}.json`
 7. **Verify**: 661/661 unit tests pass; coverage per-file ≥90% cho `room.service.ts` (98.25% stmts / 91.89% branch), `room.handler.ts` (100% / 90.47%), `match.handler.ts` (100% / 95.65%); `pnpm --filter @arena/web typecheck` + lint pass
-8. **Out of scope** (deferred sang PR riêng): SSE channel riêng cho mass-spectate; `GamePage` live opponents sidebar wiring (vẫn hardcoded)
+8. **Out of scope** (deferred sang PR riêng): SSE channel riêng cho mass-spectate; `GamePage` live opponents sidebar wiring (vẫn hardcoded) — **note 2026-06-18**: SSE channel vẫn pending (PR 2); GamePage sidebar đã fix trong PR `fix/match-race-frontend-correctness` (F1), không còn hardcode nữa
+
+### ✅ Done 2026-06-14: Match Race + Frontend Correctness Hardening
+
+PR `fix/match-race-frontend-correctness` — gộp 11 bug trong 1 PR (3 race backend + 8 correctness frontend). Xem chi tiết tại `memory-bank/plan.md` và `memory-bank/progress.md` section "Phase 12".
+
+1. **Backend race (B1)**: `GameLoopService.finishingMatches: Set<string>` (mirror `endingRounds`); `finishMatchLoop` try/finally guard; expose `isMatchFinishing(matchId)`; `AdminService.terminateRoom` abort với `ALREADY_FINISHING` reason
+2. **Backend race (B2)**: `MatchStateMachine.tieBreak/determineWinner` return `string | null`; empty-roster early-return; `finishMatchLoop` đổi `state.winnerId!` → `state.winnerId ?? null`
+3. **Backend race (B3)**: `GameLoopService.launchRoomMatch` wrap critical section trong `prisma.$transaction` với `tx.$queryRaw SELECT ... FOR UPDATE`; check `currentMatchId IS NULL` atomic
+4. **Frontend correctness (F1)**: `socket-store.ts` ROUND_ENDED + PLAYER_ELIMINATED stamp `match.players[i].status`; `game page` sidebar render `match.players` thật, sort alive trước, badge OK/ELIMINATED
+5. **Frontend correctness (F2)**: bỏ magic number `newCount <= 12` redirect; client chỉ redirect khi `match.status === "FINISHED"` (server-authoritative)
+6. **Frontend correctness (F3)**: tách 2 timer ref `roundResultRevealRef` (1s) + `roundResultContinueRef` (3s); cleanup đầy đủ
+7. **Frontend correctness (F4)**: `maxPlayers` động qua `GAME_CONFIG.MAX_PLAYERS` (fallback khi `room.maxPlayers` chưa expose)
+8. **Frontend correctness (F5)**: loading skeleton `<div className="animate-pulse">{t("loadingQuestion")}</div>` thay vì hardcoded question
+9. **Frontend correctness (F6)**: bỏ `currentRoundNo || 1`; `submitAnswer` chỉ emit khi `match.currentRoundNo > 0`
+10. **Frontend correctness (F7)**: round-completed effect drive từ `match.status === "ROUND_RESULT" && match.roundEndTime === null` (server-authoritative)
+11. **Frontend correctness (F8)**: `use-lobby-lifecycle.ts` `joinInFlightRef` chống double-emit JOIN_ROOM
+12. **Verify**: 772/772 api unit + 70/70 game-core + 31/31 web + 11/11 E2E pass; coverage per-file ≥90% cho tất cả file sửa (`game-loop.service.ts` 100%, `admin.service.ts` 100%, `match.service.ts` 96.22%, `match-state-machine.ts` 100%)
+
+### ✅ Done 2026-06-14: Post-merge Idempotency + Recovery Hardening
+
+Sau khi PR `fix/match-race-frontend-correctness` merge, post-merge audit phát hiện 5 follow-up bug còn lại (B4-B7, L1) — đã fix trong cùng ngày qua chuỗi commit `fix(bug): fix comment`:
+
+1. **B4 (DB-layer idempotency)**: `MatchService.finishMatch` `updateMany` với `where: { id: matchId, status: { not: MatchStatus.FINISHED } }`; nếu `count: 0` (đã FINISHED) → log warn + return `findUnique` mà không overwrite
+2. **B5 (saveRoundAndAnswers idempotency)**: pre-check `matchRound.findUnique` trong transaction + P2002 catch block → idempotent no-op
+3. **B6 (rehydrateCorrectAnswer graceful degradation)**: full try/catch quanh `prisma.question.findUnique`; cả 2 nhánh (question not found, DB lookup throw) đều `logger.error` + return; match vẫn recoverable
+4. **B7 (buildScoreUpdateOps operator warning)**: `logger.warn` (không silent) khi state machine đã mất
+5. **L1 (tie-break determinism)**: `match-state-machine.ts:384-411` dùng `mulberry32` PRNG seeded bằng `hashStringToSeed(state.id)`; reproducible theo (response time → correctAnswers → deterministic offset → alphabetical)
+
+### PR Kế Tiếp (P0 cleanup): PR 2B — Gateway + Schema Validation Tightening
+
+> Cập nhật 2026-06-18 (xem `plan.md` post-merge audit): trong số 3 PR defer ban đầu (PR 2A, 2B, 2C), PR 2A và PR 2C đã được xử lý xong ở post-merge audit; chỉ còn PR 2B (L2 + L3) làm follow-up ngay. Scope khu trú 2 file, blast radius thấp, ~1 ngày.
+
+Scope đề xuất:
+
+1. **L2 (gateway)**: `apps/api/src/gateways/game.gateway.ts:148-150` quyết định rõ `await` (chờ presence update xong) hay intentionally fire-and-forget; wrap với try/catch + log. Dedup import block (`:13-23` và `:30-39` gộp thành 1 import `from "@arena/shared"`)
+2. **L3 (schema validation)**:
+   - `packages/shared/src/schemas.ts:92` giảm `CLIENT_TIMESTAMP_MAX_OFFSET_MS` từ 1 năm xuống vài phút (mirror heartbeat tolerance thật)
+   - `packages/shared/src/schemas.ts:122` thay `lastSeenSeqNo.max(Number.MAX_SAFE_INTEGER)` bằng bound dựa trên `GAME_CONFIG.MAX_ROUNDS * answerMax` hoặc equivalent
+3. **Tests**:
+   - `game.gateway.spec.ts` thêm test cho disconnect path (await + log)
+   - `schemas.spec.ts` (nếu chưa có) thêm test cho clientTimestamp + lastSeenSeqNo bound
 
 ### PR Kế Tiếp (P1): In-match AFK Policy
 
