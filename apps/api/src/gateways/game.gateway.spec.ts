@@ -3,6 +3,7 @@ import {
   ServerEvent,
   ClientEvent,
   ErrorCode,
+  GAME_CONFIG,
   SubmitAnswerPayloadSchema,
   CreateRoomPayloadSchema,
   AuthenticatePayloadSchema,
@@ -221,6 +222,21 @@ describe("GameGateway", () => {
       await gateway.handleDisconnect(client);
       expect(authHandler.handleDisconnect).toHaveBeenCalledWith(client);
     });
+
+    // L2 fix: handleDisconnect is async on authHandler (queries active
+    // rooms, notifies match). The gateway must `await` the call so any
+    // thrown error propagates through Nest's lifecycle instead of being
+    // swallowed as an unhandled rejection. This test pins that behavior
+    // by making the handler reject and asserting the gateway rejects
+    // too — if anyone removes the `await`, this test fails.
+    it("propagates errors from authHandler.handleDisconnect instead of swallowing them", async () => {
+      vi.mocked(authHandler.handleDisconnect).mockRejectedValueOnce(
+        new Error("simulated disconnect failure"),
+      );
+      await expect(gateway.handleDisconnect(client)).rejects.toThrow(
+        "simulated disconnect failure",
+      );
+    });
   });
 
   describe("event handlers", () => {
@@ -348,6 +364,53 @@ describe("GameGateway", () => {
         expect(result.success).toBe(false);
       });
 
+      // L3 fix: clientTimestamp used to allow ~1 year of slack on either
+      // side of `Date.now()`, which accepted clearly corrupt payloads
+      // (e.g. clock off by a year) while still catching the obvious
+      // fuzz inputs. Tightened to 5 minutes — see schemas.ts. The
+      // boundary tests below pin both sides of the new limit so a
+      // regression that re-widens the bound (or narrows it incorrectly)
+      // is caught here.
+      it("SUBMIT_ANSWER schema rejects clientTimestamp 1 year in the past", () => {
+        const result = SubmitAnswerPayloadSchema.safeParse({
+          matchId: "m1",
+          roundNo: 1,
+          answer: "A",
+          clientTimestamp: Date.now() - 365 * 24 * 60 * 60 * 1000,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it("SUBMIT_ANSWER schema rejects clientTimestamp 6 minutes in the past", () => {
+        const result = SubmitAnswerPayloadSchema.safeParse({
+          matchId: "m1",
+          roundNo: 1,
+          answer: "A",
+          clientTimestamp: Date.now() - 6 * 60 * 1000,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it("SUBMIT_ANSWER schema rejects clientTimestamp 6 minutes in the future", () => {
+        const result = SubmitAnswerPayloadSchema.safeParse({
+          matchId: "m1",
+          roundNo: 1,
+          answer: "A",
+          clientTimestamp: Date.now() + 6 * 60 * 1000,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it("SUBMIT_ANSWER schema accepts clientTimestamp 4 minutes in the past (within headroom)", () => {
+        const result = SubmitAnswerPayloadSchema.safeParse({
+          matchId: "m1",
+          roundNo: 1,
+          answer: "A",
+          clientTimestamp: Date.now() - 4 * 60 * 1000,
+        });
+        expect(result.success).toBe(true);
+      });
+
       it("CREATE_ROOM schema caps maxPlayers to GAME_CONFIG.MAX_PLAYERS", () => {
         // Bonus M2 fix: a client asking for a 100,000-player room is
         // rejected at the validation layer, never reaching the
@@ -387,6 +450,25 @@ describe("GameGateway", () => {
           lastSeenSeqNo: -1,
         });
         expect(result.success).toBe(false);
+      });
+
+      // L3 fix: lastSeenSeqNo used to be capped at Number.MAX_SAFE_INTEGER,
+      // which accepted obviously bogus cursors. Tightened to
+      // GAME_CONFIG.MAX_ROUNDS * 2 — see schemas.ts.
+      it("REQUEST_SNAPSHOT schema rejects lastSeenSeqNo above MAX_ROUNDS * 2", () => {
+        const result = RequestSnapshotPayloadSchema.safeParse({
+          matchId: "m1",
+          lastSeenSeqNo: GAME_CONFIG.MAX_ROUNDS * 2 + 1,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it("REQUEST_SNAPSHOT schema accepts lastSeenSeqNo at MAX_ROUNDS * 2 (boundary)", () => {
+        const result = RequestSnapshotPayloadSchema.safeParse({
+          matchId: "m1",
+          lastSeenSeqNo: GAME_CONFIG.MAX_ROUNDS * 2,
+        });
+        expect(result.success).toBe(true);
       });
 
       it("JOIN_ROOM schema accepts an empty payload (roomCode and roomType are optional)", () => {

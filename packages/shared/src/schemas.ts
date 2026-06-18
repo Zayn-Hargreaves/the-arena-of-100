@@ -76,20 +76,25 @@ export type StartMatchPayload = z.infer<typeof StartMatchPayloadSchema>;
 // report.)
 const ANSWER_MAX_LENGTH = 1024;
 
-// clientTimestamp upper bound: ~1 year of slack beyond the moment
+// clientTimestamp upper bound: ~5 minutes of slack beyond the moment
 // the validation runs. Catches client clock-skew (browsers with
 // wildly wrong system clocks, mobile devices in poor-network states)
 // and obvious garbage payloads without rejecting the legitimate
-// "slightly out of sync" case. Number.MAX_SAFE_INTEGER was previously
-// used here, which allowed timestamps thousands of years in the
-// past or future — clearly a payload corruption indicator.
+// "slightly out of sync" case. The previous 1-year bound was a
+// permissive default that accepted clearly corrupt payloads — any
+// client clock more than a few minutes off is almost certainly a bug
+// or a tampering attempt.
 //
 // `.refine()` is required (not a frozen `Date.now() + OFFSET`
 // constant) so a long-running server process keeps using the
 // current clock as the reference, not a value baked in at module
-// load. Otherwise a server up >1 year would start rejecting every
+// load. Otherwise a server up >5 minutes would start rejecting every
 // legitimate SUBMIT_ANSWER whose timestamp is in the present.
-const CLIENT_TIMESTAMP_MAX_OFFSET_MS = 365 * 24 * 60 * 60 * 1000;
+//
+// Headroom rationale: ROUND_DURATION_MS = 15s. 5 minutes = 20x
+// round duration = more than enough for legitimate NTP drift, mobile
+// sleep recovery, and network buffering combined.
+const CLIENT_TIMESTAMP_MAX_OFFSET_MS = 5 * 60 * 1000;
 
 export const SubmitAnswerPayloadSchema = z.object({
   matchId: idSchema,
@@ -119,7 +124,19 @@ export type SubmitAnswerPayload = z.infer<typeof SubmitAnswerPayloadSchema>;
 
 export const RequestSnapshotPayloadSchema = z.object({
   matchId: idSchema,
-  lastSeenSeqNo: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  // lastSeenSeqNo is the cursor the client uses to ask for a snapshot
+  // delta from a specific event-log position. The sequence is bounded
+  // by the maximum number of events a single match can produce: each
+  // round generates at most ~2 EventLog rows related to snapshot
+  // delivery (round start + round end), so MAX_ROUNDS * 2 is a tight
+  // upper bound. The previous Number.MAX_SAFE_INTEGER ceiling was a
+  // leftover that would have accepted obviously bogus cursors (e.g.
+  // sentinels, bit-flips, or hostile fuzz inputs).
+  lastSeenSeqNo: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(GAME_CONFIG.MAX_ROUNDS * 2),
 });
 export type RequestSnapshotPayload = z.infer<
   typeof RequestSnapshotPayloadSchema

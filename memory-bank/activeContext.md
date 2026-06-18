@@ -1,11 +1,11 @@
 # Active Context: Arena of 100
 
-> Cập nhật 2026-06-14 dựa trên code + GitNexus.
-> Bản 2026-06-06 từng liệt kê lobby lifecycle / heartbeat / graceful exit / kill-switch là "chưa có"; thực tế code đã hoàn thành baseline ở PR #38 (lobby/heartbeat/graceful exit) và PR #47 (admin kill-switch), nay đồng bộ lại. Cùng ngày cũng đóng PR Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`): thêm `JoinMode` payload (`RoomJoinedPayload.joinedAs`) + backend join policy 4-way matrix + server-side submit gate + frontend spectator UI. Cùng ngày cũng close PR `fix/match-race-frontend-correctness`: 3 race bug backend (B1-B3) + 8 correctness bug frontend (F1-F8) — xem `Recent Changes` và `Phase 12` dưới đây.
+> Cập nhật 2026-06-18 dựa trên code + GitNexus.
+> Bản 2026-06-06 từng liệt kê lobby lifecycle / heartbeat / graceful exit / kill-switch là "chưa có"; thực tế code đã hoàn thành baseline ở PR #38 (lobby/heartbeat/graceful exit) và PR #47 (admin kill-switch), nay đồng bộ lại. 2026-06-14 cũng đóng PR Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`): thêm `JoinMode` payload (`RoomJoinedPayload.joinedAs`) + backend join policy 4-way matrix + server-side submit gate + frontend spectator UI. Cùng ngày cũng close PR `fix/match-race-frontend-correctness`: 3 race bug backend (B1-B3) + 8 correctness bug frontend (F1-F8). 2026-06-18 close PR `chore/gateway-schema-tightening-home-gradient`: L2 + L3 (gateway import dedupe + await handleDisconnect; tighten `clientTimestamp` + `lastSeenSeqNo` validation bounds) + PR 6 (drop redundant home page gradient). Xem `Recent Changes` và `Phase 12/13` dưới đây.
 
 ## Current Focus
 
-- Nhánh hiện tại: `main` (PR `fix/match-race-frontend-correctness` đã merge 2026-06-14, xem `Phase 12` ở `memory-bank/progress.md`; PR docs update cho post-merge audit đang ở staged — branch đề xuất `chore/post-merge-audit-docs`). Branch kế tiếp ưu tiên (theo kết quả verification 2026-06-18 + plan.md): **PR 2B — Gateway + Schema Validation Tightening** (L2 + L3 — blast radius thấp, scope khu trú 2 file, fix dứt điểm follow-up post-merge). Sau đó: in-match AFK policy (đang chờ product decision loại vs. chuyển spectator).
+- Nhánh hiện tại: `main` (PR `fix/match-race-frontend-correctness` merged 2026-06-14; PR `chore/gateway-schema-tightening-home-gradient` ready for review ở branch `chore/gateway-schema-tightening-home-gradient` — xem `Phase 13` ở `memory-bank/progress.md`). Branch kế tiếp ưu tiên: **PR 3 — Admin Kill-Switch Audit Event** (P1 compliance gap — `AdminService.terminateRoom` mutate DB + Redis + timers + emit `ROOM_TERMINATED` nhưng KHÔNG ghi `EventLog` row, vi phạm `review.instructions.md:36`). Cần schema migration (thêm `roomId`, `adminUserId`, `reason` columns) + capture userId từ controller. Sau đó: in-match AFK policy (đang chờ product decision loại vs. chuyển spectator).
 - Trọng tâm review gần nhất:
   - backend `GameLoopService.finishMatchLoop` B1 idempotency guard (`finishingMatches` Set) + `isMatchFinishing(matchId)` public method
   - backend `MatchStateMachine` B2 `winnerId: string | null` widening + empty-roster early-return trong `tieBreak` / `determineWinner` / `finishMatch`
@@ -86,6 +86,11 @@
   - **Frontend (F7)**: round-completed effect drive từ `match.status === "ROUND_RESULT" && match.roundEndTime === null` (server-authoritative) thay vì `lastAnswerResult?.correctAnswer` (có thể rỗng khi question row missing answer key)
   - **Frontend (F8)**: `use-lobby-lifecycle.ts` thêm `joinInFlightRef` chống double-emit `JOIN_ROOM` khi `room` object đổi do presence/PLAYER_JOINED re-trigger effect; `cancelled` cũ vẫn giữ cho `setJoining` / `setJoinError`
   - **Tests**: 772/772 unit pass (was 661 → 712 → 772 qua các commit `fix(bug): fix comment` post-merge), 70/70 game-core, 31/31 web (was 28, +3 F8), 11/11 E2E; coverage per-file ≥90% cho mọi file production sửa (verify 2026-06-18: `game-loop.service.ts` 100%/`admin.service.ts` 100%/`match.service.ts` 96.22%/`match-state-machine.ts` 100%)
+- **Gateway + Schema Tightening + Home Gradient Cleanup (PR `chore/gateway-schema-tightening-home-gradient`, 2026-06-18)** — housekeeping PR gộp 3 concern cleanup-style blast radius thấp
+  - **L2**: `game.gateway.ts` dedupe 2 import block từ `@arena/shared` (types + schemas) thành 1; `await` `authHandler.handleDisconnect(client)` ở line 149 để error propagate thay vì bị swallow unhandled rejection (handler `async` ở `auth.handler.ts:137`)
+  - **L3**: `schemas.ts:97` `CLIENT_TIMESTAMP_MAX_OFFSET_MS` từ 1 năm → 5 phút (headroom 20x `ROUND_DURATION_MS`); `schemas.ts:135-139` `lastSeenSeqNo.max(Number.MAX_SAFE_INTEGER)` → `GAME_CONFIG.MAX_ROUNDS * 2` (= 100)
+  - **PR 6**: `apps/web/src/app/[locale]/page.tsx:193` drop `bg-gradient-to-br from-[#FFF0F5] via-[#E6E6FA] to-[#E0F2FE]` (đã có cùng gradient ở `body` `globals.css:22`)
+  - **Tests**: 779/779 unit pass (was 772, +7 net: 1 cho L2 await error propagation + 6 cho L3 bound tightening); coverage per-file ≥90%: `game.gateway.ts` 100%/93.1%, `schemas.ts` 100%/100%; web 31/31 + game-core 70/70 + shared 3/3 + E2E 11/11 không break
 
 ## Architecture Assessment Summary
 
@@ -97,7 +102,7 @@
 
 ### 🟡 Significant Gaps (cập nhật 2026-06-14)
 
-1. ~~Missing Test Coverage~~ — Bây giờ có spec cho game-core, game-loop (kể cả persistence + admin helpers), auth, room, question, admin, handlers, common pipes/interceptors, presence, users, rankings, terminate-room DTO. **772/772 api + 70/70 game-core + 31/31 web + 11/11 E2E pass** (test run 2026-06-18; bản cũ 2026-06-14 báo 712/68/31 — đã lệch do các commit `fix(bug): fix comment` post-merge thêm test path cho B4-B7/L1).
+1. ~~Missing Test Coverage~~ — Bây giờ có spec cho game-core, game-loop (kể cả persistence + admin helpers), auth, room, question, admin, handlers, common pipes/interceptors, presence, users, rankings, terminate-room DTO. **779/779 api + 70/70 game-core + 31/31 web + 11/11 E2E pass** (test run 2026-06-18 sau PR `chore/gateway-schema-tightening-home-gradient` thêm 7 test mới cho L2/L3; bản cũ 2026-06-14 báo 712/68/31 — đã lệch do các commit `fix(bug): fix comment` post-merge + Phase 13).
 2. ~~No Round Timer Management~~ [RESOLVED] — `GameLoopService` đã enforce 15s timeout.
 3. **Gateway ↔ Service Coupling** — gateway vẫn gọi service trực tiếp; use-case layer chưa tách hẳn. Đã chấp nhận cho MVP.
 4. ~~Frontend Only Has Landing Page~~ [RESOLVED] — Có lobby/game/result/profile/rankings/settings/admin/room-create/not-found.
@@ -106,11 +111,11 @@
 7. ~~Drop-in spectating~~ [RESOLVED baseline 2026-06-14] — `JoinMode` payload (`RoomJoinedPayload.joinedAs`) added; `RoomService.joinRoom` 4-way matrix; `MatchHandler.handleSubmitAnswer` server gate; frontend spectator UI trên lobby + game page. Reuse `room:[id]` channel. Mass-spectator SSE vẫn deferred (PR 3).
 8. **Design System Phase 5B closeout** — **done 2026-06-14**. Shell gradient đã bỏ ở `app-shell-layout.tsx:34` + mobile overlay `sidebar.tsx:230`; legacy `styles/components.css` audit xác nhận không còn reference; vitest infrastructure cho web package setup với 99.58% coverage trên 2 file shell (28 tests pass). Home page gradient ở `[locale]/page.tsx:193` deferred sang PR riêng vì home không dùng AppShellLayout.
 
-### 🟢 Architecture Score (cập nhật 2026-06-14)
+### 🟢 Architecture Score (cập nhật 2026-06-18)
 
 - Monorepo: 10/10, Package Boundaries: 9/10, Domain Logic: 9/10
-- Backend: **9/10** (race fixes B1, B2, B3 landed 2026-06-14 — `finishMatchLoop` idempotency, `winnerId` null guard, `launchRoomMatch` FOR UPDATE), Frontend: **8.5/10** (F1-F8 correctness hardening landed — sidebar real data, bỏ magic number, timer leak fix, dynamic maxPlayers, loading state, currentRoundNo guard, round-end signal, auto-join guard), Infra: 8/10, Testing: **9.5/10** (712 unit + 11 E2E + 31 web + 68 game-core; per-file ≥90% coverage gate đạt cho mọi file production sửa)
-- **Overall: ~8.7/10**
+- Backend: **9/10** (race fixes B1, B2, B3 landed 2026-06-14 — `finishMatchLoop` idempotency, `winnerId` null guard, `launchRoomMatch` FOR UPDATE; L2/L3 + home gradient landed 2026-06-18 — gateway await + import dedupe + tighter validation bounds), Frontend: **8.5/10** (F1-F8 correctness hardening landed — sidebar real data, bỏ magic number, timer leak fix, dynamic maxPlayers, loading state, currentRoundNo guard, round-end signal, auto-join guard), Infra: 8/10, Testing: **9.5/10** (779 unit + 11 E2E + 31 web + 70 game-core; per-file ≥90% coverage gate đạt cho mọi file production sửa)
+- **Overall: ~8.8/10**
 
 ## Active Decisions (selected highlights)
 
@@ -190,14 +195,18 @@
 ### Following PRs (Priority Order)
 
 1. ✅ Drop-in spectating baseline — **done 2026-06-14** (`feat/drop-in-spectating-baseline`)
-2. In-match AFK policy (P1, product — pending decision) — promoted lên P1 sau khi drop-in spectating baseline done
-3. Mass-spectator transport scaling (P2, infra) — SSE channel riêng + batched low-frequency updates
-4. Content moderation pipeline + admin kill-switch message sanitizer (P2, compliance)
-5. Optimistic UI rollback đầy đủ (P2, game feel)
-6. Post-match rematch + share (P3, retention)
-7. Accessibility audit (WCAG) (P2, compliance)
-8. k6 load test 100 concurrent WS (P2, pre-launch gate)
-9. Playwright browser E2E (P3, deferred)
+2. ✅ Match Race + Frontend Correctness Hardening — **done 2026-06-14** (`fix/match-race-frontend-correctness`)
+3. ✅ Gateway + Schema Tightening + Home Gradient Cleanup — **done 2026-06-18** (`chore/gateway-schema-tightening-home-gradient`)
+4. **Admin Kill-Switch Audit Event (P1, compliance)** — promote lên P1 next. `AdminService.terminateRoom` mutate DB + Redis + timers + emit `ROOM_TERMINATED` nhưng KHÔNG ghi `EventLog` row. Vi phạm `.github/instructions/review.instructions.md:36`. Cần schema migration (thêm `roomId`, `adminUserId`, `reason` columns) + capture userId từ controller (xem `room.controller.ts:35` pattern).
+5. In-match AFK policy (P1, product — pending decision) — pending product decision (auto-`ELIMINATED` vs auto-`SPECTATOR`)
+6. Mass-spectator transport scaling (P2, infra) — SSE channel riêng + batched low-frequency updates
+7. Content moderation pipeline + admin kill-switch message sanitizer (P2, compliance)
+8. Optimistic UI rollback đầy đủ (P2, game feel)
+9. Post-match rematch + share (P3, retention)
+10. Accessibility audit (WCAG) (P2, compliance)
+11. k6 load test 100 concurrent WS (P2, pre-launch gate)
+12. Playwright browser E2E (P3, deferred)
+13. `Room.maxPlayers` field trong `ROOM_JOINED` payload (PR 12 cũ trong plan.md, hiện dùng fallback `GAME_CONFIG.MAX_PLAYERS`)
 
 ## Key Files Reference (verified 2026-06-14)
 
@@ -294,11 +303,11 @@ apps/web/src/
 - Optimistic UI: lock + rollback
 - Admin tools: secure access + partial-failure response contract
 
-## Current Blockers (updated 2026-06-14)
+## Current Blockers (updated 2026-06-18)
 
-Đã gỡ hết blocker kỹ thuật. Các gap product/UX còn lại (theo thứ tự ưu tiên):
+Đã gỡ hết blocker kỹ thuật. PR `chore/gateway-schema-tightening-home-gradient` close 2 follow-up post-merge (L2 + L3) + home gradient. Các gap product/UX còn lại (theo thứ tự ưu tiên):
 
-- Design System Phase 5B closeout (shell gradient legacy + safe-delete CSS + visual audit)
+- **Admin Kill-Switch Audit Event** (P1, compliance) — promote lên top priority. `AdminService.terminateRoom` mutate DB + Redis + timers + emit `ROOM_TERMINATED` nhưng KHÔNG ghi `EventLog` row. Vi phạm `.github/instructions/review.instructions.md:36` ("All modifications MUST go through immutable, append-only events"). Cần schema migration + capture userId từ controller.
 - In-match AFK policy (sau khi có product decision: loại vs. chuyển spectator)
 - Content moderation + admin kill-switch message sanitizer (deferred tới khi shared profanity/content-moderation pipeline lands; `TerminateRoomDto.message` hiện fail-fast)
 - Device fingerprint (Model C đã chốt nhưng backend chưa enforce)
@@ -310,7 +319,7 @@ apps/web/src/
 
 ## Testing Roadmap
 
-**Hiện tại (đã làm 2026-06-14)**: 716 unit tests (api) + 68 unit tests (game-core) + 31 unit tests (web) + 11 API E2E tests (users + rankings) tích hợp vào CI trên mọi PR + push main. Job `e2e` dùng real NestJS + Fastify + Prisma + Redis, real CSRF flow, real JWT auth. API coverage 95.05% statements (89.53% pre-PR #38, +5.52% delta; Phase 12 race fixes + L3 rehydrate coverage + B3 race-lost guard đẩy `match.service.ts` từ 89.73% → 95.53% và `game-loop.service.ts` 96.25%).
+**Hiện tại (đã làm 2026-06-18)**: 779 unit tests (api) + 70 unit tests (game-core) + 31 unit tests (web) + 3 shared + 11 API E2E tests (users + rankings) tích hợp vào CI trên mọi PR + push main. Job `e2e` dùng real NestJS + Fastify + Prisma + Redis, real CSRF flow, real JWT auth. Phase 13 (gateway/schema tightening) thêm 7 net test path: 1 cho L2 await error propagation (`game.gateway.spec.ts:228-235`) + 6 cho L3 bound tightening (4 timestamp + 2 seqNo). API coverage ổn định với `game.gateway.ts` 100%/93.1% + `schemas.ts` 100%/100% — đạt gate per-file ≥90%.
 
 **Giai đoạn 2 (sau khi Design System Phase 5B ổn định, ~1-2 sprint)**:
 

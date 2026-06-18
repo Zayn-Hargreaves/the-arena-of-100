@@ -190,7 +190,7 @@ export default function HomePage() {
   return (
     <main
       id="main-content"
-      className="text-candy-ink min-h-screen flex flex-col font-sans selection:bg-candy-pink selection:text-white relative bg-gradient-to-br from-[#FFF0F5] via-[#E6E6FA] to-[#E0F2FE] overflow-x-hidden antialiased"
+      className="text-candy-ink min-h-screen flex flex-col font-sans selection:bg-candy-pink selection:text-white relative overflow-x-hidden antialiased"
     >
       <a
         href="#main-content"
