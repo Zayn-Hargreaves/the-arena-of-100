@@ -121,19 +121,27 @@ pnpm db:studio
 
 ## Documentation
 
-See `memory-bank/` directory for detailed documentation:
+### Core Memory-Bank Files (read these first, in order)
 
-- [Project Brief](memory-bank/projectbrief.md)
-- [Product Context](memory-bank/productContext.md)
-- [System Patterns](memory-bank/systemPatterns.md)
-- [Progress](memory-bank/progress.md)
-- [Active Context](memory-bank/activeContext.md)
+1. [Product Context](memory-bank/productContext.md)
+2. [System Patterns](memory-bank/systemPatterns.md)
+3. [Progress](memory-bank/progress.md)
+4. [Active Context](memory-bank/activeContext.md)
+
+### Memory-Bank Read Policy
+
+- The 4 files above are the **only default memory-bank context** for agents.
+- Other files under `memory-bank/` are **supplementary / legacy notes**.
+- Do **not** read supplementary docs by default.
+- Read supplementary docs only when:
+  - the user explicitly asks for them, or
+  - one of the 4 core files explicitly points to them.
 
 <!-- gitnexus:start -->
 
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **the-arena-of-100** (3931 symbols, 9245 relationships, 264 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **the-arena-of-100** (3976 symbols, 9355 relationships, 267 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

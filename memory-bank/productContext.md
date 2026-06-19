@@ -1,156 +1,93 @@
 # Product Context: Arena of 100
 
-## Why This Project Exists
-Arena of 100 solves the problem of engaging multiplayer quiz experiences by combining the thrill of battle royale games with knowledge-based competition. Traditional quiz games lack the tension and excitement of elimination-style gameplay.
+> **Core memory-bank file 1/4**
+> Read order: `AGENTS.md` → `productContext.md` → `systemPatterns.md` → `progress.md` → `activeContext.md`
+> Other docs in `memory-bank/` are supplementary only.
 
-The project also demonstrates product engineering skills valued by top tech companies - focusing on complete user journeys, thoughtful onboarding, social features, and retention mechanics rather than just technical patterns. It emphasizes operational excellence, resilience, and international standards compliance.
+## Why This Product Exists
 
-## User Experience Goals
+Arena of 100 là game quiz battle royale real-time: 100 người chơi cùng vào trận, trả lời sai hoặc không trả lời đúng hạn thì bị loại, người cuối cùng còn sống thắng.
 
-### Primary User Journey
-1. **Entry**: User opens app → sees landing page with clear CTAs
-2. **Frictionless Onboarding**: Quick nickname entry with auto-generated avatar and content moderation
-3. **Room Selection**: Create new room or join existing via code/link
-4. **Lobby Management**: Auto-start countdown or host controls with heartbeat validation
-5. **Gameplay**: Real-time question display, 15s timer, instant feedback with error handling
-6. **Elimination**: Clear visual feedback when eliminated
-7. **Spectator Mode**: Eliminated players become spectators with micro-interactions
-8. **Victory**: Celebratory screen for winner with stats and rematch option
-9. **Anonymous Identity Tracking**: Device fingerprinting for persistent guest identity
-10. **Optimistic UI**: Instant feedback on answer submission with smart retry
-11. **Game Operations**: Admin interventions for emergency situations
+Mục tiêu sản phẩm:
 
-### Emotional Design
-- **Tension**: Countdown timers, player elimination animations
-- **Excitement**: Real-time updates, sound effects (future)
-- **Clarity**: Clear UI states (active, eliminated, spectator, winner)
-- **Engagement**: Spectator mode with emotes keeps eliminated players involved
-- **Fairness**: Transparent rules, server-authoritative timing
-- **Social Connection**: Unique player identities and sharing capabilities
-- **Accessibility**: WCAG compliant design for all users
-- **Reliability**: Graceful error handling and fallback mechanisms
-- **Trust**: Persistent identity even as guest user
-- **Confidence**: Instant feedback on actions with smart recovery
-- **Safety**: Admin oversight for emergency interventions
+- tạo trải nghiệm quiz có căng thẳng và nhịp độ thật
+- cho phép guest onboarding nhanh, không cần tạo tài khoản
+- giữ eliminated players ở lại trận bằng spectator/watch-only UX
+- chứng minh product-engineering quality: resilience, fairness, operations, test coverage
 
-## Key User Scenarios
+## Core User Journey
 
-### Scenario 1: Quick Match
-- User wants to play immediately
-- Clicks "Find Quick Match"
-- System joins available public room
-- Auto-start countdown begins when minimum players join with heartbeat validation
-- Game starts automatically
+1. Người dùng vào landing page
+2. Nhập nickname + avatar seed nhanh
+3. Tạo phòng hoặc join bằng code/link
+4. Public room auto-start; private room do host control
+5. Match chạy server-authoritative với 15s/round
+6. Sai hoặc không trả lời đúng hạn => bị loại
+7. Player bị loại tiếp tục xem trận ở spectator UI
+8. Match kết thúc, xem result/stats
 
-### Scenario 2: Private Game
-- User creates private room
-- Shares 6-character code with friends
-- Friends join via code
-- Host starts match when ready or auto-start kicks in
+## Product Decisions Locked
 
-### Scenario 3: Late Join Spectating
-- User clicks shared link to ongoing match
-- Automatically enters spectator mode via scalable infrastructure
-- Watches current gameplay in real-time
-- Gets notified when next match starts
-- Can use emotes to react to gameplay
+### 1. Onboarding
 
-### Scenario 4: Reconnect
-- Player loses internet briefly
-- Reconnects automatically
-- Game state restored via snapshot
-- Continues from where they left off
+- **Guest-only** cho MVP
+- nickname + avatar seed là identity bề mặt
+- persistent guest identity / device fingerprint là follow-up sau MVP
 
-### Scenario 5: Elimination and Spectating
-- Player answers incorrectly and is eliminated
-- Player automatically becomes spectator
-- Continues watching remaining players compete
-- Receives real-time updates on match progress
-- Can use emotes to cheer/frown at gameplay
+### 2. Match semantics
 
-### Scenario 6: AFK Player Handling
-- Player joins room but goes AFK
-- System detects inactivity after 2 missed rounds
-- Automatically moves player to spectator mode
-- Frees slot for active players
+- **Wrong answer OR no answer before round deadline = ELIMINATED ngay round đó**
+- Sau khi bị loại, player vẫn nhận update và client render ở **spectator/watch-only UI**
+- Đây là semantics thật của game-core; core docs không dùng lại rule cũ "2 missed rounds" nữa
 
-### Scenario 7: Graceful Exit
-- Player decides to leave game
-- Clicks "Leave" button or closes tab
-- Slot immediately freed for new players
-- Proper disconnection handling
+### 3. Spectator semantics
 
-### Scenario 8: Asset Preloading
-- Between rounds, system preloads media assets
-- Next question loads instantly when displayed
-- Fair experience maintained for all players
-- Smooth gameplay on mobile devices
+- Người chơi bị loại => spectator UI trong cùng match
+- Late join match `IN_GAME`/`FINISHED` => `JoinMode = "SPECTATOR"`
+- Spectator không được submit answer
 
-### Scenario 9: Content Error Handling
-- Question asset fails to load (CDN down, encoding error)
-- System automatically skips question with graceful error message
-- Game continues without interruption
-- Players notified of technical issue
+### 4. Moderation direction
 
-### Scenario 10: Accessibility Support
-- Color-blind user accesses game
-- Sees color-blind mode with icons accompanying colors
-- Navigates game entirely with keyboard
-- Uses screen reader for question content
+- **MVP moderation chỉ làm vừa đủ**:
+  - nickname profanity filtering + safe replacement
+  - admin terminate message sanitize hoặc fallback message mặc định
+- Các phần sau defer:
+  - device fingerprint enforcement
+  - violation counter
+  - shadow ban
+  - richer multilingual dictionaries
 
-### Scenario 11: Content Moderation
-- User attempts to enter inappropriate nickname
-- System filters content and assigns random name
-- User notified of content policy violation
-- Shadow ban applied if violations continue
+### 5. Scaling direction
 
-### Scenario 12: Match Completion
-- Match concludes with winner determination
-- All players see victory/defeat screen
-- Statistics displayed for all participants
-- Option to play again or return to lobby
+- **Monolithic-first**
+- Chưa ưu tiên spectator transport distributed/SSE riêng cho tới khi có load evidence
+- `k6` là workstream riêng để tạo evidence trước
 
-### Scenario 13: Anonymous Identity Tracking
-- User accesses game as guest on new device
-- System generates device fingerprint (Canvas, WebGL, User-Agent)
-- Correlates with IP address for stronger identity
-- Assigns persistent deviceId for content moderation
-- User attempts to evade ban by clearing cookies → System recognizes device fingerprint
-- Shadow ban remains effective across sessions
+## UX Principles
 
-### Scenario 14: Optimistic UI & Answer Lock-in
-- Player clicks answer during critical gameplay moment
-- UI instantly locks and shows loading state
-- Player sees immediate feedback regardless of network latency
-- If server accepts answer → UI proceeds normally
-- If server rejects answer → UI gracefully rolls back with explanation
-- If network failure → System automatically retries with idempotency key
+- **Fairness**: toàn bộ timing/validation ở server
+- **Clarity**: trạng thái active / eliminated / spectator / finished phải rõ
+- **Low friction**: onboarding nhanh, không reject cứng trừ khi thật sự cần
+- **Resilience**: reconnect, snapshot, graceful exit, admin kill-switch
+- **Safety**: moderation ở mức MVP trước, deepen sau
 
-### Scenario 15: Game Operations & Kill Switch
-- Admin detects zombie room with stuck players
-- Admin uses force kill command to terminate room
-- System broadcasts maintenance message to all connected users
-- During live match, erroneous question detected
-- Admin voids question without disrupting match flow
-- Critical security incident requires emergency shutdown
-- Admin activates kill switch to safely shut down service
+## Near-Term Product Queue
 
-## Differentiators
-- **100 players**: Massive multiplayer scale
-- **Battle Royale**: Elimination creates tension
-- **Real-time**: Instant feedback, no page refreshes
-- **Tie-break**: Fair resolution when multiple eliminated
-- **Reconnect**: Robust against network issues
-- **Spectator Mode**: Keeps eliminated players engaged with emotes
-- **Frictionless Onboarding**: No account creation barriers with content moderation
-- **Late Join Support**: Drop-in spectating for ongoing matches with scalable infrastructure
-- **Smart AFK Handling**: Automatic player management
-- **Graceful Exit**: Instant resource cleanup
-- **Asset Preloading**: Fair experience for all players
-- **Error Resilience**: Graceful fallback for content issues
-- **Accessibility**: WCAG compliant design
-- **Content Safety**: Profanity filtering and moderation
-- **Complete Journey**: From entry to victory with rematch capability
-- **Advanced Security**: Device fingerprinting prevents ban evasion
-- **Optimistic UI**: Instant feedback with smart recovery mechanisms
-- **Operational Excellence**: Admin tools for emergency interventions
+1. `Room.maxPlayers` payload thật ở game UI
+2. Optimistic answer rollback
+3. AFK docs + UX hardening bám semantics hiện tại
+4. Moderation MVP
+5. Admin audit panel UI (optional closeout)
+6. k6 load test 100 concurrent WS (separate PR)
+
+## Deferred After MVP or After Evidence
+
+- Mass-spectator SSE/distributed transport
+- Full device fingerprint + shadow ban
+- Full WCAG sweep
+- Playwright browser E2E
+- Post-match rematch + share
+
+## Supplementary / Legacy Docs
+
+Các file như `projectbrief.md`, `issue.md`, `career-assessment.md`, `frontend-enterprise-followups.md`, `techContext.md` vẫn được giữ lại, nhưng không còn là nguồn truth mặc định cho agent.
