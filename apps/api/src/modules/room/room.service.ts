@@ -25,6 +25,20 @@ redis.call('set', KEYS[1], v, 'KEEPTTL')
 return v
 `;
 
+// Atomic Lua script that updates only the playerCount field of the cached
+// room JSON snapshot, preserving all other fields and the existing TTL.
+// Returns nil if the key does not exist (caller should no-op). Avoids the
+// read-modify-write race where a concurrent setCachedRoomSnapshot could be
+// overwritten by a stale full-object setJSON.
+const SET_PLAYER_COUNT_FIELD_SCRIPT = `
+local val = redis.call('get', KEYS[1])
+if not val then return nil end
+local obj = cjson.decode(val)
+obj['playerCount'] = tonumber(ARGV[1])
+redis.call('set', KEYS[1], cjson.encode(obj), 'KEEPTTL')
+return 1
+`;
+
 @Injectable()
 export class RoomService {
   private readonly logger = new Logger(RoomService.name);
@@ -63,13 +77,11 @@ export class RoomService {
   }
 
   private async syncCachedPlayerCount(roomId: string, playerCount: number) {
-    const cached = await this.redis.getJSON<{ playerCount: number }>(
-      `room:${roomId}`,
+    await this.redis.eval(
+      SET_PLAYER_COUNT_FIELD_SCRIPT,
+      [`room:${roomId}`],
+      [String(playerCount)],
     );
-    if (!cached) return;
-
-    cached.playerCount = playerCount;
-    await this.redis.setJSON(`room:${roomId}`, cached, 3600);
   }
 
   // Create room

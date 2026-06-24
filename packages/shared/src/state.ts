@@ -51,7 +51,7 @@ export interface RoomState {
   code: string;
   status: RoomStatus;
   hostId: string;
-  roomType: "PUBLIC" | "PRIVATE";
+  roomType: RoomType;
   maxPlayers: number;
   currentPlayers: PlayerInfo[];
   currentMatchId: string | null;
@@ -137,12 +137,12 @@ export interface TieBreakResult {
   };
 }
 
-export function asRoomType(value: string): "PUBLIC" | "PRIVATE" {
+export function asRoomType(value: string): RoomType {
   if (value === "PUBLIC") return "PUBLIC";
   if (value === "PRIVATE") return "PRIVATE";
   throw new RoomError(ErrorCode.INVALID_ROOM_TYPE);
 }
 
-export function asRoomTypeOrDefault(value: string): "PUBLIC" | "PRIVATE" {
+export function asRoomTypeOrDefault(value: string): RoomType {
   return value === "PRIVATE" ? "PRIVATE" : "PUBLIC";
 }

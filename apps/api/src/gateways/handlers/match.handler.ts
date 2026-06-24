@@ -59,10 +59,14 @@ export class MatchHandler extends BaseHandler {
       },
       (error) => {
         const code = this.getErrorCode(error);
-        const msg =
+        let msg =
           error instanceof RoomError
             ? ERROR_MESSAGES[error.code]
             : this.getErrorMessage(error);
+        if (code === ErrorCode.INTERNAL_ERROR) {
+          this.logger.error("Error starting match:", error);
+          msg = "Internal server error";
+        }
         this.emitError(client, code, msg);
       },
     );
@@ -141,10 +145,14 @@ export class MatchHandler extends BaseHandler {
       },
       (error) => {
         const code = this.getErrorCode(error);
-        const msg =
+        let msg =
           error instanceof RoomError
             ? ERROR_MESSAGES[error.code]
             : this.getErrorMessage(error);
+        if (code === ErrorCode.INTERNAL_ERROR) {
+          this.logger.error("Error submitting answer:", error);
+          msg = "Internal server error";
+        }
         this.emitError(client, code, msg);
       },
     );
@@ -191,10 +199,14 @@ export class MatchHandler extends BaseHandler {
       },
       (error) => {
         const code = this.getErrorCode(error);
-        const msg =
+        let msg =
           error instanceof RoomError
             ? ERROR_MESSAGES[error.code]
             : this.getErrorMessage(error);
+        if (code === ErrorCode.INTERNAL_ERROR) {
+          this.logger.error("Error sending snapshot:", error);
+          msg = "Internal server error";
+        }
         this.emitError(client, code, msg);
       },
     );

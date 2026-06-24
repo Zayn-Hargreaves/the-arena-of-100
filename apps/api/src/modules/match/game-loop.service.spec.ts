@@ -753,10 +753,9 @@ describe("GameLoopService", () => {
     expect(emitSpy).toHaveBeenCalledWith(
       ServerEvent.PLAYER_LEFT,
       expect.objectContaining({
-        matchId: "match-1",
+        roomId: "room-1",
         playerId: "p1",
-        playerName: "Player 1",
-        reason: PlayerStatus.DISCONNECTED,
+        reason: "DISCONNECTED",
       }),
     );
   });
@@ -2462,8 +2461,10 @@ describe("GameLoopService", () => {
         const launchSpy = vi
           .spyOn(svc as any, "launchRoomMatch")
           .mockResolvedValue({ id: "m1" });
+        vi.spyOn(svc as any, "clearPersistedCountdown").mockResolvedValue(true);
 
         svc.setServer(mockServer as unknown as Server);
+        await Promise.resolve();
         await Promise.resolve();
 
         // The buffer is drained atomically.
@@ -2496,6 +2497,7 @@ describe("GameLoopService", () => {
         const launchSpy = vi
           .spyOn(svc as any, "launchRoomMatch")
           .mockResolvedValue({ id: "m1" });
+        vi.spyOn(svc as any, "clearPersistedCountdown").mockResolvedValue(true);
 
         // First recovery (no server) → buffer populated.
         await svc.onModuleInit();
@@ -2503,6 +2505,7 @@ describe("GameLoopService", () => {
 
         // setServer drains the buffer; server is now set.
         svc.setServer(mockServer as unknown as Server);
+        await Promise.resolve();
         await Promise.resolve();
         expect(launchSpy).toHaveBeenCalledTimes(1);
         expect((svc as any).pendingRecovery).toEqual([]);
@@ -3071,6 +3074,9 @@ describe("GameLoopService", () => {
         vi.spyOn(service as any, "launchRoomMatch").mockRejectedValue(
           launchError,
         );
+        vi.spyOn(service as any, "clearPersistedCountdown").mockResolvedValue(
+          true,
+        );
         (service as any).pendingRecovery.push({
           roomId: "rExpired",
           countdownEndsAt: Date.now() - 1000,
@@ -3080,7 +3086,10 @@ describe("GameLoopService", () => {
 
         service.setServer(mockServer as unknown as Server);
         // Flush the void promise chain several times — the
-        // rejected promise is detached.
+        // rejected promise is detached. The chain is now:
+        // clearPersistedCountdown() → .then(launchRoomMatch) → .catch(logger.error)
+        await Promise.resolve();
+        await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();

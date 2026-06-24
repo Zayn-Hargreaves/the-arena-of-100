@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { Socket } from "socket.io";
+import { Socket, Server } from "socket.io";
 import {
   ServerEvent,
   ErrorCode,
@@ -54,8 +54,42 @@ export class AuthHandler extends BaseHandler {
       async () => {
         const decoded = this.authService.verifyToken(payload.token);
 
-        // Kick existing connection of this user if exists (O(1) lookup)
+        // Capture the old socket ID BEFORE recording the new connection so
+        // the kick logic can still find and evict the stale session.
         const oldSocketId = this.connectedPlayers.get(decoded.userId);
+
+        // If this same socket was previously authenticated as a DIFFERENT
+        // user, clean up that user's mapping before we overwrite
+        // client.data.userId. Otherwise the old user's
+        // connectedPlayers/connectionGeneration entries become orphaned
+        // (pointing at this client.id), violating the single-session
+        // invariant.
+        const previousUserId = client.data.userId as string | undefined;
+        if (
+          previousUserId &&
+          previousUserId !== decoded.userId &&
+          this.connectedPlayers.get(previousUserId) === client.id
+        ) {
+          await this.handleTrackedUserSwitchDisconnect(
+            previousUserId,
+            client.nsp.server,
+          );
+        }
+
+        // Record the new connection BEFORE kicking the old one so that
+        // oldSocket.disconnect(true) and its async handleDisconnect path
+        // see the new socket as the active session (generation mismatch)
+        // and treat the stale socket as non-active. This prevents the
+        // old socket's disconnect from clearing the new session or
+        // triggering an unintended player disconnect.
+        this.connectedPlayers.set(decoded.userId, client.id);
+        const newGen = (this.connectionGeneration.get(decoded.userId) ?? 0) + 1;
+        this.connectionGeneration.set(decoded.userId, newGen);
+        client.data.connectionGen = newGen;
+        client.data.userId = decoded.userId;
+        client.data.username = decoded.username;
+
+        // Kick existing connection of this user if exists (O(1) lookup)
         if (oldSocketId && oldSocketId !== client.id) {
           const oldSocket = client.nsp?.sockets.get(oldSocketId);
           if (oldSocket) {
@@ -72,31 +106,13 @@ export class AuthHandler extends BaseHandler {
             // has already cleaned it up (e.g. process was OOM-killed
             // and the `disconnect` event was never delivered to us,
             // or the socket was force-closed for an unrelated
-            // reason). Drop the stale map entry so it cannot
-            // accumulate. Without this, the connectedPlayers map
-            // could grow unbounded in long-running multi-process
-            // deployments with sticky sessions, and a new
-            // authentication would silently no-op (the kick branch
-            // would skip, but the map entry would linger).
+            // reason). The stale entry was already overwritten by
+            // the set above, so no further cleanup is needed here.
             this.logger.log(
-              `Connected-players map had stale entry for user ${decoded.userId} (socket ${oldSocketId} no longer in namespace); cleaning up`,
+              `Connected-players map had stale entry for user ${decoded.userId} (socket ${oldSocketId} no longer in namespace); cleaned up by overwrite`,
             );
-            this.clearTrackedConnection(decoded.userId);
           }
         }
-
-        this.connectedPlayers.set(decoded.userId, client.id);
-        // L2: bump the generation so the previous socket's eventual
-        // `disconnect` event is recognised as stale.
-        const newGen = (this.connectionGeneration.get(decoded.userId) ?? 0) + 1;
-        this.connectionGeneration.set(decoded.userId, newGen);
-        // Capture the generation on the socket itself so handleDisconnect
-        // can compare even if the connectedPlayers map has been
-        // overwritten in between.
-        client.data.connectionGen = newGen;
-
-        client.data.userId = decoded.userId;
-        client.data.username = decoded.username;
 
         client.emit(ServerEvent.AUTHENTICATED, {
           userId: decoded.userId,
@@ -155,27 +171,7 @@ export class AuthHandler extends BaseHandler {
       }
       // Only delete from map if the disconnected socket is the active session
       if (currentSocketId === client.id) {
-        this.clearTrackedConnection(userId);
-
-        // NEW: Notify active matches
-        try {
-          const userActiveRooms =
-            await this.roomService.getUserActiveRooms(userId);
-          for (const rp of userActiveRooms) {
-            if (rp.room.currentMatchId) {
-              await this.gameLoopService.handlePlayerDisconnect(
-                rp.room.currentMatchId,
-                userId,
-                client.nsp.server,
-              );
-            }
-          }
-        } catch (error) {
-          this.logger.warn(
-            `Failed to notify match of disconnect for ${userId}`,
-            error,
-          );
-        }
+        await this.handleTrackedUserSwitchDisconnect(userId, client.nsp.server);
 
         this.logger.log(`Player disconnected: ${userId}`);
       }
@@ -185,6 +181,30 @@ export class AuthHandler extends BaseHandler {
   private clearTrackedConnection(userId: string) {
     this.connectedPlayers.delete(userId);
     this.connectionGeneration.delete(userId);
+  }
+
+  private async handleTrackedUserSwitchDisconnect(
+    userId: string,
+    server: Server,
+  ): Promise<void> {
+    this.clearTrackedConnection(userId);
+    try {
+      const userActiveRooms = await this.roomService.getUserActiveRooms(userId);
+      for (const rp of userActiveRooms) {
+        if (rp.room.currentMatchId) {
+          await this.gameLoopService.handlePlayerDisconnect(
+            rp.room.currentMatchId,
+            userId,
+            server,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Failed to notify match of disconnect for ${userId}`,
+        error,
+      );
+    }
   }
 
   private logTokenVerificationFailure(error: unknown) {

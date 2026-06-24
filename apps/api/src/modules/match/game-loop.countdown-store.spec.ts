@@ -128,6 +128,12 @@ describe("game-loop.countdown-store", () => {
       expect(result).toEqual({ kind: "missing" });
     });
 
+    it("returns missing for empty strings", async () => {
+      const redis = makeRedis({ get: "" });
+      const result = await readPersistedCountdownEnd(redis, "r1");
+      expect(result).toEqual({ kind: "missing" });
+    });
+
     it("returns missing for strings with trailing garbage like '123abc'", async () => {
       const redis = makeRedis({ get: "123abc" });
       const result = await readPersistedCountdownEnd(redis, "r1");

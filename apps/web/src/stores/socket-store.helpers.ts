@@ -40,7 +40,8 @@ export function emitIfConnected<TPayload>(
   event: ClientEvent,
   payload: TPayload,
 ) {
-  socket?.emit(event, payload);
+  if (!socket || !socket.connected) return;
+  socket.emit(event, payload);
 }
 
 export function waitForSocketAck<TResult, TSuccess = unknown>(options: {

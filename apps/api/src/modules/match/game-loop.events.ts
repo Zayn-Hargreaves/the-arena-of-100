@@ -133,15 +133,12 @@ export function emitMatchPlayerLeft(
 export function emitMatchDisconnected(
   server: Server,
   roomId: string,
-  matchId: string,
   playerId: string,
-  playerName: string,
 ) {
   const channel = getRoomChannel(roomId);
   server.to(channel).emit(ServerEvent.PLAYER_LEFT, {
-    matchId,
+    roomId,
     playerId,
-    playerName,
     reason: "DISCONNECTED",
   });
 }

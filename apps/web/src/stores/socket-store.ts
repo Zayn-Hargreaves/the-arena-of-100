@@ -137,6 +137,10 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     });
 
     newSocket.on("disconnect", () => {
+      // Only reset state if this socket is still the active one.
+      // A previous socket's delayed disconnect event must not
+      // clobber the state of a newer connection.
+      if (get().socket !== newSocket) return;
       // Clear heartbeat on unexpected socket disconnects (network drop, server
       // restart) so we never leave orphaned intervals running. A reconnection
       // (connect() called again) will create a fresh interval below.
@@ -288,20 +292,36 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       // If unauthorized or invalid token, clear local auth state and
       // null the socket so the next connect() can reinitialize
       // (otherwise the connect guard would short-circuit on
-      // socket.connected and skip re-auth).
+      // socket.connected and skip re-auth). Also disconnect the socket
+      // so dangling listeners and duplicate reconnects don't linger.
+      // Only reset state if this socket is still the active one — a
+      // stale socket's ERROR must not clobber a newer connection.
       if (
         data.message === "Invalid or expired token" ||
         data.message === "Unauthorized"
       ) {
-        set(applyUnauthorizedErrorState());
+        if (get().socket === newSocket) {
+          set(applyUnauthorizedErrorState());
+        }
+        newSocket.disconnect();
       }
-      set({ error: data.message });
+      if (get().socket === newSocket) {
+        set({ error: data.message });
+      }
       console.error("❌ Error:", data.message);
     });
 
     set({ socket: newSocket });
 
-    await authPromise;
+    try {
+      await authPromise;
+    } catch (error) {
+      // Authentication failed or timed out — tear down the socket so
+      // we don't leave dangling listeners or buffered events that
+      // would fire on an automatic reconnect.
+      newSocket.disconnect();
+      throw error;
+    }
 
     // Start heartbeat interval (every 10 seconds)
     const currentState = get();

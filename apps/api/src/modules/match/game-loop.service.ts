@@ -129,14 +129,25 @@ export class GameLoopService implements OnModuleInit {
         `Draining pending recovery for room ${entry.roomId} (expired=${entry.expired})`,
       );
       if (entry.expired) {
-        void this.launchRoomMatch(entry.roomId, this.server!, {
-          isAutoStart: true,
-        }).catch((error) => {
-          this.logger.error(
-            `Pending-recovery launch failed for room ${entry.roomId}:`,
-            error,
-          );
-        });
+        void this.clearPersistedCountdown(entry.roomId)
+          .then((cleared) => {
+            if (!cleared) {
+              this.logger.warn(
+                `Recovery clear failed for room ${entry.roomId}: persisted countdown was not cleared; re-queueing with retry`,
+              );
+              this.scheduleRecoveryRetry(entry);
+              return;
+            }
+            return this.launchRoomMatch(entry.roomId, this.server!, {
+              isAutoStart: true,
+            });
+          })
+          .catch((error) => {
+            this.logger.error(
+              `Pending-recovery launch failed for room ${entry.roomId}:`,
+              error,
+            );
+          });
       } else {
         this.armLobbyCountdownTimer(
           entry.roomId,
@@ -196,6 +207,16 @@ export class GameLoopService implements OnModuleInit {
             // Instead, buffer the recovery; setServer() will drain
             // the buffer as soon as the server is available.
             if (this.server) {
+              const cleared = await this.clearPersistedCountdown(roomId);
+              if (!cleared) {
+                this.logger.warn(
+                  `Recovery clear failed for room ${roomId}: persisted countdown was not cleared; re-queueing with retry`,
+                );
+                this.scheduleRecoveryRetry(
+                  makePendingRecoveryEntry(roomId, countdownEndsAt, true),
+                );
+                continue;
+              }
               void this.launchRoomMatch(roomId, this.server, {
                 isAutoStart: true,
               }).catch((error) => {
@@ -359,16 +380,30 @@ export class GameLoopService implements OnModuleInit {
     }
   }
 
-  private async clearPersistedCountdown(roomId: string): Promise<void> {
+  private async clearPersistedCountdown(roomId: string): Promise<boolean> {
     try {
       await clearPersistedCountdown(this.redis.getClient(), roomId);
+      return true;
     } catch (error) {
       this.logger.warn(
         `Failed to clear persisted countdown for room ${roomId}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
+      return false;
     }
+  }
+
+  private scheduleRecoveryRetry(entry: PendingRecoveryEntry): void {
+    const RETRY_DELAY_MS = 1000;
+    this.logger.log(
+      `Re-queueing recovery for room ${entry.roomId} in ${RETRY_DELAY_MS}ms for retry`,
+    );
+    const timer = setTimeout(() => {
+      this.pendingRecovery.push(entry);
+      this.drainPendingRecovery();
+    }, RETRY_DELAY_MS);
+    timer.unref?.();
   }
 
   private async clearLobbyCountdown(roomId: string, timer?: NodeJS.Timeout) {
@@ -1279,7 +1314,7 @@ export class GameLoopService implements OnModuleInit {
 
     // 6. Broadcast PLAYER_LEFT with reason field
     const roomId = state.roomId;
-    emitMatchDisconnected(server, roomId, matchId, userId, player.name);
+    emitMatchDisconnected(server, roomId, userId);
 
     // 7. Log the disconnect
     this.logger.log(`Player ${userId} disconnected from match ${matchId}`);

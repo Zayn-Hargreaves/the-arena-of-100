@@ -397,10 +397,7 @@ describe("RoomService", () => {
       vi.mocked(prisma.roomPlayer.deleteMany).mockResolvedValue({
         count: 1,
       } as any);
-      vi.mocked(redis.getJSON).mockResolvedValue({
-        playerCount: 2,
-        hostId: "u1",
-      });
+      vi.mocked(redis.eval).mockResolvedValue(1);
       vi.spyOn(service, "getRoom").mockResolvedValue({ id: "r1" } as any);
 
       const result = await service.leaveRoom("r1", "u2");
@@ -409,7 +406,18 @@ describe("RoomService", () => {
         where: { roomId: "r1", userId: "u2" },
       });
       expect(redis.srem).toHaveBeenCalledWith("room:r1:players", "u2");
-      expect(redis.setJSON).toHaveBeenCalled();
+      // First eval: atomic decrement (clamped) for the counter key
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("redis.call"),
+        ["room:r1:playerCount"],
+        ["1"],
+      );
+      // Second eval: atomic field update for the cached room JSON
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("cjson"),
+        ["room:r1"],
+        ["1"],
+      );
       expect(result).toEqual({ id: "r1" });
     });
   });
@@ -593,10 +601,10 @@ describe("RoomService", () => {
         ["room:r1:playerCount"],
         ["1"],
       );
-      expect(redis.setJSON).toHaveBeenCalledWith(
-        "room:r1",
-        { playerCount: 1 },
-        3600,
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("cjson"),
+        ["room:r1"],
+        ["1"],
       );
     });
   });
@@ -628,10 +636,10 @@ describe("RoomService", () => {
         ["room:r1:playerCount"],
         ["2"],
       );
-      expect(redis.setJSON).toHaveBeenCalledWith(
-        "room:r1",
-        { playerCount: 3 },
-        3600,
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("cjson"),
+        ["room:r1"],
+        ["3"],
       );
     });
   });

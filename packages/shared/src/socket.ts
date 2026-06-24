@@ -4,7 +4,7 @@
 // ============================================================
 
 import type { RoomTerminationReason } from "./events";
-import type { RoomStatus } from "./state";
+import type { RoomStatus, RoomType } from "./state";
 
 // Socket Namespaces
 export enum SocketNamespace {
@@ -146,7 +146,7 @@ export interface RoomCreatedPayload {
   roomId: string;
   code: string;
   hostId: string;
-  roomType: "PUBLIC" | "PRIVATE";
+  roomType: RoomType;
   roomStatus: RoomStatus;
   currentMatchId: string | null;
   players: RoomPlayerSummary[];
@@ -159,7 +159,7 @@ export interface RoomJoinedPayload {
   roomId: string;
   code: string;
   hostId: string;
-  roomType: "PUBLIC" | "PRIVATE";
+  roomType: RoomType;
   roomStatus: RoomStatus;
   currentMatchId: string | null;
   countdownEndsAt: number | null;

@@ -3,7 +3,7 @@
 // Event Sourcing Pattern: All game actions are events
 // ============================================================
 
-import { MatchStatus, RoomStatus } from "./state";
+import { MatchStatus, RoomStatus, type RoomType } from "./state";
 
 // Room Events
 export enum RoomEventType {
@@ -46,7 +46,7 @@ export interface RoomCreatedEventPayload {
   roomId: string;
   roomCode: string;
   hostId: string;
-  roomType: "PUBLIC" | "PRIVATE";
+  roomType: RoomType;
   maxPlayers: number;
 }
 

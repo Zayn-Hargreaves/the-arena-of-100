@@ -267,10 +267,28 @@ export function applyRoundStartedState(
   state: SocketState,
   data: RoundStartedPayload,
 ): Partial<SocketState> {
+  // Guard: ignore stale round events from a previous match after
+  // reconnect or room switch. Prioritize state.room.currentMatchId
+  // (set by applyMatchStartingState) over state.match.id so that
+  // ROUND_STARTED is not dropped during the transition window where
+  // match.id still points to the previous match but currentMatchId
+  // already matches the incoming matchId. Only return {} when BOTH
+  // state.match.id AND state.room.currentMatchId clearly do not
+  // match data.matchId.
+  const roomMatchId = state.room?.currentMatchId;
+  if (roomMatchId && roomMatchId !== data.matchId) return {};
+  if (
+    state.match &&
+    state.match.id !== data.matchId &&
+    (!roomMatchId || roomMatchId !== data.matchId)
+  )
+    return {};
+
   return {
     match: state.match
       ? {
           ...state.match,
+          id: data.matchId,
           status: MatchStatus.ROUND_ACTIVE,
           currentRoundNo: data.roundNo,
           currentQuestion: data.question,
@@ -293,6 +311,19 @@ export function applyRoundEndedState(
   data: RoundEndedPayload,
   priorForThisRound: LastAnswerResult | null,
 ): Partial<SocketState> {
+  // Guard: ignore stale round events from a previous match after
+  // reconnect or room switch. Same logic as applyRoundStartedState —
+  // prioritize state.room.currentMatchId so ROUND_ENDED is not
+  // dropped during the match transition window.
+  const roomMatchId = state.room?.currentMatchId;
+  if (roomMatchId && roomMatchId !== data.matchId) return {};
+  if (
+    state.match &&
+    state.match.id !== data.matchId &&
+    (!roomMatchId || roomMatchId !== data.matchId)
+  )
+    return {};
+
   const eliminatedSet = new Set(data.eliminatedPlayerIds);
   const updatedPlayers = state.match?.players.map((player) =>
     eliminatedSet.has(player.id)
@@ -304,6 +335,7 @@ export function applyRoundEndedState(
     match: state.match
       ? {
           ...state.match,
+          id: data.matchId,
           players: updatedPlayers ?? state.match.players,
           status: MatchStatus.ROUND_RESULT,
           roundEndTime: null,

@@ -1,7 +1,7 @@
 ﻿# Plan: Remaining Hardening + Memory-Bank Consolidation
 
 > **Trạng thái đồng bộ:** 2026-06-18 / 2026-06-19
-> File này **thay thế** plan cũ cho PR `fix/match-race-frontend-correctness`. PR đó đã merge từ 2026-06-14; các follow-up L2/L3, home gradient, và admin audit backend cũng đã land. Ground truth hiện tại nằm ở code live + 4 core memory-bank files.
+> File này **thay thế** plan cũ cho PR `fix/match-race-frontend-correctness`. PR đó đã merge từ 2026-06-14; các follow-up L2/L3, home gradient cleanup cũng đã land. Admin kill-switch append-only audit event **chưa land** (xem progress.md, activeContext.md). Ground truth hiện tại nằm ở code live + 4 core memory-bank files.
 
 ## 1. Ground Truth
 
@@ -79,7 +79,9 @@ Goal:
   - eliminated player tiếp tục ở spectator UI
 - focus là **operator clarity + UX clarity**, không phải tạo luật "2 missed rounds" mới
 
-### P4 — Moderation MVP
+### P4 — Moderation MVP {#501}
+
+<a id="501"></a>
 
 Goal:
 
