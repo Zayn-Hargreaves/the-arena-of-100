@@ -189,6 +189,89 @@ describe("AuthHandler", () => {
         username: "Alice",
       });
     });
+
+    it("cleans up previous user mapping when same socket re-authenticates as a different user", async () => {
+      // C3/previousUserId branch: when a socket was previously
+      // authenticated as user "u1" and then re-authenticates as
+      // "u2", the handler must clean up u1's tracked connection
+      // (connectedPlayers + connectionGeneration) and notify u1's
+      // active matches of the disconnect.
+      vi.mocked(authService.verifyToken)
+        .mockReturnValueOnce({
+          userId: "u1",
+          username: "Alice",
+          role: "GUEST" as any,
+        })
+        .mockReturnValueOnce({
+          userId: "u2",
+          username: "Bob",
+          role: "GUEST" as any,
+        });
+
+      // First auth as u1
+      await handler.handleAuthenticate(client, { token: "t1" });
+      expect(client.data.userId).toBe("u1");
+
+      // Mock getUserActiveRooms for u1's disconnect cleanup
+      vi.mocked(roomService.getUserActiveRooms).mockResolvedValueOnce([
+        {
+          room: { currentMatchId: "m1" },
+        },
+      ] as any);
+
+      // Re-authenticate the SAME socket as u2
+      await handler.handleAuthenticate(client, { token: "t2" });
+
+      // u1's active rooms should have been notified of disconnect
+      expect(roomService.getUserActiveRooms).toHaveBeenCalledWith("u1");
+      expect(gameLoopService.handlePlayerDisconnect).toHaveBeenCalledWith(
+        "m1",
+        "u1",
+        expect.anything(),
+      );
+
+      // Socket now belongs to u2
+      expect(client.data.userId).toBe("u2");
+      expect(client.data.username).toBe("Bob");
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.AUTHENTICATED, {
+        userId: "u2",
+        username: "Bob",
+      });
+
+      // u1's mapping should be cleaned up
+      expect((handler as any).connectedPlayers.has("u1")).toBe(false);
+      expect((handler as any).connectionGeneration.has("u1")).toBe(false);
+      // u2's mapping should exist
+      expect((handler as any).connectedPlayers.get("u2")).toBe(client.id);
+    });
+
+    it("skips user-switch cleanup when previousUserId matches the new decoded userId", async () => {
+      // Edge case: the socket's client.data.userId is already the
+      // same as the newly decoded userId. The previousUserId check
+      // must NOT fire handleTrackedUserSwitchDisconnect.
+      vi.mocked(authService.verifyToken).mockReturnValue({
+        userId: "u1",
+        username: "Alice",
+        role: "GUEST" as any,
+      });
+
+      // First auth
+      await handler.handleAuthenticate(client, { token: "t1" });
+      expect(client.data.userId).toBe("u1");
+
+      // Record call count after first auth (syncReconnection calls getUserActiveRooms)
+      const callsAfterFirst = vi.mocked(gameLoopService.handlePlayerDisconnect)
+        .mock.calls.length;
+
+      // Re-authenticate the SAME socket with the SAME user
+      await handler.handleAuthenticate(client, { token: "t1" });
+
+      // handlePlayerDisconnect should NOT have been called again —
+      // same user means the previousUserId branch is skipped entirely.
+      expect(gameLoopService.handlePlayerDisconnect).toHaveBeenCalledTimes(
+        callsAfterFirst,
+      );
+    });
   });
 
   describe("handleDisconnect", () => {
