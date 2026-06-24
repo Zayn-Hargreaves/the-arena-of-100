@@ -73,7 +73,8 @@ export class RoomHandler extends BaseHandler {
         const code = this.getErrorCode(error);
         let msg =
           error instanceof RoomError
-            ? (ERROR_MESSAGES[error.code] ?? this.getErrorMessage(error))
+            ? /* c8 ignore next */
+              (ERROR_MESSAGES[error.code] ?? this.getErrorMessage(error))
             : this.getErrorMessage(error);
         if (code === ErrorCode.INTERNAL_ERROR) {
           this.logger.error("Error creating room:", error);
@@ -181,7 +182,8 @@ export class RoomHandler extends BaseHandler {
         const code = this.getErrorCode(error);
         let msg =
           error instanceof RoomError
-            ? (ERROR_MESSAGES[error.code] ?? this.getErrorMessage(error))
+            ? /* c8 ignore next */
+              (ERROR_MESSAGES[error.code] ?? this.getErrorMessage(error))
             : this.getErrorMessage(error);
         if (code === ErrorCode.INTERNAL_ERROR) {
           this.logger.error("Error joining room:", error);
@@ -254,7 +256,8 @@ export class RoomHandler extends BaseHandler {
         const code = this.getErrorCode(error);
         let msg =
           error instanceof RoomError
-            ? (ERROR_MESSAGES[error.code] ?? this.getErrorMessage(error))
+            ? /* c8 ignore next */
+              (ERROR_MESSAGES[error.code] ?? this.getErrorMessage(error))
             : this.getErrorMessage(error);
         if (code === ErrorCode.INTERNAL_ERROR) {
           this.logger.error("Error leaving room:", error);

@@ -1,4 +1,3 @@
-import type { Server } from "socket.io";
 import type { RoomStatus } from "@arena/shared";
 
 export interface LobbyCountdownEntry {
@@ -20,7 +19,3 @@ export interface RoomStatusUpdatePayload {
 }
 
 export type WaitingRoomReason = "PLAYER_LEFT" | "NOT_ENOUGH_PLAYERS";
-
-export interface MatchLoopServices {
-  server?: Server;
-}

@@ -9,13 +9,16 @@ describe("AdminController", () => {
     syncQuestions: ReturnType<typeof vi.fn>;
     resetSystem: ReturnType<typeof vi.fn>;
     terminateRoom: ReturnType<typeof vi.fn>;
+    getAuditEvents: ReturnType<typeof vi.fn>;
   };
+  const adminReq = { user: { userId: "u-admin" } } as any;
 
   beforeEach(() => {
     service = {
       syncQuestions: vi.fn(),
       resetSystem: vi.fn(),
       terminateRoom: vi.fn(),
+      getAuditEvents: vi.fn(),
     };
     controller = new AdminController(service as unknown as AdminService);
   });
@@ -39,9 +42,24 @@ describe("AdminController", () => {
       };
       vi.mocked(service.syncQuestions).mockResolvedValue(expected);
 
-      const result = await controller.syncQuestions(dto);
+      const result = await controller.syncQuestions(adminReq, dto);
 
-      expect(service.syncQuestions).toHaveBeenCalledWith(false);
+      expect(service.syncQuestions).toHaveBeenCalledWith(false, "u-admin");
+      expect(result).toEqual(expected);
+    });
+
+    it("defaults clearExisting to true when the body is omitted", async () => {
+      const expected = {
+        success: true,
+        questionsCount: 5,
+        tagsCount: 2,
+        relationshipsCount: 3,
+      };
+      vi.mocked(service.syncQuestions).mockResolvedValue(expected);
+
+      const result = await controller.syncQuestions(adminReq, undefined);
+
+      expect(service.syncQuestions).toHaveBeenCalledWith(true, "u-admin");
       expect(result).toEqual(expected);
     });
 
@@ -50,7 +68,7 @@ describe("AdminController", () => {
       const error = new Error("Sync failed");
       vi.mocked(service.syncQuestions).mockRejectedValueOnce(error);
 
-      await expect(controller.syncQuestions(dto)).rejects.toThrow(
+      await expect(controller.syncQuestions(adminReq, dto)).rejects.toThrow(
         "Sync failed",
       );
     });
@@ -65,9 +83,10 @@ describe("AdminController", () => {
       };
       vi.mocked(service.resetSystem).mockResolvedValue(expected);
 
-      const result = await controller.resetSystem();
+      const result = await controller.resetSystem(adminReq);
 
       expect(service.resetSystem).toHaveBeenCalledTimes(1);
+      expect(service.resetSystem).toHaveBeenCalledWith("u-admin");
       expect(result).toEqual(expected);
     });
 
@@ -75,7 +94,9 @@ describe("AdminController", () => {
       const error = new Error("Reset failed");
       vi.mocked(service.resetSystem).mockRejectedValueOnce(error);
 
-      await expect(controller.resetSystem()).rejects.toThrow("Reset failed");
+      await expect(controller.resetSystem(adminReq)).rejects.toThrow(
+        "Reset failed",
+      );
     });
   });
 
@@ -97,7 +118,9 @@ describe("AdminController", () => {
 
       // Currently rejects — message field is fail-fast until the
       // sanitizer pipeline lands.
-      await expect(controller.terminateRoom("r1", dto)).rejects.toThrow();
+      await expect(
+        controller.terminateRoom(adminReq, "r1", dto),
+      ).rejects.toThrow();
       expect(service.terminateRoom).not.toHaveBeenCalled();
     });
 
@@ -110,9 +133,13 @@ describe("AdminController", () => {
         terminatedAt: 12345,
       });
 
-      const result = await controller.terminateRoom("r1", undefined);
+      const result = await controller.terminateRoom(adminReq, "r1", undefined);
 
-      expect(service.terminateRoom).toHaveBeenCalledWith("r1", undefined);
+      expect(service.terminateRoom).toHaveBeenCalledWith(
+        "r1",
+        "u-admin",
+        undefined,
+      );
       expect(result.success).toBe(true);
     });
 
@@ -122,14 +149,16 @@ describe("AdminController", () => {
       );
 
       await expect(
-        controller.terminateRoom("r-missing", undefined),
+        controller.terminateRoom(adminReq, "r-missing", undefined),
       ).rejects.toMatchObject({ code: ErrorCode.ROOM_NOT_FOUND });
     });
 
     it("rejects messages longer than 200 characters (zod validation)", async () => {
       const dto = { message: "x".repeat(201) };
 
-      await expect(controller.terminateRoom("r1", dto)).rejects.toThrow();
+      await expect(
+        controller.terminateRoom(adminReq, "r1", dto),
+      ).rejects.toThrow();
       expect(service.terminateRoom).not.toHaveBeenCalled();
     });
 
@@ -139,8 +168,34 @@ describe("AdminController", () => {
       // should flip to "forwards the call" semantics.
       const dto = { message: "abandoned" };
 
-      await expect(controller.terminateRoom("r1", dto)).rejects.toThrow();
+      await expect(
+        controller.terminateRoom(adminReq, "r1", dto),
+      ).rejects.toThrow();
       expect(service.terminateRoom).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("getAuditEvents", () => {
+    it("delegates validated query params to AdminService.getAuditEvents", async () => {
+      const expected = { events: [{ id: "evt-1" }], total: 1 };
+      vi.mocked(service.getAuditEvents).mockResolvedValue(expected);
+
+      const result = await controller.getAuditEvents({
+        limit: 25,
+        offset: 5,
+        roomId: "clx123examplecuid",
+        eventType: "ADMIN_TERMINATE_ROOM",
+        adminUserId: "clx456examplecuid",
+      } as any);
+
+      expect(service.getAuditEvents).toHaveBeenCalledWith({
+        limit: 25,
+        offset: 5,
+        roomId: "clx123examplecuid",
+        eventType: "ADMIN_TERMINATE_ROOM",
+        adminUserId: "clx456examplecuid",
+      });
+      expect(result).toEqual(expected);
     });
   });
 });

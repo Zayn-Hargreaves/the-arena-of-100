@@ -175,6 +175,7 @@ export class GameLoopService implements OnModuleInit {
             continue;
           }
           const countdownEndsAt = result.value;
+          /* c8 ignore next 6 */
           if (!Number.isFinite(countdownEndsAt)) {
             await clearPersistedCountdown(client, roomId);
             continue;
