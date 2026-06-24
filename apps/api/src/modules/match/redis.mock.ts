@@ -26,6 +26,7 @@ export function createMockRedisClient() {
     sadd: vi.fn().mockResolvedValue(0),
     srem: vi.fn().mockResolvedValue(0),
     smembers: vi.fn().mockResolvedValue([]),
+    exists: vi.fn().mockResolvedValue(0),
   };
 }
 

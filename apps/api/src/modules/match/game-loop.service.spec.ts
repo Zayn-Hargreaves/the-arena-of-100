@@ -2726,17 +2726,14 @@ describe("GameLoopService", () => {
         return { svc, redis, failingExec, multiSpy };
       }
 
-      it("logs and swallows errors thrown by persistLobbyCountdown (redis SET chain fails)", async () => {
+      it("propagates errors thrown by persistLobbyCountdown (redis SET chain fails)", async () => {
         const { svc, multiSpy } = buildServiceWithFailingMulti("set");
-        const errorSpy = vi.spyOn((svc as any).logger, "error");
 
-        await (svc as any).persistLobbyCountdown("r1", Date.now() + 5000);
+        await expect(
+          (svc as any).persistLobbyCountdown("r1", Date.now() + 5000),
+        ).rejects.toThrow();
 
         expect(multiSpy).toHaveBeenCalled();
-        expect(errorSpy).toHaveBeenCalledWith(
-          "Failed to persist lobby countdown for room r1:",
-          expect.any(Error),
-        );
       });
 
       it("logs and swallows errors thrown by clearPersistedCountdown (redis DEL chain fails)", async () => {
@@ -3720,6 +3717,7 @@ describe("GameLoopService", () => {
         // setTimeout should not be called since it was deduplicated
         expect(setTimeoutSpy).not.toHaveBeenCalled();
 
+        setTimeoutSpy.mockRestore();
         vi.useRealTimers();
       });
 
@@ -3760,6 +3758,8 @@ describe("GameLoopService", () => {
         expect(clearCountdownSpy).toHaveBeenCalledWith("room-retry-max");
         expect(setTimeoutSpy).not.toHaveBeenCalled();
 
+        setTimeoutSpy.mockRestore();
+        saddSpy.mockRestore();
         vi.useRealTimers();
       });
 
@@ -3797,6 +3797,99 @@ describe("GameLoopService", () => {
           ),
           saddError,
         );
+      });
+
+      describe("reliability hardening fixes (retention, cleanup, timer rollback)", () => {
+        it("sadd and setex (TTL key) are both called during max-retry abort", async () => {
+          const entry = {
+            roomId: "room-retry-ttl",
+            countdownEndsAt: Date.now() - 1000,
+            expired: true,
+            retryCount: 5,
+          };
+
+          const client = (service as any).redis.getClient();
+          const saddSpy = vi.spyOn(client, "sadd").mockResolvedValue(1);
+          const setSpy = vi.spyOn(client, "set").mockResolvedValue("OK");
+          vi.spyOn(service as any, "clearPersistedCountdown").mockResolvedValue(
+            true,
+          );
+
+          (service as any).scheduleRecoveryRetry(entry);
+
+          // flush promises
+          await Promise.resolve();
+          await Promise.resolve();
+
+          expect(saddSpy).toHaveBeenCalledWith(
+            "room:recovery:dead-letter",
+            "room-retry-ttl",
+          );
+          expect(setSpy).toHaveBeenCalledWith(
+            "room:recovery:dead-letter:room-retry-ttl",
+            "1",
+            "EX",
+            604800,
+          );
+        });
+
+        it("sweepDeadLetterRooms sweeps and cleans up expired room IDs", async () => {
+          const client = (service as any).redis.getClient();
+          const smembersSpy = vi
+            .spyOn(client, "smembers")
+            .mockResolvedValue(["room-expired", "room-active"]);
+          const existsSpy = vi
+            .spyOn(client, "exists")
+            .mockImplementation(async (...args: any[]) => {
+              const key = args[0];
+              if (key === "room:recovery:dead-letter:room-expired") return 0;
+              if (key === "room:recovery:dead-letter:room-active") return 1;
+              return 0;
+            });
+          const sremSpy = vi.spyOn(client, "srem").mockResolvedValue(1);
+
+          vi.spyOn((service as any).logger, "log").mockImplementation(() => {});
+
+          await (service as any).sweepDeadLetterRooms();
+
+          expect(smembersSpy).toHaveBeenCalledWith("room:recovery:dead-letter");
+          expect(existsSpy).toHaveBeenCalledWith(
+            "room:recovery:dead-letter:room-expired",
+          );
+          expect(existsSpy).toHaveBeenCalledWith(
+            "room:recovery:dead-letter:room-active",
+          );
+          expect(sremSpy).toHaveBeenCalledWith(
+            "room:recovery:dead-letter",
+            "room-expired",
+          );
+          expect(sremSpy).not.toHaveBeenCalledWith(
+            "room:recovery:dead-letter",
+            "room-active",
+          );
+        });
+
+        it("clearLobbyCountdownBestEffort explicitly cancels armed countdown timers", () => {
+          const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+          const fakeTimer = globalThis.setTimeout(() => {}, 10000);
+
+          (service as any).lobbyCountdowns.set("room-timer-test", {
+            timer: fakeTimer,
+            countdownEndsAt: Date.now() + 10000,
+          });
+
+          vi.spyOn(service as any, "clearPersistedCountdown").mockResolvedValue(
+            true,
+          );
+
+          (service as any).clearLobbyCountdownBestEffort("room-timer-test");
+
+          expect(clearTimeoutSpy).toHaveBeenCalledWith(fakeTimer);
+          expect((service as any).lobbyCountdowns.has("room-timer-test")).toBe(
+            false,
+          );
+          globalThis.clearTimeout(fakeTimer); // clean up just in case
+        });
       });
     });
   });

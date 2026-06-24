@@ -423,8 +423,10 @@ export class AdminService {
     const matchId = room.currentMatchId;
 
     // 2. Persist match finish in DB (no winner on admin termination).
-    // Failure here is logged but non-fatal — we still want to clean up
-    // the room and its runtime state.
+    // Failure here is recorded as a partial result so the admin UI can
+    // trigger a follow-up sweep — cleanup still runs regardless.
+    const progress: TerminationProgress = { partial: false };
+
     if (matchId) {
       // B1 fix: idempotency gate between the natural finish path
       // (`GameLoopService.finishMatchLoop` triggered by
@@ -489,15 +491,13 @@ export class AdminService {
         // straightforward.
         await this.matchService.finishMatch(matchId, null, roomId, true);
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
-        this.logger.error(
-          `Failed to finish match ${matchId} during admin termination of room ${roomId}: ${errMsg}`,
-          error instanceof Error ? error.stack : undefined,
+        this.recordPartialTerminationFailure(
+          progress,
+          `Failed to finish match ${matchId} during admin termination of room ${roomId}`,
+          error,
         );
       }
     }
-
-    const progress: TerminationProgress = { partial: false };
 
     // 3. Stop in-memory timers + lobby countdown. `stopRoomRuntime` reaches
     // Redis via `clearPersistedCountdown`, which can throw. We do not want

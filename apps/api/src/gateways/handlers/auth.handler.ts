@@ -73,6 +73,7 @@ export class AuthHandler extends BaseHandler {
           await this.handleTrackedUserSwitchDisconnect(
             previousUserId,
             client.nsp.server,
+            client,
           );
         }
 
@@ -171,7 +172,11 @@ export class AuthHandler extends BaseHandler {
       }
       // Only delete from map if the disconnected socket is the active session
       if (currentSocketId === client.id) {
-        await this.handleTrackedUserSwitchDisconnect(userId, client.nsp.server);
+        await this.handleTrackedUserSwitchDisconnect(
+          userId,
+          client.nsp.server,
+          client,
+        );
 
         this.logger.log(`Player disconnected: ${userId}`);
       }
@@ -186,10 +191,16 @@ export class AuthHandler extends BaseHandler {
   private async handleTrackedUserSwitchDisconnect(
     userId: string,
     server: Server,
+    client: Socket,
   ): Promise<void> {
     this.clearTrackedConnection(userId);
     try {
       const userActiveRooms = await this.roomService.getUserActiveRooms(userId);
+      // Leave every room channel joined during syncReconnection so a
+      // reused client cannot receive broadcasts for the old user.
+      for (const rp of userActiveRooms) {
+        client.leave(`room:${rp.room.id}`);
+      }
       for (const rp of userActiveRooms) {
         if (rp.room.currentMatchId) {
           await this.gameLoopService.handlePlayerDisconnect(

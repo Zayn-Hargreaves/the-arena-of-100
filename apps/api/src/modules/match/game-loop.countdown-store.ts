@@ -3,10 +3,11 @@ import type Redis from "ioredis";
 
 const COUNTDOWN_KEY_PREFIX = "room:countdown:";
 const COUNTDOWN_INDEX_KEY = "room:countdowns";
-// TTL longer than the longest possible countdown so a stale entry still
-// exists for a small recovery window after a process restart.
+// TTL long enough to cover a process restart + recovery window well
+// beyond the countdown duration itself, so persisted room:countdown:*
+// keys survive until onModuleInit() can restore them.
 const COUNTDOWN_REDIS_TTL_SEC = Math.ceil(
-  (GAME_CONFIG.COUNTDOWN_DURATION_MS * 2) / 1000,
+  (GAME_CONFIG.COUNTDOWN_DURATION_MS * 10) / 1000,
 );
 
 export async function persistLobbyCountdown(

@@ -48,6 +48,7 @@ describe("AuthHandler", () => {
       emit: vi.fn(),
       disconnect: vi.fn(),
       join: vi.fn(),
+      leave: vi.fn(),
       data: {},
       nsp: {
         sockets: mockSockets,
@@ -154,6 +155,7 @@ describe("AuthHandler", () => {
         emit: vi.fn(),
         disconnect: vi.fn(),
         join: vi.fn(),
+        leave: vi.fn(),
         data: { userId: "u1" },
         nsp: { sockets: mockSockets },
       } as unknown as Socket;
@@ -168,6 +170,7 @@ describe("AuthHandler", () => {
         emit: vi.fn(),
         disconnect: vi.fn(),
         join: vi.fn(),
+        leave: vi.fn(),
         data: {},
         nsp: { sockets: mockSockets },
       } as unknown as Socket;
@@ -215,7 +218,7 @@ describe("AuthHandler", () => {
       // Mock getUserActiveRooms for u1's disconnect cleanup
       vi.mocked(roomService.getUserActiveRooms).mockResolvedValueOnce([
         {
-          room: { currentMatchId: "m1" },
+          room: { id: "r1", currentMatchId: "m1" },
         },
       ] as any);
 
@@ -290,6 +293,7 @@ describe("AuthHandler", () => {
         id: "socket-2",
         emit: vi.fn(),
         join: vi.fn(),
+        leave: vi.fn(),
         data: {},
         nsp: {
           sockets: mockSockets,
@@ -334,6 +338,7 @@ describe("AuthHandler", () => {
         emit: vi.fn(),
         disconnect: vi.fn(),
         join: vi.fn(),
+        leave: vi.fn(),
         data: { userId: "u1" },
         nsp: { sockets: mockSockets },
       } as unknown as Socket;
@@ -351,6 +356,7 @@ describe("AuthHandler", () => {
         emit: vi.fn(),
         disconnect: vi.fn(),
         join: vi.fn(),
+        leave: vi.fn(),
         data: {},
         nsp: { sockets: mockSockets },
       } as unknown as Socket;
@@ -770,6 +776,7 @@ describe("AuthHandler", () => {
           emit: vi.fn(),
           disconnect: vi.fn(),
           join: vi.fn(),
+          leave: vi.fn(),
           data: {},
           nsp: { sockets: mockSockets, server: { to: vi.fn() } },
         } as unknown as Socket;
@@ -781,6 +788,7 @@ describe("AuthHandler", () => {
           emit: vi.fn(),
           disconnect: vi.fn(),
           join: vi.fn(),
+          leave: vi.fn(),
           data: {},
           nsp: { sockets: mockSockets, server: { to: vi.fn() } },
         } as unknown as Socket;

@@ -53,6 +53,10 @@ export function applyRoomCreatedState(
   data: RoomCreatedPayload,
 ): Partial<SocketState> {
   return {
+    match: null,
+    lastAnswerResult: null,
+    remainingCount: null,
+    isEliminated: false,
     room: {
       id: data.roomId,
       code: data.code,
@@ -71,6 +75,9 @@ export function applyRoomJoinedState(
   data: RoomJoinedPayload,
 ): Partial<SocketState> {
   return {
+    match: null,
+    lastAnswerResult: null,
+    remainingCount: null,
     isEliminated: false,
     room: {
       id: data.roomId,
@@ -376,8 +383,17 @@ export function applyPlayerEliminatedState(
 
 export function applyMatchFinishedState(
   state: SocketState,
-  _data: MatchFinishedPayload,
+  data: MatchFinishedPayload,
 ): Partial<SocketState> {
+  const roomMatchId = state.room?.currentMatchId;
+  if (roomMatchId && roomMatchId !== data.matchId) return {};
+  if (
+    state.match &&
+    state.match.id !== data.matchId &&
+    (!roomMatchId || roomMatchId !== data.matchId)
+  )
+    return {};
+
   return {
     room: state.room
       ? {
@@ -427,8 +443,10 @@ export function applySnapshotState(
 }
 
 export function applyAnswerResultState(
+  state: SocketState,
   data: AnswerResultPayload,
 ): Partial<SocketState> {
+  if (state.match && state.match.id !== data.matchId) return {};
   return { lastAnswerResult: data };
 }
 
@@ -455,5 +473,11 @@ export function applyUnauthorizedErrorState(): Partial<SocketState> {
     userRole: null,
     userId: null,
     username: null,
+    room: null,
+    match: null,
+    remainingCount: null,
+    lastAnswerResult: null,
+    isEliminated: false,
+    heartbeatInterval: null,
   };
 }

@@ -157,26 +157,31 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     });
 
     newSocket.on(ServerEvent.AUTHENTICATED, (data) => {
+      if (get().socket !== newSocket) return;
       set(applyAuthenticatedState(data));
       console.log("✅ Authenticated:", data.username);
     });
 
     newSocket.on(ServerEvent.ROOM_CREATED, (data: RoomCreatedPayload) => {
+      if (get().socket !== newSocket) return;
       set(applyRoomCreatedState(data));
       console.log("🏠 Room created:", data.code);
     });
 
     newSocket.on(ServerEvent.ROOM_JOINED, (data: RoomJoinedPayload) => {
+      if (get().socket !== newSocket) return;
       set(applyRoomJoinedState(data));
       console.log("🏠 Room joined:", data.code, "as", data.joinedAs);
     });
 
     newSocket.on(ServerEvent.PLAYER_JOINED, (data: RoomPlayerJoinedPayload) => {
+      if (get().socket !== newSocket) return;
       set((state) => applyPlayerJoinedState(state, data));
       console.log("👤 Player joined:", data);
     });
 
     newSocket.on(ServerEvent.PLAYER_LEFT, (data: RoomPlayerLeftPayload) => {
+      if (get().socket !== newSocket) return;
       set((state) => applyPlayerLeftState(state, data));
       console.log("👤 Player left:", data);
     });
@@ -184,6 +189,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     newSocket.on(
       ServerEvent.ROOM_STATUS_UPDATED,
       (data: RoomStatusUpdatedPayload) => {
+        if (get().socket !== newSocket) return;
         set((state) => applyRoomStatusUpdatedState(state, data));
       },
     );
@@ -191,6 +197,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     newSocket.on(
       ServerEvent.ROOM_COUNTDOWN_STARTED,
       (data: RoomCountdownStartedPayload) => {
+        if (get().socket !== newSocket) return;
         set((state) => applyRoomCountdownStartedState(state, data));
       },
     );
@@ -198,6 +205,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     newSocket.on(
       ServerEvent.ROOM_COUNTDOWN_CANCELLED,
       (data: RoomCountdownCancelledPayload) => {
+        if (get().socket !== newSocket) return;
         set((state) => applyRoomCountdownCancelledState(state, data));
       },
     );
@@ -205,26 +213,31 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     newSocket.on(
       ServerEvent.ROOM_PRESENCE_UPDATED,
       (data: RoomPresenceUpdatedPayload) => {
+        if (get().socket !== newSocket) return;
         set((state) => applyRoomPresenceUpdatedState(state, data));
       },
     );
 
     newSocket.on(ServerEvent.MATCH_STARTING, (data) => {
+      if (get().socket !== newSocket) return;
       set((state) => applyMatchStartingState(state, data));
       console.log("⚔️ Match starting:", data);
     });
 
     newSocket.on(ServerEvent.MATCH_STARTED, (data) => {
+      if (get().socket !== newSocket) return;
       set((state) => applyMatchStartedState(state, data));
       console.log("🚀 Match started:", data);
     });
 
     newSocket.on(ServerEvent.ROUND_STARTED, (data: RoundStartedPayload) => {
+      if (get().socket !== newSocket) return;
       set((state) => applyRoundStartedState(state, data));
       console.log("⏱️ Round started:", data);
     });
 
     newSocket.on(ServerEvent.ROUND_ENDED, (data: RoundEndedPayload) => {
+      if (get().socket !== newSocket) return;
       const prev = get().lastAnswerResult;
       const priorForThisRound =
         prev && prev.matchId === data.matchId && prev.roundNo === data.roundNo
@@ -246,6 +259,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     newSocket.on(
       ServerEvent.PLAYER_ELIMINATED,
       (data: PlayerEliminatedPayload) => {
+        if (get().socket !== newSocket) return;
         const currentState = get();
         if (data.playerId === currentState.userId) {
           set({ isEliminated: true });
@@ -262,17 +276,20 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     );
 
     newSocket.on(ServerEvent.MATCH_FINISHED, (data: MatchFinishedPayload) => {
+      if (get().socket !== newSocket) return;
       set((state) => applyMatchFinishedState(state, data));
       console.log("🏆 Match finished:", data);
     });
 
     newSocket.on(ServerEvent.SNAPSHOT, (data: SnapshotPayload) => {
+      if (get().socket !== newSocket) return;
       set((state) => applySnapshotState(state, data));
       console.log("📸 Snapshot received");
     });
 
     newSocket.on(ServerEvent.ANSWER_RESULT, (data: AnswerResultPayload) => {
-      set(applyAnswerResultState(data));
+      if (get().socket !== newSocket) return;
+      set((state) => applyAnswerResultState(state, data));
       console.log("✅ Answer result:", data);
     });
 
@@ -284,6 +301,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     // must not leak into the next room after a forced restart, otherwise
     // the spectator/ELIMINATED UI would persist on reconnect/join.
     newSocket.on(ServerEvent.ROOM_TERMINATED, (data: RoomTerminatedPayload) => {
+      if (get().socket !== newSocket) return;
       set(applyRoomTerminatedState(data));
       console.warn("🛑 Room terminated by server:", data);
     });
@@ -301,6 +319,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         data.code === ErrorCode.UNAUTHORIZED
       ) {
         if (get().socket === newSocket) {
+          const { heartbeatInterval: hb } = get();
+          if (hb) clearInterval(hb);
           set(applyUnauthorizedErrorState());
         }
         newSocket.disconnect();

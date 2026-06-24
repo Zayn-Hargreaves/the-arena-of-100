@@ -167,6 +167,10 @@ export class GameLoopService implements OnModuleInit {
    * prevents rooms being stuck in COUNTDOWN indefinitely with no live timer.
    */
   async onModuleInit() {
+    if (process.env.NODE_ENV !== "test") {
+      void this.sweepDeadLetterRooms();
+    }
+
     if (this.recoveryInFlight) return;
     this.recoveryInFlight = true;
     try {
@@ -301,16 +305,31 @@ export class GameLoopService implements OnModuleInit {
       // Persist to Redis so a process restart can recover and re-arm the
       // timer (or launch the match if it expired while we were down).
       //
-      // This is intentionally best-effort: a transient Redis blip must
-      // not propagate to the outer catch (which calls
-      // clearLobbyCountdownBestEffort and would orphan the timer we
-      // just armed on line 277). The in-memory timer still drives the
-      // countdown for the live process; only the cross-restart
-      // recovery is lost, and on the next process start the
-      // not-yet-expired entry is best recovered via a sweep of any
-      // rooms that have a `status = COUNTDOWN` in the DB but no
-      // matching lobbyCountdowns entry.
-      await this.persistLobbyCountdown(roomId, countdownEndsAt);
+      // If the persist fails, the room is in COUNTDOWN with a live
+      // in-memory timer but no Redis recovery entry. Roll back to
+      // WAITING so the room isn't stuck in COUNTDOWN with no timer
+      // and no recovery path if the process dies before the timer
+      // fires.
+      try {
+        await this.persistLobbyCountdown(roomId, countdownEndsAt);
+      } catch (persistError) {
+        this.clearLobbyCountdownBestEffort(roomId);
+        try {
+          await this.roomService.updateRoomStatus(roomId, RoomStatus.WAITING);
+          emitRoomStatusUpdated(server, {
+            roomId,
+            roomStatus: RoomStatus.WAITING,
+            currentMatchId: null,
+            updatedAt: Date.now(),
+          });
+        } catch (rollbackError) {
+          this.logger.error(
+            `Failed to roll back room ${roomId} to WAITING after countdown persist failure:`,
+            rollbackError,
+          );
+        }
+        throw persistError;
+      }
       return { countdownEndsAt };
     } catch (error) {
       this.clearLobbyCountdownBestEffort(roomId);
@@ -367,18 +386,11 @@ export class GameLoopService implements OnModuleInit {
     roomId: string,
     countdownEndsAt: number,
   ): Promise<void> {
-    try {
-      await persistLobbyCountdown(
-        this.redis.getClient(),
-        roomId,
-        countdownEndsAt,
-      );
-    } catch (error) {
-      this.logger.error(
-        `Failed to persist lobby countdown for room ${roomId}:`,
-        error,
-      );
-    }
+    await persistLobbyCountdown(
+      this.redis.getClient(),
+      roomId,
+      countdownEndsAt,
+    );
   }
 
   private async clearPersistedCountdown(roomId: string): Promise<boolean> {
@@ -392,6 +404,31 @@ export class GameLoopService implements OnModuleInit {
         }`,
       );
       return false;
+    }
+  }
+
+  private async sweepDeadLetterRooms(): Promise<void> {
+    try {
+      const client = this.redis.getClient();
+      const roomIds = await client.smembers("room:recovery:dead-letter");
+      if (!roomIds || roomIds.length === 0) return;
+
+      this.logger.log(
+        `Sweeping ${roomIds.length} dead-letter room(s) from Redis...`,
+      );
+      for (const roomId of roomIds) {
+        const exists = await client.exists(
+          `room:recovery:dead-letter:${roomId}`,
+        );
+        if (exists === 0) {
+          this.logger.log(
+            `Removing expired dead-letter room ${roomId} from set`,
+          );
+          await client.srem("room:recovery:dead-letter", roomId);
+        }
+      }
+    } catch (error) {
+      this.logger.error("Failed to sweep dead-letter rooms:", error);
     }
   }
 
@@ -412,9 +449,17 @@ export class GameLoopService implements OnModuleInit {
       this.logger.error(
         `[ALERT][RECOVERY_ABORTED] Room recovery failed after max retries. Room ID: ${entry.roomId}`,
       );
-      void this.redis
-        .getClient()
+      const client = this.redis.getClient();
+      void client
         .sadd("room:recovery:dead-letter", entry.roomId)
+        .then(() => {
+          return client.set(
+            `room:recovery:dead-letter:${entry.roomId}`,
+            "1",
+            "EX",
+            604800, // 7 days TTL retention
+          );
+        })
         .catch((err) => {
           this.logger.error(
             `Failed to record room ${entry.roomId} in dead-letter set:`,
@@ -453,6 +498,10 @@ export class GameLoopService implements OnModuleInit {
   }
 
   private clearLobbyCountdownBestEffort(roomId: string) {
+    const entry = this.lobbyCountdowns.get(roomId);
+    if (entry?.timer) {
+      clearTimeout(entry.timer);
+    }
     this.lobbyCountdowns.delete(roomId);
     void this.clearPersistedCountdown(roomId);
   }
@@ -809,7 +858,7 @@ export class GameLoopService implements OnModuleInit {
       server,
       roomId,
       matchId,
-      "COUNTDOWN",
+      MatchStatus.COUNTDOWN,
       GAME_CONFIG.COUNTDOWN_DURATION_MS,
     );
 

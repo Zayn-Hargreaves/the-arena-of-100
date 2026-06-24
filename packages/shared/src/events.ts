@@ -136,7 +136,7 @@ export interface MatchStartingRealtimePayload {
 export interface MatchStartedRealtimePayload {
   matchId: string;
   roomId: string;
-  status: MatchStatus;
+  status: MatchStatus.COUNTDOWN;
   countdownMs: number;
 }
 

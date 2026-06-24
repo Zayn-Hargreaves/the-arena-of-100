@@ -100,6 +100,7 @@ describe("RoomService", () => {
       vi.mocked(prisma.roomPlayer.count).mockResolvedValue(1);
       vi.mocked(prisma.roomPlayer.create).mockResolvedValue({} as any);
       vi.mocked(redis.getJSON).mockResolvedValue({ playerCount: 1 });
+      vi.mocked(redis.incr).mockResolvedValue(2);
       vi.spyOn(service, "getRoom").mockResolvedValue({ id: "r1" } as any);
 
       const result = await service.joinRoom("ABC", "u2");
@@ -116,7 +117,7 @@ describe("RoomService", () => {
       expect(redis.eval).toHaveBeenCalledWith(
         expect.any(String),
         ["room:r1"],
-        ["1"],
+        ["2"],
       );
       expect(result).toEqual({ id: "r1", joined: true, joinedAs: "PLAYER" });
     });
@@ -136,6 +137,7 @@ describe("RoomService", () => {
       vi.mocked(prisma.roomPlayer.count).mockResolvedValue(1);
       vi.mocked(prisma.roomPlayer.create).mockResolvedValue({} as any);
       vi.mocked(redis.getJSON).mockResolvedValue({ playerCount: 1 });
+      vi.mocked(redis.incr).mockResolvedValue(2);
       vi.spyOn(service, "getRoom").mockResolvedValue({ id: "r1" } as any);
 
       vi.mocked(redis.eval).mockRejectedValue(
@@ -149,7 +151,7 @@ describe("RoomService", () => {
       expect(redis.eval).toHaveBeenCalledWith(
         expect.any(String),
         ["room:r1"],
-        ["1"],
+        ["2"],
       );
       expect(result).toEqual({ id: "r1", joined: true, joinedAs: "PLAYER" });
     });

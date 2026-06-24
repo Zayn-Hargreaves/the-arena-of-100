@@ -1,4 +1,9 @@
-import { ServerEvent, getRoomChannel, type RoomStatus } from "@arena/shared";
+import {
+  ServerEvent,
+  getRoomChannel,
+  MatchStatus,
+  type RoomStatus,
+} from "@arena/shared";
 import type { Server } from "socket.io";
 import type {
   LobbyCountdownEntry,
@@ -70,7 +75,7 @@ export function emitMatchStarted(
   server: Server,
   roomId: string,
   matchId: string,
-  status: string,
+  status: MatchStatus.COUNTDOWN,
   countdownMs: number,
 ) {
   server.to(getRoomChannel(roomId)).emit(ServerEvent.MATCH_STARTED, {

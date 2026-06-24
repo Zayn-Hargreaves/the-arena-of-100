@@ -28,10 +28,10 @@ export interface Room {
   id: string;
   code: string;
   status: RoomStatus;
-  hostId: string | null;
-  roomType?: RoomType;
-  currentMatchId?: string | null;
-  countdownEndsAt?: number | null;
+  hostId: string;
+  roomType: RoomType;
+  currentMatchId: string | null;
+  countdownEndsAt: number | null;
   players: Player[];
   joinMode: JoinMode;
 }

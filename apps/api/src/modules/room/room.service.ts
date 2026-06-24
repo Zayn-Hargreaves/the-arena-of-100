@@ -446,6 +446,13 @@ export class RoomService {
     });
 
     await this.setCachedRoomSnapshot(room, room.players.length);
+    // Keep the atomic counter in sync with the snapshot so later
+    // join/leave/remove paths don't mirror a stale count back.
+    await this.redis.set(
+      `room:${room.id}:playerCount`,
+      String(room.players.length),
+      3600,
+    );
 
     return room;
   }
