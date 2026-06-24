@@ -2425,6 +2425,7 @@ describe("GameLoopService", () => {
             roomId: "rExpiredNoServer",
             countdownEndsAt: pastEnd,
             expired: true,
+            retryCount: 0,
           },
         ]);
         // The Redis multi() path was NOT used — the persisted entry
@@ -2863,6 +2864,7 @@ describe("GameLoopService", () => {
             roomId: "rExpiredNoServer",
             countdownEndsAt: pastEnd,
             expired: true,
+            retryCount: 0,
           },
         ]);
       });
@@ -3128,6 +3130,7 @@ describe("GameLoopService", () => {
             roomId: "rFuture",
             countdownEndsAt: futureEnd,
             expired: false,
+            retryCount: 0,
           },
         ]);
       });
@@ -3581,6 +3584,103 @@ describe("GameLoopService", () => {
           "room-1",
           mockServer,
         );
+
+        vi.useRealTimers();
+      });
+    });
+
+    describe("scheduleRecoveryRetry", () => {
+      it("schedules a retry with exponential backoff and tracks active recovery retries", async () => {
+        vi.useFakeTimers();
+        const entry = {
+          roomId: "room-retry-1",
+          countdownEndsAt: Date.now() - 1000,
+          expired: true,
+          retryCount: 0,
+        };
+
+        const drainSpy = vi
+          .spyOn(service as any, "drainPendingRecovery")
+          .mockImplementation(() => {});
+
+        (service as any).scheduleRecoveryRetry(entry);
+
+        // Check it was added to active recovery retries
+        expect((service as any).activeRecoveryRetries.has("room-retry-1")).toBe(
+          true,
+        );
+
+        // Fast forward 1000ms
+        await vi.advanceTimersByTimeAsync(1000);
+
+        // Should have pushed a new entry with nextRetry count to pendingRecovery
+        expect((service as any).pendingRecovery).toContainEqual({
+          ...entry,
+          retryCount: 1,
+        });
+        expect(drainSpy).toHaveBeenCalled();
+
+        vi.useRealTimers();
+      });
+
+      it("deduplicates scheduled retries if the room is already being retried", () => {
+        vi.useFakeTimers();
+        const entry = {
+          roomId: "room-retry-dup",
+          countdownEndsAt: Date.now() - 1000,
+          expired: true,
+          retryCount: 0,
+        };
+
+        // Mark it as already retrying
+        (service as any).activeRecoveryRetries.add("room-retry-dup");
+
+        const setTimeoutSpy = vi.spyOn(global, "setTimeout");
+
+        (service as any).scheduleRecoveryRetry(entry);
+
+        // setTimeout should not be called since it was deduplicated
+        expect(setTimeoutSpy).not.toHaveBeenCalled();
+
+        vi.useRealTimers();
+      });
+
+      it("aborts recovery when max attempts are exceeded, logs alert, clears countdown, and registers in dead-letter", () => {
+        vi.useFakeTimers();
+        const entry = {
+          roomId: "room-retry-max",
+          countdownEndsAt: Date.now() - 1000,
+          expired: true,
+          retryCount: 5, // Next retry will be 6 (> 5)
+        };
+
+        const errorSpy = vi
+          .spyOn((service as any).logger, "error")
+          .mockImplementation(() => {});
+        const clearCountdownSpy = vi
+          .spyOn(service as any, "clearPersistedCountdown")
+          .mockResolvedValue(true);
+        const setTimeoutSpy = vi.spyOn(global, "setTimeout");
+        const saddSpy = vi.spyOn((service as any).redis.getClient(), "sadd");
+
+        (service as any).scheduleRecoveryRetry(entry);
+
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "Max recovery retries (5) exceeded for room room-retry-max",
+          ),
+        );
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "[ALERT][RECOVERY_ABORTED] Room recovery failed after max retries. Room ID: room-retry-max",
+          ),
+        );
+        expect(saddSpy).toHaveBeenCalledWith(
+          "room:recovery:dead-letter",
+          "room-retry-max",
+        );
+        expect(clearCountdownSpy).toHaveBeenCalledWith("room-retry-max");
+        expect(setTimeoutSpy).not.toHaveBeenCalled();
 
         vi.useRealTimers();
       });

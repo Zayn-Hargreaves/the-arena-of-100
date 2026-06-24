@@ -4,7 +4,6 @@
 // ============================================================
 
 import { create } from "zustand";
-import type { Socket } from "socket.io-client";
 import {
   ClientEvent,
   ServerEvent,
@@ -24,6 +23,7 @@ import {
   type RoundEndedPayload,
   type MatchFinishedPayload,
   type PlayerEliminatedPayload,
+  ErrorCode,
 } from "@arena/shared";
 import { API_URL } from "@/lib/api";
 import type { AuthResponse, SocketState } from "./socket-store.types";
@@ -102,8 +102,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       timeoutMessage: "Authentication timed out",
       mapSuccess: () => undefined,
       shouldRejectOnError: (data) =>
-        data.message === "Invalid or expired token" ||
-        data.message === "Unauthorized",
+        data.code === ErrorCode.INVALID_TOKEN ||
+        data.code === ErrorCode.UNAUTHORIZED,
       getErrorMessage: (data) => data.message,
     });
 
@@ -297,8 +297,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       // Only reset state if this socket is still the active one — a
       // stale socket's ERROR must not clobber a newer connection.
       if (
-        data.message === "Invalid or expired token" ||
-        data.message === "Unauthorized"
+        data.code === ErrorCode.INVALID_TOKEN ||
+        data.code === ErrorCode.UNAUTHORIZED
       ) {
         if (get().socket === newSocket) {
           set(applyUnauthorizedErrorState());
@@ -409,13 +409,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   },
 
   // Authenticate
-  authenticate: (nickname: string): Promise<void> => {
-    let socket: Socket;
-    try {
-      socket = requireSocket(get().socket);
-    } catch (error) {
-      return Promise.reject(error);
-    }
+  authenticate: async (nickname: string): Promise<void> => {
+    const socket = requireSocket(get().socket);
 
     const AUTH_TIMEOUT_MS = 5000;
 
@@ -433,8 +428,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
       const onAuthError = (data: ErrorPayload) => {
         if (
-          data.message === "Invalid or expired token" ||
-          data.message === "Unauthorized"
+          data.code === ErrorCode.INVALID_TOKEN ||
+          data.code === ErrorCode.UNAUTHORIZED
         ) {
           cleanup();
           reject(new Error(data.message));
@@ -486,13 +481,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   },
 
   // Create Room
-  createRoom: (config) => {
-    let socket: Socket;
-    try {
-      socket = requireSocket(get().socket);
-    } catch (error) {
-      return Promise.reject(error);
-    }
+  createRoom: async (config) => {
+    const socket = requireSocket(get().socket);
 
     const ack = waitForSocketAck<string, { roomId: string; code: string }>({
       socket,
@@ -517,13 +507,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   },
 
   // Join Room
-  joinRoom: (roomCode: string) => {
-    let socket: Socket;
-    try {
-      socket = requireSocket(get().socket);
-    } catch (error) {
-      return Promise.reject(error);
-    }
+  joinRoom: async (roomCode: string) => {
+    const socket = requireSocket(get().socket);
 
     const ack = waitForSocketAck<void, RoomJoinedPayload>({
       socket,

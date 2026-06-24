@@ -77,11 +77,19 @@ export class RoomService {
   }
 
   private async syncCachedPlayerCount(roomId: string, playerCount: number) {
-    await this.redis.eval(
-      SET_PLAYER_COUNT_FIELD_SCRIPT,
-      [`room:${roomId}`],
-      [String(playerCount)],
-    );
+    try {
+      await this.redis.eval(
+        SET_PLAYER_COUNT_FIELD_SCRIPT,
+        [`room:${roomId}`],
+        [String(playerCount)],
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to sync cached player count for room ${roomId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   // Create room
@@ -438,14 +446,6 @@ export class RoomService {
     });
 
     await this.setCachedRoomSnapshot(room, room.players.length);
-
-    // Re-sync the player-count counter from the DB so the atomic counter
-    // stays consistent with the authoritative source when status changes.
-    await this.redis.set(
-      `room:${roomId}:playerCount`,
-      String(room.players.length),
-      3600,
-    );
 
     return room;
   }

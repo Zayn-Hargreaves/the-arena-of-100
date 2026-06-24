@@ -18,8 +18,9 @@ export function makePendingRecoveryEntry(
   roomId: string,
   countdownEndsAt: number,
   expired: boolean,
+  retryCount: number = 0,
 ): PendingRecoveryEntry {
-  return { roomId, countdownEndsAt, expired };
+  return { roomId, countdownEndsAt, expired, retryCount };
 }
 
 export function emitRoomStatusUpdated(

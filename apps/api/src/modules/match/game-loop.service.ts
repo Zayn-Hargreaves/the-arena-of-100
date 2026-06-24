@@ -85,6 +85,7 @@ export class GameLoopService implements OnModuleInit {
   // room is not silently stuck in COUNTDOWN forever. As soon as
   // setServer is invoked we drain the buffer and re-arm the timers.
   private pendingRecovery: PendingRecoveryEntry[] = [];
+  private activeRecoveryRetries = new Set<string>();
 
   constructor(
     private readonly matchService: MatchService,
@@ -395,11 +396,47 @@ export class GameLoopService implements OnModuleInit {
   }
 
   private scheduleRecoveryRetry(entry: PendingRecoveryEntry): void {
-    const RETRY_DELAY_MS = 1000;
+    if (this.activeRecoveryRetries.has(entry.roomId)) {
+      this.logger.log(
+        `Room ${entry.roomId} already has a pending retry; skipping scheduling.`,
+      );
+      return;
+    }
+
+    const currentRetry = entry.retryCount || 0;
+    const MAX_RETRIES = 5;
+    if (currentRetry >= MAX_RETRIES) {
+      this.logger.error(
+        `Max recovery retries (${MAX_RETRIES}) exceeded for room ${entry.roomId}. Aborting recovery.`,
+      );
+      this.logger.error(
+        `[ALERT][RECOVERY_ABORTED] Room recovery failed after max retries. Room ID: ${entry.roomId}`,
+      );
+      void this.redis
+        .getClient()
+        .sadd("room:recovery:dead-letter", entry.roomId)
+        .catch((err) => {
+          this.logger.error(
+            `Failed to record room ${entry.roomId} in dead-letter set:`,
+            err,
+          );
+        });
+      void this.clearPersistedCountdown(entry.roomId);
+      return;
+    }
+
+    const nextRetry = currentRetry + 1;
+    const RETRY_DELAY_MS = Math.min(1000 * Math.pow(2, nextRetry - 1), 8000);
+
     this.logger.log(
-      `Re-queueing recovery for room ${entry.roomId} in ${RETRY_DELAY_MS}ms for retry`,
+      `Re-queueing recovery for room ${entry.roomId} (attempt ${nextRetry}/${MAX_RETRIES}) in ${RETRY_DELAY_MS}ms`,
     );
+
+    this.activeRecoveryRetries.add(entry.roomId);
+
     const timer = setTimeout(() => {
+      this.activeRecoveryRetries.delete(entry.roomId);
+      entry.retryCount = nextRetry;
       this.pendingRecovery.push(entry);
       this.drainPendingRecovery();
     }, RETRY_DELAY_MS);

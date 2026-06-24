@@ -112,6 +112,45 @@ describe("RoomService", () => {
       });
       expect(prisma.roomPlayer.create).toHaveBeenCalled();
       expect(redis.sadd).toHaveBeenCalledWith("room:r1:players", "u2");
+      expect(redis.incr).toHaveBeenCalledWith("room:r1:playerCount");
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.any(String),
+        ["room:r1"],
+        ["1"],
+      );
+      expect(result).toEqual({ id: "r1", joined: true, joinedAs: "PLAYER" });
+    });
+
+    it("joins successfully even if Redis fails to sync player count", async () => {
+      const mockRoom = {
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.WAITING,
+        maxPlayers: 100,
+        players: [],
+      };
+      vi.mocked(prisma.room.findUnique).mockResolvedValue(mockRoom as any);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { id: "r1", maxPlayers: 100 },
+      ] as any);
+      vi.mocked(prisma.roomPlayer.count).mockResolvedValue(1);
+      vi.mocked(prisma.roomPlayer.create).mockResolvedValue({} as any);
+      vi.mocked(redis.getJSON).mockResolvedValue({ playerCount: 1 });
+      vi.spyOn(service, "getRoom").mockResolvedValue({ id: "r1" } as any);
+
+      vi.mocked(redis.eval).mockRejectedValue(
+        new Error("Redis connection lost"),
+      );
+
+      const result = await service.joinRoom("ABC", "u2");
+
+      expect(prisma.roomPlayer.create).toHaveBeenCalled();
+      expect(redis.incr).toHaveBeenCalledWith("room:r1:playerCount");
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.any(String),
+        ["room:r1"],
+        ["1"],
+      );
       expect(result).toEqual({ id: "r1", joined: true, joinedAs: "PLAYER" });
     });
 

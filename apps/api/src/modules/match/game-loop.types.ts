@@ -9,6 +9,7 @@ export interface PendingRecoveryEntry {
   roomId: string;
   countdownEndsAt: number;
   expired: boolean;
+  retryCount?: number;
 }
 
 export interface RoomStatusUpdatePayload {
