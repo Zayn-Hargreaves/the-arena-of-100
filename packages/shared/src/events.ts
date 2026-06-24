@@ -3,7 +3,7 @@
 // Event Sourcing Pattern: All game actions are events
 // ============================================================
 
-import { RoomStatus } from "./state";
+import { MatchStatus, RoomStatus } from "./state";
 
 // Room Events
 export enum RoomEventType {
@@ -115,6 +115,29 @@ export interface MatchCreatedPayload {
   matchId: string;
   roomId: string;
   playerIds: string[];
+}
+
+// Socket-event wire shape for `MATCH_STARTING`. Distinct from
+// `MatchStartedPayload` below: this is the "match is about to
+// begin" notification sent over the room channel (used by the
+// lobby UI to switch to a countdown view) and only carries the
+// data the lobby needs (matchId + seconds remaining).
+export interface MatchStartingRealtimePayload {
+  matchId: string;
+  countdown: number;
+}
+
+// Socket-event wire shape for `MATCH_STARTED`. Sent right before
+// the first round's countdown begins. `roomId` lets the client
+// reconcile which room the match belongs to without a second
+// round-trip, and `countdownMs` drives the first-round countdown
+// UI. `status` is the initial match state (typically
+// `MatchStatus.COUNTDOWN`).
+export interface MatchStartedRealtimePayload {
+  matchId: string;
+  roomId: string;
+  status: MatchStatus;
+  countdownMs: number;
 }
 
 export interface MatchStartedPayload {

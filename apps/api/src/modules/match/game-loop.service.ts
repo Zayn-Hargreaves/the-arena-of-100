@@ -3,36 +3,55 @@ import { Server } from "socket.io";
 import {
   GAME_CONFIG,
   MatchStatus,
-  PlayerStatus,
   RoomStatus,
   ServerEvent,
   getRoomChannel,
   RoomError,
   ErrorCode,
-  type RoomPlayerLeftPayload,
 } from "@arena/shared";
 import { MatchService } from "./match.service";
 import { QuestionService } from "../question/question.service";
 import { RoomService } from "../room/room.service";
 import { RedisService } from "../redis/redis.service";
 import { PrismaService } from "../prisma/prisma.service";
+import type {
+  LobbyCountdownEntry,
+  PendingRecoveryEntry,
+} from "./game-loop.types";
+import {
+  emitMatchStarted,
+  emitMatchStarting,
+  emitRoomStatusUpdated,
+  emitRoomTerminated,
+  emitWaitingRoomState,
+  makeLobbyCountdownEntry,
+  makePendingRecoveryEntry,
+} from "./game-loop.helpers";
+import {
+  clearPersistedCountdown,
+  listPersistedCountdownRoomIds,
+  LOBBY_COUNTDOWN_INDEX_KEY,
+  persistLobbyCountdown,
+  readPersistedCountdownEnd,
+  removeStaleCountdownIndexEntry,
+} from "./game-loop.countdown-store";
 
-const COUNTDOWN_KEY_PREFIX = "room:countdown:";
-export const COUNTDOWN_INDEX_KEY = "room:countdowns";
-// TTL longer than the longest possible countdown so a stale entry still
-// exists for a small recovery window after a process restart.
-const COUNTDOWN_REDIS_TTL_SEC = Math.ceil(
-  (GAME_CONFIG.COUNTDOWN_DURATION_MS * 2) / 1000,
-);
+// Re-export for backwards compatibility with existing spec imports.
+export const COUNTDOWN_INDEX_KEY = LOBBY_COUNTDOWN_INDEX_KEY;
+import {
+  emitMatchDisconnected,
+  emitMatchFinished,
+  emitMatchPlayerLeft,
+  emitPlayerEliminated,
+  emitRoundEnded,
+  emitRoundStarted,
+} from "./game-loop.events";
 
 @Injectable()
 export class GameLoopService implements OnModuleInit {
   private readonly logger = new Logger(GameLoopService.name);
   private activeTimers = new Map<string, Set<NodeJS.Timeout>>();
-  private lobbyCountdowns = new Map<
-    string,
-    { timer: NodeJS.Timeout; countdownEndsAt: number }
-  >();
+  private lobbyCountdowns = new Map<string, LobbyCountdownEntry>();
   // F2: Track used question IDs per match to avoid repeats
   private usedQuestionIds = new Map<string, Set<string>>();
   // Add property for early termination (used by Task 7)
@@ -65,11 +84,7 @@ export class GameLoopService implements OnModuleInit {
   // onModuleInit), recovered countdowns are buffered here so the
   // room is not silently stuck in COUNTDOWN forever. As soon as
   // setServer is invoked we drain the buffer and re-arm the timers.
-  private pendingRecovery: Array<{
-    roomId: string;
-    countdownEndsAt: number;
-    expired: boolean;
-  }> = [];
+  private pendingRecovery: PendingRecoveryEntry[] = [];
 
   constructor(
     private readonly matchService: MatchService,
@@ -144,7 +159,7 @@ export class GameLoopService implements OnModuleInit {
     this.recoveryInFlight = true;
     try {
       const client = this.redis.getClient();
-      const roomIds = await client.smembers(COUNTDOWN_INDEX_KEY);
+      const roomIds = await listPersistedCountdownRoomIds(client);
       if (roomIds.length === 0) return;
 
       this.logger.log(
@@ -154,14 +169,14 @@ export class GameLoopService implements OnModuleInit {
 
       for (const roomId of roomIds) {
         try {
-          const raw = await client.get(`${COUNTDOWN_KEY_PREFIX}${roomId}`);
-          if (!raw) {
-            await client.srem(COUNTDOWN_INDEX_KEY, roomId);
+          const result = await readPersistedCountdownEnd(client, roomId);
+          if (result.kind === "missing") {
+            await removeStaleCountdownIndexEntry(client, roomId);
             continue;
           }
-          const countdownEndsAt = Number.parseInt(raw, 10);
+          const countdownEndsAt = result.value;
           if (!Number.isFinite(countdownEndsAt)) {
-            await this.clearPersistedCountdown(roomId);
+            await clearPersistedCountdown(client, roomId);
             continue;
           }
           const remaining = Math.max(countdownEndsAt - now, 0);
@@ -192,11 +207,9 @@ export class GameLoopService implements OnModuleInit {
               this.logger.warn(
                 `Cannot launch recovered match for room ${roomId} yet: server not ready; deferring`,
               );
-              this.pendingRecovery.push({
-                roomId,
-                countdownEndsAt,
-                expired: true,
-              });
+              this.pendingRecovery.push(
+                makePendingRecoveryEntry(roomId, countdownEndsAt, true),
+              );
             }
           } else {
             // C4 fix: armLobbyCountdownTimer requires a server. If
@@ -208,11 +221,9 @@ export class GameLoopService implements OnModuleInit {
               this.logger.warn(
                 `Cannot arm recovered countdown for room ${roomId} yet: server not ready; deferring`,
               );
-              this.pendingRecovery.push({
-                roomId,
-                countdownEndsAt,
-                expired: false,
-              });
+              this.pendingRecovery.push(
+                makePendingRecoveryEntry(roomId, countdownEndsAt, false),
+              );
             }
           }
         } catch (error) {
@@ -241,18 +252,14 @@ export class GameLoopService implements OnModuleInit {
     // Reserve the slot atomically before any await to prevent race conditions
     const startedAt = Date.now();
     const countdownEndsAt = startedAt + GAME_CONFIG.COUNTDOWN_DURATION_MS;
-    this.lobbyCountdowns.set(roomId, {
-      // Placeholder; replaced by the real timer below before any await.
-      timer: setTimeout(() => undefined, 0) as unknown as NodeJS.Timeout,
-      countdownEndsAt,
-    });
+    this.lobbyCountdowns.set(roomId, makeLobbyCountdownEntry(countdownEndsAt));
 
     try {
       await this.roomService.updateRoomStatus(roomId, RoomStatus.COUNTDOWN);
 
       const channel = getRoomChannel(roomId);
 
-      server.to(channel).emit(ServerEvent.ROOM_STATUS_UPDATED, {
+      emitRoomStatusUpdated(server, {
         roomId,
         roomStatus: RoomStatus.COUNTDOWN,
         currentMatchId: null,
@@ -270,11 +277,22 @@ export class GameLoopService implements OnModuleInit {
       this.armLobbyCountdownTimer(roomId, countdownEndsAt, server);
       // Persist to Redis so a process restart can recover and re-arm the
       // timer (or launch the match if it expired while we were down).
-      await this.persistLobbyCountdown(roomId, countdownEndsAt);
+      try {
+        await persistLobbyCountdown(
+          this.redis.getClient(),
+          roomId,
+          countdownEndsAt,
+        );
+      } catch (error) {
+        this.logger.error(
+          `Failed to persist lobby countdown for room ${roomId}:`,
+          error,
+        );
+        throw error;
+      }
       return { countdownEndsAt };
     } catch (error) {
-      this.lobbyCountdowns.delete(roomId);
-      void this.clearPersistedCountdown(roomId);
+      this.clearLobbyCountdownBestEffort(roomId);
       throw error;
     }
   }
@@ -302,8 +320,7 @@ export class GameLoopService implements OnModuleInit {
       this.logger.error(
         `Cannot arm lobby countdown for room ${roomId}: server not set`,
       );
-      this.lobbyCountdowns.delete(roomId);
-      void this.clearPersistedCountdown(roomId);
+      this.clearLobbyCountdownBestEffort(roomId);
       return;
     }
 
@@ -319,7 +336,10 @@ export class GameLoopService implements OnModuleInit {
       });
     }, remaining);
 
-    this.lobbyCountdowns.set(roomId, { timer, countdownEndsAt });
+    this.lobbyCountdowns.set(
+      roomId,
+      makeLobbyCountdownEntry(countdownEndsAt, timer),
+    );
   }
 
   private async persistLobbyCountdown(
@@ -327,17 +347,11 @@ export class GameLoopService implements OnModuleInit {
     countdownEndsAt: number,
   ): Promise<void> {
     try {
-      const client = this.redis.getClient();
-      await client
-        .multi()
-        .set(
-          `${COUNTDOWN_KEY_PREFIX}${roomId}`,
-          countdownEndsAt.toString(),
-          "EX",
-          COUNTDOWN_REDIS_TTL_SEC,
-        )
-        .sadd(COUNTDOWN_INDEX_KEY, roomId)
-        .exec();
+      await persistLobbyCountdown(
+        this.redis.getClient(),
+        roomId,
+        countdownEndsAt,
+      );
     } catch (error) {
       this.logger.error(
         `Failed to persist lobby countdown for room ${roomId}:`,
@@ -348,12 +362,7 @@ export class GameLoopService implements OnModuleInit {
 
   private async clearPersistedCountdown(roomId: string): Promise<void> {
     try {
-      const client = this.redis.getClient();
-      await client
-        .multi()
-        .del(`${COUNTDOWN_KEY_PREFIX}${roomId}`)
-        .srem(COUNTDOWN_INDEX_KEY, roomId)
-        .exec();
+      await clearPersistedCountdown(this.redis.getClient(), roomId);
     } catch (error) {
       this.logger.warn(
         `Failed to clear persisted countdown for room ${roomId}: ${
@@ -361,6 +370,20 @@ export class GameLoopService implements OnModuleInit {
         }`,
       );
     }
+  }
+
+  private async clearLobbyCountdown(roomId: string, timer?: NodeJS.Timeout) {
+    if (timer) {
+      clearTimeout(timer);
+    }
+
+    this.lobbyCountdowns.delete(roomId);
+    await this.clearPersistedCountdown(roomId);
+  }
+
+  private clearLobbyCountdownBestEffort(roomId: string) {
+    this.lobbyCountdowns.delete(roomId);
+    void this.clearPersistedCountdown(roomId);
   }
 
   // H4 fix: getCountdownEnd now falls back to Redis when the
@@ -387,11 +410,12 @@ export class GameLoopService implements OnModuleInit {
     if (inMemory !== undefined) return inMemory;
 
     try {
-      const client = this.redis.getClient();
-      const raw = await client.get(`${COUNTDOWN_KEY_PREFIX}${roomId}`);
-      if (!raw) return null;
-      const parsed = Number.parseInt(raw, 10);
-      return Number.isFinite(parsed) ? parsed : null;
+      const result = await readPersistedCountdownEnd(
+        this.redis.getClient(),
+        roomId,
+      );
+      if (result.kind === "missing") return null;
+      return Number.isFinite(result.value) ? result.value : null;
     } catch (error) {
       this.logger.warn(
         `getCountdownEnd: Redis read failed for room ${roomId}: ${
@@ -414,28 +438,10 @@ export class GameLoopService implements OnModuleInit {
       return;
     }
 
-    clearTimeout(countdown.timer);
-    this.lobbyCountdowns.delete(roomId);
-    await this.clearPersistedCountdown(roomId);
+    await this.clearLobbyCountdown(roomId, countdown.timer);
 
     await this.roomService.updateRoomStatus(roomId, RoomStatus.WAITING);
-
-    const updatedAt = Date.now();
-    const channel = getRoomChannel(roomId);
-
-    server.to(channel).emit(ServerEvent.ROOM_COUNTDOWN_CANCELLED, {
-      roomId,
-      roomStatus: RoomStatus.WAITING,
-      reason: "PLAYER_LEFT",
-      cancelledAt: updatedAt,
-    });
-
-    server.to(channel).emit(ServerEvent.ROOM_STATUS_UPDATED, {
-      roomId,
-      roomStatus: RoomStatus.WAITING,
-      currentMatchId: null,
-      updatedAt,
-    });
+    emitWaitingRoomState(roomId, server, "PLAYER_LEFT", RoomStatus.WAITING);
   }
 
   async forceStartRoomMatch(roomId: string, server: Server) {
@@ -458,9 +464,7 @@ export class GameLoopService implements OnModuleInit {
 
     const countdown = this.lobbyCountdowns.get(roomId);
     if (countdown) {
-      clearTimeout(countdown.timer);
-      this.lobbyCountdowns.delete(roomId);
-      await this.clearPersistedCountdown(roomId);
+      await this.clearLobbyCountdown(roomId, countdown.timer);
     }
 
     if (room.players.length < GAME_CONFIG.MIN_PLAYERS_TO_START) {
@@ -469,23 +473,12 @@ export class GameLoopService implements OnModuleInit {
       }
 
       if (options.isAutoStart) {
-        const updatedAt = Date.now();
-        server
-          .to(getRoomChannel(roomId))
-          .emit(ServerEvent.ROOM_COUNTDOWN_CANCELLED, {
-            roomId,
-            roomStatus: RoomStatus.WAITING,
-            reason: "NOT_ENOUGH_PLAYERS",
-            cancelledAt: updatedAt,
-          });
-        server
-          .to(getRoomChannel(roomId))
-          .emit(ServerEvent.ROOM_STATUS_UPDATED, {
-            roomId,
-            roomStatus: RoomStatus.WAITING,
-            currentMatchId: null,
-            updatedAt,
-          });
+        emitWaitingRoomState(
+          roomId,
+          server,
+          "NOT_ENOUGH_PLAYERS",
+          RoomStatus.WAITING,
+        );
       }
 
       throw new RoomError(ErrorCode.NOT_ENOUGH_PLAYERS);
@@ -569,8 +562,7 @@ export class GameLoopService implements OnModuleInit {
         });
       });
 
-      const channel = getRoomChannel(roomId);
-      server.to(channel).emit(ServerEvent.ROOM_STATUS_UPDATED, {
+      emitRoomStatusUpdated(server, {
         roomId,
         roomStatus: RoomStatus.STARTING,
         currentMatchId: room.currentMatchId ?? null,
@@ -601,10 +593,12 @@ export class GameLoopService implements OnModuleInit {
       // progress.
       match = await this.matchService.createMatch(roomId);
 
-      server.to(channel).emit(ServerEvent.MATCH_STARTING, {
-        matchId: match.id,
-        countdown: GAME_CONFIG.COUNTDOWN_DURATION_MS / 1000,
-      });
+      emitMatchStarting(
+        server,
+        roomId,
+        match.id,
+        GAME_CONFIG.COUNTDOWN_DURATION_MS / 1000,
+      );
 
       await this.startMatchLoop(match.id, roomId, server);
       return match;
@@ -682,14 +676,12 @@ export class GameLoopService implements OnModuleInit {
           RoomStatus.WAITING,
           null,
         );
-        server
-          .to(getRoomChannel(roomId))
-          .emit(ServerEvent.ROOM_STATUS_UPDATED, {
-            roomId,
-            roomStatus: RoomStatus.WAITING,
-            currentMatchId: null,
-            updatedAt: Date.now(),
-          });
+        emitRoomStatusUpdated(server, {
+          roomId,
+          roomStatus: RoomStatus.WAITING,
+          currentMatchId: null,
+          updatedAt: Date.now(),
+        });
       } catch (revertError) {
         this.logger.error(
           `Failed to revert Room ${roomId} status to WAITING after launch failure.`,
@@ -725,7 +717,7 @@ export class GameLoopService implements OnModuleInit {
       matchId,
     );
 
-    server.to(getRoomChannel(roomId)).emit(ServerEvent.ROOM_STATUS_UPDATED, {
+    emitRoomStatusUpdated(server, {
       roomId,
       roomStatus: RoomStatus.IN_GAME,
       currentMatchId: matchId,
@@ -742,13 +734,13 @@ export class GameLoopService implements OnModuleInit {
     await this.matchService.persistStateMachine(matchId);
 
     // 3. Broadcast MATCH_STARTED
-    const channel = getRoomChannel(roomId);
-    server.to(channel).emit(ServerEvent.MATCH_STARTED, {
-      matchId,
+    emitMatchStarted(
+      server,
       roomId,
-      status: "COUNTDOWN",
-      countdownMs: GAME_CONFIG.COUNTDOWN_DURATION_MS,
-    });
+      matchId,
+      "COUNTDOWN",
+      GAME_CONFIG.COUNTDOWN_DURATION_MS,
+    );
 
     // 4. Start countdown timer
     this.executeCountdown(matchId, roomId, server);
@@ -850,9 +842,7 @@ export class GameLoopService implements OnModuleInit {
   async stopRoomRuntime(roomId: string, matchId: string | null): Promise<void> {
     const countdown = this.lobbyCountdowns.get(roomId);
     if (countdown) {
-      clearTimeout(countdown.timer);
-      this.lobbyCountdowns.delete(roomId);
-      await this.clearPersistedCountdown(roomId);
+      await this.clearLobbyCountdown(roomId, countdown.timer);
     }
     if (matchId) {
       this.cancelMatchLoop(matchId);
@@ -874,13 +864,7 @@ export class GameLoopService implements OnModuleInit {
       );
       return;
     }
-    this.server.to(getRoomChannel(roomId)).emit(ServerEvent.ROOM_TERMINATED, {
-      roomId,
-      reason: "ADMIN_TERMINATED",
-      matchId: payload.matchId,
-      message: payload.message,
-      terminatedAt: Date.now(),
-    });
+    emitRoomTerminated(this.server, roomId, payload);
   }
 
   // ============================================================
@@ -938,21 +922,20 @@ export class GameLoopService implements OnModuleInit {
     this.expectedAnswers?.set(matchId, survivingCount);
 
     // 5. Broadcast ROUND_STARTED (STRIP correctAnswer from question!)
-    const channel = getRoomChannel(roomId);
     const round = stateMachine.getCurrentRound()!;
-    const clientQuestion = {
-      id: question.id,
-      content: question.content,
-      options: question.options,
-      difficulty: question.difficulty,
-    };
-    server.to(channel).emit(ServerEvent.ROUND_STARTED, {
+    emitRoundStarted(
+      server,
+      roomId,
       matchId,
-      roundNo: state.currentRoundNo,
-      question: clientQuestion,
-      endsAt: round.endsAt,
-      roundDurationMs: GAME_CONFIG.ROUND_DURATION_MS,
-    });
+      state,
+      {
+        id: question.id,
+        content: question.content,
+        options: question.options,
+        difficulty: question.difficulty,
+      },
+      round.endsAt,
+    );
 
     // 6. Set 15s timer → endRound
     const timer = setTimeout(async () => {
@@ -1077,32 +1060,30 @@ export class GameLoopService implements OnModuleInit {
       stateMachine.transition(MatchStatus.ROUND_RESULT);
       await this.matchService.persistStateMachine(matchId);
 
-      // 8. Convert Maps to arrays for Socket.io serialization
-      const playerInfos = Array.from(state.players.values());
-
-      // 9. Broadcast ROUND_ENDED (KHÔNG gửi correctAnswer trong question object)
-      const channel = getRoomChannel(roomId);
-      server.to(channel).emit(ServerEvent.ROUND_ENDED, {
+      // 8. Broadcast ROUND_ENDED (KHÔNG gửi correctAnswer trong question object)
+      emitRoundEnded({
+        server,
+        roomId,
         matchId,
-        roundNo: state.currentRoundNo,
-        correctAnswer, // standalone field, NOT inside question
-        survivingPlayerIds: survivingIds,
-        eliminatedPlayerIds: eliminatedIds,
-        playerResults: playerInfos,
+        state,
+        correctAnswer,
+        survivingIds,
+        eliminatedIds,
       });
 
       // 10. Per-player eliminated notification
       for (const playerId of eliminatedIds) {
         const player = state.players.get(playerId);
         if (!player) continue;
-        server.to(channel).emit(ServerEvent.PLAYER_ELIMINATED, {
+        emitPlayerEliminated({
+          server,
+          roomId,
           matchId,
-          roundNo: state.currentRoundNo,
+          state,
           playerId,
           playerName: player.name,
-          reason: stateMachine.getCurrentRound()?.answers.has(playerId)
-            ? "WRONG_ANSWER"
-            : "TIMEOUT",
+          answeredThisRound:
+            stateMachine.getCurrentRound()?.answers.has(playerId) ?? false,
         });
       }
 
@@ -1244,14 +1225,7 @@ export class GameLoopService implements OnModuleInit {
     await this.matchService.finishMatch(matchId, winnerId, roomId, false);
 
     // 4. Broadcast MATCH_FINISHED
-    const channel = getRoomChannel(roomId);
-    const playerInfos = Array.from(state.players.values());
-    server.to(channel).emit(ServerEvent.MATCH_FINISHED, {
-      matchId,
-      winnerId,
-      totalRounds: state.currentRoundNo,
-      players: playerInfos,
-    });
+    emitMatchFinished(server, roomId, matchId, state, winnerId);
 
     // 5. Cleanup
     this.clearTimers(matchId);
@@ -1306,13 +1280,7 @@ export class GameLoopService implements OnModuleInit {
 
     // 6. Broadcast PLAYER_LEFT with reason field
     const roomId = state.roomId;
-    const channel = getRoomChannel(roomId);
-    server.to(channel).emit(ServerEvent.PLAYER_LEFT, {
-      matchId,
-      playerId: userId,
-      playerName: player.name,
-      reason: PlayerStatus.DISCONNECTED,
-    });
+    emitMatchDisconnected(server, roomId, matchId, userId, player.name);
 
     // 7. Log the disconnect
     this.logger.log(`Player ${userId} disconnected from match ${matchId}`);
@@ -1394,12 +1362,7 @@ export class GameLoopService implements OnModuleInit {
     //    subscribers that need to know which match is in flight can
     //    read `match.currentMatchId` from the most recent SNAPSHOT
     //    they already hold.
-    const channel = getRoomChannel(roomId);
-    server.to(channel).emit(ServerEvent.PLAYER_LEFT, {
-      roomId,
-      playerId: userId,
-      reason: "LEFT",
-    } satisfies RoomPlayerLeftPayload);
+    emitMatchPlayerLeft(server, roomId, userId);
 
     this.logger.log(
       `Player ${userId} voluntarily left match ${matchId} (room ${roomId})`,

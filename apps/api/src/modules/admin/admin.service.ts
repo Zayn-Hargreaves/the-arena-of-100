@@ -21,6 +21,11 @@ export interface TerminateRoomResult {
   cleanupError?: string;
 }
 
+interface TerminationProgress {
+  partial: boolean;
+  cleanupError?: string;
+}
+
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
@@ -324,8 +329,7 @@ export class AdminService {
       }
     }
 
-    let partial = false;
-    let cleanupError: string | undefined;
+    const progress: TerminationProgress = { partial: false };
 
     // 3. Stop in-memory timers + lobby countdown. `stopRoomRuntime` reaches
     // Redis via `clearPersistedCountdown`, which can throw. We do not want
@@ -336,13 +340,10 @@ export class AdminService {
     try {
       await this.gameLoopService.stopRoomRuntime(roomId, matchId);
     } catch (error) {
-      partial = true;
-      const errMsg = error instanceof Error ? error.message : String(error);
-      const errStack = error instanceof Error ? error.stack : undefined;
-      if (!cleanupError) cleanupError = errMsg;
-      this.logger.error(
-        `Partial termination: stopRoomRuntime failed during admin termination of room ${roomId}${matchId ? ` (match ${matchId})` : ""}: ${errMsg}`,
-        errStack,
+      this.recordPartialTerminationFailure(
+        progress,
+        `stopRoomRuntime failed during admin termination of room ${roomId}${matchId ? ` (match ${matchId})` : ""}`,
+        error,
       );
     }
 
@@ -353,13 +354,10 @@ export class AdminService {
     try {
       this.gameLoopService.emitRoomTerminated(roomId, { matchId, message });
     } catch (error) {
-      partial = true;
-      const errMsg = error instanceof Error ? error.message : String(error);
-      const errStack = error instanceof Error ? error.stack : undefined;
-      if (!cleanupError) cleanupError = errMsg;
-      this.logger.error(
-        `Partial termination: emitRoomTerminated failed during admin termination of room ${roomId}${matchId ? ` (match ${matchId})` : ""}: ${errMsg}`,
-        errStack,
+      this.recordPartialTerminationFailure(
+        progress,
+        `emitRoomTerminated failed during admin termination of room ${roomId}${matchId ? ` (match ${matchId})` : ""}`,
+        error,
       );
     }
 
@@ -377,13 +375,10 @@ export class AdminService {
     try {
       await this.cleanupRoomRedisKeys(roomId, matchId);
     } catch (error) {
-      partial = true;
-      const errMsg = error instanceof Error ? error.message : String(error);
-      const errStack = error instanceof Error ? error.stack : undefined;
-      if (!cleanupError) cleanupError = errMsg;
-      this.logger.error(
-        `Partial termination: failed to cleanup Redis keys for room ${roomId}${matchId ? ` (match ${matchId})` : ""}: ${errMsg}`,
-        errStack,
+      this.recordPartialTerminationFailure(
+        progress,
+        `failed to cleanup Redis keys for room ${roomId}${matchId ? ` (match ${matchId})` : ""}`,
+        error,
       );
     }
 
@@ -397,34 +392,47 @@ export class AdminService {
     try {
       await this.roomService.disbandRoom(roomId);
     } catch (error) {
-      partial = true;
-      const errMsg = error instanceof Error ? error.message : String(error);
-      const errStack = error instanceof Error ? error.stack : undefined;
-      // Prefer the first error encountered so the caller can act on a
-      // stable field; the most recent error is still logged.
-      if (!cleanupError) cleanupError = errMsg;
-      this.logger.error(
-        `Partial termination: failed to disband room ${roomId} during admin termination${matchId ? ` (match ${matchId})` : ""}: ${errMsg}`,
-        errStack,
+      this.recordPartialTerminationFailure(
+        progress,
+        `failed to disband room ${roomId} during admin termination${matchId ? ` (match ${matchId})` : ""}`,
+        error,
       );
     }
 
     const terminatedAt = Date.now();
     this.logger.warn(
-      `Room ${roomId} terminated by admin${matchId ? ` (match ${matchId})` : ""}${partial ? " (partial: cleanup failed)" : ""}`,
+      `Room ${roomId} terminated by admin${matchId ? ` (match ${matchId})` : ""}${progress.partial ? " (partial: cleanup failed)" : ""}`,
     );
 
     return {
-      success: !partial,
-      partial,
+      success: !progress.partial,
+      partial: progress.partial,
       roomId,
       matchId,
-      message: partial
+      message: progress.partial
         ? "Room terminated by admin (partial: cleanup failed)"
         : "Room terminated by admin",
       terminatedAt,
-      ...(cleanupError ? { cleanupError } : {}),
+      ...(progress.cleanupError ? { cleanupError: progress.cleanupError } : {}),
     };
+  }
+
+  private recordPartialTerminationFailure(
+    progress: TerminationProgress,
+    context: string,
+    error: unknown,
+  ) {
+    progress.partial = true;
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errStack = error instanceof Error ? error.stack : undefined;
+
+    // Prefer the first error encountered so the caller can act on a
+    // stable field; later failures are still logged for operators.
+    if (!progress.cleanupError) {
+      progress.cleanupError = errMsg;
+    }
+
+    this.logger.error(`Partial termination: ${context}: ${errMsg}`, errStack);
   }
 
   /**

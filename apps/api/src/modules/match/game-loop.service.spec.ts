@@ -2332,14 +2332,27 @@ describe("GameLoopService", () => {
         expect(sremSpy).toHaveBeenCalledWith(COUNTDOWN_INDEX_KEY, "rMissing");
       });
 
-      it("clears the persisted entry when the stored countdownEndsAt is unparseable", async () => {
-        const { svc, multiSpy } = buildService({
+      it("removes a room from the index when its stored countdownEndsAt is unparseable", async () => {
+        const { svc, redis, multiSpy } = buildService({
           smembers: ["rBad"],
           get: "not-a-number",
         });
+        // readPersistedCountdownEnd now treats unparseable values
+        // as "missing" (it returns { kind: "missing" } for non-finite
+        // parsed ints), so the recovery path takes the same code
+        // branch as a missing key: a single SREM on the index set
+        // rather than a full clearPersistedCountdown multi() chain.
+        const sremSpy = redis.getClient().srem;
         await svc.onModuleInit();
-        // clearPersistedCountdown runs the multi() chain
-        expect(multiSpy).toHaveBeenCalled();
+        expect(sremSpy).toHaveBeenCalledWith(COUNTDOWN_INDEX_KEY, "rBad");
+        // Pin the srem-only branch: the recovery path must NOT have
+        // entered the clearPersistedCountdown multi()/exec() chain.
+        // Without this assertion, a regression that loosened the
+        // parser to treat "not-a-number" as 0 (parseInt would return
+        // NaN, but a future bug could flip the branch ordering) would
+        // still satisfy the SREM expectation because clearPersistedCountdown
+        // also issues an SREM internally.
+        expect(multiSpy).not.toHaveBeenCalled();
       });
 
       it("re-arms a timer for a future countdown (uses the injected server)", async () => {

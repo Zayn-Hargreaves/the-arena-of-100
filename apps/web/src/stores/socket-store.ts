@@ -8,8 +8,6 @@ import type { Socket } from "socket.io-client";
 import {
   ClientEvent,
   ServerEvent,
-  RoomStatus,
-  type JoinMode,
   type RoomCreatedPayload,
   type SnapshotPayload,
   type AnswerResultPayload,
@@ -28,107 +26,34 @@ import {
   type PlayerEliminatedPayload,
 } from "@arena/shared";
 import { API_URL } from "@/lib/api";
-
-interface AuthResponse {
-  accessToken: string;
-  user: {
-    id: string;
-    username: string;
-    role: string;
-  };
-}
-
-export interface Player {
-  id: string;
-  name: string;
-  status: string;
-  score: number;
-  isOnline: boolean;
-}
-
-export interface Room {
-  id: string;
-  code: string;
-  status: RoomStatus;
-  hostId: string | null;
-  roomType?: "PUBLIC" | "PRIVATE";
-  currentMatchId?: string | null;
-  countdownEndsAt?: number | null;
-  players: Player[];
-  // Drop-in spectating baseline: which role the current socket joined
-  // as. PLAYER = the user is a participant in the match. SPECTATOR =
-  // the user is a read-only late-joiner (joined an IN_GAME or FINISHED
-  // room). The lobby and game pages read this to render the spectator
-  // UI and to block answer submission on the client side (the server
-  // still enforces the gate independently).
-  joinMode: JoinMode;
-}
-
-interface Match {
-  id: string;
-  status: string;
-  currentRoundNo: number;
-  players: Player[];
-  currentQuestion: {
-    id: string;
-    content: string;
-    options: string[];
-  } | null;
-  roundEndTime: number | null;
-}
-
-function mapRoomPlayersToMatchPlayers(players: Player[]): Player[] {
-  return players.map((player) => ({
-    ...player,
-  }));
-}
-
-interface LastAnswerResult {
-  matchId: string;
-  roundNo: number;
-  isCorrect?: boolean;
-  responseTimeMs?: number;
-  correctAnswer?: string;
-}
-
-interface ConnectionState {
-  isConnected: boolean;
-  isAuthenticated: boolean;
-  userId: string | null;
-  username: string | null;
-  accessToken: string | null;
-  userRole: string | null;
-}
-
-interface SocketState extends ConnectionState {
-  socket: Socket | null;
-  room: Room | null;
-  match: Match | null;
-  lastAnswerResult: LastAnswerResult | null;
-  remainingCount: number | null;
-  error: string | null;
-  heartbeatInterval: ReturnType<typeof setInterval> | null;
-  isEliminated: boolean;
-  roomTerminated: boolean;
-  roomTerminationMessage: string | null;
-
-  // Actions
-  connect: () => Promise<void>;
-  disconnect: () => void;
-  authenticate: (nickname: string) => Promise<void>;
-  refreshAccessToken: () => Promise<string | null>;
-  createRoom: (config: {
-    roomType: "PUBLIC" | "PRIVATE";
-    timeLimit: number;
-    maxPlayers: number;
-    category: string;
-  }) => Promise<string>;
-  joinRoom: (roomCode: string) => Promise<void>;
-  leaveRoom: (roomId: string) => void;
-  startMatch: (roomId: string) => void;
-  submitAnswer: (matchId: string, roundNo: number, answer: string) => void;
-  requestSnapshot: (matchId: string, lastSeenSeqNo: number) => void;
-}
+import type { AuthResponse, SocketState } from "./socket-store.types";
+import {
+  applyClearedTerminationState,
+  emitIfConnected,
+  requireSocket,
+  waitForSocketAck,
+} from "./socket-store.helpers";
+import {
+  applyAnswerResultState,
+  applyAuthenticatedState,
+  applyMatchFinishedState,
+  applyMatchStartedState,
+  applyMatchStartingState,
+  applyPlayerEliminatedState,
+  applyPlayerJoinedState,
+  applyPlayerLeftState,
+  applyRoomCountdownCancelledState,
+  applyRoomCountdownStartedState,
+  applyRoomCreatedState,
+  applyRoomJoinedState,
+  applyRoomPresenceUpdatedState,
+  applyRoomStatusUpdatedState,
+  applyRoomTerminatedState,
+  applyRoundEndedState,
+  applyRoundStartedState,
+  applySnapshotState,
+  applyUnauthorizedErrorState,
+} from "./socket-store.updaters";
 
 export const useSocketStore = create<SocketState>((set, get) => ({
   // Initial state
@@ -170,34 +95,16 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     // acknowledged authentication, so callers' `await connect()` guarantees
     // a ready/authenticated socket before invoking createRoom/joinRoom.
     const AUTH_TIMEOUT_MS = 5000;
-    const authPromise = new Promise<void>((resolve, reject) => {
-      const onAuthenticated = () => {
-        clearTimeout(timeoutId);
-        newSocket.off(ServerEvent.AUTHENTICATED, onAuthenticated);
-        newSocket.off(ServerEvent.ERROR, onAuthError);
-        resolve();
-      };
-
-      const onAuthError = (data: ErrorPayload) => {
-        if (
-          data.message === "Invalid or expired token" ||
-          data.message === "Unauthorized"
-        ) {
-          clearTimeout(timeoutId);
-          newSocket.off(ServerEvent.AUTHENTICATED, onAuthenticated);
-          newSocket.off(ServerEvent.ERROR, onAuthError);
-          reject(new Error(data.message));
-        }
-      };
-
-      const timeoutId = setTimeout(() => {
-        newSocket.off(ServerEvent.AUTHENTICATED, onAuthenticated);
-        newSocket.off(ServerEvent.ERROR, onAuthError);
-        reject(new Error("Authentication timed out"));
-      }, AUTH_TIMEOUT_MS);
-
-      newSocket.once(ServerEvent.AUTHENTICATED, onAuthenticated);
-      newSocket.on(ServerEvent.ERROR, onAuthError);
+    const authPromise = waitForSocketAck<void>({
+      socket: newSocket,
+      successEvent: ServerEvent.AUTHENTICATED,
+      timeoutMs: AUTH_TIMEOUT_MS,
+      timeoutMessage: "Authentication timed out",
+      mapSuccess: () => undefined,
+      shouldRejectOnError: (data) =>
+        data.message === "Invalid or expired token" ||
+        data.message === "Unauthorized",
+      getErrorMessage: (data) => data.message,
     });
 
     newSocket.on("connect", () => {
@@ -246,269 +153,70 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     });
 
     newSocket.on(ServerEvent.AUTHENTICATED, (data) => {
-      set({
-        isAuthenticated: true,
-        userId: data.userId,
-        username: data.username,
-      });
+      set(applyAuthenticatedState(data));
       console.log("✅ Authenticated:", data.username);
     });
 
     newSocket.on(ServerEvent.ROOM_CREATED, (data: RoomCreatedPayload) => {
-      set({
-        room: {
-          id: data.roomId,
-          code: data.code,
-          status: data.roomStatus,
-          hostId: data.hostId,
-          roomType: data.roomType,
-          currentMatchId: data.currentMatchId,
-          countdownEndsAt: null,
-          // The host is always a player.
-          joinMode: data.joinedAs ?? "PLAYER",
-          players: data.players.map((player) => ({
-            id: player.playerId,
-            name: player.playerName,
-            status: "READY",
-            score: 0,
-            isOnline: player.isOnline,
-          })),
-        },
-      });
+      set(applyRoomCreatedState(data));
       console.log("🏠 Room created:", data.code);
     });
 
     newSocket.on(ServerEvent.ROOM_JOINED, (data: RoomJoinedPayload) => {
-      set({
-        isEliminated: false,
-        room: {
-          id: data.roomId,
-          code: data.code,
-          status: data.roomStatus,
-          hostId: data.hostId,
-          roomType: data.roomType,
-          currentMatchId: data.currentMatchId,
-          countdownEndsAt: data.countdownEndsAt,
-          // Default to PLAYER for legacy servers that may not include
-          // the field, then override with whatever the server sent.
-          joinMode: data.joinedAs ?? "PLAYER",
-          players: data.players.map((player) => ({
-            id: player.playerId,
-            name: player.playerName,
-            status: "READY",
-            score: 0,
-            isOnline: player.isOnline,
-          })),
-        },
-      });
+      set(applyRoomJoinedState(data));
       console.log("🏠 Room joined:", data.code, "as", data.joinedAs);
     });
 
     newSocket.on(ServerEvent.PLAYER_JOINED, (data: RoomPlayerJoinedPayload) => {
-      set((state) => {
-        if (!state.room || state.room.id !== data.roomId) {
-          return state;
-        }
-
-        const hasPlayer = state.room.players.some(
-          (player) => player.id === data.playerId,
-        );
-        if (hasPlayer) {
-          return {
-            room: {
-              ...state.room,
-              players: state.room.players.map((player) =>
-                player.id === data.playerId
-                  ? {
-                      ...player,
-                      name: data.playerName,
-                      isOnline: data.isOnline,
-                    }
-                  : player,
-              ),
-            },
-          };
-        }
-
-        return {
-          room: {
-            ...state.room,
-            players: [
-              ...state.room.players,
-              {
-                id: data.playerId,
-                name: data.playerName,
-                status: "READY",
-                score: 0,
-                isOnline: data.isOnline,
-              },
-            ],
-          },
-        };
-      });
+      set((state) => applyPlayerJoinedState(state, data));
       console.log("👤 Player joined:", data);
     });
 
     newSocket.on(ServerEvent.PLAYER_LEFT, (data: RoomPlayerLeftPayload) => {
-      set((state) => {
-        if (!state.room || state.room.id !== data.roomId) {
-          return state;
-        }
-
-        return {
-          room: {
-            ...state.room,
-            players: state.room.players.filter(
-              (player) => player.id !== data.playerId,
-            ),
-          },
-        };
-      });
+      set((state) => applyPlayerLeftState(state, data));
       console.log("👤 Player left:", data);
     });
 
     newSocket.on(
       ServerEvent.ROOM_STATUS_UPDATED,
       (data: RoomStatusUpdatedPayload) => {
-        set((state) => {
-          if (!state.room || state.room.id !== data.roomId) {
-            return state;
-          }
-
-          return {
-            room: {
-              ...state.room,
-              status: data.roomStatus,
-              currentMatchId: data.currentMatchId,
-              countdownEndsAt:
-                data.roomStatus === RoomStatus.COUNTDOWN
-                  ? (state.room.countdownEndsAt ?? null)
-                  : null,
-            },
-          };
-        });
+        set((state) => applyRoomStatusUpdatedState(state, data));
       },
     );
 
     newSocket.on(
       ServerEvent.ROOM_COUNTDOWN_STARTED,
       (data: RoomCountdownStartedPayload) => {
-        set((state) => {
-          if (!state.room || state.room.id !== data.roomId) {
-            return state;
-          }
-
-          return {
-            room: {
-              ...state.room,
-              status: data.roomStatus,
-              countdownEndsAt: data.countdownEndsAt,
-            },
-          };
-        });
+        set((state) => applyRoomCountdownStartedState(state, data));
       },
     );
 
     newSocket.on(
       ServerEvent.ROOM_COUNTDOWN_CANCELLED,
       (data: RoomCountdownCancelledPayload) => {
-        set((state) => {
-          if (!state.room || state.room.id !== data.roomId) {
-            return state;
-          }
-
-          return {
-            room: {
-              ...state.room,
-              status: data.roomStatus,
-              countdownEndsAt: null,
-            },
-          };
-        });
+        set((state) => applyRoomCountdownCancelledState(state, data));
       },
     );
 
     newSocket.on(
       ServerEvent.ROOM_PRESENCE_UPDATED,
       (data: RoomPresenceUpdatedPayload) => {
-        set((state) => {
-          if (!state.room || state.room.id !== data.roomId) {
-            return state;
-          }
-
-          return {
-            room: {
-              ...state.room,
-              players: state.room.players.map((player) =>
-                player.id === data.playerId
-                  ? { ...player, isOnline: data.isOnline }
-                  : player,
-              ),
-            },
-          };
-        });
+        set((state) => applyRoomPresenceUpdatedState(state, data));
       },
     );
 
     newSocket.on(ServerEvent.MATCH_STARTING, (data) => {
-      set((state) => ({
-        remainingCount: null,
-        lastAnswerResult: null,
-        room: state.room
-          ? {
-              ...state.room,
-              status: RoomStatus.STARTING,
-              currentMatchId: data.matchId,
-              countdownEndsAt: null,
-            }
-          : null,
-      }));
+      set((state) => applyMatchStartingState(state, data));
       console.log("⚔️ Match starting:", data);
     });
 
     newSocket.on(ServerEvent.MATCH_STARTED, (data) => {
-      set((state) => ({
-        isEliminated: false,
-        room: state.room
-          ? {
-              ...state.room,
-              status: RoomStatus.IN_GAME,
-              currentMatchId: data.matchId,
-              countdownEndsAt: null,
-            }
-          : null,
-        match: {
-          id: data.matchId,
-          status: data.status,
-          currentRoundNo: 0,
-          players: mapRoomPlayersToMatchPlayers(state.room?.players ?? []),
-          currentQuestion: null,
-          roundEndTime: null,
-        },
-      }));
+      set((state) => applyMatchStartedState(state, data));
       console.log("🚀 Match started:", data);
     });
 
     newSocket.on(ServerEvent.ROUND_STARTED, (data: RoundStartedPayload) => {
-      set((state) => ({
-        match: state.match
-          ? {
-              ...state.match,
-              status: "ROUND_ACTIVE",
-              currentRoundNo: data.roundNo,
-              currentQuestion: data.question,
-              roundEndTime: data.endsAt,
-            }
-          : {
-              id: data.matchId,
-              status: "ROUND_ACTIVE",
-              currentRoundNo: data.roundNo,
-              players: mapRoomPlayersToMatchPlayers(state.room?.players ?? []),
-              currentQuestion: data.question,
-              roundEndTime: data.endsAt,
-            },
-        lastAnswerResult: null,
-      }));
+      set((state) => applyRoundStartedState(state, data));
       console.log("⏱️ Round started:", data);
     });
 
@@ -527,36 +235,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       // from `match.players` and reflects actual server-side
       // elimination state. We use an immutable map update so React
       // re-renders on player status changes.
-      set((state) => {
-        const eliminatedSet = new Set(data.eliminatedPlayerIds);
-        const updatedPlayers = state.match?.players.map((player) =>
-          eliminatedSet.has(player.id)
-            ? { ...player, status: "ELIMINATED" as const }
-            : player,
-        );
-        return {
-          match: state.match
-            ? {
-                ...state.match,
-                players: updatedPlayers ?? state.match.players,
-                status: "ROUND_RESULT",
-                roundEndTime: null, // Reset round end time
-              }
-            : null,
-          lastAnswerResult: {
-            matchId: data.matchId,
-            roundNo: data.roundNo,
-            ...(priorForThisRound?.isCorrect !== undefined && {
-              isCorrect: priorForThisRound.isCorrect,
-            }),
-            ...(priorForThisRound?.responseTimeMs !== undefined && {
-              responseTimeMs: priorForThisRound.responseTimeMs,
-            }),
-            correctAnswer: data.correctAnswer,
-          },
-          remainingCount: data.survivingPlayerIds.length,
-        };
-      });
+      set((state) => applyRoundEndedState(state, data, priorForThisRound));
       console.log("🏁 Round ended:", data);
     });
 
@@ -573,67 +252,23 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         // the ROUND_ENDED broadcast (which carries the full
         // `eliminatedPlayerIds` array). This is a real-time
         // mirror of the per-player event.
-        set((state) => {
-          if (!state.match) return state;
-          const updatedPlayers = state.match.players.map((player) =>
-            player.id === data.playerId
-              ? { ...player, status: "ELIMINATED" as const }
-              : player,
-          );
-          return { match: { ...state.match, players: updatedPlayers } };
-        });
+        set((state) => applyPlayerEliminatedState(state, data));
         console.log("💀 Player eliminated:", data);
       },
     );
 
     newSocket.on(ServerEvent.MATCH_FINISHED, (data: MatchFinishedPayload) => {
-      set((state) => ({
-        room: state.room
-          ? {
-              ...state.room,
-              status: RoomStatus.FINISHED,
-              countdownEndsAt: null,
-            }
-          : null,
-        match: state.match
-          ? {
-              ...state.match,
-              status: "FINISHED",
-            }
-          : state.match,
-      }));
+      set((state) => applyMatchFinishedState(state, data));
       console.log("🏆 Match finished:", data);
     });
 
     newSocket.on(ServerEvent.SNAPSHOT, (data: SnapshotPayload) => {
-      set((state) => ({
-        room: state.room
-          ? {
-              ...state.room,
-              status: RoomStatus.IN_GAME,
-              currentMatchId: data.matchId,
-              countdownEndsAt: null,
-            }
-          : null,
-        match: {
-          id: data.matchId,
-          status: data.status,
-          currentRoundNo: data.currentRoundNo,
-          players: (data.players as Player[]).map((player) => ({
-            ...player,
-            isOnline: player.isOnline ?? true,
-          })),
-          currentQuestion: data.currentQuestion,
-          roundEndTime: data.roundEndTime,
-        },
-        remainingCount: null,
-        lastAnswerResult: null,
-      }));
+      set((state) => applySnapshotState(state, data));
       console.log("📸 Snapshot received");
     });
 
     newSocket.on(ServerEvent.ANSWER_RESULT, (data: AnswerResultPayload) => {
-      set({ lastAnswerResult: data });
+      set(applyAnswerResultState(data));
       console.log("✅ Answer result:", data);
     });
 
@@ -645,15 +280,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     // must not leak into the next room after a forced restart, otherwise
     // the spectator/ELIMINATED UI would persist on reconnect/join.
     newSocket.on(ServerEvent.ROOM_TERMINATED, (data: RoomTerminatedPayload) => {
-      set({
-        room: null,
-        match: null,
-        remainingCount: null,
-        lastAnswerResult: null,
-        isEliminated: false,
-        roomTerminated: true,
-        roomTerminationMessage: data.message ?? null,
-      });
+      set(applyRoomTerminatedState(data));
       console.warn("🛑 Room terminated by server:", data);
     });
 
@@ -666,15 +293,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         data.message === "Invalid or expired token" ||
         data.message === "Unauthorized"
       ) {
-        set({
-          socket: null,
-          isConnected: false,
-          isAuthenticated: false,
-          accessToken: null,
-          userRole: null,
-          userId: null,
-          username: null,
-        });
+        set(applyUnauthorizedErrorState());
       }
       set({ error: data.message });
       console.error("❌ Error:", data.message);
@@ -771,9 +390,11 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
   // Authenticate
   authenticate: (nickname: string): Promise<void> => {
-    const { socket } = get();
-    if (!socket) {
-      return Promise.reject(new Error("Socket not connected"));
+    let socket: Socket;
+    try {
+      socket = requireSocket(get().socket);
+    } catch (error) {
+      return Promise.reject(error);
     }
 
     const AUTH_TIMEOUT_MS = 5000;
@@ -829,7 +450,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
             userRole: data.user.role,
           });
 
-          socket.emit(ClientEvent.AUTHENTICATE, {
+          emitIfConnected(socket, ClientEvent.AUTHENTICATE, {
             token: data.accessToken,
           });
         } catch (err) {
@@ -846,125 +467,89 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
   // Create Room
   createRoom: (config) => {
-    const { socket } = get();
-    if (!socket) {
-      return Promise.reject(new Error("Socket not connected"));
+    let socket: Socket;
+    try {
+      socket = requireSocket(get().socket);
+    } catch (error) {
+      return Promise.reject(error);
     }
 
-    return new Promise<string>((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        cleanup();
-        reject(new Error("Create room timed out"));
-      }, 8000);
-
-      const onCreated = (data: { roomId: string; code: string }) => {
-        cleanup();
-        // Clear stale termination flag — user is now in a fresh room.
-        const { roomTerminated, roomTerminationMessage } = get();
-        if (roomTerminated || roomTerminationMessage) {
-          set({ roomTerminated: false, roomTerminationMessage: null });
-        }
-        resolve(data.code);
-      };
-
-      const onError = (data: ErrorPayload) => {
-        cleanup();
-        reject(new Error(data.message || "Failed to create room"));
-      };
-
-      const cleanup = () => {
-        clearTimeout(timeoutId);
-        socket.off(ServerEvent.ROOM_CREATED, onCreated);
-        socket.off(ServerEvent.ERROR, onError);
-      };
-
-      socket.on(ServerEvent.ROOM_CREATED, onCreated);
-      socket.on(ServerEvent.ERROR, onError);
-
-      socket.emit(ClientEvent.CREATE_ROOM, {
-        roomType: config.roomType,
-        maxPlayers: config.maxPlayers,
-        timeLimit: config.timeLimit,
-        category: config.category,
-      });
+    const ack = waitForSocketAck<string, { roomId: string; code: string }>({
+      socket,
+      successEvent: ServerEvent.ROOM_CREATED,
+      timeoutMs: 8000,
+      timeoutMessage: "Create room timed out",
+      mapSuccess: (data) => {
+        applyClearedTerminationState(set, get);
+        return data.code;
+      },
+      getErrorMessage: (data) => data.message || "Failed to create room",
     });
+
+    emitIfConnected(socket, ClientEvent.CREATE_ROOM, {
+      roomType: config.roomType,
+      maxPlayers: config.maxPlayers,
+      timeLimit: config.timeLimit,
+      category: config.category,
+    });
+
+    return ack;
   },
 
   // Join Room
   joinRoom: (roomCode: string) => {
-    const { socket } = get();
-    if (!socket) {
-      return Promise.reject(new Error("Socket not connected"));
+    let socket: Socket;
+    try {
+      socket = requireSocket(get().socket);
+    } catch (error) {
+      return Promise.reject(error);
     }
 
-    return new Promise<void>((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        cleanup();
-        reject(new Error("Join room timed out"));
-      }, 8000);
-
-      const onJoined = (data: RoomJoinedPayload) => {
-        if (data.code !== roomCode) return;
-        cleanup();
-        // Clear stale termination flag — user is now in a fresh room.
-        const { roomTerminated, roomTerminationMessage } = get();
-        if (roomTerminated || roomTerminationMessage) {
-          set({ roomTerminated: false, roomTerminationMessage: null });
-        }
-        resolve();
-      };
-
-      const onError = (data: ErrorPayload) => {
-        cleanup();
-        reject(new Error(data.message || "Failed to join room"));
-      };
-
-      const cleanup = () => {
-        clearTimeout(timeoutId);
-        socket.off(ServerEvent.ROOM_JOINED, onJoined);
-        socket.off(ServerEvent.ERROR, onError);
-      };
-
-      socket.on(ServerEvent.ROOM_JOINED, onJoined);
-      socket.on(ServerEvent.ERROR, onError);
-      socket.emit(ClientEvent.JOIN_ROOM, { roomCode });
+    const ack = waitForSocketAck<void, RoomJoinedPayload>({
+      socket,
+      successEvent: ServerEvent.ROOM_JOINED,
+      timeoutMs: 8000,
+      timeoutMessage: "Join room timed out",
+      matchesSuccess: (data) => data.code === roomCode,
+      mapSuccess: () => {
+        applyClearedTerminationState(set, get);
+      },
+      getErrorMessage: (data) => data.message || "Failed to join room",
     });
+
+    emitIfConnected(socket, ClientEvent.JOIN_ROOM, { roomCode });
+    return ack;
   },
 
   // Leave Room
   leaveRoom: (roomId: string) => {
     const { socket } = get();
-    if (socket) {
-      socket.emit(ClientEvent.LEAVE_ROOM, { roomId });
-    }
+    emitIfConnected(socket, ClientEvent.LEAVE_ROOM, { roomId });
   },
 
   // Start Match
   startMatch: (roomId: string) => {
     const { socket } = get();
-    if (socket) {
-      socket.emit(ClientEvent.START_MATCH, { roomId });
-    }
+    emitIfConnected(socket, ClientEvent.START_MATCH, { roomId });
   },
 
   // Submit Answer
   submitAnswer: (matchId: string, roundNo: number, answer: string) => {
     const { socket } = get();
-    if (socket) {
-      socket.emit(ClientEvent.SUBMIT_ANSWER, {
-        matchId,
-        roundNo,
-        answer,
-        clientTimestamp: Date.now(),
-      });
-    }
+    emitIfConnected(socket, ClientEvent.SUBMIT_ANSWER, {
+      matchId,
+      roundNo,
+      answer,
+      clientTimestamp: Date.now(),
+    });
   },
 
   // Request Snapshot
   requestSnapshot: (matchId: string, lastSeenSeqNo: number) => {
     const { socket } = get();
-    if (socket) {
-      socket.emit(ClientEvent.REQUEST_SNAPSHOT, { matchId, lastSeenSeqNo });
-    }
+    emitIfConnected(socket, ClientEvent.REQUEST_SNAPSHOT, {
+      matchId,
+      lastSeenSeqNo,
+    });
   },
 }));

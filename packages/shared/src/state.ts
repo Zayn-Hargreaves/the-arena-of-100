@@ -38,6 +38,13 @@ export enum PlayerStatus {
   WINNER = "WINNER",
 }
 
+// Discriminator for public vs private rooms. Aliased here so
+// consumers (frontend socket-store types, validation schemas) can
+// import a single named type instead of duplicating the literal
+// union. Keep this in sync with the Prisma RoomType enum and the
+// literal used in `RoomState` / `RoomCreatedPayload` below.
+export type RoomType = "PUBLIC" | "PRIVATE";
+
 // Room State
 export interface RoomState {
   id: string;

@@ -49,89 +49,86 @@ export class AuthHandler extends BaseHandler {
   }
 
   async handleAuthenticate(client: Socket, payload: { token: string }) {
-    try {
-      const decoded = this.authService.verifyToken(payload.token);
+    return this.runSafely(
+      client,
+      async () => {
+        const decoded = this.authService.verifyToken(payload.token);
 
-      // Kick existing connection of this user if exists (O(1) lookup)
-      const oldSocketId = this.connectedPlayers.get(decoded.userId);
-      if (oldSocketId && oldSocketId !== client.id) {
-        const oldSocket = client.nsp?.sockets.get(oldSocketId);
-        if (oldSocket) {
-          this.logger.log(
-            `Kicking old socket: ${oldSocketId} for user: ${decoded.userId}`,
-          );
-          oldSocket.emit(ServerEvent.ERROR, {
-            code: ErrorCode.UNAUTHORIZED,
-            message: ERROR_MESSAGES[ErrorCode.UNAUTHORIZED],
-          });
-          oldSocket.disconnect(true);
-        } else {
-          // L1 fix: the old socket ID is in our map but Socket.IO
-          // has already cleaned it up (e.g. process was OOM-killed
-          // and the `disconnect` event was never delivered to us,
-          // or the socket was force-closed for an unrelated
-          // reason). Drop the stale map entry so it cannot
-          // accumulate. Without this, the connectedPlayers map
-          // could grow unbounded in long-running multi-process
-          // deployments with sticky sessions, and a new
-          // authentication would silently no-op (the kick branch
-          // would skip, but the map entry would linger).
-          this.logger.log(
-            `Connected-players map had stale entry for user ${decoded.userId} (socket ${oldSocketId} no longer in namespace); cleaning up`,
-          );
-          this.connectedPlayers.delete(decoded.userId);
-          this.connectionGeneration.delete(decoded.userId);
+        // Kick existing connection of this user if exists (O(1) lookup)
+        const oldSocketId = this.connectedPlayers.get(decoded.userId);
+        if (oldSocketId && oldSocketId !== client.id) {
+          const oldSocket = client.nsp?.sockets.get(oldSocketId);
+          if (oldSocket) {
+            this.logger.log(
+              `Kicking old socket: ${oldSocketId} for user: ${decoded.userId}`,
+            );
+            oldSocket.emit(ServerEvent.ERROR, {
+              code: ErrorCode.UNAUTHORIZED,
+              message: ERROR_MESSAGES[ErrorCode.UNAUTHORIZED],
+            });
+            oldSocket.disconnect(true);
+          } else {
+            // L1 fix: the old socket ID is in our map but Socket.IO
+            // has already cleaned it up (e.g. process was OOM-killed
+            // and the `disconnect` event was never delivered to us,
+            // or the socket was force-closed for an unrelated
+            // reason). Drop the stale map entry so it cannot
+            // accumulate. Without this, the connectedPlayers map
+            // could grow unbounded in long-running multi-process
+            // deployments with sticky sessions, and a new
+            // authentication would silently no-op (the kick branch
+            // would skip, but the map entry would linger).
+            this.logger.log(
+              `Connected-players map had stale entry for user ${decoded.userId} (socket ${oldSocketId} no longer in namespace); cleaning up`,
+            );
+            this.clearTrackedConnection(decoded.userId);
+          }
         }
-      }
 
-      this.connectedPlayers.set(decoded.userId, client.id);
-      // L2: bump the generation so the previous socket's eventual
-      // `disconnect` event is recognised as stale.
-      const newGen = (this.connectionGeneration.get(decoded.userId) ?? 0) + 1;
-      this.connectionGeneration.set(decoded.userId, newGen);
-      // Capture the generation on the socket itself so handleDisconnect
-      // can compare even if the connectedPlayers map has been
-      // overwritten in between.
-      client.data.connectionGen = newGen;
+        this.connectedPlayers.set(decoded.userId, client.id);
+        // L2: bump the generation so the previous socket's eventual
+        // `disconnect` event is recognised as stale.
+        const newGen = (this.connectionGeneration.get(decoded.userId) ?? 0) + 1;
+        this.connectionGeneration.set(decoded.userId, newGen);
+        // Capture the generation on the socket itself so handleDisconnect
+        // can compare even if the connectedPlayers map has been
+        // overwritten in between.
+        client.data.connectionGen = newGen;
 
-      client.data.userId = decoded.userId;
-      client.data.username = decoded.username;
+        client.data.userId = decoded.userId;
+        client.data.username = decoded.username;
 
-      client.emit(ServerEvent.AUTHENTICATED, {
-        userId: decoded.userId,
-        username: decoded.username,
-      });
+        client.emit(ServerEvent.AUTHENTICATED, {
+          userId: decoded.userId,
+          username: decoded.username,
+        });
 
-      this.logger.log(`Player authenticated: ${decoded.username}`);
+        this.logger.log(`Player authenticated: ${decoded.username}`);
 
-      // Reconnection sync: restore room/match state
-      await this.syncReconnection(client, decoded.userId);
-    } catch (error: unknown) {
-      // A WsValidationError means the AUTHENTICATE payload itself was
-      // malformed (e.g. { token: 123 } or missing token). Surface that
-      // distinctly so the client knows to fix the request shape, not
-      // the credentials.
-      if (
-        error instanceof RoomError &&
-        error.code === ErrorCode.INVALID_PAYLOAD
-      ) {
-        this.emitError(client, error.code, error.message);
-        return;
-      }
-      if (error instanceof Error) {
-        this.logger.error(
-          `Token verification failed: ${error.message}`,
-          error.stack,
+        // Reconnection sync: restore room/match state
+        await this.syncReconnection(client, decoded.userId);
+      },
+      (error) => {
+        // A WsValidationError means the AUTHENTICATE payload itself was
+        // malformed (e.g. { token: 123 } or missing token). Surface that
+        // distinctly so the client knows to fix the request shape, not
+        // the credentials.
+        if (
+          error instanceof RoomError &&
+          error.code === ErrorCode.INVALID_PAYLOAD
+        ) {
+          this.emitError(client, error.code, error.message);
+          return;
+        }
+
+        this.logTokenVerificationFailure(error);
+        this.emitError(
+          client,
+          ErrorCode.INVALID_TOKEN,
+          ERROR_MESSAGES[ErrorCode.INVALID_TOKEN],
         );
-      } else {
-        this.logger.error(`Token verification failed: ${String(error)}`);
-      }
-      this.emitError(
-        client,
-        ErrorCode.INVALID_TOKEN,
-        ERROR_MESSAGES[ErrorCode.INVALID_TOKEN],
-      );
-    }
+      },
+    );
   }
 
   async handleDisconnect(client: Socket) {
@@ -158,8 +155,7 @@ export class AuthHandler extends BaseHandler {
       }
       // Only delete from map if the disconnected socket is the active session
       if (currentSocketId === client.id) {
-        this.connectedPlayers.delete(userId);
-        this.connectionGeneration.delete(userId);
+        this.clearTrackedConnection(userId);
 
         // NEW: Notify active matches
         try {
@@ -184,6 +180,23 @@ export class AuthHandler extends BaseHandler {
         this.logger.log(`Player disconnected: ${userId}`);
       }
     }
+  }
+
+  private clearTrackedConnection(userId: string) {
+    this.connectedPlayers.delete(userId);
+    this.connectionGeneration.delete(userId);
+  }
+
+  private logTokenVerificationFailure(error: unknown) {
+    if (error instanceof Error) {
+      this.logger.error(
+        `Token verification failed: ${error.message}`,
+        error.stack,
+      );
+      return;
+    }
+
+    this.logger.error(`Token verification failed: ${String(error)}`);
   }
 
   private async syncReconnection(client: Socket, userId: string) {

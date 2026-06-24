@@ -1,290 +1,170 @@
 # System Patterns: Arena of 100
 
-## Architecture Overview
-**Modular Monolith** with clear layer separation. All game logic runs on server; client is presentation-only. Architecture designed to support product-focused features like frictionless onboarding, spectator modes, and social engagement, while emphasizing operational excellence, resilience, and international standards compliance.
+> **Core memory-bank file 2/4**
+> Ghi lại những gì đang thật sự đúng trong code. Không ghi wish-list như đã implemented.
 
-## Design Patterns Applied
+## Architecture Snapshot
 
-### 1. State Pattern (GoF)
-**Where**: `MatchStateMachine` in `packages/game-core`
-- Encapsulates match state transitions (CREATED → COUNTDOWN → ROUND_ACTIVE → ROUND_EVALUATING → ROUND_RESULT → FINISHED)
-- Each state defines valid transitions and behaviors
-- Prevents invalid state changes (e.g., can't submit answer when match is FINISHED)
-- Extended to support player role transitions (ACTIVE → ELIMINATED → SPECTATOR)
-- Supports AFK player detection and conversion
-- Manages lobby lifecycle states (WAITING → COUNTDOWN → IN_GAME → FINISHED)
+- **Modular monolith** với boundary chính: `apps/api`, `apps/web`, `packages/shared`, `packages/game-core`.
+- **Server-authoritative gameplay**: client gửi intent; server quyết định timing, answer validity, elimination, winner.
+- **State machine + append-only event log** trong `packages/game-core`; chưa phải full event sourcing/replay source of truth.
+- **Socket.io realtime transport** hiện tại cho players và spectator baseline.
+- **Redis** cho transient state, room countdown, presence, reconnect snapshots.
+- **PostgreSQL + Prisma** cho persistence/history; admin audit event riêng vẫn là near-term gap.
 
-### 2. Command Pattern (GoF)
-**Where**: Socket event handlers
-- Each client action (JoinRoom, SubmitAnswer, StartMatch) is a command
-- Commands are validated, executed, and may produce events
-- Decouples request from execution
-- Host-only commands for match control
-- Spectator-mode restricted commands
-- Graceful exit commands for instant resource cleanup
+## Hard Invariants
 
-### 3. Observer Pattern (GoF)
-**Where**: Real-time event broadcasting
-- Server emits events to subscribed channels (room:{id}, match:{id}, spectator:{id})
-- Clients observe and react to state changes
-- Supports multiple observers per event
-- Separate channels for spectators to reduce bandwidth
-- Optimized payloads for different observer types
-- Batched events for micro-interactions (emotes, reactions)
-- **Scalable infrastructure with SSE for mass spectators**
+### Match Authority
 
-### 4. Strategy Pattern (GoF)
-**Where**: Tie-break logic, bot behavior, content delivery, and error handling
-- `tieBreak()` method uses strategy to determine winner
-- Can swap tie-break algorithms without changing caller
-- Current: total response time → correct answers count → random
-- Bot response time and accuracy as configurable strategies
-- Question delivery algorithms for anti-repetition
-- **Error handling strategies for content failures**
-- **Asset loading strategies with fallback mechanisms**
+- Client không được tự kết thúc trận hoặc tự xác định winner.
+- Round timing, answer cutoff, elimination, and winner determination đều chạy server-side.
+- UI có thể optimistic lock-in answer, nhưng server response vẫn là source of truth.
 
-### 5. Factory Pattern (GoF)
-**Where**: Event creation, bot player creation, avatar generation, and content moderation
-- `createEvent()` factory produces correctly structured events
-- Ensures consistent event format across codebase
-- Simplifies event creation for callers
-- `BotFactory` creates configurable bot players
-- `AvatarFactory` generates unique visuals from nicknames
-- `EmoteFactory` creates standardized emote events
-- **`ContentModerationFactory` filters inappropriate content**
+### Match State Machine
 
-### 6. Template Method Pattern (GoF)
-**Where**: NestJS module structure
-- Each module follows same template: module → service → controller
-- Provides consistency and predictability
-- Simplifies adding new features
-- Supports product feature extensions
+- Match lifecycle được giữ trong `MatchStateMachine`.
+- Không sửa state gameplay trực tiếp ở UI/client.
+- Sai hoặc không trả lời trước deadline => bị loại trong round đó.
+- `MatchStateMachine` có nhiều runtime flow phụ thuộc; refactor class-level là high risk, nên ưu tiên sửa nhỏ theo method-level impact.
 
-## Anti-Patterns Avoided
+### Spectator Rules
 
-### ✗ God Object
-- Each service has single responsibility
-- Game logic isolated in `game-core` package
-- No massive "GameManager" class
+- Player bị loại vẫn nhận update, nhưng client render spectator/watch-only UI.
+- Late join ongoing/finished match vào `JoinMode = "SPECTATOR"`.
+- Spectator không được submit answer; server-side gate vẫn là source of truth.
 
-### ✗ Spaghetti Code
-- Clear layer boundaries: transport → application → domain → infrastructure
-- Dependencies flow inward (transport depends on domain, not vice versa)
-- Domain has zero external dependencies
+### Event Discipline
 
-### ✗ Race Conditions
-- Server-authoritative timestamps (not client)
-- Redis atomic operations (INCR, SADD)
-- State machine prevents invalid transitions
-- Player role transitions are atomic
+- Gameplay state changes phải đi qua state-machine methods / transitions.
+- Socket payload changes cần xem là shared contract changes vì `@arena/shared` là boundary chung.
+- Audit-style operational changes cần append-only mindset; admin kill-switch audit event vẫn chưa implemented.
 
-### ✗ Poor User Experience
-- No account creation barriers for Time-to-Fun optimization
-- No rejection of late joiners
-- No ghost players blocking game progression
-- No repetitive content ruining replayability
-- No instant feedback for critical actions
-- No administrative oversight for emergencies
+## Implemented Patterns
 
-### ✗ Performance Bottlenecks
-- No unbatched micro-interactions overwhelming event loop
-- No blocking operations during critical gameplay
-- No inefficient asset loading causing unfairness
+### State Machine Pattern
 
-### ✗ Security Vulnerabilities
-- No unchecked user-generated content
-- No rate limiting bypasses
-- No inadequate access controls
-- No device fingerprinting for persistent identity
+**Where**: `packages/game-core/src/match-state-machine.ts`
 
-### ✗ Accessibility Issues
-- No color-only information传达
-- No keyboard navigation barriers
-- No screen reader incompatibilities
+- `MatchStateMachine` quản lý match lifecycle: created/countdown/round/evaluation/result/finished semantics.
+- `canTransition`, `transition`, `startRound`, `submitAnswer`, `evaluateRound`, `finishMatch`, reconnect/disconnect handling đều tập trung ở domain core.
+- Đây là pattern có thật trong code, nhưng không nên gọi là GoF State Pattern thuần với per-state classes. Implementation hiện là explicit state machine trong một class.
 
-## Code Organization Principles
+### Factory Function
 
-### Clean Architecture Layers
-```
-transport/     → HTTP/WebSocket endpoints
-application/   → Use cases / command handlers
-domain/        → Entities, rules, state machines
-infrastructure/→ DB, Redis, external services
-```
+**Where**: `packages/shared/src/events.ts:createEvent`
 
-### Dependency Rule
-- Inner layers know nothing about outer layers
-- Domain logic is pure (no DB, no HTTP)
-- Infrastructure implements interfaces defined in domain
+- `createEvent()` tạo event envelope thống nhất: id, type, timestamp, payload, seqNo.
+- Đây là factory function thật đang tồn tại.
+- Không có `BotFactory`, `AvatarFactory`, `EmoteFactory`, hoặc `ContentModerationFactory` trong code hiện tại.
 
-## Concurrency Patterns
+### Handler / Dispatcher Style Socket Flow
 
-### Redis Atomic Operations
-- `INCR` for sequence numbers
-- `SADD/SREM` for player sets (thread-safe)
-- `SET NX` for distributed locks (future)
-- Atomic player role transitions
-- Session management for frictionless onboarding
+**Where**: `apps/api/src/gateways/game.gateway.ts` + `apps/api/src/gateways/handlers/*`
 
-### Event Sourcing
-- All state changes are events
-- Events are append-only (no updates/deletes)
-- Can replay events to reconstruct state
-- Supports audit and debugging
-- Spectator events optimized for minimal payload
-- AFK detection through event pattern analysis
+- Socket gateway dispatch event vào `AuthHandler`, `RoomHandler`, `MatchHandler`.
+- Đây **không phải Command Pattern** theo nghĩa strict: không có `Command` interface, command objects, undo, queue, hoặc command bus.
+- Với use case hiện tại, handler/service/state-machine layering là đủ sạch và ít ceremony hơn Command Pattern.
 
-## Performance Optimization Patterns
+### Observer-Like Realtime Broadcast
 
-### Event Batching and Throttling
-**Where**: Micro-interactions (emotes, reactions)
-- Batch similar events (emotes) before broadcasting
-- Throttle high-frequency events to prevent overload
-- Use Redis queues for event buffering
-- Implement sliding window rate limiting
-- Optimize WebSocket payload sizes
-- **Separate channels for players and spectators**
+**Where**: Socket.io room/channel emits
 
-### Asset Preloading
-**Where**: Rich media content delivery
-- Background fetching during round transitions
-- Client-side caching with expiration
-- Progressive loading for large assets
-- Fallback mechanisms for failed loads
-- Bandwidth-aware loading strategies
-- **Graceful error handling for content issues**
+- Socket.io broadcast tạo observer-like behavior: clients subscribe room/match channel và react với server events.
+- Không có explicit `Subject`/`Observer` classes. Đây là transport behavior, không phải custom GoF Observer implementation.
 
-### Connection Management
-**Where**: Graceful exit and resource cleanup
-- Immediate connection cleanup on disconnect
-- Resource pooling for efficient reuse
-- Timeout-based cleanup for orphaned resources
-- Memory leak prevention patterns
+### NestJS Framework Patterns
 
-## Error Handling
+**Where**: controllers, services, guards, pipes, interceptors
 
-### Typed Errors
-- Custom `ErrorCode` enum in shared package
-- Each error has Vietnamese message
-- Consistent error format across API
-- Specific errors for spectator mode and host controls
-- Graceful degradation for late joiners
-- **Content moderation errors**
+- Controllers/services/modules là NestJS convention, không phải Template Method Pattern.
+- Guards/pipes/interceptors đang là framework-supported cross-cutting mechanisms cho auth, CSRF, validation, serialization, throttling.
 
-### Graceful Degradation
-- Reconnect restores state from snapshot
-- Missing events fetched and replayed
-- Network issues don't crash game
-- Spectators gracefully handle match state changes
-- Late joiners smoothly transition to spectator mode
-- **Question skipping for content errors**
-- **Asset fallback for loading failures**
+## Not Implemented / Future Seams
 
-## Scalability Considerations
+### Command Pattern
 
-### Event Loop Protection
-- Micro-interactions are batched and throttled
-- High-frequency events use worker threads
-- Non-blocking I/O for all operations
-- Memory pressure monitoring and management
+- Không dùng hiện tại.
+- Không cần cho current memory-bank use cases như join room, submit answer, start match, leave room, reconnect, request snapshot, hoặc admin terminate.
+- Chỉ revisit nếu có requirement rõ: queue command, retry/idempotency per command, undo/rollback, scheduled commands, approval workflow, hoặc replay user intents trước domain events.
 
-### Resource Management
-- Connections cleaned up immediately on exit
-- Assets cached and reused across sessions
-- Memory leaks prevented through proper disposal
-- Garbage collection optimized for real-time performance
+### Strategy Pattern
 
-### Mass-Spectator Handling
-- **Separate communication channels for players (WebSocket) and spectators (SSE)**
-- **Batched updates for spectators (1-second intervals)**
-- **Reduced payload sizes for spectator events**
-- **Horizontal scaling for spectator services**
+- `MatchStateMachine.tieBreak` hiện là private method, chưa phải Strategy Pattern.
+- Strategy đáng cân nhắc cho tie-break vì blast radius method-level thấp và behavior có thể cần variant sau này.
+- Không tách toàn bộ `MatchStateMachine` domain logic nếu chưa có lý do cụ thể.
 
-## Security Patterns
+### Future Factories
 
-### Content Moderation
-**Where**: User-generated content filtering
-- **Profanity filtering for nicknames and chat**
-- **Shadow banning for repeat offenders**
-- **Rate limiting for name changes**
-- **Content validation at input boundaries**
+Factory Pattern có thể dùng sau này khi object creation có nhiều variant:
 
-### Anonymous Identity Tracking
-**Where**: Device fingerprinting and persistent guest identity
-- **Browser fingerprinting (Canvas, WebGL, User-Agent)**
-- **IP address correlation for stronger identity binding**
-- **Device ID generation and persistence**
-- **Backend enforcement of device-level bans**
-- **Shadow ban effectiveness across sessions**
+- bot players: difficulty/personality/accuracy/response-time profiles
+- avatar generation: nhiều visual provider/theme/style
+- emote events: metadata, cooldown, tier/effect variants
+- match creation: classic/ranked/private/tournament variants
 
-### Access Control
-**Where**: Room and match permissions
-- Host-only controls for private rooms
-- Spectator restrictions on gameplay actions
-- Rate limiting for API endpoints
-- Session validation for all requests
+Content moderation nhiều khả năng phù hợp hơn với Strategy hoặc Chain of Responsibility; factory nếu có chỉ nên dùng để assemble pipeline.
 
-## Accessibility Patterns
+## Current Real-Time Topology
 
-### WCAG Compliance
-**Where**: User interface and interaction design
-- **ARIA labels for screen readers**
-- **Keyboard navigation support**
-- **Color-blind friendly design with icons**
-- **Contrast ratios meeting WCAG standards**
-- **Focus indicators for interactive elements**
+### Implemented Today
 
-### Inclusive Design
-**Where**: All user interactions
-- **Multiple input methods supported**
-- **Text alternatives for visual content**
-- **Customizable UI elements**
-- **Internationalization support**
+- Players và spectator baseline reuse room/match realtime path hiện có.
+- Reconnect dùng snapshot hydrate.
+- Presence sweep cover lobby stale cleanup, chưa phải distributed AFK engine.
 
-## Optimistic UI Patterns
+### Not Implemented Yet
 
-### Instant Feedback
-**Where**: Answer submission and user interactions
-- **UI lock-in on user action for perceived performance**
-- **Internal loading states without server dependency**
-- **Visual feedback for all user interactions**
-- **Graceful rollback for rejected submissions**
+- SSE spectator channel riêng.
+- Distributed game-loop locks.
+- Multi-instance Socket.io adapter.
+- Load evidence cho 100 concurrent WebSocket users.
 
-### Smart Recovery
-**Where**: Network resilience and error handling
-- **Automatic retry with idempotency keys**
-- **Exponential backoff for failed requests**
-- **Connection state monitoring**
-- **Graceful degradation for offline scenarios**
+## Monolith-First Migration Seams
 
-## Game Operations Patterns
+### Spectator Scale Path
 
-### Administrative Control
-**Where**: Emergency interventions and maintenance
-- **Force kill capabilities for rooms/matches**
-- **Global broadcast messaging system**
-- **Question voiding mechanism**
-- **Emergency shutdown procedures**
+Khi cần scale hơn:
 
-### Observability
-**Where**: System monitoring and debugging
-- **Comprehensive logging for all operations**
-- **Real-time metrics and dashboards**
-- **Audit trails for administrative actions**
-- **Health checks for all services**
+1. tách spectator transport khỏi player transport
+2. batch spectator updates theo interval thấp hơn, ví dụ 1s
+3. chỉ làm sau khi có load evidence từ `k6`
 
-## Resilience Patterns
+### Concurrency Path
 
-### Circuit Breaker
-**Where**: External service dependencies
-- **Fallback mechanisms for CDN failures**
-- **Graceful degradation for asset loading**
-- **Automatic retry with exponential backoff**
-- **Health checks for service dependencies**
+Khi cần multi-instance:
 
-### Fault Tolerance
-**Where**: Critical game operations
-- **Question skipping for content errors**
-- **Snapshot-based recovery for connection issues**
-- **Event replay for missed updates**
-- **Graceful shutdown procedures**
+1. Redis-backed/distributed locks cho timer-sensitive guards
+2. Socket.io adapter đa instance
+3. runtime ownership / recovery rules rõ hơn cho game loop
+
+## UI/Data Patterns
+
+### Optimistic UX
+
+- Hiện tại UI đã có answer lock-in cơ bản.
+- Chưa có full rollback + idempotency path.
+- Hướng đúng: lock ngay, gửi idempotency key, rollback rõ ràng nếu server reject.
+
+### Moderation
+
+- Hướng MVP: sanitize/replace ở input boundary.
+- Hướng hậu MVP: fingerprint, repeat-offender policy, shadow ban.
+- Không ghi moderation factory là implemented cho tới khi có code thật.
+
+## Operational Patterns
+
+- Admin kill-switch hiện là best-effort orchestrator.
+- Admin kill-switch append-only audit event vẫn là gap.
+- Reset không nên purge audit rows sau khi audit event backend được implement.
+
+## Core Risks Still Open
+
+1. Admin kill-switch chưa ghi append-only audit event.
+2. `Room.maxPlayers` chưa expose qua realtime join/create payload.
+3. Optimistic answer rollback chưa full.
+4. Moderation mới ở mức intent, chưa thành pipeline MVP.
+5. Load characteristics 100 concurrent WS chưa có evidence đo thực nghiệm.
+
+## Supplementary / Legacy Docs
+
+Nếu cần đào sâu historical reasoning, tham khảo supplementary docs. Core file này chỉ giữ pattern đang có hiệu lực.

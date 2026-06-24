@@ -32,168 +32,171 @@ export class MatchHandler extends BaseHandler {
     server: Server,
     payload: { roomId: string },
   ) {
-    try {
-      const userId = this.requireAuth(client);
+    return this.runSafely(
+      client,
+      async () => {
+        const userId = this.requireAuth(client);
 
-      const room = await this.roomService.getRoom(payload.roomId);
-      if (room.hostId !== userId) {
-        throw new RoomError(ErrorCode.NOT_ROOM_HOST);
-      }
+        const room = await this.roomService.getRoom(payload.roomId);
+        if (room.hostId !== userId) {
+          throw new RoomError(ErrorCode.NOT_ROOM_HOST);
+        }
 
-      if (room.type !== "PRIVATE") {
-        throw new RoomError(ErrorCode.INVALID_ROOM_TYPE);
-      }
+        if (room.type !== "PRIVATE") {
+          throw new RoomError(ErrorCode.INVALID_ROOM_TYPE);
+        }
 
-      if (room.status !== RoomStatus.WAITING) {
-        throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
-      }
+        if (room.status !== RoomStatus.WAITING) {
+          throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
+        }
 
-      const match = await this.gameLoopService.forceStartRoomMatch(
-        payload.roomId,
-        server,
-      );
+        const match = await this.gameLoopService.forceStartRoomMatch(
+          payload.roomId,
+          server,
+        );
 
-      this.logger.log(`Match starting: ${match.id}`);
-    } catch (error) {
-      const code =
-        error instanceof RoomError ? error.code : ErrorCode.INTERNAL_ERROR;
-      const msg =
-        error instanceof RoomError
-          ? ERROR_MESSAGES[error.code]
-          : error instanceof Error
-            ? error.message
-            : String(error);
-      this.emitError(client, code, msg);
-    }
+        this.logger.log(`Match starting: ${match.id}`);
+      },
+      (error) => {
+        const code = this.getErrorCode(error);
+        const msg =
+          error instanceof RoomError
+            ? ERROR_MESSAGES[error.code]
+            : this.getErrorMessage(error);
+        this.emitError(client, code, msg);
+      },
+    );
   }
 
   async handleSubmitAnswer(client: Socket, payload: SubmitAnswerPayload) {
-    try {
-      const userId = this.requireAuth(client);
+    return this.runSafely(
+      client,
+      async () => {
+        const userId = this.requireAuth(client);
 
-      const stateMachine = await this.matchService.getStateMachine(
-        payload.matchId,
-      );
-      if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
+        const stateMachine = await this.matchService.getStateMachine(
+          payload.matchId,
+        );
+        if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
 
-      // Drop-in spectating baseline: gate answer submission on the
-      // server so a late-joiner who is not a registered player in the
-      // match cannot submit answers even if they emit SUBMIT_ANSWER.
-      // The state machine is the source of truth for the player roster.
-      const isPlayerInMatch = stateMachine.getState().players.has(userId);
-      if (!isPlayerInMatch) {
-        throw new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER);
-      }
+        // Drop-in spectating baseline: gate answer submission on the
+        // server so a late-joiner who is not a registered player in the
+        // match cannot submit answers even if they emit SUBMIT_ANSWER.
+        // The state machine is the source of truth for the player roster.
+        const isPlayerInMatch = stateMachine.getState().players.has(userId);
+        if (!isPlayerInMatch) {
+          throw new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER);
+        }
 
-      // M6 fix: emit a distinct error code for DISCONNECTED players.
-      // Without this, a player who just lost their socket (e.g.
-      // brief network blip) would see "Bạn không ở trong phòng này"
-      // — confusing because they ARE in the room, just temporarily
-      // offline. The frontend can use PLAYER_DISCONNECTED to drive
-      // a reconnect flow instead of an error toast.
-      const player = stateMachine.getState().players.get(userId);
-      if (player && player.status === PlayerStatus.DISCONNECTED) {
-        throw new RoomError(ErrorCode.PLAYER_DISCONNECTED);
-      }
+        // M6 fix: emit a distinct error code for DISCONNECTED players.
+        // Without this, a player who just lost their socket (e.g.
+        // brief network blip) would see "Bạn không ở trong phòng này"
+        // — confusing because they ARE in the room, just temporarily
+        // offline. The frontend can use PLAYER_DISCONNECTED to drive
+        // a reconnect flow instead of an error toast.
+        const player = stateMachine.getState().players.get(userId);
+        if (player && player.status === PlayerStatus.DISCONNECTED) {
+          throw new RoomError(ErrorCode.PLAYER_DISCONNECTED);
+        }
 
-      const serverTimestamp = Date.now();
-      const result = stateMachine.submitAnswer(
-        userId,
-        payload.answer,
-        serverTimestamp,
-      );
+        const serverTimestamp = Date.now();
+        const result = stateMachine.submitAnswer(
+          userId,
+          payload.answer,
+          serverTimestamp,
+        );
 
-      // Persist state after mutation
-      await this.matchService.persistStateMachine(payload.matchId);
+        // Persist state after mutation
+        await this.matchService.persistStateMachine(payload.matchId);
 
-      // Get roomId from state for early termination check
-      const roomId = stateMachine.getState().roomId;
+        // Get roomId from state for early termination check
+        const roomId = stateMachine.getState().roomId;
 
-      client.emit(ServerEvent.ANSWER_RESULT, {
-        matchId: payload.matchId,
-        // L4 fix: read roundNo from the state machine, not from the
-        // client payload. The previous `?? payload.roundNo` fallback
-        // never fired in practice (getCurrentRound is non-null when
-        // submitAnswer succeeded) and trusting the client's roundNo
-        // was a UX trap: a stale or future round number from the
-        // client would be persisted to AnswerResult events. The
-        // state machine is the single source of truth for which
-        // round is currently active.
-        roundNo: stateMachine.getCurrentRound()!.roundNo,
-        isCorrect: result.isCorrect,
-        responseTimeMs: result.responseTimeMs,
-      });
+        client.emit(ServerEvent.ANSWER_RESULT, {
+          matchId: payload.matchId,
+          // L4 fix: read roundNo from the state machine, not from the
+          // client payload. The previous `?? payload.roundNo` fallback
+          // never fired in practice (getCurrentRound is non-null when
+          // submitAnswer succeeded) and trusting the client's roundNo
+          // was a UX trap: a stale or future round number from the
+          // client would be persisted to AnswerResult events. The
+          // state machine is the single source of truth for which
+          // round is currently active.
+          roundNo: stateMachine.getCurrentRound()!.roundNo,
+          isCorrect: result.isCorrect,
+          responseTimeMs: result.responseTimeMs,
+        });
 
-      this.logger.log(
-        `Answer submitted: ${userId} - ${result.isCorrect ? "correct" : "wrong"}`,
-      );
+        this.logger.log(
+          `Answer submitted: ${userId} - ${result.isCorrect ? "correct" : "wrong"}`,
+        );
 
-      // Check for early termination - all players answered
-      // Pass the server instance from the client's namespace
-      await this.gameLoopService.checkEarlyTermination(
-        payload.matchId,
-        roomId,
-        client.nsp.server,
-      );
-    } catch (error) {
-      const code =
-        error instanceof RoomError ? error.code : ErrorCode.INTERNAL_ERROR;
-      const msg =
-        error instanceof RoomError
-          ? ERROR_MESSAGES[error.code]
-          : error instanceof Error
-            ? error.message
-            : String(error);
-      this.emitError(client, code, msg);
-    }
+        // Check for early termination - all players answered
+        // Pass the server instance from the client's namespace
+        await this.gameLoopService.checkEarlyTermination(
+          payload.matchId,
+          roomId,
+          client.nsp.server,
+        );
+      },
+      (error) => {
+        const code = this.getErrorCode(error);
+        const msg =
+          error instanceof RoomError
+            ? ERROR_MESSAGES[error.code]
+            : this.getErrorMessage(error);
+        this.emitError(client, code, msg);
+      },
+    );
   }
 
   async handleRequestSnapshot(client: Socket, payload: RequestSnapshotPayload) {
-    try {
-      const userId = this.requireAuth(client);
+    return this.runSafely(
+      client,
+      async () => {
+        const userId = this.requireAuth(client);
 
-      const stateMachine = await this.matchService.getStateMachine(
-        payload.matchId,
-      );
-      if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
+        const stateMachine = await this.matchService.getStateMachine(
+          payload.matchId,
+        );
+        if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
 
-      // H6 fix: room-membership gate. Previously this handler was
-      // fully open to any authenticated user that knew the matchId
-      // — a leak risk for the player roster, the in-flight question,
-      // and the per-player score. The previous comment said
-      // "spectators use this exact path" and explicitly opted out
-      // of a player-roster check, but the right check is socket
-      // channel membership: both players AND drop-in spectators
-      // (who entered via JOIN_ROOM → handleJoinRoom) end up in the
-      // `room:${roomId}` channel. Anyone who has not joined the
-      // room — even with a valid token — is rejected.
-      const roomId = stateMachine.getState().roomId;
-      if (!client.rooms.has(`room:${roomId}`)) {
-        throw new RoomError(ErrorCode.UNAUTHORIZED);
-      }
+        // H6 fix: room-membership gate. Previously this handler was
+        // fully open to any authenticated user that knew the matchId
+        // — a leak risk for the player roster, the in-flight question,
+        // and the per-player score. The previous comment said
+        // "spectators use this exact path" and explicitly opted out
+        // of a player-roster check, but the right check is socket
+        // channel membership: both players AND drop-in spectators
+        // (who entered via JOIN_ROOM → handleJoinRoom) end up in the
+        // `room:${roomId}` channel. Anyone who has not joined the
+        // room — even with a valid token — is rejected.
+        const roomId = stateMachine.getState().roomId;
+        if (!client.rooms.has(`room:${roomId}`)) {
+          throw new RoomError(ErrorCode.UNAUTHORIZED);
+        }
 
-      // The snapshot is already client-safe: MatchStateMachine.getSnapshot
-      // returns only the question (no correctAnswer), so no answer leak
-      // is possible through this endpoint. We intentionally do NOT check
-      // whether the requester is in the player roster here, because
-      // spectators are exactly the new caller profile that the baseline
-      // unlocks.
-      const snapshot = stateMachine.getSnapshot(payload.lastSeenSeqNo);
-      client.emit(ServerEvent.SNAPSHOT, snapshot);
+        // The snapshot is already client-safe: MatchStateMachine.getSnapshot
+        // returns only the question (no correctAnswer), so no answer leak
+        // is possible through this endpoint. We intentionally do NOT check
+        // whether the requester is in the player roster here, because
+        // spectators are exactly the new caller profile that the baseline
+        // unlocks.
+        const snapshot = stateMachine.getSnapshot(payload.lastSeenSeqNo);
+        client.emit(ServerEvent.SNAPSHOT, snapshot);
 
-      this.logger.log(
-        `Snapshot sent to ${userId} for match ${payload.matchId}`,
-      );
-    } catch (error) {
-      const code =
-        error instanceof RoomError ? error.code : ErrorCode.INTERNAL_ERROR;
-      const msg =
-        error instanceof RoomError
-          ? ERROR_MESSAGES[error.code]
-          : error instanceof Error
-            ? error.message
-            : String(error);
-      this.emitError(client, code, msg);
-    }
+        this.logger.log(
+          `Snapshot sent to ${userId} for match ${payload.matchId}`,
+        );
+      },
+      (error) => {
+        const code = this.getErrorCode(error);
+        const msg =
+          error instanceof RoomError
+            ? ERROR_MESSAGES[error.code]
+            : this.getErrorMessage(error);
+        this.emitError(client, code, msg);
+      },
+    );
   }
 }

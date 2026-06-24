@@ -34,6 +34,44 @@ export class RoomService {
     private readonly redis: RedisService,
   ) {}
 
+  private async setCachedRoomSnapshot(
+    room: {
+      id: string;
+      code: string;
+      status: RoomStatus;
+      hostId: string;
+      currentMatchId: string | null;
+      timeLimit: number;
+      category: string;
+    },
+    playerCount: number,
+  ) {
+    await this.redis.setJSON(
+      `room:${room.id}`,
+      {
+        id: room.id,
+        code: room.code,
+        status: room.status,
+        hostId: room.hostId,
+        playerCount,
+        currentMatchId: room.currentMatchId,
+        timeLimit: room.timeLimit,
+        category: room.category,
+      },
+      3600,
+    );
+  }
+
+  private async syncCachedPlayerCount(roomId: string, playerCount: number) {
+    const cached = await this.redis.getJSON<{ playerCount: number }>(
+      `room:${roomId}`,
+    );
+    if (!cached) return;
+
+    cached.playerCount = playerCount;
+    await this.redis.setJSON(`room:${roomId}`, cached, 3600);
+  }
+
   // Create room
   async createRoom(
     hostId: string,
@@ -80,20 +118,7 @@ export class RoomService {
     });
 
     // Cache room in Redis
-    await this.redis.setJSON(
-      `room:${room.id}`,
-      {
-        id: room.id,
-        code: room.code,
-        status: room.status,
-        hostId: room.hostId,
-        playerCount: 1,
-        currentMatchId: null,
-        timeLimit: room.timeLimit,
-        category: room.category,
-      },
-      3600,
-    );
+    await this.setCachedRoomSnapshot(room, 1);
 
     // Initialize the atomic player-count counter so concurrent joins/leaves
     // don't read a missing key.
@@ -240,13 +265,7 @@ export class RoomService {
 
         // Best-effort: mirror the new count into the cached room JSON. The
         // counter is the source of truth; the JSON is for cheap reads.
-        const cached = await this.redis.getJSON<{ playerCount: number }>(
-          `room:${room.id}`,
-        );
-        if (cached) {
-          cached.playerCount = newCount;
-          await this.redis.setJSON(`room:${room.id}`, cached, 3600);
-        }
+        await this.syncCachedPlayerCount(room.id, newCount);
 
         this.logger.log(`Player ${userId} joined room ${roomCode}`);
       } else {
@@ -316,14 +335,7 @@ export class RoomService {
         roomId,
         result.count,
       );
-      const cached = await this.redis.getJSON<{
-        playerCount: number;
-        hostId: string;
-      }>(`room:${roomId}`);
-      if (cached) {
-        cached.playerCount = newCount;
-        await this.redis.setJSON(`room:${roomId}`, cached, 3600);
-      }
+      await this.syncCachedPlayerCount(roomId, newCount);
     }
 
     this.logger.log(`Player ${userId} left room ${roomId}`);
@@ -413,20 +425,7 @@ export class RoomService {
       include: { players: true },
     });
 
-    await this.redis.setJSON(
-      `room:${roomId}`,
-      {
-        id: room.id,
-        code: room.code,
-        status: room.status,
-        hostId: room.hostId,
-        playerCount: room.players.length,
-        currentMatchId: room.currentMatchId,
-        timeLimit: room.timeLimit,
-        category: room.category,
-      },
-      3600,
-    );
+    await this.setCachedRoomSnapshot(room, room.players.length);
 
     // Re-sync the player-count counter from the DB so the atomic counter
     // stays consistent with the authoritative source when status changes.
@@ -530,13 +529,7 @@ export class RoomService {
         roomId,
         result.count,
       );
-      const cached = await this.redis.getJSON<{ playerCount: number }>(
-        `room:${roomId}`,
-      );
-      if (cached) {
-        cached.playerCount = newCount;
-        await this.redis.setJSON(`room:${roomId}`, cached, 3600);
-      }
+      await this.syncCachedPlayerCount(roomId, newCount);
     }
   }
 
@@ -565,13 +558,7 @@ export class RoomService {
         roomId,
         result.count,
       );
-      const cached = await this.redis.getJSON<{ playerCount: number }>(
-        `room:${roomId}`,
-      );
-      if (cached) {
-        cached.playerCount = newCount;
-        await this.redis.setJSON(`room:${roomId}`, cached, 3600);
-      }
+      await this.syncCachedPlayerCount(roomId, newCount);
     }
   }
 }
