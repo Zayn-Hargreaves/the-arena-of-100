@@ -277,19 +277,17 @@ export class GameLoopService implements OnModuleInit {
       this.armLobbyCountdownTimer(roomId, countdownEndsAt, server);
       // Persist to Redis so a process restart can recover and re-arm the
       // timer (or launch the match if it expired while we were down).
-      try {
-        await persistLobbyCountdown(
-          this.redis.getClient(),
-          roomId,
-          countdownEndsAt,
-        );
-      } catch (error) {
-        this.logger.error(
-          `Failed to persist lobby countdown for room ${roomId}:`,
-          error,
-        );
-        throw error;
-      }
+      //
+      // This is intentionally best-effort: a transient Redis blip must
+      // not propagate to the outer catch (which calls
+      // clearLobbyCountdownBestEffort and would orphan the timer we
+      // just armed on line 277). The in-memory timer still drives the
+      // countdown for the live process; only the cross-restart
+      // recovery is lost, and on the next process start the
+      // not-yet-expired entry is best recovered via a sweep of any
+      // rooms that have a `status = COUNTDOWN` in the DB but no
+      // matching lobbyCountdowns entry.
+      await this.persistLobbyCountdown(roomId, countdownEndsAt);
       return { countdownEndsAt };
     } catch (error) {
       this.clearLobbyCountdownBestEffort(roomId);

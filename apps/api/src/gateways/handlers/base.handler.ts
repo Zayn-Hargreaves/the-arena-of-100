@@ -3,7 +3,7 @@ import { ServerEvent, ErrorCode, RoomError } from "@arena/shared";
 
 export abstract class BaseHandler {
   protected async runSafely(
-    client: Socket,
+    _client: Socket,
     operation: () => Promise<void>,
     onError: (error: unknown) => void,
   ) {

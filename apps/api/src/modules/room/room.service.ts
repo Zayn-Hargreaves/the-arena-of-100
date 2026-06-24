@@ -38,7 +38,7 @@ export class RoomService {
     room: {
       id: string;
       code: string;
-      status: RoomStatus;
+      status: string;
       hostId: string;
       currentMatchId: string | null;
       timeLimit: number;
