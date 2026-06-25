@@ -1,4 +1,8 @@
 import { guestLoginSchema, GuestLoginDto } from "./guest-login.dto";
+import {
+  sanitizeAdminMessage,
+  baseNormalize,
+} from "../../../common/moderation";
 import { describe, it, expect } from "vitest";
 import { ZodError } from "zod";
 
@@ -16,13 +20,44 @@ describe("GuestLoginDto & Schema", () => {
       expect(parsed.username).toBe("guest_player");
     });
 
+    it("should mask profanity in the username", () => {
+      const parsed = guestLoginSchema.parse({ username: "badshit" });
+      expect(parsed.username).toBe("bad****");
+    });
+
+    it("should mask obfuscated profanity in the username", () => {
+      const inputs = [
+        "badsh!it",
+        "badsh\u200Bit",
+        "badsh-it",
+        "badsh_it",
+        "badsh it",
+        "badsh*it",
+        "badshshitit",
+        "badｓｈｉｔ",
+      ];
+
+      for (const username of inputs) {
+        const parsed = guestLoginSchema.parse({ username });
+        expect(parsed.username.replace(/[^\p{L}\p{N}]/gu, "")).not.toContain(
+          "shit",
+        );
+      }
+    });
+
     it("should throw if username is less than 3 characters", () => {
       const input = { username: "ab" };
       expect(() => guestLoginSchema.parse(input)).toThrow(ZodError);
     });
 
-    it("should throw if username is more than 20 characters", () => {
-      const input = { username: "a".repeat(21) };
+    it("should throw if raw username is too large", () => {
+      expect(() =>
+        guestLoginSchema.parse({ username: "a".repeat(257) }),
+      ).toThrow(ZodError);
+    });
+
+    it("should throw if sanitized username is more than 20 characters", () => {
+      const input = { username: `valid${"!".repeat(20)}name${"a".repeat(12)}` };
       expect(() => guestLoginSchema.parse(input)).toThrow(ZodError);
     });
 
@@ -30,6 +65,49 @@ describe("GuestLoginDto & Schema", () => {
       const input = { username: "" };
       expect(() => guestLoginSchema.parse(input)).toThrow(ZodError);
       expect(() => guestLoginSchema.parse({})).toThrow(ZodError);
+    });
+
+    it("should throw if username is fully filtered", () => {
+      expect(() => guestLoginSchema.parse({ username: "!!!" })).toThrow(
+        ZodError,
+      );
+    });
+
+    it("should throw if username has no alphanumeric content", () => {
+      expect(() => guestLoginSchema.parse({ username: "***" })).toThrow(
+        ZodError,
+      );
+      expect(() => guestLoginSchema.parse({ username: "---" })).toThrow(
+        ZodError,
+      );
+    });
+
+    it("should reject precomposed accented profanity like fúck", () => {
+      expect(() => guestLoginSchema.parse({ username: "fúck" })).toThrow(
+        ZodError,
+      );
+      expect(() => guestLoginSchema.parse({ username: "fúck123" })).toThrow(
+        ZodError,
+      );
+    });
+
+    it("should reject usernames that still contain banned terms after masking", () => {
+      expect(() => guestLoginSchema.parse({ username: "fúckshit" })).toThrow(
+        ZodError,
+      );
+    });
+  });
+
+  describe("moderation helpers", () => {
+    it("normalizes nullish values to an empty string", () => {
+      expect(baseNormalize(null)).toBe("");
+      expect(baseNormalize(undefined)).toBe("");
+    });
+
+    it("sanitizes admin messages", () => {
+      expect(sanitizeAdminMessage(undefined)).toBeUndefined();
+      expect(sanitizeAdminMessage("   ")).toBeUndefined();
+      expect(sanitizeAdminMessage("bad shit")).toBe("Room terminated by admin");
     });
   });
 

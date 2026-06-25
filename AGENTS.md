@@ -141,7 +141,7 @@ pnpm db:studio
 
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **the-arena-of-100** (3953 symbols, 9540 relationships, 268 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **the-arena-of-100** (4053 symbols, 9810 relationships, 283 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

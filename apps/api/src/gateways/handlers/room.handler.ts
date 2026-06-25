@@ -54,6 +54,7 @@ export class RoomHandler extends BaseHandler {
           hostId: room.hostId,
           roomType: asRoomType(room.type),
           roomStatus: RoomStatus.WAITING,
+          maxPlayers: room.maxPlayers,
           currentMatchId: null,
           players: [
             {
@@ -118,6 +119,7 @@ export class RoomHandler extends BaseHandler {
           hostId: room.hostId,
           roomType: asRoomType(room.type),
           roomStatus: asRoomStatus(room.status),
+          maxPlayers: room.maxPlayers,
           currentMatchId: room.currentMatchId,
           countdownEndsAt: await this.gameLoopService.getCountdownEnd(room.id),
           joinedAs: room.joinedAs,

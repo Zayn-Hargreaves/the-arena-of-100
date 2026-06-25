@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Socket, Server } from "socket.io";
 import {
+  ClientEvent,
   ServerEvent,
   ErrorCode,
   PlayerStatus,
@@ -118,6 +119,7 @@ export class MatchHandler extends BaseHandler {
 
         client.emit(ServerEvent.ANSWER_RESULT, {
           matchId: payload.matchId,
+          submissionId: payload.submissionId,
           // L4 fix: read roundNo from the state machine, not from the
           // client payload. The previous `?? payload.roundNo` fallback
           // never fired in practice (getCurrentRound is non-null when
@@ -137,23 +139,30 @@ export class MatchHandler extends BaseHandler {
 
         // Check for early termination - all players answered
         // Pass the server instance from the client's namespace
-        await this.gameLoopService.checkEarlyTermination(
-          payload.matchId,
-          roomId,
-          client.nsp.server,
-        );
+        try {
+          await this.gameLoopService.checkEarlyTermination(
+            payload.matchId,
+            roomId,
+            client.nsp.server,
+          );
+        } catch (error) {
+          this.logger.error("Error checking early termination:", error);
+        }
       },
       (error) => {
-        const code = this.getErrorCode(error);
-        let msg =
-          error instanceof RoomError
-            ? ERROR_MESSAGES[error.code]
-            : this.getErrorMessage(error);
+        const rawCode = error instanceof RoomError ? error.code : null;
+        const code = rawCode ?? this.getErrorCode(error);
+        let msg = ERROR_MESSAGES[code] ?? this.getErrorMessage(error);
         if (code === ErrorCode.INTERNAL_ERROR) {
           this.logger.error("Error submitting answer:", error);
           msg = "Internal server error";
         }
-        this.emitError(client, code, msg);
+        client.emit(ServerEvent.ERROR, {
+          code,
+          message: msg,
+          failedEvent: ClientEvent.SUBMIT_ANSWER,
+          submissionId: payload.submissionId,
+        });
       },
     );
   }

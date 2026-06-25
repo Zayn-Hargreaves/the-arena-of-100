@@ -14,13 +14,9 @@ import { useTranslations } from "next-intl";
 import { useToast } from "@/hooks/use-toast";
 import { Users, ShieldAlert, Swords, LogOut, Trophy, Eye } from "lucide-react";
 import { avatars } from "@/lib/avatars";
-// F4 fix: GAME_CONFIG.MAX_PLAYERS is the source of truth for the
-// "remaining / total" denominator in the header. Previously the
-// page hardcoded `/ 100` and fell back to `?? 100` on the
-// numerator, which produced misleading UI for rooms with a
-// different `maxPlayers` (small dev rooms, future scaling
-// experiments). GAME_CONFIG comes from `@arena/shared` so the
-// game-core and the frontend share the same constant.
+// F4 fix: room.maxPlayers is the source of truth for the
+// "remaining / total" denominator in the header. GAME_CONFIG.MAX_PLAYERS
+// is only the fallback when room capacity is not available.
 import { GAME_CONFIG } from "@arena/shared";
 
 interface GamePageProps {
@@ -37,6 +33,7 @@ export default function GamePage({ params }: GamePageProps) {
     submitAnswer,
     userId,
     lastAnswerResult,
+    pendingAnswer,
     remainingCount,
     leaveRoom,
     isEliminated,
@@ -63,6 +60,29 @@ export default function GamePage({ params }: GamePageProps) {
     string | null
   >(null);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
+
+  const activeRoundNo = match?.currentRoundNo;
+  const activePendingAnswer =
+    pendingAnswer?.matchId === matchId &&
+    pendingAnswer.roundNo === activeRoundNo
+      ? pendingAnswer
+      : null;
+  const activeAnswerResult =
+    lastAnswerResult?.matchId === matchId &&
+    lastAnswerResult.roundNo === activeRoundNo
+      ? lastAnswerResult
+      : null;
+
+  useEffect(() => {
+    if (!activePendingAnswer) return;
+    setSelectedAnswer(activePendingAnswer.answer);
+  }, [activePendingAnswer]);
+
+  useEffect(() => {
+    if (activePendingAnswer) return;
+    if (activeAnswerResult?.isCorrect !== undefined) return;
+    setSelectedAnswer(null);
+  }, [activePendingAnswer, activeAnswerResult]);
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -306,14 +326,13 @@ export default function GamePage({ params }: GamePageProps) {
   }, [clearTimers]);
 
   const handleSelectAnswer = (option: string) => {
-    if (roundCompleted) return;
+    if (roundCompleted || activePendingAnswer || activeAnswerResult) return;
     // Drop-in spectating baseline: spectators cannot submit answers. The
     // server enforces the same gate (MatchHandler.handleSubmitAnswer) so
     // this is a UX-only short-circuit — a malicious client would still
     // be rejected by the server, but we hide the interactive control
     // entirely so the spectator UI stays read-only.
     if (isSpectator) return;
-    setSelectedAnswer(option);
 
     // Submit answer to socket-store.
     // F6 fix: send the actual `currentRoundNo` (which may be 0
@@ -329,7 +348,8 @@ export default function GamePage({ params }: GamePageProps) {
     // circuit when the round is not yet known (the next
     // ROUND_STARTED broadcast will re-enable submission).
     if (match?.id && match.currentRoundNo > 0) {
-      submitAnswer(match.id, match.currentRoundNo, option);
+      const submissionId = submitAnswer(match.id, match.currentRoundNo, option);
+      if (submissionId) setSelectedAnswer(option);
     }
   };
 
@@ -379,23 +399,7 @@ export default function GamePage({ params }: GamePageProps) {
     ? (match?.currentQuestion?.options ?? [])
     : [];
 
-  // F4 fix: the header used to render `remainingCount ??
-  // match?.players?.length ?? 100` over a hardcoded `/ 100`. Both
-  // the numerator's fallback and the denominator's literal are
-  // misleading: dev / small / large rooms have different
-  // `maxPlayers` and the displayed fraction should reflect the
-  // actual room capacity. `room.maxPlayers` is not yet on the
-  // ROOM_JOINED payload (tracked as PR 12 in the plan), so we
-  // fall back to `match.players.length` and finally to
-  // `GAME_CONFIG.MAX_PLAYERS` (the shared constant from
-  // `@arena/game-core`). The numerator uses the authoritative
-  // `remainingCount` (server-broadcast on every ROUND_ENDED)
-  // and falls back to the player array length when the
-  // broadcast has not yet arrived.
-  const maxPlayers =
-    match?.players && match.players.length > 0
-      ? match.players.length
-      : GAME_CONFIG.MAX_PLAYERS;
+  const maxPlayers = room?.maxPlayers ?? GAME_CONFIG.MAX_PLAYERS;
   const livePlayerCount = remainingCount ?? match?.players?.length ?? 0;
 
   return (
@@ -548,7 +552,11 @@ export default function GamePage({ params }: GamePageProps) {
                       content={option}
                       variant={getTileVariant(charCode)}
                       onClick={() => handleSelectAnswer(charCode)}
-                      disabled={roundCompleted}
+                      disabled={
+                        roundCompleted ||
+                        activePendingAnswer !== null ||
+                        activeAnswerResult !== null
+                      }
                     />
                   );
                 })}

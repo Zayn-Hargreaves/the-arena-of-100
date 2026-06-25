@@ -33,15 +33,14 @@
 2. Admin Kill-Switch Audit Event: append immutable audit row when admin terminates a room.
 3. `Room.maxPlayers` realtime payload exposure.
 4. Optimistic answer rollback with idempotency key.
-5. Moderation MVP boundary filtering / sanitizer.
-6. k6 load test for 100 concurrent WebSocket users.
+5. k6 load test for 100 concurrent WebSocket users.
 
 ## Open Product / Engineering Gaps
 
 - Admin audit panel UI is optional until backend audit event exists.
 - In-match AFK policy should follow locked product semantics: missing active round deadline means elimination in that round.
 - Mass-spectator transport split is deferred until `k6` evidence exists.
-- Moderation MVP should be small and boundary-focused; deeper fingerprint/shadow-ban is post-MVP.
+- Moderation MVP is completed; deeper fingerprint/shadow-ban is post-MVP.
 
 ## Agent Read Policy
 

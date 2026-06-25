@@ -341,6 +341,7 @@ export class AuthHandler extends BaseHandler {
         hostId: mostRecentRoom.hostId,
         roomType: asRoomTypeOrDefault(mostRecentRoom.type),
         roomStatus: mostRecentRoom.status as import("@arena/shared").RoomStatus,
+        maxPlayers: mostRecentRoom.maxPlayers,
         currentMatchId: mostRecentRoom.currentMatchId,
         countdownEndsAt,
         joinedAs: "PLAYER",

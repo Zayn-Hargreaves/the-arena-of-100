@@ -2,6 +2,7 @@ import { MatchStatus, PlayerStatus, RoomStatus } from "@arena/shared";
 import type { JoinMode, RoomType } from "@arena/shared";
 import { describe, expect, it } from "vitest";
 import {
+  applyAnswerResultState,
   applyMatchFinishedState,
   applyRoundEndedState,
   applyRoundStartedState,
@@ -38,6 +39,7 @@ function makeState(overrides: Partial<SocketState> = {}): SocketState {
     room: null,
     match: null,
     lastAnswerResult: null,
+    pendingAnswer: null,
     remainingCount: null,
     error: null,
     heartbeatInterval: null,
@@ -52,7 +54,7 @@ function makeState(overrides: Partial<SocketState> = {}): SocketState {
     joinRoom: () => Promise.resolve(),
     leaveRoom: () => {},
     startMatch: () => {},
-    submitAnswer: () => {},
+    submitAnswer: () => null,
     requestSnapshot: () => {},
     ...overrides,
   };
@@ -76,6 +78,7 @@ describe("applyRoundEndedState — stale state.match guard", () => {
         countdownEndsAt: null,
         players: basePlayers,
         joinMode: "PLAYER" satisfies JoinMode,
+        maxPlayers: 100,
       },
       match: {
         id: "m-old",
@@ -158,6 +161,7 @@ describe("applyRoundStartedState — stale state.match guard", () => {
         countdownEndsAt: null,
         players: basePlayers,
         joinMode: "PLAYER" satisfies JoinMode,
+        maxPlayers: 100,
       },
       match: {
         id: "m-old",
@@ -207,6 +211,7 @@ describe("applyRoundStartedState — stale state.match guard", () => {
         countdownEndsAt: null,
         players: basePlayers,
         joinMode: "PLAYER" satisfies JoinMode,
+        maxPlayers: 100,
       },
     });
 
@@ -239,6 +244,7 @@ describe("applyMatchFinishedState — stale state.match guard", () => {
         countdownEndsAt: null,
         players: basePlayers,
         joinMode: "PLAYER" satisfies JoinMode,
+        maxPlayers: 100,
       },
       match: {
         id: "m-old",
@@ -318,6 +324,64 @@ describe("applyMatchFinishedState — stale state.match guard", () => {
   });
 });
 
+describe("applyAnswerResultState", () => {
+  it("updates lastAnswerResult only for the matching pending answer", () => {
+    const state = makeState({
+      pendingAnswer: {
+        matchId: "m1",
+        roundNo: 2,
+        answer: "A",
+        submissionId: "s1",
+      },
+    });
+
+    const result = applyAnswerResultState(state, {
+      matchId: "m1",
+      roundNo: 2,
+      submissionId: "s1",
+      isCorrect: true,
+      responseTimeMs: 123,
+    });
+
+    expect(result.lastAnswerResult).toMatchObject({ submissionId: "s1" });
+    expect(result.pendingAnswer).toBeNull();
+  });
+
+  it("keeps pending answer while storing a mismatched answer result", () => {
+    const pendingAnswer = {
+      matchId: "m1",
+      roundNo: 2,
+      answer: "A",
+      submissionId: "s1",
+    };
+    const state = makeState({ pendingAnswer });
+
+    const result = applyAnswerResultState(state, {
+      matchId: "m1",
+      roundNo: 2,
+      submissionId: "stale",
+      isCorrect: false,
+      responseTimeMs: 999,
+    });
+
+    expect(result.lastAnswerResult).toMatchObject({ submissionId: "stale" });
+    expect(result.pendingAnswer).toBe(pendingAnswer);
+  });
+
+  it("stores answer result when pending answer is already clear", () => {
+    const result = applyAnswerResultState(makeState(), {
+      matchId: "m1",
+      roundNo: 2,
+      submissionId: "s1",
+      isCorrect: true,
+      responseTimeMs: 123,
+    });
+
+    expect(result.lastAnswerResult).toMatchObject({ submissionId: "s1" });
+    expect(result.pendingAnswer).toBeNull();
+  });
+});
+
 describe("applyUnauthorizedErrorState", () => {
   it("clears prior room termination state along with auth state", () => {
     const result = applyUnauthorizedErrorState("nope");
@@ -334,6 +398,7 @@ describe("applyUnauthorizedErrorState", () => {
       match: null,
       remainingCount: null,
       lastAnswerResult: null,
+      pendingAnswer: null,
       isEliminated: false,
       heartbeatInterval: null,
       roomTerminated: false,

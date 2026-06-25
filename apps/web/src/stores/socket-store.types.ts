@@ -30,6 +30,7 @@ export interface Room {
   status: RoomStatus;
   hostId: string;
   roomType: RoomType;
+  maxPlayers: number;
   currentMatchId: string | null;
   countdownEndsAt: number | null;
   players: Player[];
@@ -52,9 +53,17 @@ export interface Match {
 export interface LastAnswerResult {
   matchId: string;
   roundNo: number;
+  submissionId?: string;
   isCorrect?: boolean;
   responseTimeMs?: number;
   correctAnswer?: string;
+}
+
+export interface PendingAnswer {
+  matchId: string;
+  roundNo: number;
+  answer: string;
+  submissionId: string;
 }
 
 export interface ConnectionState {
@@ -71,6 +80,7 @@ export interface SocketState extends ConnectionState {
   room: Room | null;
   match: Match | null;
   lastAnswerResult: LastAnswerResult | null;
+  pendingAnswer: PendingAnswer | null;
   remainingCount: number | null;
   error: string | null;
   heartbeatInterval: ReturnType<typeof setInterval> | null;
@@ -91,6 +101,10 @@ export interface SocketState extends ConnectionState {
   joinRoom: (roomCode: string) => Promise<void>;
   leaveRoom: (roomId: string) => void;
   startMatch: (roomId: string) => void;
-  submitAnswer: (matchId: string, roundNo: number, answer: string) => void;
+  submitAnswer: (
+    matchId: string,
+    roundNo: number,
+    answer: string,
+  ) => string | null;
   requestSnapshot: (matchId: string, lastSeenSeqNo: number) => void;
 }

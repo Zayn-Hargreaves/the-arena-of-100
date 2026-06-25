@@ -105,6 +105,7 @@ export const SubmitAnswerPayloadSchema = z.object({
   // inconsistent with GAME_CONFIG.MAX_ROUNDS = 50.
   roundNo: z.number().int().positive().max(GAME_CONFIG.MAX_ROUNDS),
   answer: z.string().min(1).max(ANSWER_MAX_LENGTH),
+  submissionId: idSchema,
   clientTimestamp: z
     .number()
     .int()

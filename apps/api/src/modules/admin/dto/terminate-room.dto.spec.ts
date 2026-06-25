@@ -18,21 +18,16 @@ describe("TerminateRoomDto & Schema", () => {
       expect(parsed.message).toBeUndefined();
     });
 
-    it("rejects any `message` value (superRefine fail-fast — sanitizer pipeline not yet available)", () => {
-      // The schema intentionally rejects every message until the shared
-      // profanity/content-sanitizer pipeline (plan.md §501) lands. This
-      // guarantees unmoderated text cannot be shipped to players via the
-      // kill-switch ROOM_TERMINATED event.
-      const result = terminateRoomSchema.safeParse({
-        message: "Abandoned by host",
+    it("accepts and trims a clean message", () => {
+      const parsed = terminateRoomSchema.parse({
+        message: "  Abandoned by host   ",
       });
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.issues[0]?.path).toEqual(["message"]);
-        expect(result.error.issues[0]?.message).toContain(
-          "Admin message disabled",
-        );
-      }
+      expect(parsed.message).toBe("Abandoned by host");
+    });
+
+    it("replaces unsafe message content with the default fallback", () => {
+      const parsed = terminateRoomSchema.parse({ message: "bad shit" });
+      expect(parsed.message).toBe("Room terminated by admin");
     });
 
     it("rejects a non-string message", () => {
@@ -43,18 +38,13 @@ describe("TerminateRoomDto & Schema", () => {
 
     it("rejects a message longer than 200 characters", () => {
       const longMessage = "a".repeat(201);
-      // The .max(200) check fires before the superRefine, so the error
-      // message is the zod default for string length, not the fail-fast
-      // "Admin message disabled" message.
       expect(() =>
         terminateRoomSchema.parse({ message: longMessage }),
       ).toThrow();
     });
 
     it("exposes a Zod schema instance (type-system contract)", () => {
-      // superRefine wraps the base z.object in a ZodEffects — assert the
-      // wrapper instead of the inner object to reflect the real shape.
-      expect(terminateRoomSchema).toBeInstanceOf(z.ZodEffects);
+      expect(terminateRoomSchema).toBeInstanceOf(z.ZodObject);
     });
   });
 

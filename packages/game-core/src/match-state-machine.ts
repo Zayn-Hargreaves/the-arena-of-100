@@ -12,6 +12,7 @@ import {
   type AnswerState,
   GAME_CONFIG,
   ErrorCode,
+  RoomError,
 } from "@arena/shared";
 import { computeRoundScore } from "./scoring";
 interface DeserializedMatch {
@@ -197,20 +198,20 @@ export class MatchStateMachine {
     serverTimestamp: number,
   ): AnswerState {
     if (!this.currentRound || this.currentRound.status !== "ACTIVE") {
-      throw new Error(ErrorCode.ROUND_NOT_ACTIVE);
+      throw new RoomError(ErrorCode.ROUND_NOT_ACTIVE);
     }
 
     if (this.currentRound.answers.has(playerId)) {
-      throw new Error(ErrorCode.ALREADY_ANSWERED);
+      throw new RoomError(ErrorCode.ALREADY_ANSWERED);
     }
 
     if (serverTimestamp > this.currentRound.endsAt) {
-      throw new Error(ErrorCode.ANSWER_SUBMISSION_CLOSED);
+      throw new RoomError(ErrorCode.ANSWER_SUBMISSION_CLOSED);
     }
 
     const player = this.state.players.get(playerId);
     if (!player || player.status !== PlayerStatus.ACTIVE) {
-      throw new Error(ErrorCode.PLAYER_NOT_IN_ROOM);
+      throw new RoomError(ErrorCode.PLAYER_NOT_IN_ROOM);
     }
 
     const roundWithAnswer = this.currentRound as RoundState & {

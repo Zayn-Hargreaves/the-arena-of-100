@@ -6,6 +6,7 @@ import {
   PlayerStatus,
   RoomStatus,
   RoomError,
+  ClientEvent,
 } from "@arena/shared";
 import { MatchHandler } from "./match.handler";
 import { RoomService } from "../../modules/room/room.service";
@@ -128,7 +129,9 @@ describe("MatchHandler", () => {
       await handler.handleStartMatch(client, server, { roomId: "r1" });
       expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.ERROR,
-        expect.objectContaining({ code: ErrorCode.INTERNAL_ERROR }),
+        expect.objectContaining({
+          code: ErrorCode.INTERNAL_ERROR,
+        }),
       );
     });
 
@@ -181,6 +184,7 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
 
@@ -193,6 +197,7 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ANSWER_RESULT, {
         matchId: "m1",
         roundNo: 1,
+        submissionId: "s1",
         isCorrect: true,
         responseTimeMs: 500,
       });
@@ -219,6 +224,7 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
 
@@ -229,6 +235,8 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.SPECTATOR_CANNOT_ANSWER,
         message: ERROR_MESSAGES[ErrorCode.SPECTATOR_CANNOT_ANSWER],
+        failedEvent: ClientEvent.SUBMIT_ANSWER,
+        submissionId: "s1",
       });
     });
 
@@ -265,6 +273,7 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
 
@@ -276,6 +285,8 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.PLAYER_DISCONNECTED,
         message: ERROR_MESSAGES[ErrorCode.PLAYER_DISCONNECTED],
+        failedEvent: ClientEvent.SUBMIT_ANSWER,
+        submissionId: "s1",
       });
     });
 
@@ -286,12 +297,15 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
 
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.MATCH_NOT_FOUND,
         message: ERROR_MESSAGES[ErrorCode.MATCH_NOT_FOUND],
+        failedEvent: ClientEvent.SUBMIT_ANSWER,
+        submissionId: "s1",
       });
     });
 
@@ -301,6 +315,7 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
       expect(client.emit).toHaveBeenCalledWith(
@@ -309,14 +324,14 @@ describe("MatchHandler", () => {
       );
     });
 
-    it("emits error when submitAnswer throws", async () => {
+    it("does not map Error.message strings as ErrorCode values", async () => {
       const mockMachine = {
         getState: vi.fn().mockReturnValue({
           roomId: "r1",
           players: new Map([["u1", { id: "u1" }]]),
         }),
         submitAnswer: vi.fn().mockImplementation(() => {
-          throw new Error(ErrorCode.ALREADY_ANSWERED);
+          throw new Error(ErrorCode.MATCH_NOT_FOUND);
         }),
       };
       vi.mocked(matchService.getStateMachine).mockResolvedValue(
@@ -327,14 +342,47 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
+        clientTimestamp: 1234567890,
+      });
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: "Internal server error",
+        failedEvent: ClientEvent.SUBMIT_ANSWER,
+        submissionId: "s1",
+      });
+    });
+
+    it("emits error when submitAnswer throws", async () => {
+      const mockMachine = {
+        getState: vi.fn().mockReturnValue({
+          roomId: "r1",
+          players: new Map([["u1", { id: "u1" }]]),
+        }),
+        submitAnswer: vi.fn().mockImplementation(() => {
+          throw new RoomError(ErrorCode.ALREADY_ANSWERED);
+        }),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+
+      await handler.handleSubmitAnswer(client, {
+        matchId: "m1",
+        answer: "A",
+        roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
 
       expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.ERROR,
         expect.objectContaining({
-          code: ErrorCode.INTERNAL_ERROR,
-          message: "Internal server error",
+          code: ErrorCode.ALREADY_ANSWERED,
+          message: ERROR_MESSAGES[ErrorCode.ALREADY_ANSWERED],
+          failedEvent: ClientEvent.SUBMIT_ANSWER,
+          submissionId: "s1",
         }),
       );
     });
@@ -357,12 +405,15 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
 
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
         message: "Internal server error",
+        failedEvent: ClientEvent.SUBMIT_ANSWER,
+        submissionId: "s1",
       });
     });
 
@@ -388,14 +439,56 @@ describe("MatchHandler", () => {
         matchId,
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
 
-      // Verify that checkEarlyTermination was called with exact parameters
       expect(gameLoopService.checkEarlyTermination).toHaveBeenCalledWith(
         matchId,
         roomId,
         server,
+      );
+    });
+
+    it("does not emit submit failure when post-submit early termination fails", async () => {
+      const matchId = "m1";
+      const roomId = "r1";
+      const mockMachine = {
+        getCurrentRound: vi.fn().mockReturnValue({ roundNo: 1 }),
+        getState: vi.fn().mockReturnValue({
+          roomId,
+          players: new Map([["u1", { id: "u1" }]]),
+        }),
+        submitAnswer: vi
+          .fn()
+          .mockReturnValue({ isCorrect: true, responseTimeMs: 500 }),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+      vi.mocked(matchService.persistStateMachine).mockResolvedValue(undefined);
+      gameLoopService.checkEarlyTermination.mockRejectedValueOnce(
+        new Error("post-submit failed"),
+      );
+
+      await handler.handleSubmitAnswer(client, {
+        matchId,
+        answer: "A",
+        roundNo: 1,
+        submissionId: "s1",
+        clientTimestamp: 1234567890,
+      });
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ANSWER_RESULT, {
+        matchId,
+        roundNo: 1,
+        submissionId: "s1",
+        isCorrect: true,
+        responseTimeMs: 500,
+      });
+      expect(client.emit).not.toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({ submissionId: "s1" }),
       );
     });
   });

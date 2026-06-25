@@ -5,7 +5,7 @@ import { UnauthorizedException } from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
-import { Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 
 type ServiceInternals = {
   parseExpiresInToSeconds: (value: string) => number;
@@ -193,7 +193,67 @@ describe("AuthService.guestLogin", () => {
     expect(result.refreshToken).toBeTruthy();
   });
 
-  it("returns existing user without creating a new record (role preserved)", async () => {
+  it("sanitizes profanity before creating a guest user", async () => {
+    const { service, prisma } = buildServiceWithPrisma();
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
+    vi.mocked(prisma.user.create).mockResolvedValueOnce({
+      id: "u-1",
+      username: "bad****",
+      guestId: "gid",
+      role: Role.GUEST,
+    } as never);
+
+    const result = await service.guestLogin("badshit");
+
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { username: "bad****" },
+    });
+    expect(prisma.user.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ username: "bad****" }),
+    });
+    expect(result.user.username).toBe("bad****");
+  });
+
+  it("re-reads an existing guest user when create hits a unique race", async () => {
+    const { service, prisma, redis } = buildServiceWithPrisma();
+    const raceError = Object.assign(
+      Object.create(Prisma.PrismaClientKnownRequestError.prototype),
+      { code: "P2002" },
+    );
+    vi.mocked(prisma.user.findUnique)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: "u-existing",
+        username: "regular_user",
+        guestId: "gid",
+        role: Role.GUEST,
+      } as never);
+    vi.mocked(prisma.user.create).mockRejectedValueOnce(raceError as never);
+
+    const result = await service.guestLogin("regular_user");
+
+    expect(prisma.user.findUnique).toHaveBeenCalledTimes(2);
+    expect(redis.set).toHaveBeenCalledTimes(1);
+    expect(result.user.role).toBe(Role.GUEST);
+  });
+
+  it("returns existing guest user without creating a new record", async () => {
+    const { service, prisma, redis } = buildServiceWithPrisma();
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      id: "u-existing",
+      username: "regular_user",
+      guestId: "gid",
+      role: Role.GUEST,
+    } as never);
+
+    const result = await service.guestLogin("regular_user");
+
+    expect(prisma.user.create).not.toHaveBeenCalled();
+    expect(redis.set).toHaveBeenCalledTimes(1);
+    expect(result.user.role).toBe(Role.GUEST);
+  });
+
+  it("rejects existing non-guest users from guest login", async () => {
     const { service, prisma, redis } = buildServiceWithPrisma();
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       id: "u-existing",
@@ -202,20 +262,70 @@ describe("AuthService.guestLogin", () => {
       role: Role.ADMIN,
     } as never);
 
-    const result = await service.guestLogin("regular_user");
-
-    expect(prisma.user.create).not.toHaveBeenCalled();
-    expect(redis.set).toHaveBeenCalledTimes(1);
-    expect(result.user.role).toBe(Role.ADMIN);
-  });
-
-  it("rejects the 'admin' username from guest login", async () => {
-    const { service, prisma } = buildServiceWithPrisma();
-    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
-
-    await expect(service.guestLogin("admin")).rejects.toThrow(
+    await expect(service.guestLogin("regular_user")).rejects.toThrow(
       UnauthorizedException,
     );
+    expect(prisma.user.create).not.toHaveBeenCalled();
+    expect(redis.set).not.toHaveBeenCalled();
+  });
+
+  it("rejects a unique race when the raced user is missing", async () => {
+    const { service, prisma, redis } = buildServiceWithPrisma();
+    const raceError = Object.assign(
+      Object.create(Prisma.PrismaClientKnownRequestError.prototype),
+      { code: "P2002" },
+    );
+    vi.mocked(prisma.user.findUnique)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+    vi.mocked(prisma.user.create).mockRejectedValueOnce(raceError as never);
+
+    await expect(service.guestLogin("regular_user")).rejects.toThrow(
+      UnauthorizedException,
+    );
+    expect(prisma.user.findUnique).toHaveBeenCalledTimes(2);
+    expect(redis.set).not.toHaveBeenCalled();
+  });
+
+  it("rethrows non-unique create errors", async () => {
+    const { service, prisma, redis } = buildServiceWithPrisma();
+    const error = new Error("database unavailable");
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
+    vi.mocked(prisma.user.create).mockRejectedValueOnce(error as never);
+
+    await expect(service.guestLogin("regular_user")).rejects.toThrow(error);
+    expect(redis.set).not.toHaveBeenCalled();
+  });
+
+  it("rejects reserved usernames before user lookup", async () => {
+    const inputs = [
+      "admin",
+      "ad-min",
+      "a d m i n",
+      "a*dmin",
+      "ａｄｍｉｎ",
+      "ＡＤＭＩＮ",
+      "ádmin",
+    ];
+
+    for (const username of inputs) {
+      const { service, prisma } = buildServiceWithPrisma();
+
+      await expect(service.guestLogin(username)).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects fully filtered guest usernames before user lookup", async () => {
+    const { service, prisma } = buildServiceWithPrisma();
+
+    await expect(service.guestLogin("!!!")).rejects.toThrow(
+      UnauthorizedException,
+    );
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
     expect(prisma.user.create).not.toHaveBeenCalled();
   });
 });
