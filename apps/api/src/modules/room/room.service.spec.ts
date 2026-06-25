@@ -600,6 +600,48 @@ describe("RoomService", () => {
       expect(result).toEqual(room);
     });
 
+    it("omits optional atomic predicates that were not provided", async () => {
+      const room = {
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.WAITING,
+        hostId: "u1",
+        currentMatchId: null,
+        players: [{ userId: "u1" }],
+      };
+      vi.mocked(prisma.room.updateMany).mockResolvedValue({ count: 1 } as any);
+      vi.mocked(prisma.room.findUnique).mockResolvedValue(room as any);
+
+      await service.updateRoomStatus("r1", RoomStatus.WAITING, undefined, {
+        expectedStatus: RoomStatus.COUNTDOWN,
+      });
+
+      expect(prisma.room.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "r1", status: RoomStatus.COUNTDOWN },
+          data: { status: RoomStatus.WAITING },
+        }),
+      );
+    });
+
+    it("returns null when the guarded atomic update no longer matches", async () => {
+      vi.mocked(prisma.room.updateMany).mockResolvedValue({ count: 0 } as any);
+
+      const result = await service.updateRoomStatus(
+        "r1",
+        RoomStatus.WAITING,
+        null,
+        {
+          expectedStatus: RoomStatus.COUNTDOWN,
+          expectedCurrentMatchId: null,
+        },
+      );
+
+      expect(result).toBeNull();
+      expect(prisma.room.findUnique).not.toHaveBeenCalled();
+      expect(redis.setJSON).not.toHaveBeenCalled();
+    });
+
     // Regression for the cache-overwrite race: when the Redis
     // counter is already present (e.g. after concurrent joins),
     // updateRoomStatus must NOT overwrite it with the stale

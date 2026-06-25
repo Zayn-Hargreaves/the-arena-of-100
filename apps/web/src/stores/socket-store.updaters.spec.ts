@@ -5,6 +5,7 @@ import {
   applyMatchFinishedState,
   applyRoundEndedState,
   applyRoundStartedState,
+  applyUnauthorizedErrorState,
 } from "./socket-store.updaters";
 import type { SocketState } from "./socket-store.types";
 
@@ -314,5 +315,30 @@ describe("applyMatchFinishedState — stale state.match guard", () => {
     });
 
     expect(result).toEqual({});
+  });
+});
+
+describe("applyUnauthorizedErrorState", () => {
+  it("clears prior room termination state along with auth state", () => {
+    const result = applyUnauthorizedErrorState("nope");
+
+    expect(result).toMatchObject({
+      socket: null,
+      isConnected: false,
+      isAuthenticated: false,
+      accessToken: null,
+      userRole: null,
+      userId: null,
+      username: null,
+      room: null,
+      match: null,
+      remainingCount: null,
+      lastAnswerResult: null,
+      isEliminated: false,
+      heartbeatInterval: null,
+      roomTerminated: false,
+      roomTerminationMessage: null,
+      error: "nope",
+    });
   });
 });

@@ -3786,6 +3786,71 @@ describe("GameLoopService", () => {
         vi.useRealTimers();
       });
 
+      it("skips the WAITING rollback emit when the guarded status update no longer matches", async () => {
+        const entry = {
+          roomId: "room-retry-skip-rollback",
+          countdownEndsAt: Date.now() - 1000,
+          expired: true,
+          retryCount: 5,
+        };
+
+        vi.spyOn((service as any).logger, "error").mockImplementation(() => {});
+        const warnSpy = vi.spyOn((service as any).logger, "warn");
+        vi.mocked(roomService.updateRoomStatus).mockResolvedValueOnce(
+          null as any,
+        );
+        const clearCountdownSpy = vi
+          .spyOn(service as any, "clearPersistedCountdown")
+          .mockResolvedValue(true);
+        const roomEmitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: roomEmitSpy });
+        service.setServer(mockServer as unknown as Server);
+
+        (service as any).scheduleRecoveryRetry(entry);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "Skipping WAITING rollback for room room-retry-skip-rollback",
+          ),
+        );
+        expect(roomEmitSpy).not.toHaveBeenCalledWith(
+          ServerEvent.ROOM_STATUS_UPDATED,
+          expect.anything(),
+        );
+        expect(clearCountdownSpy).not.toHaveBeenCalled();
+      });
+
+      it("logs rollback failures during max-retry abort", async () => {
+        const entry = {
+          roomId: "room-retry-rollback-error",
+          countdownEndsAt: Date.now() - 1000,
+          expired: true,
+          retryCount: 5,
+        };
+
+        const rollbackError = new Error("rollback write failed");
+        const errorSpy = vi
+          .spyOn((service as any).logger, "error")
+          .mockImplementation(() => {});
+        vi.mocked(roomService.updateRoomStatus).mockRejectedValueOnce(
+          rollbackError,
+        );
+        vi.spyOn(service as any, "clearPersistedCountdown").mockResolvedValue(
+          true,
+        );
+
+        (service as any).scheduleRecoveryRetry(entry);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(errorSpy).toHaveBeenCalledWith(
+          "Failed to roll back Room room-retry-rollback-error status to WAITING after recovery abort:",
+          rollbackError,
+        );
+      });
+
       it("logs error when sadd to dead-letter set fails during max-retry abort", async () => {
         // Lines 419-423: the .catch() handler on the fire-and-forget
         // sadd("room:recovery:dead-letter") call. When Redis rejects

@@ -354,6 +354,10 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
     // Start heartbeat interval (every 10 seconds)
     const currentState = get();
+    if (currentState.socket !== newSocket) {
+      newSocket.disconnect();
+      return;
+    }
     if (currentState.heartbeatInterval) {
       clearInterval(currentState.heartbeatInterval);
     }
@@ -366,6 +370,12 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         });
       }
     }, 10000);
+
+    if (get().socket !== newSocket) {
+      clearInterval(interval);
+      newSocket.disconnect();
+      return;
+    }
 
     set({ heartbeatInterval: interval });
   },

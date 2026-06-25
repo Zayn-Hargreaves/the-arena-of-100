@@ -501,6 +501,8 @@ export class GameLoopService implements OnModuleInit {
               updatedAt: Date.now(),
             });
           }
+
+          void this.clearPersistedCountdown(entry.roomId);
         })
         .catch((err) => {
           this.logger.error(
@@ -508,7 +510,6 @@ export class GameLoopService implements OnModuleInit {
             err,
           );
         });
-      void this.clearPersistedCountdown(entry.roomId);
       return;
     }
 

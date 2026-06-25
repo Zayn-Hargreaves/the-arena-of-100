@@ -505,6 +505,8 @@ export function applyUnauthorizedErrorState(
     lastAnswerResult: null,
     isEliminated: false,
     heartbeatInterval: null,
+    roomTerminated: false,
+    roomTerminationMessage: null,
     // Include the error message in the SAME set call that resets the
     // socket/heartbeat state. A separate follow-up `set({ error })`
     // would be a no-op because this function sets `socket: null`,

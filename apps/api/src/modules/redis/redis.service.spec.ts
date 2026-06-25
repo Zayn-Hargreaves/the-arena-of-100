@@ -135,6 +135,28 @@ describe("RedisService", () => {
     expect(client.set).toHaveBeenCalledWith("room:1", "ready");
   });
 
+  it("exposes the underlying redis client and uses NX writes for setIfAbsent", async () => {
+    client.set
+      .mockResolvedValueOnce("OK")
+      .mockResolvedValueOnce(null as unknown as "OK");
+
+    expect(service.getClient()).toBe(client);
+    await expect(service.setIfAbsent("room:1", "ready", 60)).resolves.toBe(
+      true,
+    );
+    await expect(service.setIfAbsent("room:2", "ready")).resolves.toBe(false);
+
+    expect(client.set).toHaveBeenNthCalledWith(
+      1,
+      "room:1",
+      "ready",
+      "EX",
+      60,
+      "NX",
+    );
+    expect(client.set).toHaveBeenNthCalledWith(2, "room:2", "ready", "NX");
+  });
+
   it("reads and writes JSON values through the string helpers", async () => {
     client.get.mockResolvedValueOnce('{"players":3,"status":"waiting"}');
 
