@@ -11,7 +11,6 @@ import {
   type SnapshotPayload,
   type AnswerResultPayload,
   type ErrorPayload,
-  type SubmitAnswerPayload,
   type RoomJoinedPayload,
   type RoomPlayerJoinedPayload,
   type RoomPlayerLeftPayload,
@@ -34,10 +33,6 @@ import {
   requireSocket,
   waitForSocketAck,
 } from "./socket-store.helpers";
-type CorrelatedErrorPayload = ErrorPayload &
-  Partial<Pick<SubmitAnswerPayload, "submissionId">> & {
-    failedEvent?: ClientEvent;
-  };
 
 import {
   applyAnswerResultState,
@@ -323,7 +318,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       console.warn("🛑 Room terminated by server:", data);
     });
 
-    newSocket.on(ServerEvent.ERROR, (data: CorrelatedErrorPayload) => {
+    newSocket.on(ServerEvent.ERROR, (data: ErrorPayload) => {
       if (get().socket !== newSocket) return;
       const { pendingAnswer } = get();
       const { submissionId } = data;

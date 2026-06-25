@@ -98,6 +98,7 @@ export interface ErrorPayload {
   code: string;
   message: string;
   submissionId?: string;
+  failedEvent?: ClientEvent;
 }
 
 export interface SnapshotPayload {
