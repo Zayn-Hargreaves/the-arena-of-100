@@ -40,6 +40,8 @@ export default defineConfig({
         "**/*.test.ts",
         "prisma/**",
         "src/main.ts",
+        // Type-only declaration files (no runtime code, v8 reports 0%).
+        "src/modules/match/game-loop.types.ts",
       ],
     },
   },

@@ -15,6 +15,7 @@ describe("RoomService", () => {
         findUnique: vi.fn(),
         findMany: vi.fn(),
         update: vi.fn(),
+        updateMany: vi.fn(),
         delete: vi.fn(),
       },
       roomPlayer: {
@@ -49,6 +50,8 @@ describe("RoomService", () => {
       srem: vi.fn(),
       smembers: vi.fn(),
       set: vi.fn(),
+      get: vi.fn().mockResolvedValue(null),
+      setIfAbsent: vi.fn().mockResolvedValue(true),
       del: vi.fn(),
       exists: vi.fn(),
       incr: vi.fn().mockResolvedValue(1),
@@ -100,6 +103,7 @@ describe("RoomService", () => {
       vi.mocked(prisma.roomPlayer.count).mockResolvedValue(1);
       vi.mocked(prisma.roomPlayer.create).mockResolvedValue({} as any);
       vi.mocked(redis.getJSON).mockResolvedValue({ playerCount: 1 });
+      vi.mocked(redis.incr).mockResolvedValue(2);
       vi.spyOn(service, "getRoom").mockResolvedValue({ id: "r1" } as any);
 
       const result = await service.joinRoom("ABC", "u2");
@@ -112,6 +116,46 @@ describe("RoomService", () => {
       });
       expect(prisma.roomPlayer.create).toHaveBeenCalled();
       expect(redis.sadd).toHaveBeenCalledWith("room:r1:players", "u2");
+      expect(redis.incr).toHaveBeenCalledWith("room:r1:playerCount");
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.any(String),
+        ["room:r1"],
+        ["2"],
+      );
+      expect(result).toEqual({ id: "r1", joined: true, joinedAs: "PLAYER" });
+    });
+
+    it("joins successfully even if Redis fails to sync player count", async () => {
+      const mockRoom = {
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.WAITING,
+        maxPlayers: 100,
+        players: [],
+      };
+      vi.mocked(prisma.room.findUnique).mockResolvedValue(mockRoom as any);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { id: "r1", maxPlayers: 100 },
+      ] as any);
+      vi.mocked(prisma.roomPlayer.count).mockResolvedValue(1);
+      vi.mocked(prisma.roomPlayer.create).mockResolvedValue({} as any);
+      vi.mocked(redis.getJSON).mockResolvedValue({ playerCount: 1 });
+      vi.mocked(redis.incr).mockResolvedValue(2);
+      vi.spyOn(service, "getRoom").mockResolvedValue({ id: "r1" } as any);
+
+      vi.mocked(redis.eval).mockRejectedValue(
+        new Error("Redis connection lost"),
+      );
+
+      const result = await service.joinRoom("ABC", "u2");
+
+      expect(prisma.roomPlayer.create).toHaveBeenCalled();
+      expect(redis.incr).toHaveBeenCalledWith("room:r1:playerCount");
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.any(String),
+        ["room:r1"],
+        ["2"],
+      );
       expect(result).toEqual({ id: "r1", joined: true, joinedAs: "PLAYER" });
     });
 
@@ -397,10 +441,7 @@ describe("RoomService", () => {
       vi.mocked(prisma.roomPlayer.deleteMany).mockResolvedValue({
         count: 1,
       } as any);
-      vi.mocked(redis.getJSON).mockResolvedValue({
-        playerCount: 2,
-        hostId: "u1",
-      });
+      vi.mocked(redis.eval).mockResolvedValue(1);
       vi.spyOn(service, "getRoom").mockResolvedValue({ id: "r1" } as any);
 
       const result = await service.leaveRoom("r1", "u2");
@@ -409,7 +450,18 @@ describe("RoomService", () => {
         where: { roomId: "r1", userId: "u2" },
       });
       expect(redis.srem).toHaveBeenCalledWith("room:r1:players", "u2");
-      expect(redis.setJSON).toHaveBeenCalled();
+      // First eval: atomic decrement (clamped) for the counter key
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("redis.call"),
+        ["room:r1:playerCount"],
+        ["1"],
+      );
+      // Second eval: atomic field update for the cached room JSON
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("cjson"),
+        ["room:r1"],
+        ["1"],
+      );
       expect(result).toEqual({ id: "r1" });
     });
   });
@@ -504,6 +556,195 @@ describe("RoomService", () => {
       expect(redis.setJSON).toHaveBeenCalled();
       expect(result).toEqual(room);
     });
+
+    it("atomically updates only when the expected room state still matches", async () => {
+      const room = {
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.WAITING,
+        hostId: "u1",
+        currentMatchId: null,
+        players: [{ userId: "u1" }],
+      };
+      vi.mocked(prisma.room.updateMany).mockResolvedValue({ count: 1 } as any);
+      vi.mocked(prisma.room.findUnique).mockResolvedValue(room as any);
+
+      const result = await service.updateRoomStatus(
+        "r1",
+        RoomStatus.WAITING,
+        null,
+        {
+          expectedStatus: RoomStatus.COUNTDOWN,
+          expectedCurrentMatchId: null,
+        },
+      );
+
+      expect(prisma.room.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            id: "r1",
+            status: RoomStatus.COUNTDOWN,
+            currentMatchId: null,
+          },
+          data: { status: RoomStatus.WAITING, currentMatchId: null },
+        }),
+      );
+      expect(redis.setJSON).toHaveBeenCalledWith(
+        "room:r1",
+        expect.objectContaining({
+          status: RoomStatus.WAITING,
+          currentMatchId: null,
+        }),
+        expect.any(Number),
+      );
+      expect(result).toEqual(room);
+    });
+
+    it("omits optional atomic predicates that were not provided", async () => {
+      const room = {
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.WAITING,
+        hostId: "u1",
+        currentMatchId: null,
+        players: [{ userId: "u1" }],
+      };
+      vi.mocked(prisma.room.updateMany).mockResolvedValue({ count: 1 } as any);
+      vi.mocked(prisma.room.findUnique).mockResolvedValue(room as any);
+
+      await service.updateRoomStatus("r1", RoomStatus.WAITING, undefined, {
+        expectedStatus: RoomStatus.COUNTDOWN,
+      });
+
+      expect(prisma.room.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "r1", status: RoomStatus.COUNTDOWN },
+          data: { status: RoomStatus.WAITING },
+        }),
+      );
+    });
+
+    it("returns null when the guarded atomic update no longer matches", async () => {
+      vi.mocked(prisma.room.updateMany).mockResolvedValue({ count: 0 } as any);
+
+      const result = await service.updateRoomStatus(
+        "r1",
+        RoomStatus.WAITING,
+        null,
+        {
+          expectedStatus: RoomStatus.COUNTDOWN,
+          expectedCurrentMatchId: null,
+        },
+      );
+
+      expect(result).toBeNull();
+      expect(prisma.room.findUnique).not.toHaveBeenCalled();
+      expect(redis.setJSON).not.toHaveBeenCalled();
+    });
+
+    // Regression for the cache-overwrite race: when the Redis
+    // counter is already present (e.g. after concurrent joins),
+    // updateRoomStatus must NOT overwrite it with the stale
+    // `room.players.length` snapshot taken before the awaited DB
+    // update. The counter is the server-authoritative source of
+    // truth.
+    it("preserves the existing Redis playerCount and does not overwrite it", async () => {
+      const room = {
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.IN_GAME,
+        hostId: "u1",
+        // Stale snapshot — a concurrent join happened between the
+        // DB update and this call. Redis already holds 3.
+        players: [{ userId: "u1" }],
+      };
+      vi.mocked(prisma.room.update).mockResolvedValue(room as any);
+      vi.mocked(redis.get).mockResolvedValue("3");
+
+      await service.updateRoomStatus("r1", RoomStatus.IN_GAME, "m1");
+
+      // The cached room JSON must use the live counter (3), not
+      // the stale players.length (1).
+      expect(redis.setJSON).toHaveBeenCalledWith(
+        "room:r1",
+        expect.objectContaining({ playerCount: 3 }),
+        expect.any(Number),
+      );
+      // The counter key must NOT be rewritten — `set` is only used
+      // to seed when the key is missing.
+      expect(redis.set).not.toHaveBeenCalledWith(
+        "room:r1:playerCount",
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it("seeds the Redis playerCount from players.length when the key is missing", async () => {
+      const room = {
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.WAITING,
+        hostId: "u1",
+        players: [{ userId: "u1" }, { userId: "u2" }],
+      };
+      vi.mocked(prisma.room.update).mockResolvedValue(room as any);
+      // redis.get returns null → key missing → seed from DB via
+      // atomic SET NX (setIfAbsent) to close the TOCTOU window.
+      vi.mocked(redis.get).mockResolvedValue(null);
+
+      await service.updateRoomStatus("r1", RoomStatus.COUNTDOWN);
+
+      expect(redis.setJSON).toHaveBeenCalledWith(
+        "room:r1",
+        expect.objectContaining({ playerCount: 2 }),
+        expect.any(Number),
+      );
+      expect(redis.setIfAbsent).toHaveBeenCalledWith(
+        "room:r1:playerCount",
+        "2",
+        3600,
+      );
+    });
+
+    // Regression for the TOCTOU race: if a concurrent joinRoom
+    // calls incr(counter) between our redis.get (returns null) and
+    // our write, setIfAbsent (SET NX) must return false and we must
+    // NOT overwrite the newer value. Plain redis.set would clobber
+    // it with the stale players.length.
+    it("does not overwrite a fresher counter value that appeared during the seed window", async () => {
+      const room = {
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.IN_GAME,
+        hostId: "u1",
+        players: [{ userId: "u1" }],
+      };
+      vi.mocked(prisma.room.update).mockResolvedValue(room as any);
+      // Initial read shows key missing.
+      vi.mocked(redis.get).mockResolvedValue(null);
+      // SET NX returns "OK" only when the key did not exist. Simulate
+      // a concurrent incr winning the race → setIfAbsent returns false.
+      vi.mocked(redis.setIfAbsent).mockResolvedValue(false);
+
+      await service.updateRoomStatus("r1", RoomStatus.IN_GAME, "m1");
+
+      // setIfAbsent was attempted (the seed path ran) but reported
+      // the key already existed. The cached room JSON still uses
+      // the stale players.length (1) for this snapshot — that's the
+      // trade-off the prior fix accepts; the key itself is intact
+      // for the next read.
+      expect(redis.setIfAbsent).toHaveBeenCalledWith(
+        "room:r1:playerCount",
+        "1",
+        3600,
+      );
+      // Plain redis.set must NOT have been called as a fallback.
+      expect(redis.set).not.toHaveBeenCalledWith(
+        "room:r1:playerCount",
+        expect.anything(),
+        expect.anything(),
+      );
+    });
   });
 
   describe("getRoomPlayerIds", () => {
@@ -593,10 +834,10 @@ describe("RoomService", () => {
         ["room:r1:playerCount"],
         ["1"],
       );
-      expect(redis.setJSON).toHaveBeenCalledWith(
-        "room:r1",
-        { playerCount: 1 },
-        3600,
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("cjson"),
+        ["room:r1"],
+        ["1"],
       );
     });
   });
@@ -628,10 +869,10 @@ describe("RoomService", () => {
         ["room:r1:playerCount"],
         ["2"],
       );
-      expect(redis.setJSON).toHaveBeenCalledWith(
-        "room:r1",
-        { playerCount: 3 },
-        3600,
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("cjson"),
+        ["room:r1"],
+        ["3"],
       );
     });
   });

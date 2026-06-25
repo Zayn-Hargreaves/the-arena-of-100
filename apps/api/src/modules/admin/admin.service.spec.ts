@@ -697,7 +697,10 @@ describe("AdminService", () => {
       // Should NOT throw — match finish failure is logged but non-fatal
       const result = await service.terminateRoom("r3", "u-admin", undefined);
 
-      expect(result.success).toBe(true);
+      // finishMatch failure is now recorded as partial so the admin UI
+      // can trigger a follow-up sweep.
+      expect(result.success).toBe(false);
+      expect(result.partial).toBe(true);
       expect(result.matchId).toBe("m3");
       // Runtime + emit + disband still run
       expect(gameLoopService.stopRoomRuntime).toHaveBeenCalledWith("r3", "m3");

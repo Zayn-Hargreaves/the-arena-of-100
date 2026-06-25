@@ -57,6 +57,21 @@ export class RedisService implements OnModuleDestroy {
     }
   }
 
+  // Atomic "create-only" write. Uses Redis SET ... NX so the key is
+  // created iff it does NOT already exist. A concurrent writer that
+  // won the race is preserved; we never overwrite a fresher value.
+  // Returns true if the key was created, false if it already existed.
+  async setIfAbsent(
+    key: string,
+    value: string,
+    ttl?: number,
+  ): Promise<boolean> {
+    const result = ttl
+      ? await this.client.set(key, value, "EX", ttl, "NX")
+      : await this.client.set(key, value, "NX");
+    return result === "OK";
+  }
+
   async del(key: string): Promise<void> {
     await this.client.del(key);
   }

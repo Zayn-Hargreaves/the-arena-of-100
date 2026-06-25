@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { Socket } from "socket.io";
+import { Socket, Server } from "socket.io";
 import {
   ServerEvent,
   ErrorCode,
@@ -49,89 +49,110 @@ export class AuthHandler extends BaseHandler {
   }
 
   async handleAuthenticate(client: Socket, payload: { token: string }) {
-    try {
-      const decoded = this.authService.verifyToken(payload.token);
+    return this.runSafely(
+      client,
+      async () => {
+        const decoded = this.authService.verifyToken(payload.token);
 
-      // Kick existing connection of this user if exists (O(1) lookup)
-      const oldSocketId = this.connectedPlayers.get(decoded.userId);
-      if (oldSocketId && oldSocketId !== client.id) {
-        const oldSocket = client.nsp?.sockets.get(oldSocketId);
-        if (oldSocket) {
-          this.logger.log(
-            `Kicking old socket: ${oldSocketId} for user: ${decoded.userId}`,
+        // Capture the old socket ID BEFORE recording the new connection so
+        // the kick logic can still find and evict the stale session.
+        const oldSocketId = this.connectedPlayers.get(decoded.userId);
+
+        // If this same socket was previously authenticated as a DIFFERENT
+        // user, clean up that user's mapping before we overwrite
+        // client.data.userId. Otherwise the old user's
+        // connectedPlayers/connectionGeneration entries become orphaned
+        // (pointing at this client.id), violating the single-session
+        // invariant.
+        const previousUserId = client.data.userId as string | undefined;
+
+        // Record the new connection BEFORE kicking the old one so that
+        // oldSocket.disconnect(true) and its async handleDisconnect path
+        // see the new socket as the active session (generation mismatch)
+        // and treat the stale socket as non-active. This prevents the
+        // old socket's disconnect from clearing the new session or
+        // triggering an unintended player disconnect.
+        //
+        // The same identity update is also done BEFORE awaiting
+        // handleTrackedUserSwitchDisconnect below: while that cleanup
+        // is in flight, any concurrent handler reading
+        // client.data.userId / client.data.connectionGen must observe
+        // the new user, not the stale previousUserId.
+        this.connectedPlayers.set(decoded.userId, client.id);
+        const newGen = (this.connectionGeneration.get(decoded.userId) ?? 0) + 1;
+        this.connectionGeneration.set(decoded.userId, newGen);
+        client.data.connectionGen = newGen;
+        client.data.userId = decoded.userId;
+        client.data.username = decoded.username;
+
+        if (
+          previousUserId &&
+          previousUserId !== decoded.userId &&
+          this.connectedPlayers.get(previousUserId) === client.id
+        ) {
+          await this.handleTrackedUserSwitchDisconnect(
+            previousUserId,
+            client.nsp.server,
+            client,
           );
-          oldSocket.emit(ServerEvent.ERROR, {
-            code: ErrorCode.UNAUTHORIZED,
-            message: ERROR_MESSAGES[ErrorCode.UNAUTHORIZED],
-          });
-          oldSocket.disconnect(true);
-        } else {
-          // L1 fix: the old socket ID is in our map but Socket.IO
-          // has already cleaned it up (e.g. process was OOM-killed
-          // and the `disconnect` event was never delivered to us,
-          // or the socket was force-closed for an unrelated
-          // reason). Drop the stale map entry so it cannot
-          // accumulate. Without this, the connectedPlayers map
-          // could grow unbounded in long-running multi-process
-          // deployments with sticky sessions, and a new
-          // authentication would silently no-op (the kick branch
-          // would skip, but the map entry would linger).
-          this.logger.log(
-            `Connected-players map had stale entry for user ${decoded.userId} (socket ${oldSocketId} no longer in namespace); cleaning up`,
-          );
-          this.connectedPlayers.delete(decoded.userId);
-          this.connectionGeneration.delete(decoded.userId);
         }
-      }
 
-      this.connectedPlayers.set(decoded.userId, client.id);
-      // L2: bump the generation so the previous socket's eventual
-      // `disconnect` event is recognised as stale.
-      const newGen = (this.connectionGeneration.get(decoded.userId) ?? 0) + 1;
-      this.connectionGeneration.set(decoded.userId, newGen);
-      // Capture the generation on the socket itself so handleDisconnect
-      // can compare even if the connectedPlayers map has been
-      // overwritten in between.
-      client.data.connectionGen = newGen;
+        // Kick existing connection of this user if exists (O(1) lookup)
+        if (oldSocketId && oldSocketId !== client.id) {
+          const oldSocket = client.nsp?.sockets.get(oldSocketId);
+          if (oldSocket) {
+            this.logger.log(
+              `Kicking old socket: ${oldSocketId} for user: ${decoded.userId}`,
+            );
+            oldSocket.emit(ServerEvent.ERROR, {
+              code: ErrorCode.UNAUTHORIZED,
+              message: ERROR_MESSAGES[ErrorCode.UNAUTHORIZED],
+            });
+            oldSocket.disconnect(true);
+          } else {
+            // L1 fix: the old socket ID is in our map but Socket.IO
+            // has already cleaned it up (e.g. process was OOM-killed
+            // and the `disconnect` event was never delivered to us,
+            // or the socket was force-closed for an unrelated
+            // reason). The stale entry was already overwritten by
+            // the set above, so no further cleanup is needed here.
+            this.logger.log(
+              `Connected-players map had stale entry for user ${decoded.userId} (socket ${oldSocketId} no longer in namespace); cleaned up by overwrite`,
+            );
+          }
+        }
 
-      client.data.userId = decoded.userId;
-      client.data.username = decoded.username;
+        client.emit(ServerEvent.AUTHENTICATED, {
+          userId: decoded.userId,
+          username: decoded.username,
+        });
 
-      client.emit(ServerEvent.AUTHENTICATED, {
-        userId: decoded.userId,
-        username: decoded.username,
-      });
+        this.logger.log(`Player authenticated: ${decoded.username}`);
 
-      this.logger.log(`Player authenticated: ${decoded.username}`);
+        // Reconnection sync: restore room/match state
+        await this.syncReconnection(client, decoded.userId);
+      },
+      (error) => {
+        // A WsValidationError means the AUTHENTICATE payload itself was
+        // malformed (e.g. { token: 123 } or missing token). Surface that
+        // distinctly so the client knows to fix the request shape, not
+        // the credentials.
+        if (
+          error instanceof RoomError &&
+          error.code === ErrorCode.INVALID_PAYLOAD
+        ) {
+          this.emitError(client, error.code, error.message);
+          return;
+        }
 
-      // Reconnection sync: restore room/match state
-      await this.syncReconnection(client, decoded.userId);
-    } catch (error: unknown) {
-      // A WsValidationError means the AUTHENTICATE payload itself was
-      // malformed (e.g. { token: 123 } or missing token). Surface that
-      // distinctly so the client knows to fix the request shape, not
-      // the credentials.
-      if (
-        error instanceof RoomError &&
-        error.code === ErrorCode.INVALID_PAYLOAD
-      ) {
-        this.emitError(client, error.code, error.message);
-        return;
-      }
-      if (error instanceof Error) {
-        this.logger.error(
-          `Token verification failed: ${error.message}`,
-          error.stack,
+        this.logTokenVerificationFailure(error);
+        this.emitError(
+          client,
+          ErrorCode.INVALID_TOKEN,
+          ERROR_MESSAGES[ErrorCode.INVALID_TOKEN],
         );
-      } else {
-        this.logger.error(`Token verification failed: ${String(error)}`);
-      }
-      this.emitError(
-        client,
-        ErrorCode.INVALID_TOKEN,
-        ERROR_MESSAGES[ErrorCode.INVALID_TOKEN],
-      );
-    }
+      },
+    );
   }
 
   async handleDisconnect(client: Socket) {
@@ -158,32 +179,84 @@ export class AuthHandler extends BaseHandler {
       }
       // Only delete from map if the disconnected socket is the active session
       if (currentSocketId === client.id) {
-        this.connectedPlayers.delete(userId);
-        this.connectionGeneration.delete(userId);
-
-        // NEW: Notify active matches
-        try {
-          const userActiveRooms =
-            await this.roomService.getUserActiveRooms(userId);
-          for (const rp of userActiveRooms) {
-            if (rp.room.currentMatchId) {
-              await this.gameLoopService.handlePlayerDisconnect(
-                rp.room.currentMatchId,
-                userId,
-                client.nsp.server,
-              );
-            }
-          }
-        } catch (error) {
-          this.logger.warn(
-            `Failed to notify match of disconnect for ${userId}`,
-            error,
-          );
-        }
+        await this.handleTrackedUserSwitchDisconnect(
+          userId,
+          client.nsp.server,
+          client,
+        );
 
         this.logger.log(`Player disconnected: ${userId}`);
       }
     }
+  }
+
+  private clearTrackedConnection(userId: string) {
+    this.connectedPlayers.delete(userId);
+    this.connectionGeneration.delete(userId);
+  }
+
+  private async handleTrackedUserSwitchDisconnect(
+    userId: string,
+    server: Server,
+    client: Socket,
+  ): Promise<void> {
+    this.clearTrackedConnection(userId);
+
+    // SYNC: leave every `room:*` channel the socket is currently joined
+    // to. Iterating `client.rooms` (no DB) means a `getUserActiveRooms`
+    // failure cannot leave stale `room:*` memberships on a reused
+    // socket — a user-switch re-auth must not receive broadcasts for
+    // the previous user. The socket's own room (`client.id`) is skipped
+    // because leaving it would force-disconnect the socket itself.
+    for (const roomName of Array.from(client.rooms ?? [])) {
+      if (roomName === client.id) continue;
+      if (roomName.startsWith("room:")) {
+        client.leave(roomName);
+      }
+    }
+
+    // DB-touching notification is in its own try/catch so a failure
+    // here cannot undo the synchronous socket cleanup above.
+    try {
+      const userActiveRooms = await this.roomService.getUserActiveRooms(userId);
+      for (const rp of userActiveRooms) {
+        // Re-check tracking: a newer socket may have authenticated as
+        // this user during the await. If connectedPlayers[userId] now
+        // holds any entry (the one we just deleted), a new session is
+        // canonical — skip the state-mutating handlePlayerDisconnect so
+        // the live player's state machine is NOT marked DISCONNECTED.
+        if (this.connectedPlayers.has(userId)) {
+          this.logger.debug(
+            `Skipping handlePlayerDisconnect for ${userId} in room ${rp.room.id}: a newer socket has authenticated`,
+          );
+          continue;
+        }
+        if (rp.room.currentMatchId) {
+          await this.gameLoopService.handlePlayerDisconnect(
+            rp.room.currentMatchId,
+            userId,
+            server,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Failed to notify match of disconnect for ${userId}`,
+        error,
+      );
+    }
+  }
+
+  private logTokenVerificationFailure(error: unknown) {
+    if (error instanceof Error) {
+      this.logger.error(
+        `Token verification failed: ${error.message}`,
+        error.stack,
+      );
+      return;
+    }
+
+    this.logger.error(`Token verification failed: ${String(error)}`);
   }
 
   private async syncReconnection(client: Socket, userId: string) {

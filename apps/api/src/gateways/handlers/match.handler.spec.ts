@@ -137,7 +137,7 @@ describe("MatchHandler", () => {
       await handler.handleStartMatch(client, server, { roomId: "r1" });
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: "string error",
+        message: "Internal server error",
       });
     });
 
@@ -332,7 +332,10 @@ describe("MatchHandler", () => {
 
       expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.ERROR,
-        expect.objectContaining({ message: ErrorCode.ALREADY_ANSWERED }),
+        expect.objectContaining({
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "Internal server error",
+        }),
       );
     });
 
@@ -359,7 +362,7 @@ describe("MatchHandler", () => {
 
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: "42",
+        message: "Internal server error",
       });
     });
 
@@ -555,7 +558,7 @@ describe("MatchHandler", () => {
 
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: "snapshot failure",
+        message: "Internal server error",
       });
     });
 
@@ -579,7 +582,7 @@ describe("MatchHandler", () => {
 
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: "some standard error",
+        message: "Internal server error",
       });
     });
   });

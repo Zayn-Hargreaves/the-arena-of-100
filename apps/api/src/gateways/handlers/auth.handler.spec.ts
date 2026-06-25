@@ -48,7 +48,12 @@ describe("AuthHandler", () => {
       emit: vi.fn(),
       disconnect: vi.fn(),
       join: vi.fn(),
+      leave: vi.fn(),
       data: {},
+      // Default empty rooms set — tests that exercise the sync
+      // `client.leave(room:*)` cleanup override this with the rooms
+      // they expect the socket to be joined to.
+      rooms: new Set<string>(),
       nsp: {
         sockets: mockSockets,
         // Required for handleDisconnect's match-notification path.
@@ -154,6 +159,7 @@ describe("AuthHandler", () => {
         emit: vi.fn(),
         disconnect: vi.fn(),
         join: vi.fn(),
+        leave: vi.fn(),
         data: { userId: "u1" },
         nsp: { sockets: mockSockets },
       } as unknown as Socket;
@@ -168,6 +174,7 @@ describe("AuthHandler", () => {
         emit: vi.fn(),
         disconnect: vi.fn(),
         join: vi.fn(),
+        leave: vi.fn(),
         data: {},
         nsp: { sockets: mockSockets },
       } as unknown as Socket;
@@ -189,6 +196,177 @@ describe("AuthHandler", () => {
         username: "Alice",
       });
     });
+
+    it("cleans up previous user mapping when same socket re-authenticates as a different user", async () => {
+      // C3/previousUserId branch: when a socket was previously
+      // authenticated as user "u1" and then re-authenticates as
+      // "u2", the handler must clean up u1's tracked connection
+      // (connectedPlayers + connectionGeneration) and notify u1's
+      // active matches of the disconnect.
+      vi.mocked(authService.verifyToken)
+        .mockReturnValueOnce({
+          userId: "u1",
+          username: "Alice",
+          role: "GUEST" as any,
+        })
+        .mockReturnValueOnce({
+          userId: "u2",
+          username: "Bob",
+          role: "GUEST" as any,
+        });
+
+      // First auth as u1 — client is joined to room:r1 so the
+      // disconnect cleanup will leave it. Empty rooms mock for the
+      // first auth's syncReconnection.
+      (client as any).rooms = new Set<string>(["socket-1", "room:r1"]);
+      vi.mocked(roomService.getUserActiveRooms).mockResolvedValueOnce([]);
+      await handler.handleAuthenticate(client, { token: "t1" });
+      expect(client.data.userId).toBe("u1");
+
+      // Mock getUserActiveRooms for u1's disconnect cleanup
+      vi.mocked(roomService.getUserActiveRooms).mockResolvedValueOnce([
+        {
+          room: { id: "r1", currentMatchId: "m1" },
+        },
+      ] as any);
+
+      // Re-authenticate the SAME socket as u2
+      await handler.handleAuthenticate(client, { token: "t2" });
+
+      // u1's active rooms should have been notified of disconnect
+      expect(roomService.getUserActiveRooms).toHaveBeenCalledWith("u1");
+      expect(gameLoopService.handlePlayerDisconnect).toHaveBeenCalledWith(
+        "m1",
+        "u1",
+        expect.anything(),
+      );
+
+      // The socket must leave every room channel u1 was joined to so
+      // the reused client cannot receive broadcasts for the old user.
+      expect(client.leave).toHaveBeenCalledWith("room:r1");
+
+      // Socket now belongs to u2
+      expect(client.data.userId).toBe("u2");
+      expect(client.data.username).toBe("Bob");
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.AUTHENTICATED, {
+        userId: "u2",
+        username: "Bob",
+      });
+
+      // u1's mapping should be cleaned up
+      expect((handler as any).connectedPlayers.has("u1")).toBe(false);
+      expect((handler as any).connectionGeneration.has("u1")).toBe(false);
+      // u2's mapping should exist
+      expect((handler as any).connectedPlayers.get("u2")).toBe(client.id);
+    });
+
+    it("skips user-switch cleanup when previousUserId matches the new decoded userId", async () => {
+      // Edge case: the socket's client.data.userId is already the
+      // same as the newly decoded userId. The previousUserId check
+      // must NOT fire handleTrackedUserSwitchDisconnect.
+      vi.mocked(authService.verifyToken).mockReturnValue({
+        userId: "u1",
+        username: "Alice",
+        role: "GUEST" as any,
+      });
+
+      // First auth
+      await handler.handleAuthenticate(client, { token: "t1" });
+      expect(client.data.userId).toBe("u1");
+
+      // Record call count after first auth (syncReconnection calls getUserActiveRooms)
+      const callsAfterFirst = vi.mocked(gameLoopService.handlePlayerDisconnect)
+        .mock.calls.length;
+
+      // Re-authenticate the SAME socket with the SAME user
+      await handler.handleAuthenticate(client, { token: "t1" });
+
+      // handlePlayerDisconnect should NOT have been called again —
+      // same user means the previousUserId branch is skipped entirely.
+      expect(gameLoopService.handlePlayerDisconnect).toHaveBeenCalledTimes(
+        callsAfterFirst,
+      );
+    });
+
+    // Regression for the reconnect-during-await race in
+    // handleTrackedUserSwitchDisconnect: when a new socket
+    // authenticates as the same user during the awaited
+    // getUserActiveRooms call, the match-notify path must be
+    // skipped (the new socket's session is canonical). Without
+    // the re-check of `connectedPlayers.has(userId)`, the old
+    // socket's disconnect would propagate to the state machine
+    // and mark a live player as DISCONNECTED.
+    it("skips handlePlayerDisconnect when a newer socket authenticates during the awaited disconnect cleanup", async () => {
+      vi.mocked(authService.verifyToken).mockReturnValue({
+        userId: "u-race",
+        username: "Alice",
+        role: "GUEST" as any,
+      });
+
+      // First socket authenticates as u-race.
+      const socket1 = {
+        id: "socket-1",
+        emit: vi.fn(),
+        disconnect: vi.fn(),
+        join: vi.fn(),
+        leave: vi.fn(),
+        data: {},
+        // Simulate the socket having been joined to r1 so the
+        // sync leave loop has something to iterate.
+        rooms: new Set<string>(["socket-1", "room:r1"]),
+        nsp: { sockets: mockSockets, server: { to: vi.fn() } },
+      } as unknown as Socket;
+      mockSockets.set(socket1.id, socket1);
+      await handler.handleAuthenticate(socket1, { token: "t1" });
+      expect((handler as any).connectedPlayers.get("u-race")).toBe(socket1.id);
+
+      // Drive handleDisconnect on socket1 — but do NOT await it yet
+      // because we want to interleave a re-authenticate during the
+      // awaited getUserActiveRooms. We mock getUserActiveRooms to
+      // expose a controllable promise so the interleaving is
+      // deterministic.
+      let resolveGetRooms!: (rooms: any) => void;
+      const getRoomsPromise = new Promise<any>((resolve) => {
+        resolveGetRooms = resolve;
+      });
+      vi.mocked(roomService.getUserActiveRooms).mockReturnValueOnce(
+        getRoomsPromise as any,
+      );
+
+      const disconnectPromise = handler.handleDisconnect(socket1);
+
+      // While handleDisconnect is awaiting getUserActiveRooms,
+      // simulate a NEW socket authenticating as u-race. This
+      // populates connectedPlayers[u-race] again.
+      const socket2 = {
+        id: "socket-2",
+        emit: vi.fn(),
+        disconnect: vi.fn(),
+        join: vi.fn(),
+        leave: vi.fn(),
+        data: {},
+        nsp: { sockets: mockSockets, server: { to: vi.fn() } },
+      } as unknown as Socket;
+      mockSockets.set(socket2.id, socket2);
+      await handler.handleAuthenticate(socket2, { token: "t2" });
+      expect((handler as any).connectedPlayers.get("u-race")).toBe(socket2.id);
+
+      // Now resolve the pending getUserActiveRooms with an active
+      // match. The re-check inside the notify loop must see that
+      // connectedPlayers[u-race] is non-empty (a new socket took
+      // over) and skip handlePlayerDisconnect.
+      resolveGetRooms([{ room: { id: "r1", currentMatchId: "m1" } }]);
+      await disconnectPromise;
+
+      // The new session must NOT be marked as DISCONNECTED — the
+      // notify path was correctly skipped because a newer socket
+      // took over u-race during the await.
+      expect(gameLoopService.handlePlayerDisconnect).not.toHaveBeenCalled();
+      // socket1 was still told to leave the room channel (sync,
+      // before the await), so a future broadcast for the old user
+      // does not reach this reused socket.
+      expect(socket1.leave).toHaveBeenCalledWith("room:r1");
+    });
   });
 
   describe("handleDisconnect", () => {
@@ -207,6 +385,7 @@ describe("AuthHandler", () => {
         id: "socket-2",
         emit: vi.fn(),
         join: vi.fn(),
+        leave: vi.fn(),
         data: {},
         nsp: {
           sockets: mockSockets,
@@ -251,6 +430,7 @@ describe("AuthHandler", () => {
         emit: vi.fn(),
         disconnect: vi.fn(),
         join: vi.fn(),
+        leave: vi.fn(),
         data: { userId: "u1" },
         nsp: { sockets: mockSockets },
       } as unknown as Socket;
@@ -268,6 +448,7 @@ describe("AuthHandler", () => {
         emit: vi.fn(),
         disconnect: vi.fn(),
         join: vi.fn(),
+        leave: vi.fn(),
         data: {},
         nsp: { sockets: mockSockets },
       } as unknown as Socket;
@@ -687,6 +868,7 @@ describe("AuthHandler", () => {
           emit: vi.fn(),
           disconnect: vi.fn(),
           join: vi.fn(),
+          leave: vi.fn(),
           data: {},
           nsp: { sockets: mockSockets, server: { to: vi.fn() } },
         } as unknown as Socket;
@@ -698,6 +880,7 @@ describe("AuthHandler", () => {
           emit: vi.fn(),
           disconnect: vi.fn(),
           join: vi.fn(),
+          leave: vi.fn(),
           data: {},
           nsp: { sockets: mockSockets, server: { to: vi.fn() } },
         } as unknown as Socket;
