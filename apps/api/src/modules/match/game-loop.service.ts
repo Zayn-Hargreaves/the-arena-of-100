@@ -466,6 +466,19 @@ export class GameLoopService implements OnModuleInit {
             err,
           );
         });
+      // Roll the room back to WAITING so it isn't stuck in COUNTDOWN
+      // with no live timer, no persisted countdown, and no recovery
+      // path until a manual job acts on the dead-letter entry. The
+      // dead-letter record itself is retained for 7 days so an
+      // operator can inspect / replay the failure.
+      void this.roomService
+        .updateRoomStatus(entry.roomId, RoomStatus.WAITING)
+        .catch((err) => {
+          this.logger.error(
+            `Failed to roll back Room ${entry.roomId} status to WAITING after recovery abort:`,
+            err,
+          );
+        });
       void this.clearPersistedCountdown(entry.roomId);
       return;
     }

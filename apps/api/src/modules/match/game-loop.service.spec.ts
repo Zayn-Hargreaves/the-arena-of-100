@@ -3756,6 +3756,13 @@ describe("GameLoopService", () => {
           "room-retry-max",
         );
         expect(clearCountdownSpy).toHaveBeenCalledWith("room-retry-max");
+        // The room must be rolled back to WAITING so it isn't stuck
+        // in COUNTDOWN with no live timer and no recovery path.
+        // (The dead-letter record is retained for operator inspection.)
+        expect(roomService.updateRoomStatus).toHaveBeenCalledWith(
+          "room-retry-max",
+          RoomStatus.WAITING,
+        );
         expect(setTimeoutSpy).not.toHaveBeenCalled();
 
         setTimeoutSpy.mockRestore();

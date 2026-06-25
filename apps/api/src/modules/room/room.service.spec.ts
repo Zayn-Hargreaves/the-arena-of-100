@@ -49,6 +49,8 @@ describe("RoomService", () => {
       srem: vi.fn(),
       smembers: vi.fn(),
       set: vi.fn(),
+      get: vi.fn().mockResolvedValue(null),
+      setIfAbsent: vi.fn().mockResolvedValue(true),
       del: vi.fn(),
       exists: vi.fn(),
       incr: vi.fn().mockResolvedValue(1),
@@ -552,6 +554,110 @@ describe("RoomService", () => {
       );
       expect(redis.setJSON).toHaveBeenCalled();
       expect(result).toEqual(room);
+    });
+
+    // Regression for the cache-overwrite race: when the Redis
+    // counter is already present (e.g. after concurrent joins),
+    // updateRoomStatus must NOT overwrite it with the stale
+    // `room.players.length` snapshot taken before the awaited DB
+    // update. The counter is the server-authoritative source of
+    // truth.
+    it("preserves the existing Redis playerCount and does not overwrite it", async () => {
+      const room = {
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.IN_GAME,
+        hostId: "u1",
+        // Stale snapshot — a concurrent join happened between the
+        // DB update and this call. Redis already holds 3.
+        players: [{ userId: "u1" }],
+      };
+      vi.mocked(prisma.room.update).mockResolvedValue(room as any);
+      vi.mocked(redis.get).mockResolvedValue("3");
+
+      await service.updateRoomStatus("r1", RoomStatus.IN_GAME, "m1");
+
+      // The cached room JSON must use the live counter (3), not
+      // the stale players.length (1).
+      expect(redis.setJSON).toHaveBeenCalledWith(
+        "room:r1",
+        expect.objectContaining({ playerCount: 3 }),
+        expect.any(Number),
+      );
+      // The counter key must NOT be rewritten — `set` is only used
+      // to seed when the key is missing.
+      expect(redis.set).not.toHaveBeenCalledWith(
+        "room:r1:playerCount",
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it("seeds the Redis playerCount from players.length when the key is missing", async () => {
+      const room = {
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.WAITING,
+        hostId: "u1",
+        players: [{ userId: "u1" }, { userId: "u2" }],
+      };
+      vi.mocked(prisma.room.update).mockResolvedValue(room as any);
+      // redis.get returns null → key missing → seed from DB via
+      // atomic SET NX (setIfAbsent) to close the TOCTOU window.
+      vi.mocked(redis.get).mockResolvedValue(null);
+
+      await service.updateRoomStatus("r1", RoomStatus.COUNTDOWN);
+
+      expect(redis.setJSON).toHaveBeenCalledWith(
+        "room:r1",
+        expect.objectContaining({ playerCount: 2 }),
+        expect.any(Number),
+      );
+      expect(redis.setIfAbsent).toHaveBeenCalledWith(
+        "room:r1:playerCount",
+        "2",
+        3600,
+      );
+    });
+
+    // Regression for the TOCTOU race: if a concurrent joinRoom
+    // calls incr(counter) between our redis.get (returns null) and
+    // our write, setIfAbsent (SET NX) must return false and we must
+    // NOT overwrite the newer value. Plain redis.set would clobber
+    // it with the stale players.length.
+    it("does not overwrite a fresher counter value that appeared during the seed window", async () => {
+      const room = {
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.IN_GAME,
+        hostId: "u1",
+        players: [{ userId: "u1" }],
+      };
+      vi.mocked(prisma.room.update).mockResolvedValue(room as any);
+      // Initial read shows key missing.
+      vi.mocked(redis.get).mockResolvedValue(null);
+      // SET NX returns "OK" only when the key did not exist. Simulate
+      // a concurrent incr winning the race → setIfAbsent returns false.
+      vi.mocked(redis.setIfAbsent).mockResolvedValue(false);
+
+      await service.updateRoomStatus("r1", RoomStatus.IN_GAME, "m1");
+
+      // setIfAbsent was attempted (the seed path ran) but reported
+      // the key already existed. The cached room JSON still uses
+      // the stale players.length (1) for this snapshot — that's the
+      // trade-off the prior fix accepts; the key itself is intact
+      // for the next read.
+      expect(redis.setIfAbsent).toHaveBeenCalledWith(
+        "room:r1:playerCount",
+        "1",
+        3600,
+      );
+      // Plain redis.set must NOT have been called as a fallback.
+      expect(redis.set).not.toHaveBeenCalledWith(
+        "room:r1:playerCount",
+        expect.anything(),
+        expect.anything(),
+      );
     });
   });
 

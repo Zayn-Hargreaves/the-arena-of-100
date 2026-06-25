@@ -314,6 +314,9 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       // so dangling listeners and duplicate reconnects don't linger.
       // Only reset state if this socket is still the active one — a
       // stale socket's ERROR must not clobber a newer connection.
+      // The error message is merged into the SAME set call so the
+      // message survives the socket reset (a follow-up `set({ error })`
+      // would never run because socket is now null).
       if (
         data.code === ErrorCode.INVALID_TOKEN ||
         data.code === ErrorCode.UNAUTHORIZED
@@ -321,12 +324,9 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         if (get().socket === newSocket) {
           const { heartbeatInterval: hb } = get();
           if (hb) clearInterval(hb);
-          set(applyUnauthorizedErrorState());
+          set(applyUnauthorizedErrorState(data.message));
         }
         newSocket.disconnect();
-      }
-      if (get().socket === newSocket) {
-        set({ error: data.message });
       }
       console.error("❌ Error:", data.message);
     });

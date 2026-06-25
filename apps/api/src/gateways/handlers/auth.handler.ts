@@ -194,14 +194,36 @@ export class AuthHandler extends BaseHandler {
     client: Socket,
   ): Promise<void> {
     this.clearTrackedConnection(userId);
+
+    // SYNC: leave every `room:*` channel the socket is currently joined
+    // to. Iterating `client.rooms` (no DB) means a `getUserActiveRooms`
+    // failure cannot leave stale `room:*` memberships on a reused
+    // socket — a user-switch re-auth must not receive broadcasts for
+    // the previous user. The socket's own room (`client.id`) is skipped
+    // because leaving it would force-disconnect the socket itself.
+    for (const roomName of Array.from(client.rooms ?? [])) {
+      if (roomName === client.id) continue;
+      if (roomName.startsWith("room:")) {
+        client.leave(roomName);
+      }
+    }
+
+    // DB-touching notification is in its own try/catch so a failure
+    // here cannot undo the synchronous socket cleanup above.
     try {
       const userActiveRooms = await this.roomService.getUserActiveRooms(userId);
-      // Leave every room channel joined during syncReconnection so a
-      // reused client cannot receive broadcasts for the old user.
       for (const rp of userActiveRooms) {
-        client.leave(`room:${rp.room.id}`);
-      }
-      for (const rp of userActiveRooms) {
+        // Re-check tracking: a newer socket may have authenticated as
+        // this user during the await. If connectedPlayers[userId] now
+        // holds any entry (the one we just deleted), a new session is
+        // canonical — skip the state-mutating handlePlayerDisconnect so
+        // the live player's state machine is NOT marked DISCONNECTED.
+        if (this.connectedPlayers.has(userId)) {
+          this.logger.debug(
+            `Skipping handlePlayerDisconnect for ${userId} in room ${rp.room.id}: a newer socket has authenticated`,
+          );
+          continue;
+        }
         if (rp.room.currentMatchId) {
           await this.gameLoopService.handlePlayerDisconnect(
             rp.room.currentMatchId,

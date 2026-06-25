@@ -275,21 +275,16 @@ export function applyRoundStartedState(
   data: RoundStartedPayload,
 ): Partial<SocketState> {
   // Guard: ignore stale round events from a previous match after
-  // reconnect or room switch. Prioritize state.room.currentMatchId
-  // (set by applyMatchStartingState) over state.match.id so that
-  // ROUND_STARTED is not dropped during the transition window where
-  // match.id still points to the previous match but currentMatchId
-  // already matches the incoming matchId. Only return {} when BOTH
-  // state.match.id AND state.room.currentMatchId clearly do not
-  // match data.matchId.
-  const roomMatchId = state.room?.currentMatchId;
-  if (roomMatchId && roomMatchId !== data.matchId) return {};
-  if (
-    state.match &&
-    state.match.id !== data.matchId &&
-    (!roomMatchId || roomMatchId !== data.matchId)
-  )
-    return {};
+  // reconnect or room switch. Prioritize `state.room?.currentMatchId`
+  // (set by `applyMatchStartingState`) as the authoritative active
+  // match over `state.match?.id`, so ROUND_STARTED is not dropped
+  // during the transition window where `state.match.id` still points
+  // to the previous match but `currentMatchId` already matches the
+  // incoming matchId. When both IDs exist, neither matching the
+  // incoming matchId means the broadcast is stale and must be
+  // rejected.
+  const activeMatchId = state.room?.currentMatchId ?? state.match?.id ?? null;
+  if (activeMatchId === null || activeMatchId !== data.matchId) return {};
 
   return {
     match: state.match
@@ -319,17 +314,12 @@ export function applyRoundEndedState(
   priorForThisRound: LastAnswerResult | null,
 ): Partial<SocketState> {
   // Guard: ignore stale round events from a previous match after
-  // reconnect or room switch. Same logic as applyRoundStartedState —
-  // prioritize state.room.currentMatchId so ROUND_ENDED is not
-  // dropped during the match transition window.
-  const roomMatchId = state.room?.currentMatchId;
-  if (roomMatchId && roomMatchId !== data.matchId) return {};
-  if (
-    state.match &&
-    state.match.id !== data.matchId &&
-    (!roomMatchId || roomMatchId !== data.matchId)
-  )
-    return {};
+  // reconnect or room switch. Prioritize `state.room?.currentMatchId`
+  // (set by `applyMatchStartingState`) as the authoritative active
+  // match over `state.match?.id` so ROUND_ENDED is not dropped during
+  // the transition window.
+  const activeMatchId = state.room?.currentMatchId ?? state.match?.id ?? null;
+  if (activeMatchId === null || activeMatchId !== data.matchId) return {};
 
   const eliminatedSet = new Set(data.eliminatedPlayerIds);
   const updatedPlayers = state.match?.players.map((player) =>
@@ -385,14 +375,14 @@ export function applyMatchFinishedState(
   state: SocketState,
   data: MatchFinishedPayload,
 ): Partial<SocketState> {
-  const roomMatchId = state.room?.currentMatchId;
-  if (roomMatchId && roomMatchId !== data.matchId) return {};
-  if (
-    state.match &&
-    state.match.id !== data.matchId &&
-    (!roomMatchId || roomMatchId !== data.matchId)
-  )
-    return {};
+  // Guard: ignore stale MATCH_FINISHED events from a previous match.
+  // Prioritize `state.room?.currentMatchId` (set by
+  // `applyMatchStartingState`) as the authoritative active match over
+  // `state.match?.id`. When both IDs exist and neither matches the
+  // incoming `data.matchId`, the broadcast is stale and must be
+  // rejected so it cannot mutate the lobby/room state.
+  const activeMatchId = state.room?.currentMatchId ?? state.match?.id ?? null;
+  if (activeMatchId === null || activeMatchId !== data.matchId) return {};
 
   return {
     room: state.room
@@ -464,7 +454,9 @@ export function applyRoomTerminatedState(
   };
 }
 
-export function applyUnauthorizedErrorState(): Partial<SocketState> {
+export function applyUnauthorizedErrorState(
+  errorMessage: string | null,
+): Partial<SocketState> {
   return {
     socket: null,
     isConnected: false,
@@ -479,5 +471,11 @@ export function applyUnauthorizedErrorState(): Partial<SocketState> {
     lastAnswerResult: null,
     isEliminated: false,
     heartbeatInterval: null,
+    // Include the error message in the SAME set call that resets the
+    // socket/heartbeat state. A separate follow-up `set({ error })`
+    // would be a no-op because this function sets `socket: null`,
+    // and any subsequent `if (get().socket === newSocket)` gate would
+    // never match — the error message would silently be dropped.
+    error: errorMessage,
   };
 }

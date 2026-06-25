@@ -445,14 +445,28 @@ export class RoomService {
       include: { players: true },
     });
 
-    await this.setCachedRoomSnapshot(room, room.players.length);
-    // Keep the atomic counter in sync with the snapshot so later
-    // join/leave/remove paths don't mirror a stale count back.
-    await this.redis.set(
-      `room:${room.id}:playerCount`,
-      String(room.players.length),
-      3600,
-    );
+    // Preserve the live server-authoritative playerCount. The atomic
+    // counter (incremented/decremented by joinRoom/leaveRoom/removePlayer)
+    // is the source of truth; `room.players.length` is a snapshot from
+    // BEFORE the awaited DB update and is stale by the time we write
+    // back. A concurrent join/leave between the DB read and the cache
+    // write would otherwise be overwritten by an older count.
+    const counterKey = `room:${room.id}:playerCount`;
+    const existingCounter = await this.redis.get(counterKey);
+    const playerCount =
+      existingCounter !== null && Number.isFinite(Number(existingCounter))
+        ? Number(existingCounter)
+        : room.players.length;
+
+    await this.setCachedRoomSnapshot(room, playerCount);
+    // Only seed the counter when it was missing — never overwrite a
+    // fresher value with the stale `room.players.length` snapshot.
+    // Use atomic SET NX (via setIfAbsent) to close the TOCTOU window
+    // between the `get` above and this write: a concurrent
+    // joinRoom/incr that wins the race is preserved.
+    if (existingCounter === null) {
+      await this.redis.setIfAbsent(counterKey, String(playerCount), 3600);
+    }
 
     return room;
   }
