@@ -58,6 +58,7 @@ describe("RoomHandler", () => {
         code: "ABC123",
         type: "PUBLIC",
         hostId: "u1",
+        maxPlayers: 100,
       } as any);
 
       await handler.handleCreateRoom(client, {
@@ -79,6 +80,7 @@ describe("RoomHandler", () => {
         hostId: "u1",
         roomType: "PUBLIC",
         roomStatus: RoomStatus.WAITING,
+        maxPlayers: 100,
         currentMatchId: null,
         players: [
           {
@@ -138,6 +140,7 @@ describe("RoomHandler", () => {
         code: "ABC123",
         type: "PUBLIC",
         hostId: "u1",
+        maxPlayers: 100,
       } as any);
 
       await handler.handleCreateRoom(client, {
@@ -161,6 +164,7 @@ describe("RoomHandler", () => {
         hostId: "u1",
         roomType: "PUBLIC",
         roomStatus: RoomStatus.WAITING,
+        maxPlayers: 100,
         currentMatchId: null,
         players: [
           {
@@ -182,6 +186,7 @@ describe("RoomHandler", () => {
         hostId: "u9",
         type: "PUBLIC",
         status: RoomStatus.WAITING,
+        maxPlayers: 100,
         currentMatchId: null,
         joined: true,
         joinedAs: "PLAYER",
@@ -211,6 +216,7 @@ describe("RoomHandler", () => {
         hostId: "u9",
         roomType: "PUBLIC",
         roomStatus: RoomStatus.WAITING,
+        maxPlayers: 100,
         currentMatchId: null,
         countdownEndsAt: null,
         joinedAs: "PLAYER",
@@ -240,6 +246,7 @@ describe("RoomHandler", () => {
         hostId: "u9",
         type: "PUBLIC",
         status: RoomStatus.IN_GAME,
+        maxPlayers: 100,
         currentMatchId: "m1",
         joined: false,
         joinedAs: "SPECTATOR",
@@ -281,6 +288,7 @@ describe("RoomHandler", () => {
         hostId: "u9",
         type: "PRIVATE",
         status: RoomStatus.WAITING,
+        maxPlayers: 100,
         currentMatchId: null,
         joined: false,
         joinedAs: "PLAYER",
@@ -341,6 +349,7 @@ describe("RoomHandler", () => {
         hostId: "u9",
         type: "PUBLIC",
         status: RoomStatus.WAITING,
+        maxPlayers: 100,
         currentMatchId: null,
         joined: true,
         players: [
@@ -379,6 +388,7 @@ describe("RoomHandler", () => {
         hostId: "u9",
         type: "PUBLIC",
         status: RoomStatus.WAITING,
+        maxPlayers: 100,
         currentMatchId: null,
         joined: true,
         joinedAs: "PLAYER",
@@ -434,6 +444,7 @@ describe("RoomHandler", () => {
         hostId: "u9",
         type: "PUBLIC",
         status: RoomStatus.WAITING,
+        maxPlayers: 100,
         currentMatchId: null,
         joined: true,
         joinedAs: "PLAYER",
@@ -470,6 +481,7 @@ describe("RoomHandler", () => {
         hostId: "u9",
         type: "PUBLIC",
         status: RoomStatus.WAITING,
+        maxPlayers: 100,
         currentMatchId: null,
         joined: true,
         players: [

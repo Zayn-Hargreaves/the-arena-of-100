@@ -181,6 +181,7 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
 
@@ -193,6 +194,7 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ANSWER_RESULT, {
         matchId: "m1",
         roundNo: 1,
+        submissionId: "s1",
         isCorrect: true,
         responseTimeMs: 500,
       });
@@ -219,6 +221,7 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
 
@@ -265,6 +268,7 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
 
@@ -286,6 +290,7 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
 
@@ -301,12 +306,41 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
       expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.ERROR,
         expect.objectContaining({ code: ErrorCode.UNAUTHORIZED }),
       );
+    });
+
+    it("maps ErrorCode string values thrown as Error messages", async () => {
+      const mockMachine = {
+        getState: vi.fn().mockReturnValue({
+          roomId: "r1",
+          players: new Map([["u1", { id: "u1" }]]),
+        }),
+        submitAnswer: vi.fn().mockImplementation(() => {
+          throw new Error(ErrorCode.MATCH_NOT_FOUND);
+        }),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+
+      await handler.handleSubmitAnswer(client, {
+        matchId: "m1",
+        answer: "A",
+        roundNo: 1,
+        submissionId: "s1",
+        clientTimestamp: 1234567890,
+      });
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.MATCH_NOT_FOUND,
+        message: ERROR_MESSAGES[ErrorCode.MATCH_NOT_FOUND],
+      });
     });
 
     it("emits error when submitAnswer throws", async () => {
@@ -327,14 +361,15 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
 
       expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.ERROR,
         expect.objectContaining({
-          code: ErrorCode.INTERNAL_ERROR,
-          message: "Internal server error",
+          code: ErrorCode.ALREADY_ANSWERED,
+          message: ERROR_MESSAGES[ErrorCode.ALREADY_ANSWERED],
         }),
       );
     });
@@ -357,6 +392,7 @@ describe("MatchHandler", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
 
@@ -388,6 +424,7 @@ describe("MatchHandler", () => {
         matchId,
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
 

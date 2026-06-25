@@ -11,6 +11,7 @@ import {
   type SnapshotPayload,
   type AnswerResultPayload,
   type ErrorPayload,
+  type SubmitAnswerPayload,
   type RoomJoinedPayload,
   type RoomPlayerJoinedPayload,
   type RoomPlayerLeftPayload,
@@ -33,6 +34,11 @@ import {
   requireSocket,
   waitForSocketAck,
 } from "./socket-store.helpers";
+type CorrelatedErrorPayload = ErrorPayload &
+  Partial<Pick<SubmitAnswerPayload, "submissionId">> & {
+    failedEvent?: ClientEvent;
+  };
+
 import {
   applyAnswerResultState,
   applyAuthenticatedState,
@@ -67,6 +73,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   room: null,
   match: null,
   lastAnswerResult: null,
+  pendingAnswer: null,
   remainingCount: null,
   error: null,
   heartbeatInterval: null,
@@ -315,7 +322,13 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       console.warn("🛑 Room terminated by server:", data);
     });
 
-    newSocket.on(ServerEvent.ERROR, (data) => {
+    newSocket.on(ServerEvent.ERROR, (data: CorrelatedErrorPayload) => {
+      if (get().socket !== newSocket) return;
+      const { pendingAnswer } = get();
+      const { submissionId } = data;
+      if (pendingAnswer && submissionId === pendingAnswer.submissionId) {
+        set({ pendingAnswer: null });
+      }
       // If unauthorized or invalid token, clear local auth state and
       // null the socket so the next connect() can reinitialize
       // (otherwise the connect guard would short-circuit on
@@ -400,6 +413,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         match: null,
         remainingCount: null,
         lastAnswerResult: null,
+        pendingAnswer: null,
         heartbeatInterval: null,
         roomTerminated: false,
         roomTerminationMessage: null,
@@ -579,13 +593,27 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
   // Submit Answer
   submitAnswer: (matchId: string, roundNo: number, answer: string) => {
-    const { socket } = get();
+    const { socket, pendingAnswer } = get();
+    if (!socket?.connected) return null;
+    if (
+      pendingAnswer?.matchId === matchId &&
+      pendingAnswer.roundNo === roundNo
+    ) {
+      return null;
+    }
+
+    const submissionId =
+      globalThis.crypto?.randomUUID?.() ??
+      `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    set({ pendingAnswer: { matchId, roundNo, answer, submissionId } });
     emitIfConnected(socket, ClientEvent.SUBMIT_ANSWER, {
       matchId,
       roundNo,
       answer,
+      submissionId,
       clientTimestamp: Date.now(),
     });
+    return submissionId;
   },
 
   // Request Snapshot

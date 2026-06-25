@@ -19,7 +19,7 @@ Admin kill-switch append-only audit event **chưa xong**.
 
 ## Latest Known Test Counts
 
-- API unit tests: previously reported **779/779**, later doc draft mentioned **792/792** but needs a fresh verification run before treating as current truth.
+- API unit tests: **866/866** passed.
 - Game-core tests: **70/70**
 - Web tests: **31/31**
 - Shared tests: **3/3**
@@ -66,13 +66,13 @@ Run the relevant package tests before using these numbers in PR text.
 - Profile/rankings real APIs.
 - CSRF, throttling, and Zod validation baseline.
 - Socket handlers split into `AuthHandler`, `RoomHandler`, `MatchHandler`.
+- Moderation MVP boundary filtering / sanitizer (NFKD Unicode normalization, diacritic stripping, and post-masking re-validation).
 
 ## What Is Not Done Yet
 
 - Admin kill-switch append-only audit event.
 - `Room.maxPlayers` realtime payload exposure.
 - Full optimistic answer rollback + idempotency key.
-- Moderation MVP boundary filtering / sanitizer.
 - k6 load evidence for 100 concurrent WebSocket users.
 - Spectator transport split for scale.
 - Full WCAG / Playwright / rematch work.
@@ -94,8 +94,8 @@ Run the relevant package tests before using these numbers in PR text.
    - Frontend currently uses fallback `GAME_CONFIG.MAX_PLAYERS` when live payload lacks max player count.
 3. **Optimistic Answer Rollback**
    - Current UI has lock-in behavior, but no full idempotency/rollback contract.
-4. **Moderation MVP**
-   - Boundary filtering/sanitizer first; device fingerprint and shadow-ban later.
+4. **Moderation MVP** (Done)
+   - Unicode NFKD normalization, mark stripping, and post-masking re-validation are completed and verified with tests. Deeper device fingerprinting and shadow-ban are deferred as post-MVP.
 
 ### P2 — Evidence / Scale
 

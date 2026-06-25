@@ -131,6 +131,7 @@ export interface EventBatchPayload {
 export interface AnswerResultPayload {
   matchId: string;
   roundNo: number;
+  submissionId?: string;
   isCorrect: boolean;
   responseTimeMs: number;
   correctAnswer?: string;
@@ -148,6 +149,7 @@ export interface RoomCreatedPayload {
   hostId: string;
   roomType: RoomType;
   roomStatus: RoomStatus;
+  maxPlayers: number;
   currentMatchId: string | null;
   players: RoomPlayerSummary[];
   // The host is always a player; included for consistency with
@@ -161,6 +163,7 @@ export interface RoomJoinedPayload {
   hostId: string;
   roomType: RoomType;
   roomStatus: RoomStatus;
+  maxPlayers: number;
   currentMatchId: string | null;
   countdownEndsAt: number | null;
   players: RoomPlayerSummary[];

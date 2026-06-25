@@ -285,12 +285,14 @@ describe("GameGateway", () => {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
       expect(matchHandler.handleSubmitAnswer).toHaveBeenCalledWith(client, {
         matchId: "m1",
         answer: "A",
         roundNo: 1,
+        submissionId: "s1",
         clientTimestamp: 1234567890,
       });
     });
@@ -340,6 +342,7 @@ describe("GameGateway", () => {
           matchId: "m1",
           roundNo: 1,
           answer: { inject: true },
+          submissionId: "s1",
           clientTimestamp: Date.now(),
         });
         expect(result.success).toBe(false);
@@ -349,6 +352,7 @@ describe("GameGateway", () => {
         const result = SubmitAnswerPayloadSchema.safeParse({
           roundNo: 1,
           answer: "A",
+          submissionId: "s1",
           clientTimestamp: Date.now(),
         });
         expect(result.success).toBe(false);
@@ -359,6 +363,7 @@ describe("GameGateway", () => {
           matchId: "m1",
           roundNo: 1,
           answer: "x".repeat(2000),
+          submissionId: "s1",
           clientTimestamp: Date.now(),
         });
         expect(result.success).toBe(false);
@@ -376,6 +381,7 @@ describe("GameGateway", () => {
           matchId: "m1",
           roundNo: 1,
           answer: "A",
+          submissionId: "s1",
           clientTimestamp: Date.now() - 365 * 24 * 60 * 60 * 1000,
         });
         expect(result.success).toBe(false);
@@ -386,6 +392,7 @@ describe("GameGateway", () => {
           matchId: "m1",
           roundNo: 1,
           answer: "A",
+          submissionId: "s1",
           clientTimestamp: Date.now() - 6 * 60 * 1000,
         });
         expect(result.success).toBe(false);
@@ -396,6 +403,7 @@ describe("GameGateway", () => {
           matchId: "m1",
           roundNo: 1,
           answer: "A",
+          submissionId: "s1",
           clientTimestamp: Date.now() + 6 * 60 * 1000,
         });
         expect(result.success).toBe(false);
@@ -406,6 +414,7 @@ describe("GameGateway", () => {
           matchId: "m1",
           roundNo: 1,
           answer: "A",
+          submissionId: "s1",
           clientTimestamp: Date.now() - 4 * 60 * 1000,
         });
         expect(result.success).toBe(true);
@@ -640,6 +649,7 @@ describe("GameGateway", () => {
       const malformedPayload = {
         roundNo: 1,
         answer: "A",
+        submissionId: "s1",
         clientTimestamp: Date.now(),
       };
 
@@ -669,6 +679,7 @@ describe("GameGateway", () => {
         matchId: "m1",
         roundNo: 1,
         answer: "x".repeat(2000),
+        submissionId: "s1",
         clientTimestamp: Date.now(),
       };
 
@@ -698,6 +709,7 @@ describe("GameGateway", () => {
         matchId: "m1",
         roundNo: 1,
         answer: "A",
+        submissionId: "s1",
         clientTimestamp: Date.now(),
       };
 

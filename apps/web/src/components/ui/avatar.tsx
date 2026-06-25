@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import React, { useState } from "react";
 import { Skeleton } from "./skeleton";
 import { cn } from "@/lib/utils";
@@ -162,10 +163,11 @@ export const Avatar = React.forwardRef<HTMLDivElement, AvatarProps>(
     return (
       <div ref={ref} className={combinedClassName} {...rest}>
         {src && !imageError && (
-          <img
+          <Image
             src={src}
             alt={alt}
-            loading="lazy"
+            width={sizePx}
+            height={sizePx}
             className="w-full h-full object-cover"
             onError={() => {
               setImageError(true);

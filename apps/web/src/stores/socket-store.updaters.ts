@@ -63,6 +63,7 @@ export function applyRoomCreatedState(
       status: data.roomStatus,
       hostId: data.hostId,
       roomType: data.roomType,
+      maxPlayers: data.maxPlayers,
       currentMatchId: data.currentMatchId,
       countdownEndsAt: null,
       joinMode: data.joinedAs ?? "PLAYER",
@@ -85,6 +86,7 @@ export function applyRoomJoinedState(
       status: data.roomStatus,
       hostId: data.hostId,
       roomType: data.roomType,
+      maxPlayers: data.maxPlayers,
       currentMatchId: data.currentMatchId,
       countdownEndsAt: data.countdownEndsAt,
       joinMode: data.joinedAs ?? "PLAYER",
@@ -234,6 +236,7 @@ export function applyMatchStartingState(
   return {
     remainingCount: null,
     lastAnswerResult: null,
+    pendingAnswer: null,
     room: state.room
       ? {
           ...state.room,
@@ -312,6 +315,7 @@ export function applyRoundStartedState(
           roundEndTime: data.endsAt,
         },
     lastAnswerResult: null,
+    pendingAnswer: null,
   };
 }
 
@@ -369,6 +373,11 @@ export function applyRoundEndedState(
       correctAnswer: data.correctAnswer,
     },
     remainingCount: data.survivingPlayerIds.length,
+    pendingAnswer:
+      state.pendingAnswer?.matchId === data.matchId &&
+      state.pendingAnswer.roundNo === data.roundNo
+        ? null
+        : state.pendingAnswer,
   };
 }
 
@@ -463,6 +472,7 @@ export function applySnapshotState(
     },
     remainingCount: null,
     lastAnswerResult: null,
+    pendingAnswer: null,
   };
 }
 
@@ -471,7 +481,15 @@ export function applyAnswerResultState(
   data: AnswerResultPayload,
 ): Partial<SocketState> {
   if (state.match && state.match.id !== data.matchId) return {};
-  return { lastAnswerResult: data };
+  const isPendingAnswer =
+    state.pendingAnswer?.matchId === data.matchId &&
+    state.pendingAnswer.roundNo === data.roundNo &&
+    (data.submissionId === undefined ||
+      state.pendingAnswer.submissionId === data.submissionId);
+  return {
+    lastAnswerResult: data,
+    pendingAnswer: isPendingAnswer ? null : state.pendingAnswer,
+  };
 }
 
 export function applyRoomTerminatedState(
@@ -482,6 +500,7 @@ export function applyRoomTerminatedState(
     match: null,
     remainingCount: null,
     lastAnswerResult: null,
+    pendingAnswer: null,
     isEliminated: false,
     roomTerminated: true,
     roomTerminationMessage: data.message ?? null,
@@ -503,6 +522,7 @@ export function applyUnauthorizedErrorState(
     match: null,
     remainingCount: null,
     lastAnswerResult: null,
+    pendingAnswer: null,
     isEliminated: false,
     heartbeatInterval: null,
     roomTerminated: false,

@@ -1,3 +1,4 @@
+import { ClientEvent, ErrorCode, ServerEvent } from "@arena/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const waitForSocketAckMock = vi.hoisted(() => vi.fn());
@@ -40,6 +41,7 @@ describe("socket-store connect heartbeat ownership", () => {
       room: null,
       match: null,
       lastAnswerResult: null,
+      pendingAnswer: null,
       remainingCount: null,
       error: null,
       heartbeatInterval: null,
@@ -89,5 +91,199 @@ describe("socket-store connect heartbeat ownership", () => {
       socket2?.disconnect();
       setIntervalSpy.mockRestore();
     }
+  });
+
+  it("ignores stale socket errors when clearing pending answers", async () => {
+    const firstAuth = deferred<void>();
+    waitForSocketAckMock
+      .mockReturnValueOnce(firstAuth.promise)
+      .mockResolvedValueOnce(undefined);
+
+    let socket1: ReturnType<typeof useSocketStore.getState>["socket"] = null;
+    let socket2: ReturnType<typeof useSocketStore.getState>["socket"] = null;
+
+    try {
+      const firstConnect = useSocketStore.getState().connect();
+      await vi.waitFor(() =>
+        expect(useSocketStore.getState().socket).not.toBeNull(),
+      );
+      socket1 = useSocketStore.getState().socket;
+      const secondConnect = useSocketStore.getState().connect();
+      await vi.waitFor(() =>
+        expect(useSocketStore.getState().socket).not.toBe(socket1),
+      );
+      socket2 = useSocketStore.getState().socket;
+      await secondConnect;
+
+      useSocketStore.setState({
+        pendingAnswer: {
+          matchId: "m1",
+          roundNo: 1,
+          answer: "A",
+          submissionId: "s1",
+        },
+      });
+      socket1?.emit(ServerEvent.ERROR, {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: "late",
+      });
+
+      expect(useSocketStore.getState().pendingAnswer?.submissionId).toBe("s1");
+
+      firstAuth.resolve();
+      await firstConnect;
+    } finally {
+      socket1?.disconnect();
+      socket2?.disconnect();
+    }
+  });
+
+  it("keeps pending answer for uncorrelated current-socket errors", async () => {
+    waitForSocketAckMock.mockResolvedValueOnce(undefined);
+    let socket: ReturnType<typeof useSocketStore.getState>["socket"] = null;
+
+    try {
+      await useSocketStore.getState().connect();
+      socket = useSocketStore.getState().socket;
+      useSocketStore.setState({
+        pendingAnswer: {
+          matchId: "m1",
+          roundNo: 1,
+          answer: "A",
+          submissionId: "s1",
+        },
+      });
+
+      socket?.listeners(ServerEvent.ERROR).forEach((listener) => {
+        listener({
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "uncorrelated",
+        });
+      });
+
+      expect(useSocketStore.getState().pendingAnswer?.submissionId).toBe("s1");
+    } finally {
+      socket?.disconnect();
+    }
+  });
+
+  it("clears pending answer for submit-answer correlated errors", async () => {
+    waitForSocketAckMock.mockResolvedValueOnce(undefined);
+    let socket: ReturnType<typeof useSocketStore.getState>["socket"] = null;
+
+    try {
+      await useSocketStore.getState().connect();
+      socket = useSocketStore.getState().socket;
+      useSocketStore.setState({
+        pendingAnswer: {
+          matchId: "m1",
+          roundNo: 1,
+          answer: "A",
+          submissionId: "s1",
+        },
+      });
+
+      // Assert pendingAnswer stays unchanged when the error does not carry a matching submissionId
+      socket?.listeners(ServerEvent.ERROR).forEach((listener) => {
+        listener({
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "submit failed",
+          failedEvent: ClientEvent.SUBMIT_ANSWER,
+        });
+      });
+
+      expect(useSocketStore.getState().pendingAnswer?.submissionId).toBe("s1");
+
+      // Assert pendingAnswer clears when submissionId correlates correctly
+      socket?.listeners(ServerEvent.ERROR).forEach((listener) => {
+        listener({
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "submit failed",
+          failedEvent: ClientEvent.SUBMIT_ANSWER,
+          submissionId: "s1",
+        });
+      });
+
+      await vi.waitFor(() =>
+        expect(useSocketStore.getState().pendingAnswer).toBeNull(),
+      );
+    } finally {
+      socket?.disconnect();
+    }
+  });
+
+  it("clears pending answer on matching submissionId, but leaves it intact on mismatched submissionId", async () => {
+    waitForSocketAckMock.mockResolvedValueOnce(undefined);
+    let socket: ReturnType<typeof useSocketStore.getState>["socket"] = null;
+
+    try {
+      await useSocketStore.getState().connect();
+      socket = useSocketStore.getState().socket;
+
+      // 1. Mismatched submissionId
+      useSocketStore.setState({
+        pendingAnswer: {
+          matchId: "m1",
+          roundNo: 1,
+          answer: "A",
+          submissionId: "current-submission-id",
+        },
+      });
+
+      socket?.listeners(ServerEvent.ERROR).forEach((listener) => {
+        listener({
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "stale submission error",
+          submissionId: "stale-submission-id",
+        });
+      });
+
+      expect(useSocketStore.getState().pendingAnswer?.submissionId).toBe(
+        "current-submission-id",
+      );
+
+      // 2. Matching submissionId
+      socket?.listeners(ServerEvent.ERROR).forEach((listener) => {
+        listener({
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "matching submission error",
+          submissionId: "current-submission-id",
+        });
+      });
+
+      await vi.waitFor(() =>
+        expect(useSocketStore.getState().pendingAnswer).toBeNull(),
+      );
+    } finally {
+      socket?.disconnect();
+    }
+  });
+
+  it("does not create pending answer state while disconnected", () => {
+    const submissionId = useSocketStore.getState().submitAnswer("m1", 1, "A");
+
+    expect(submissionId).toBeNull();
+    expect(useSocketStore.getState().pendingAnswer).toBeNull();
+  });
+
+  it("creates pending answer state only when submit can emit", () => {
+    const emit = vi.fn();
+    useSocketStore.setState({
+      socket: {
+        connected: true,
+        emit,
+      } as unknown as ReturnType<typeof useSocketStore.getState>["socket"],
+    });
+
+    const submissionId = useSocketStore.getState().submitAnswer("m1", 1, "A");
+
+    expect(submissionId).toBeTruthy();
+    expect(useSocketStore.getState().pendingAnswer?.submissionId).toBe(
+      submissionId,
+    );
+    expect(emit).toHaveBeenCalledWith(
+      ClientEvent.SUBMIT_ANSWER,
+      expect.objectContaining({ submissionId }),
+    );
   });
 });

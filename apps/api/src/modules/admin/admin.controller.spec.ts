@@ -101,27 +101,25 @@ describe("AdminController", () => {
   });
 
   describe("terminateRoom", () => {
-    it("rejects when message is provided (fail-fast until sanitizer lands)", async () => {
-      // Note: `message` is currently rejected at the schema boundary
-      // because the shared sanitizer pipeline is not yet wired
-      // (see terminate-room.dto.ts and plan.md §501). Once it lands,
-      // update this test to also assert the message is forwarded.
-      const dto = { message: "abandoned by host" };
+    it("accepts and forwards when message is provided (sanitizer pipeline is wired)", async () => {
+      const dto = { message: "  abandoned by host  " };
       const expected = {
         success: true,
         roomId: "r1",
         matchId: "m1",
-        message: "Room terminated by admin",
+        message: "abandoned by host",
         terminatedAt: 12345,
       };
       vi.mocked(service.terminateRoom).mockResolvedValue(expected);
 
-      // Currently rejects — message field is fail-fast until the
-      // sanitizer pipeline lands.
-      await expect(
-        controller.terminateRoom(adminReq, "r1", dto),
-      ).rejects.toThrow();
-      expect(service.terminateRoom).not.toHaveBeenCalled();
+      const result = await controller.terminateRoom(adminReq, "r1", dto);
+
+      expect(service.terminateRoom).toHaveBeenCalledWith(
+        "r1",
+        "u-admin",
+        "abandoned by host",
+      );
+      expect(result).toEqual(expected);
     });
 
     it("forwards the call when message is omitted", async () => {
@@ -162,16 +160,25 @@ describe("AdminController", () => {
       expect(service.terminateRoom).not.toHaveBeenCalled();
     });
 
-    it("rejects any message because the sanitizer pipeline is not yet available", async () => {
-      // Even a short, well-formed message is rejected at the schema
-      // boundary (fail-fast). When the sanitizer lands this test
-      // should flip to "forwards the call" semantics.
-      const dto = { message: "abandoned" };
+    it("replaces unsafe message content with the default fallback", async () => {
+      const dto = { message: "bad shit" };
+      const expected = {
+        success: true,
+        roomId: "r1",
+        matchId: "m1",
+        message: "Room terminated by admin",
+        terminatedAt: 12345,
+      };
+      vi.mocked(service.terminateRoom).mockResolvedValue(expected);
 
-      await expect(
-        controller.terminateRoom(adminReq, "r1", dto),
-      ).rejects.toThrow();
-      expect(service.terminateRoom).not.toHaveBeenCalled();
+      const result = await controller.terminateRoom(adminReq, "r1", dto);
+
+      expect(service.terminateRoom).toHaveBeenCalledWith(
+        "r1",
+        "u-admin",
+        "Room terminated by admin",
+      );
+      expect(result).toEqual(expected);
     });
   });
 

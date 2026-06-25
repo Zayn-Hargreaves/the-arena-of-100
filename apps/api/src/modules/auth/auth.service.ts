@@ -9,12 +9,19 @@ import { RedisService } from "../redis/redis.service";
 import * as jwt from "jsonwebtoken";
 import ms from "ms";
 import { nanoid } from "nanoid";
-import { Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
+import { sanitizeNickname, baseNormalize } from "../../common/moderation";
 
 export interface TokenPayload {
   userId: string;
   username: string;
   role: Role;
+}
+
+const RESERVED_USERNAMES = ["admin"];
+
+function normalizeReservedUsername(value: string): string {
+  return baseNormalize(value);
 }
 
 export interface AuthResult {
@@ -56,31 +63,47 @@ export class AuthService {
 
   // Guest Login (no password, just username)
   async guestLogin(username: string): Promise<AuthResult> {
-    // Find or create user
+    const safeUsername = sanitizeNickname(username);
+    if (safeUsername === null) {
+      throw new UnauthorizedException("Invalid guest username");
+    }
+    if (RESERVED_USERNAMES.includes(normalizeReservedUsername(safeUsername))) {
+      throw new UnauthorizedException("Cannot use reserved username");
+    }
+
     let user = await this.prisma.user.findUnique({
-      where: { username },
+      where: { username: safeUsername },
     });
 
     if (!user) {
-      // Prevent creation of "admin" user via guest login
-      if (username === "admin") {
-        throw new UnauthorizedException(
-          "Cannot create admin user via guest login",
+      try {
+        user = await this.prisma.user.create({
+          data: {
+            username: safeUsername,
+            guestId: nanoid(12),
+            role: Role.GUEST, // Always create new users as GUEST
+          },
+        });
+        this.logger.log(
+          `New guest user created: ${safeUsername} with role ${user.role}`,
         );
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002"
+        ) {
+          user = await this.prisma.user.findUnique({
+            where: { username: safeUsername },
+          });
+        } else {
+          throw error;
+        }
       }
-
-      user = await this.prisma.user.create({
-        data: {
-          username,
-          guestId: nanoid(12),
-          role: Role.GUEST, // Always create new users as GUEST
-        },
-      });
-      this.logger.log(
-        `New guest user created: ${username} with role ${user.role}`,
-      );
     }
-    // If user exists, preserve their existing role when logging in
+
+    if (!user || user.role !== Role.GUEST) {
+      throw new UnauthorizedException("Cannot use reserved username");
+    }
 
     return this.generateTokens(user.id, user.username, user.role);
   }

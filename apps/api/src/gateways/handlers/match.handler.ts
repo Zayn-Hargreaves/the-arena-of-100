@@ -118,6 +118,7 @@ export class MatchHandler extends BaseHandler {
 
         client.emit(ServerEvent.ANSWER_RESULT, {
           matchId: payload.matchId,
+          submissionId: payload.submissionId,
           // L4 fix: read roundNo from the state machine, not from the
           // client payload. The previous `?? payload.roundNo` fallback
           // never fired in practice (getCurrentRound is non-null when
@@ -144,11 +145,16 @@ export class MatchHandler extends BaseHandler {
         );
       },
       (error) => {
-        const code = this.getErrorCode(error);
-        let msg =
+        const errorCodeValues = Object.values(ErrorCode);
+        const rawCode =
           error instanceof RoomError
-            ? ERROR_MESSAGES[error.code]
-            : this.getErrorMessage(error);
+            ? error.code
+            : error instanceof Error &&
+                errorCodeValues.includes(error.message as ErrorCode)
+              ? (error.message as ErrorCode)
+              : null;
+        const code = rawCode ?? this.getErrorCode(error);
+        let msg = ERROR_MESSAGES[code] ?? this.getErrorMessage(error);
         if (code === ErrorCode.INTERNAL_ERROR) {
           this.logger.error("Error submitting answer:", error);
           msg = "Internal server error";
