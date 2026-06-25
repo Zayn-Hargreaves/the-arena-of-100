@@ -73,12 +73,10 @@ Mục tiêu sản phẩm:
 
 ## Near-Term Product Queue
 
-1. `Room.maxPlayers` payload thật ở game UI
-2. Optimistic answer rollback
-3. AFK docs + UX hardening bám semantics hiện tại
-4. Moderation MVP
-5. Admin audit panel UI (optional closeout)
-6. k6 load test 100 concurrent WS (separate PR)
+1. k6 load test 100 concurrent WS (separate PR)
+2. AFK docs + UX hardening bám semantics hiện tại
+3. Admin audit panel UI (optional closeout)
+4. Spectator transport decision chỉ sau khi có load evidence
 
 ## Deferred After MVP or After Evidence
 

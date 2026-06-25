@@ -141,9 +141,9 @@ Khi cần multi-instance:
 
 ### Optimistic UX
 
-- Hiện tại UI đã có answer lock-in cơ bản.
-- Chưa có full rollback + idempotency path.
-- Hướng đúng: lock ngay, gửi idempotency key, rollback rõ ràng nếu server reject.
+- UI có answer lock-in + correlated rollback theo `submissionId`.
+- Server-side `submitAnswer` đã replay canonical result cho duplicate retry cùng `submissionId` trong cùng round.
+- Defer tiếp: reconnect/event replay thật theo `lastSeenSeqNo`; hiện snapshot hydrate vẫn là baseline.
 
 ### Moderation
 
@@ -154,16 +154,15 @@ Khi cần multi-instance:
 ## Operational Patterns
 
 - Admin kill-switch hiện là best-effort orchestrator.
-- Admin kill-switch append-only audit event vẫn là gap.
+- Admin kill-switch audit row append + paginated audit query đã có backend baseline.
 - Reset không nên purge audit rows sau khi audit event backend được implement.
 
 ## Core Risks Still Open
 
-1. Admin kill-switch chưa ghi append-only audit event.
-2. `Room.maxPlayers` chưa expose qua realtime join/create payload.
-3. Optimistic answer rollback chưa full.
-4. Moderation mới ở mức intent, chưa thành pipeline MVP.
-5. Load characteristics 100 concurrent WS chưa có evidence đo thực nghiệm.
+1. Reconnect/event replay theo `lastSeenSeqNo` vẫn chưa thành contract thật; snapshot hydrate là baseline hiện tại.
+2. Admin audit panel UI mới là optional closeout; backend audit baseline đã có.
+3. Moderation mới ở mức MVP boundary pipeline; deeper fingerprint/shadow-ban vẫn deferred.
+4. Load characteristics 100 concurrent WS chưa có evidence đo thực nghiệm.
 
 ## Supplementary / Legacy Docs
 

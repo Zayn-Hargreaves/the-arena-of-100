@@ -107,6 +107,7 @@ export interface QuestionState {
 export interface AnswerState {
   playerId: string;
   answer: string;
+  submissionId: string;
   isCorrect: boolean;
   responseTimeMs: number;
   submittedAt: number;

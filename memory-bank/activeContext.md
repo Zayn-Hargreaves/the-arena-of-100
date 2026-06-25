@@ -17,7 +17,9 @@
 - Server-authoritative game loop is active.
 - `MatchStateMachine` is the core domain state machine and should not be split broadly without a specific high-value refactor.
 - `MatchStateMachine.tieBreak` is deterministic but still a private method, not a Strategy Pattern implementation.
-- Admin kill-switch append-only audit event is **not implemented** in code yet. No `appendAudit()`, `GET /admin/audit-events`, or `eventLog.create` implementation was found.
+- Admin kill-switch append-only audit event backend baseline is implemented (`appendAudit`, `eventLog.create`, `GET /admin/audit-events`).
+- `Room.maxPlayers` is already exposed through realtime room create/join payloads and consumed by the game UI.
+- `submitAnswer` now uses `submissionId` as a server-side idempotency key for duplicate retries in the same round.
 
 ## Current Architectural Decisions
 
@@ -30,14 +32,14 @@
 ## Immediate Priority Queue
 
 1. Resolve docs/memory-bank consolidation cleanly.
-2. Admin Kill-Switch Audit Event: append immutable audit row when admin terminates a room.
-3. `Room.maxPlayers` realtime payload exposure.
-4. Optimistic answer rollback with idempotency key.
-5. k6 load test for 100 concurrent WebSocket users.
+2. k6 load test for 100 concurrent WebSocket users.
+3. AFK docs + UX hardening.
+4. Admin audit panel UI (optional).
+5. Replay/delta contract follow-up behind `lastSeenSeqNo` if reconnect UX needs more than snapshot hydrate.
 
 ## Open Product / Engineering Gaps
 
-- Admin audit panel UI is optional until backend audit event exists.
+- Admin audit panel UI is optional because backend audit event support now exists.
 - In-match AFK policy should follow locked product semantics: missing active round deadline means elimination in that round.
 - Mass-spectator transport split is deferred until `k6` evidence exists.
 - Moderation MVP is completed; deeper fingerprint/shadow-ban is post-MVP.
