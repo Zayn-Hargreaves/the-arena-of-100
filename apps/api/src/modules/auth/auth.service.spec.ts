@@ -269,6 +269,34 @@ describe("AuthService.guestLogin", () => {
     expect(redis.set).not.toHaveBeenCalled();
   });
 
+  it("rejects a unique race when the raced user is missing", async () => {
+    const { service, prisma, redis } = buildServiceWithPrisma();
+    const raceError = Object.assign(
+      Object.create(Prisma.PrismaClientKnownRequestError.prototype),
+      { code: "P2002" },
+    );
+    vi.mocked(prisma.user.findUnique)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+    vi.mocked(prisma.user.create).mockRejectedValueOnce(raceError as never);
+
+    await expect(service.guestLogin("regular_user")).rejects.toThrow(
+      UnauthorizedException,
+    );
+    expect(prisma.user.findUnique).toHaveBeenCalledTimes(2);
+    expect(redis.set).not.toHaveBeenCalled();
+  });
+
+  it("rethrows non-unique create errors", async () => {
+    const { service, prisma, redis } = buildServiceWithPrisma();
+    const error = new Error("database unavailable");
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
+    vi.mocked(prisma.user.create).mockRejectedValueOnce(error as never);
+
+    await expect(service.guestLogin("regular_user")).rejects.toThrow(error);
+    expect(redis.set).not.toHaveBeenCalled();
+  });
+
   it("rejects reserved usernames before user lookup", async () => {
     const inputs = [
       "admin",
@@ -277,6 +305,7 @@ describe("AuthService.guestLogin", () => {
       "a*dmin",
       "ａｄｍｉｎ",
       "ＡＤＭＩＮ",
+      "ádmin",
     ];
 
     for (const username of inputs) {

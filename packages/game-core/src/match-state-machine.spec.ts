@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { MatchStateMachine } from "./match-state-machine";
-import { MatchStatus, PlayerStatus } from "@arena/shared";
+import { ErrorCode, MatchStatus, PlayerStatus } from "@arena/shared";
 
 const makePlayers = () => [
   {
@@ -844,7 +844,9 @@ describe("MatchStateMachine guard branches", () => {
     const machine = new MatchStateMachine("m1", "r1", makePlayers());
     machine.transition(MatchStatus.COUNTDOWN);
     machine.transition(MatchStatus.ROUND_ACTIVE);
-    expect(() => machine.submitAnswer("p1", "A", Date.now())).toThrow();
+    expect(() => machine.submitAnswer("p1", "A", Date.now())).toThrow(
+      ErrorCode.ROUND_NOT_ACTIVE,
+    );
   });
 
   it("submitAnswer throws on duplicate answer", () => {
@@ -860,7 +862,7 @@ describe("MatchStateMachine guard branches", () => {
     machine.submitAnswer("p1", "A", round.startedAt + 100);
     expect(() =>
       machine.submitAnswer("p1", "B", round.startedAt + 200),
-    ).toThrow();
+    ).toThrow(ErrorCode.ALREADY_ANSWERED);
   });
 
   it("submitAnswer throws when past deadline", () => {
@@ -873,9 +875,9 @@ describe("MatchStateMachine guard branches", () => {
       options: ["A", "B"],
       correctAnswer: "A",
     });
-    expect(() =>
-      machine.submitAnswer("p1", "A", round.endsAt + 1000),
-    ).toThrow();
+    expect(() => machine.submitAnswer("p1", "A", round.endsAt + 1000)).toThrow(
+      ErrorCode.ANSWER_SUBMISSION_CLOSED,
+    );
   });
 
   it("submitAnswer throws for unknown player", () => {
@@ -890,7 +892,7 @@ describe("MatchStateMachine guard branches", () => {
     });
     expect(() =>
       machine.submitAnswer("unknown", "A", round.startedAt + 100),
-    ).toThrow();
+    ).toThrow(ErrorCode.PLAYER_NOT_IN_ROOM);
   });
 
   it("evaluateRound throws when no active round", () => {

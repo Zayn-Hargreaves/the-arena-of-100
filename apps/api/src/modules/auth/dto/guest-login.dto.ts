@@ -26,7 +26,7 @@ export class GuestLoginDto implements GuestLoginInput {
     example: "guest_player",
     description: "The unique guest username chosen by the user",
     minLength: 3,
-    maxLength: 20,
+    maxLength: 256,
   })
   username!: string;
 }

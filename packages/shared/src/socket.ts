@@ -97,6 +97,7 @@ export type {
 export interface ErrorPayload {
   code: string;
   message: string;
+  submissionId?: string;
 }
 
 export interface SnapshotPayload {

@@ -369,6 +369,38 @@ describe("GameGateway", () => {
         expect(result.success).toBe(false);
       });
 
+      it("SUBMIT_ANSWER schema rejects missing submissionId", () => {
+        const result = SubmitAnswerPayloadSchema.safeParse({
+          matchId: "m1",
+          roundNo: 1,
+          answer: "A",
+          clientTimestamp: Date.now(),
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it("SUBMIT_ANSWER schema rejects oversized submissionId", () => {
+        const result = SubmitAnswerPayloadSchema.safeParse({
+          matchId: "m1",
+          roundNo: 1,
+          answer: "A",
+          submissionId: "x".repeat(65),
+          clientTimestamp: Date.now(),
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it("SUBMIT_ANSWER schema accepts submissionId at max length", () => {
+        const result = SubmitAnswerPayloadSchema.safeParse({
+          matchId: "m1",
+          roundNo: 1,
+          answer: "A",
+          submissionId: "x".repeat(64),
+          clientTimestamp: Date.now(),
+        });
+        expect(result.success).toBe(true);
+      });
+
       // L3 fix: clientTimestamp used to allow ~1 year of slack on either
       // side of `Date.now()`, which accepted clearly corrupt payloads
       // (e.g. clock off by a year) while still catching the obvious

@@ -145,21 +145,18 @@ export class MatchHandler extends BaseHandler {
         );
       },
       (error) => {
-        const errorCodeValues = Object.values(ErrorCode);
-        const rawCode =
-          error instanceof RoomError
-            ? error.code
-            : error instanceof Error &&
-                errorCodeValues.includes(error.message as ErrorCode)
-              ? (error.message as ErrorCode)
-              : null;
+        const rawCode = error instanceof RoomError ? error.code : null;
         const code = rawCode ?? this.getErrorCode(error);
         let msg = ERROR_MESSAGES[code] ?? this.getErrorMessage(error);
         if (code === ErrorCode.INTERNAL_ERROR) {
           this.logger.error("Error submitting answer:", error);
           msg = "Internal server error";
         }
-        this.emitError(client, code, msg);
+        client.emit(ServerEvent.ERROR, {
+          code,
+          message: msg,
+          submissionId: payload.submissionId,
+        });
       },
     );
   }

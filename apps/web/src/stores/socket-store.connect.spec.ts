@@ -138,6 +138,34 @@ describe("socket-store connect heartbeat ownership", () => {
     }
   });
 
+  it("clears pending answer on current-socket disconnect", async () => {
+    waitForSocketAckMock.mockResolvedValueOnce(undefined);
+    let socket: ReturnType<typeof useSocketStore.getState>["socket"] = null;
+
+    try {
+      await useSocketStore.getState().connect();
+      socket = useSocketStore.getState().socket;
+      useSocketStore.setState({
+        pendingAnswer: {
+          matchId: "m1",
+          roundNo: 1,
+          answer: "A",
+          submissionId: "s1",
+        },
+      });
+
+      socket?.listeners("disconnect").forEach((listener) => {
+        listener("transport close");
+      });
+
+      expect(useSocketStore.getState().pendingAnswer).toBeNull();
+      expect(useSocketStore.getState().isConnected).toBe(false);
+      expect(useSocketStore.getState().isAuthenticated).toBe(false);
+    } finally {
+      socket?.disconnect();
+    }
+  });
+
   it("keeps pending answer for uncorrelated current-socket errors", async () => {
     waitForSocketAckMock.mockResolvedValueOnce(undefined);
     let socket: ReturnType<typeof useSocketStore.getState>["socket"] = null;

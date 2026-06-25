@@ -39,7 +39,8 @@ export function baseNormalize(value: unknown): string {
   }
   const str = String(value);
   return str
-    .normalize("NFKC")
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
     .replace(/[\s_\-*]/g, "")
     .toLowerCase();
 }

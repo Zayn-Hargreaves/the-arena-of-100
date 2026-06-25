@@ -232,6 +232,7 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.SPECTATOR_CANNOT_ANSWER,
         message: ERROR_MESSAGES[ErrorCode.SPECTATOR_CANNOT_ANSWER],
+        submissionId: "s1",
       });
     });
 
@@ -280,6 +281,7 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.PLAYER_DISCONNECTED,
         message: ERROR_MESSAGES[ErrorCode.PLAYER_DISCONNECTED],
+        submissionId: "s1",
       });
     });
 
@@ -297,6 +299,7 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.MATCH_NOT_FOUND,
         message: ERROR_MESSAGES[ErrorCode.MATCH_NOT_FOUND],
+        submissionId: "s1",
       });
     });
 
@@ -315,7 +318,7 @@ describe("MatchHandler", () => {
       );
     });
 
-    it("maps ErrorCode string values thrown as Error messages", async () => {
+    it("does not map Error.message strings as ErrorCode values", async () => {
       const mockMachine = {
         getState: vi.fn().mockReturnValue({
           roomId: "r1",
@@ -338,8 +341,9 @@ describe("MatchHandler", () => {
       });
 
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
-        code: ErrorCode.MATCH_NOT_FOUND,
-        message: ERROR_MESSAGES[ErrorCode.MATCH_NOT_FOUND],
+        code: ErrorCode.INTERNAL_ERROR,
+        message: "Internal server error",
+        submissionId: "s1",
       });
     });
 
@@ -350,7 +354,7 @@ describe("MatchHandler", () => {
           players: new Map([["u1", { id: "u1" }]]),
         }),
         submitAnswer: vi.fn().mockImplementation(() => {
-          throw new Error(ErrorCode.ALREADY_ANSWERED);
+          throw new RoomError(ErrorCode.ALREADY_ANSWERED);
         }),
       };
       vi.mocked(matchService.getStateMachine).mockResolvedValue(
@@ -370,6 +374,7 @@ describe("MatchHandler", () => {
         expect.objectContaining({
           code: ErrorCode.ALREADY_ANSWERED,
           message: ERROR_MESSAGES[ErrorCode.ALREADY_ANSWERED],
+          submissionId: "s1",
         }),
       );
     });
@@ -399,6 +404,7 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
         message: "Internal server error",
+        submissionId: "s1",
       });
     });
 

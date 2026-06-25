@@ -552,7 +552,11 @@ export default function GamePage({ params }: GamePageProps) {
                       content={option}
                       variant={getTileVariant(charCode)}
                       onClick={() => handleSelectAnswer(charCode)}
-                      disabled={roundCompleted}
+                      disabled={
+                        roundCompleted ||
+                        activePendingAnswer !== null ||
+                        activeAnswerResult !== null
+                      }
                     />
                   );
                 })}

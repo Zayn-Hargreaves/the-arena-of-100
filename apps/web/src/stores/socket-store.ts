@@ -158,6 +158,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       set({
         isConnected: false,
         isAuthenticated: false,
+        pendingAnswer: null,
         heartbeatInterval: null,
       });
       console.log("🔌 Disconnected from game server");

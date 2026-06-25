@@ -1,4 +1,8 @@
 import { guestLoginSchema, GuestLoginDto } from "./guest-login.dto";
+import {
+  sanitizeAdminMessage,
+  baseNormalize,
+} from "../../../common/moderation";
 import { describe, it, expect } from "vitest";
 import { ZodError } from "zod";
 
@@ -91,6 +95,20 @@ describe("GuestLoginDto & Schema", () => {
       expect(() => guestLoginSchema.parse({ username: "fúckshit" })).toThrow(
         ZodError,
       );
+    });
+  });
+
+  describe("moderation helpers", () => {
+    it("normalizes nullish values to an empty string", () => {
+      expect(baseNormalize(null)).toBe("");
+      expect(baseNormalize(undefined)).toBe("");
+    });
+
+    it("sanitizes admin messages", () => {
+      expect(sanitizeAdminMessage(undefined)).toBeUndefined();
+      expect(sanitizeAdminMessage("   ")).toBeUndefined();
+      expect(sanitizeAdminMessage("bad shit")).toBe("Room terminated by admin");
+      expect(sanitizeAdminMessage("a".repeat(201))).toHaveLength(200);
     });
   });
 
