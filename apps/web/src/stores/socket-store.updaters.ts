@@ -286,10 +286,17 @@ export function applyRoundStartedState(
   const activeMatchId = state.room?.currentMatchId ?? state.match?.id ?? null;
   if (activeMatchId === null || activeMatchId !== data.matchId) return {};
 
+  // Treat `state.match` as current only when its id matches the event.
+  // During the transition window the room can already point at the new
+  // match while `state.match` still reflects the previous one; in that
+  // case we must not spread the stale match object.
+  const currentMatch = state.match?.id === data.matchId ? state.match : null;
+  const basePlayers = currentMatch?.players ?? state.room?.players ?? [];
+
   return {
-    match: state.match
+    match: currentMatch
       ? {
-          ...state.match,
+          ...currentMatch,
           id: data.matchId,
           status: MatchStatus.ROUND_ACTIVE,
           currentRoundNo: data.roundNo,
@@ -300,7 +307,7 @@ export function applyRoundStartedState(
           id: data.matchId,
           status: MatchStatus.ROUND_ACTIVE,
           currentRoundNo: data.roundNo,
-          players: state.room?.players ?? [],
+          players: basePlayers,
           currentQuestion: data.question,
           roundEndTime: data.endsAt,
         },
@@ -321,23 +328,35 @@ export function applyRoundEndedState(
   const activeMatchId = state.room?.currentMatchId ?? state.match?.id ?? null;
   if (activeMatchId === null || activeMatchId !== data.matchId) return {};
 
+  // Treat `state.match` as the current match ONLY when its id matches
+  // the event; otherwise `state.match` is from a previous match and
+  // must not be spread (which would carry stale roster/fields over).
+  const currentMatch = state.match?.id === data.matchId ? state.match : null;
+  const basePlayers = currentMatch?.players ?? state.room?.players ?? [];
   const eliminatedSet = new Set(data.eliminatedPlayerIds);
-  const updatedPlayers = state.match?.players.map((player) =>
+  const updatedPlayers = basePlayers.map((player) =>
     eliminatedSet.has(player.id)
       ? { ...player, status: PlayerStatus.ELIMINATED }
       : player,
   );
 
   return {
-    match: state.match
+    match: currentMatch
       ? {
-          ...state.match,
+          ...currentMatch,
           id: data.matchId,
-          players: updatedPlayers ?? state.match.players,
+          players: updatedPlayers,
           status: MatchStatus.ROUND_RESULT,
           roundEndTime: null,
         }
-      : null,
+      : {
+          id: data.matchId,
+          status: MatchStatus.ROUND_RESULT,
+          currentRoundNo: data.roundNo,
+          players: updatedPlayers,
+          currentQuestion: null,
+          roundEndTime: null,
+        },
     lastAnswerResult: {
       matchId: data.matchId,
       roundNo: data.roundNo,
@@ -384,6 +403,13 @@ export function applyMatchFinishedState(
   const activeMatchId = state.room?.currentMatchId ?? state.match?.id ?? null;
   if (activeMatchId === null || activeMatchId !== data.matchId) return {};
 
+  // Treat `state.match` as the current match ONLY when its id matches
+  // the event; otherwise `state.match` is from a previous match and
+  // must not be spread. The returned `match.id` must always equal
+  // `data.matchId` so the finished state cannot carry forward a stale
+  // roster/id from an older match.
+  const currentMatch = state.match?.id === data.matchId ? state.match : null;
+
   return {
     room: state.room
       ? {
@@ -392,12 +418,20 @@ export function applyMatchFinishedState(
           countdownEndsAt: null,
         }
       : null,
-    match: state.match
+    match: currentMatch
       ? {
-          ...state.match,
+          ...currentMatch,
+          id: data.matchId,
           status: MatchStatus.FINISHED,
         }
-      : state.match,
+      : {
+          id: data.matchId,
+          status: MatchStatus.FINISHED,
+          currentRoundNo: 0,
+          players: state.room?.players ?? [],
+          currentQuestion: null,
+          roundEndTime: null,
+        },
   };
 }
 

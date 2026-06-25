@@ -15,6 +15,7 @@ describe("RoomService", () => {
         findUnique: vi.fn(),
         findMany: vi.fn(),
         update: vi.fn(),
+        updateMany: vi.fn(),
         delete: vi.fn(),
       },
       roomPlayer: {
@@ -553,6 +554,49 @@ describe("RoomService", () => {
         }),
       );
       expect(redis.setJSON).toHaveBeenCalled();
+      expect(result).toEqual(room);
+    });
+
+    it("atomically updates only when the expected room state still matches", async () => {
+      const room = {
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.WAITING,
+        hostId: "u1",
+        currentMatchId: null,
+        players: [{ userId: "u1" }],
+      };
+      vi.mocked(prisma.room.updateMany).mockResolvedValue({ count: 1 } as any);
+      vi.mocked(prisma.room.findUnique).mockResolvedValue(room as any);
+
+      const result = await service.updateRoomStatus(
+        "r1",
+        RoomStatus.WAITING,
+        null,
+        {
+          expectedStatus: RoomStatus.COUNTDOWN,
+          expectedCurrentMatchId: null,
+        },
+      );
+
+      expect(prisma.room.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            id: "r1",
+            status: RoomStatus.COUNTDOWN,
+            currentMatchId: null,
+          },
+          data: { status: RoomStatus.WAITING, currentMatchId: null },
+        }),
+      );
+      expect(redis.setJSON).toHaveBeenCalledWith(
+        "room:r1",
+        expect.objectContaining({
+          status: RoomStatus.WAITING,
+          currentMatchId: null,
+        }),
+        expect.any(Number),
+      );
       expect(result).toEqual(room);
     });
 

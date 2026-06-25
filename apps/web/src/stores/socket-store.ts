@@ -261,6 +261,15 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       (data: PlayerEliminatedPayload) => {
         if (get().socket !== newSocket) return;
         const currentState = get();
+        // Guard: ignore stale PLAYER_ELIMINATED events from a previous
+        // match after reconnect or room switch. The active match id is
+        // room.currentMatchId (authoritative after MATCH_STARTING)
+        // falling back to match.id; when neither matches the event's
+        // matchId, the event is stale and must not mark the local user
+        // as eliminated or mutate the current match roster.
+        const activeMatchId =
+          currentState.room?.currentMatchId ?? currentState.match?.id ?? null;
+        if (activeMatchId === null || activeMatchId !== data.matchId) return;
         if (data.playerId === currentState.userId) {
           set({ isEliminated: true });
         }

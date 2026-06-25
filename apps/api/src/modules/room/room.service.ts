@@ -92,6 +92,29 @@ export class RoomService {
     }
   }
 
+  private async syncCachedRoomState(room: {
+    id: string;
+    code: string;
+    status: string;
+    hostId: string;
+    currentMatchId: string | null;
+    timeLimit: number;
+    category: string;
+    players: unknown[];
+  }) {
+    const counterKey = `room:${room.id}:playerCount`;
+    const existingCounter = await this.redis.get(counterKey);
+    const playerCount =
+      existingCounter !== null && Number.isFinite(Number(existingCounter))
+        ? Number(existingCounter)
+        : room.players.length;
+
+    await this.setCachedRoomSnapshot(room, playerCount);
+    if (existingCounter === null) {
+      await this.redis.setIfAbsent(counterKey, String(playerCount), 3600);
+    }
+  }
+
   // Create room
   async createRoom(
     hostId: string,
@@ -435,7 +458,44 @@ export class RoomService {
     roomId: string,
     status: RoomStatus,
     currentMatchId?: string | null,
+    options?: {
+      expectedStatus?: RoomStatus;
+      expectedCurrentMatchId?: string | null;
+    },
   ) {
+    if (options) {
+      const room = await this.prisma.$transaction(async (tx) => {
+        const updateResult = await tx.room.updateMany({
+          where: {
+            id: roomId,
+            ...(options.expectedStatus !== undefined
+              ? { status: options.expectedStatus }
+              : {}),
+            ...(options.expectedCurrentMatchId !== undefined
+              ? { currentMatchId: options.expectedCurrentMatchId }
+              : {}),
+          },
+          data: {
+            status,
+            ...(currentMatchId !== undefined ? { currentMatchId } : {}),
+          },
+        });
+
+        if (updateResult.count === 0) {
+          return null;
+        }
+
+        return tx.room.findUnique({
+          where: { id: roomId },
+          include: { players: true },
+        });
+      });
+
+      if (!room) return null;
+      await this.syncCachedRoomState(room);
+      return room;
+    }
+
     const room = await this.prisma.room.update({
       where: { id: roomId },
       data: {
@@ -445,29 +505,7 @@ export class RoomService {
       include: { players: true },
     });
 
-    // Preserve the live server-authoritative playerCount. The atomic
-    // counter (incremented/decremented by joinRoom/leaveRoom/removePlayer)
-    // is the source of truth; `room.players.length` is a snapshot from
-    // BEFORE the awaited DB update and is stale by the time we write
-    // back. A concurrent join/leave between the DB read and the cache
-    // write would otherwise be overwritten by an older count.
-    const counterKey = `room:${room.id}:playerCount`;
-    const existingCounter = await this.redis.get(counterKey);
-    const playerCount =
-      existingCounter !== null && Number.isFinite(Number(existingCounter))
-        ? Number(existingCounter)
-        : room.players.length;
-
-    await this.setCachedRoomSnapshot(room, playerCount);
-    // Only seed the counter when it was missing — never overwrite a
-    // fresher value with the stale `room.players.length` snapshot.
-    // Use atomic SET NX (via setIfAbsent) to close the TOCTOU window
-    // between the `get` above and this write: a concurrent
-    // joinRoom/incr that wins the race is preserved.
-    if (existingCounter === null) {
-      await this.redis.setIfAbsent(counterKey, String(playerCount), 3600);
-    }
-
+    await this.syncCachedRoomState(room);
     return room;
   }
 

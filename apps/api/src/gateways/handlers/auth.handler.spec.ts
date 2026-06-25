@@ -218,7 +218,7 @@ describe("AuthHandler", () => {
       // First auth as u1 — client is joined to room:r1 so the
       // disconnect cleanup will leave it. Empty rooms mock for the
       // first auth's syncReconnection.
-      client.rooms = new Set<string>(["socket-1", "room:r1"]);
+      (client as any).rooms = new Set<string>(["socket-1", "room:r1"]);
       vi.mocked(roomService.getUserActiveRooms).mockResolvedValueOnce([]);
       await handler.handleAuthenticate(client, { token: "t1" });
       expect(client.data.userId).toBe("u1");

@@ -3721,7 +3721,7 @@ describe("GameLoopService", () => {
         vi.useRealTimers();
       });
 
-      it("aborts recovery when max attempts are exceeded, logs alert, clears countdown, and registers in dead-letter", () => {
+      it("aborts recovery when max attempts are exceeded, logs alert, clears countdown, and registers in dead-letter", async () => {
         vi.useFakeTimers();
         const entry = {
           roomId: "room-retry-max",
@@ -3738,8 +3738,32 @@ describe("GameLoopService", () => {
           .mockResolvedValue(true);
         const setTimeoutSpy = vi.spyOn(global, "setTimeout");
         const saddSpy = vi.spyOn((service as any).redis.getClient(), "sadd");
+        const roomEmitSpy = vi.fn();
+        (mockServer.to as any).mockReturnValue({ emit: roomEmitSpy });
+        service.setServer(mockServer as unknown as Server);
 
         (service as any).scheduleRecoveryRetry(entry);
+
+        await vi.waitFor(() => {
+          expect(roomService.updateRoomStatus).toHaveBeenCalledWith(
+            "room-retry-max",
+            RoomStatus.WAITING,
+            null,
+            {
+              expectedStatus: RoomStatus.COUNTDOWN,
+              expectedCurrentMatchId: null,
+            },
+          );
+          expect(clearCountdownSpy).toHaveBeenCalledWith("room-retry-max");
+          expect(roomEmitSpy).toHaveBeenCalledWith(
+            ServerEvent.ROOM_STATUS_UPDATED,
+            expect.objectContaining({
+              roomId: "room-retry-max",
+              roomStatus: RoomStatus.WAITING,
+              currentMatchId: null,
+            }),
+          );
+        });
 
         expect(errorSpy).toHaveBeenCalledWith(
           expect.stringContaining(
@@ -3754,14 +3778,6 @@ describe("GameLoopService", () => {
         expect(saddSpy).toHaveBeenCalledWith(
           "room:recovery:dead-letter",
           "room-retry-max",
-        );
-        expect(clearCountdownSpy).toHaveBeenCalledWith("room-retry-max");
-        // The room must be rolled back to WAITING so it isn't stuck
-        // in COUNTDOWN with no live timer and no recovery path.
-        // (The dead-letter record is retained for operator inspection.)
-        expect(roomService.updateRoomStatus).toHaveBeenCalledWith(
-          "room-retry-max",
-          RoomStatus.WAITING,
         );
         expect(setTimeoutSpy).not.toHaveBeenCalled();
 

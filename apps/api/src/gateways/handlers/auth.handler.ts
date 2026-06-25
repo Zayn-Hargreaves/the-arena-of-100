@@ -65,6 +65,26 @@ export class AuthHandler extends BaseHandler {
         // (pointing at this client.id), violating the single-session
         // invariant.
         const previousUserId = client.data.userId as string | undefined;
+
+        // Record the new connection BEFORE kicking the old one so that
+        // oldSocket.disconnect(true) and its async handleDisconnect path
+        // see the new socket as the active session (generation mismatch)
+        // and treat the stale socket as non-active. This prevents the
+        // old socket's disconnect from clearing the new session or
+        // triggering an unintended player disconnect.
+        //
+        // The same identity update is also done BEFORE awaiting
+        // handleTrackedUserSwitchDisconnect below: while that cleanup
+        // is in flight, any concurrent handler reading
+        // client.data.userId / client.data.connectionGen must observe
+        // the new user, not the stale previousUserId.
+        this.connectedPlayers.set(decoded.userId, client.id);
+        const newGen = (this.connectionGeneration.get(decoded.userId) ?? 0) + 1;
+        this.connectionGeneration.set(decoded.userId, newGen);
+        client.data.connectionGen = newGen;
+        client.data.userId = decoded.userId;
+        client.data.username = decoded.username;
+
         if (
           previousUserId &&
           previousUserId !== decoded.userId &&
@@ -76,19 +96,6 @@ export class AuthHandler extends BaseHandler {
             client,
           );
         }
-
-        // Record the new connection BEFORE kicking the old one so that
-        // oldSocket.disconnect(true) and its async handleDisconnect path
-        // see the new socket as the active session (generation mismatch)
-        // and treat the stale socket as non-active. This prevents the
-        // old socket's disconnect from clearing the new session or
-        // triggering an unintended player disconnect.
-        this.connectedPlayers.set(decoded.userId, client.id);
-        const newGen = (this.connectionGeneration.get(decoded.userId) ?? 0) + 1;
-        this.connectionGeneration.set(decoded.userId, newGen);
-        client.data.connectionGen = newGen;
-        client.data.userId = decoded.userId;
-        client.data.username = decoded.username;
 
         // Kick existing connection of this user if exists (O(1) lookup)
         if (oldSocketId && oldSocketId !== client.id) {

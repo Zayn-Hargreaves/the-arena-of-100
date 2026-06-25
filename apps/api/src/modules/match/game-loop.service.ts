@@ -471,8 +471,37 @@ export class GameLoopService implements OnModuleInit {
       // path until a manual job acts on the dead-letter entry. The
       // dead-letter record itself is retained for 7 days so an
       // operator can inspect / replay the failure.
+      //
+      // Guard against rolling back a room that has already
+      // transitioned past the unstarted countdown while we were
+      // retrying (e.g. an operator manually launched the match, or
+      // a different recovery path won the race). Only reset to
+      // WAITING when the room is still an unstarted countdown
+      // (status=COUNTDOWN and no currentMatchId); otherwise skip
+      // the status change and only clear the stale persisted
+      // countdown.
       void this.roomService
-        .updateRoomStatus(entry.roomId, RoomStatus.WAITING)
+        .updateRoomStatus(entry.roomId, RoomStatus.WAITING, null, {
+          expectedStatus: RoomStatus.COUNTDOWN,
+          expectedCurrentMatchId: null,
+        })
+        .then((room) => {
+          if (!room) {
+            this.logger.warn(
+              `Skipping WAITING rollback for room ${entry.roomId}: room is already active or the countdown was cleared; only clearing persisted countdown`,
+            );
+            return;
+          }
+
+          if (this.server) {
+            emitRoomStatusUpdated(this.server, {
+              roomId: entry.roomId,
+              roomStatus: RoomStatus.WAITING,
+              currentMatchId: null,
+              updatedAt: Date.now(),
+            });
+          }
+        })
         .catch((err) => {
           this.logger.error(
             `Failed to roll back Room ${entry.roomId} status to WAITING after recovery abort:`,
