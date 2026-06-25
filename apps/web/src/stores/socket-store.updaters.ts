@@ -484,8 +484,7 @@ export function applyAnswerResultState(
   const isPendingAnswer =
     state.pendingAnswer?.matchId === data.matchId &&
     state.pendingAnswer.roundNo === data.roundNo &&
-    (data.submissionId === undefined ||
-      state.pendingAnswer.submissionId === data.submissionId);
+    state.pendingAnswer.submissionId === data.submissionId;
   return {
     lastAnswerResult: data,
     pendingAnswer: isPendingAnswer ? null : state.pendingAnswer,

@@ -368,30 +368,6 @@ describe("applyAnswerResultState", () => {
     expect(result.pendingAnswer).toBe(pendingAnswer);
   });
 
-  it("clears matching pending answer when answer result omits submissionId", () => {
-    const state = makeState({
-      pendingAnswer: {
-        matchId: "m1",
-        roundNo: 2,
-        answer: "A",
-        submissionId: "s1",
-      },
-    });
-
-    const result = applyAnswerResultState(state, {
-      matchId: "m1",
-      roundNo: 2,
-      isCorrect: true,
-      responseTimeMs: 123,
-    });
-
-    expect(result.lastAnswerResult).toMatchObject({
-      matchId: "m1",
-      roundNo: 2,
-    });
-    expect(result.pendingAnswer).toBeNull();
-  });
-
   it("stores answer result when pending answer is already clear", () => {
     const result = applyAnswerResultState(makeState(), {
       matchId: "m1",

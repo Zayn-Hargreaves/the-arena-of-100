@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Socket, Server } from "socket.io";
 import {
+  ClientEvent,
   ServerEvent,
   ErrorCode,
   PlayerStatus,
@@ -138,11 +139,15 @@ export class MatchHandler extends BaseHandler {
 
         // Check for early termination - all players answered
         // Pass the server instance from the client's namespace
-        await this.gameLoopService.checkEarlyTermination(
-          payload.matchId,
-          roomId,
-          client.nsp.server,
-        );
+        try {
+          await this.gameLoopService.checkEarlyTermination(
+            payload.matchId,
+            roomId,
+            client.nsp.server,
+          );
+        } catch (error) {
+          this.logger.error("Error checking early termination:", error);
+        }
       },
       (error) => {
         const rawCode = error instanceof RoomError ? error.code : null;
@@ -155,6 +160,7 @@ export class MatchHandler extends BaseHandler {
         client.emit(ServerEvent.ERROR, {
           code,
           message: msg,
+          failedEvent: ClientEvent.SUBMIT_ANSWER,
           submissionId: payload.submissionId,
         });
       },

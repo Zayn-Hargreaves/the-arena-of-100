@@ -132,7 +132,7 @@ export interface EventBatchPayload {
 export interface AnswerResultPayload {
   matchId: string;
   roundNo: number;
-  submissionId?: string;
+  submissionId: string;
   isCorrect: boolean;
   responseTimeMs: number;
   correctAnswer?: string;

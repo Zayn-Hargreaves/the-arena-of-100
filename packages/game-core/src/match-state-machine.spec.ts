@@ -1,6 +1,17 @@
 import { describe, it, expect } from "vitest";
 import { MatchStateMachine } from "./match-state-machine";
-import { ErrorCode, MatchStatus, PlayerStatus } from "@arena/shared";
+import { ErrorCode, MatchStatus, PlayerStatus, RoomError } from "@arena/shared";
+
+function expectRoomError(operation: () => unknown, code: ErrorCode) {
+  try {
+    operation();
+  } catch (error) {
+    expect(error).toBeInstanceOf(RoomError);
+    expect((error as RoomError).code).toBe(code);
+    return;
+  }
+  throw new Error(`Expected RoomError ${code}`);
+}
 
 const makePlayers = () => [
   {
@@ -844,7 +855,8 @@ describe("MatchStateMachine guard branches", () => {
     const machine = new MatchStateMachine("m1", "r1", makePlayers());
     machine.transition(MatchStatus.COUNTDOWN);
     machine.transition(MatchStatus.ROUND_ACTIVE);
-    expect(() => machine.submitAnswer("p1", "A", Date.now())).toThrow(
+    expectRoomError(
+      () => machine.submitAnswer("p1", "A", Date.now()),
       ErrorCode.ROUND_NOT_ACTIVE,
     );
   });
@@ -860,9 +872,10 @@ describe("MatchStateMachine guard branches", () => {
       correctAnswer: "A",
     });
     machine.submitAnswer("p1", "A", round.startedAt + 100);
-    expect(() =>
-      machine.submitAnswer("p1", "B", round.startedAt + 200),
-    ).toThrow(ErrorCode.ALREADY_ANSWERED);
+    expectRoomError(
+      () => machine.submitAnswer("p1", "B", round.startedAt + 200),
+      ErrorCode.ALREADY_ANSWERED,
+    );
   });
 
   it("submitAnswer throws when past deadline", () => {
@@ -875,7 +888,8 @@ describe("MatchStateMachine guard branches", () => {
       options: ["A", "B"],
       correctAnswer: "A",
     });
-    expect(() => machine.submitAnswer("p1", "A", round.endsAt + 1000)).toThrow(
+    expectRoomError(
+      () => machine.submitAnswer("p1", "A", round.endsAt + 1000),
       ErrorCode.ANSWER_SUBMISSION_CLOSED,
     );
   });
@@ -890,9 +904,10 @@ describe("MatchStateMachine guard branches", () => {
       options: ["A", "B"],
       correctAnswer: "A",
     });
-    expect(() =>
-      machine.submitAnswer("unknown", "A", round.startedAt + 100),
-    ).toThrow(ErrorCode.PLAYER_NOT_IN_ROOM);
+    expectRoomError(
+      () => machine.submitAnswer("unknown", "A", round.startedAt + 100),
+      ErrorCode.PLAYER_NOT_IN_ROOM,
+    );
   });
 
   it("evaluateRound throws when no active round", () => {

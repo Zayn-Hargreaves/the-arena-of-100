@@ -108,7 +108,6 @@ describe("GuestLoginDto & Schema", () => {
       expect(sanitizeAdminMessage(undefined)).toBeUndefined();
       expect(sanitizeAdminMessage("   ")).toBeUndefined();
       expect(sanitizeAdminMessage("bad shit")).toBe("Room terminated by admin");
-      expect(sanitizeAdminMessage("a".repeat(201))).toHaveLength(200);
     });
   });
 

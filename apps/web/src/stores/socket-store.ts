@@ -327,7 +327,11 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       if (get().socket !== newSocket) return;
       const { pendingAnswer } = get();
       const { submissionId } = data;
-      if (pendingAnswer && submissionId === pendingAnswer.submissionId) {
+      if (
+        pendingAnswer &&
+        data.failedEvent === ClientEvent.SUBMIT_ANSWER &&
+        submissionId === pendingAnswer.submissionId
+      ) {
         set({ pendingAnswer: null });
       }
       // If unauthorized or invalid token, clear local auth state and

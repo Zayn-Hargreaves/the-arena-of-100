@@ -222,7 +222,16 @@ describe("socket-store connect heartbeat ownership", () => {
 
       expect(useSocketStore.getState().pendingAnswer?.submissionId).toBe("s1");
 
-      // Assert pendingAnswer clears when submissionId correlates correctly
+      socket?.listeners(ServerEvent.ERROR).forEach((listener) => {
+        listener({
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "submit failed",
+          submissionId: "s1",
+        });
+      });
+
+      expect(useSocketStore.getState().pendingAnswer?.submissionId).toBe("s1");
+
       socket?.listeners(ServerEvent.ERROR).forEach((listener) => {
         listener({
           code: ErrorCode.INTERNAL_ERROR,
@@ -270,11 +279,11 @@ describe("socket-store connect heartbeat ownership", () => {
         "current-submission-id",
       );
 
-      // 2. Matching submissionId
       socket?.listeners(ServerEvent.ERROR).forEach((listener) => {
         listener({
           code: ErrorCode.INTERNAL_ERROR,
           message: "matching submission error",
+          failedEvent: ClientEvent.SUBMIT_ANSWER,
           submissionId: "current-submission-id",
         });
       });

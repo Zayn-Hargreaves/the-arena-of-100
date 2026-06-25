@@ -333,7 +333,6 @@ export default function GamePage({ params }: GamePageProps) {
     // be rejected by the server, but we hide the interactive control
     // entirely so the spectator UI stays read-only.
     if (isSpectator) return;
-    setSelectedAnswer(option);
 
     // Submit answer to socket-store.
     // F6 fix: send the actual `currentRoundNo` (which may be 0
@@ -349,7 +348,8 @@ export default function GamePage({ params }: GamePageProps) {
     // circuit when the round is not yet known (the next
     // ROUND_STARTED broadcast will re-enable submission).
     if (match?.id && match.currentRoundNo > 0) {
-      submitAnswer(match.id, match.currentRoundNo, option);
+      const submissionId = submitAnswer(match.id, match.currentRoundNo, option);
+      if (submissionId) setSelectedAnswer(option);
     }
   };
 
