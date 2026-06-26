@@ -196,13 +196,25 @@ export class MatchStateMachine {
     playerId: string,
     answer: string,
     serverTimestamp: number,
+    submissionId?: string,
   ): AnswerState {
-    if (!this.currentRound || this.currentRound.status !== "ACTIVE") {
+    if (!this.currentRound) {
       throw new RoomError(ErrorCode.ROUND_NOT_ACTIVE);
     }
 
-    if (this.currentRound.answers.has(playerId)) {
+    const existingAnswer = this.currentRound.answers.get(playerId);
+    if (existingAnswer) {
+      if (submissionId && existingAnswer.submissionId === submissionId) {
+        // Return a shallow copy so the caller cannot mutate the
+        // live entry inside `currentRound.answers`. This matches
+        // the defensive-copy pattern used by `getCurrentRound()`.
+        return { ...existingAnswer };
+      }
       throw new RoomError(ErrorCode.ALREADY_ANSWERED);
+    }
+
+    if (this.currentRound.status !== "ACTIVE") {
+      throw new RoomError(ErrorCode.ROUND_NOT_ACTIVE);
     }
 
     if (serverTimestamp > this.currentRound.endsAt) {
@@ -237,6 +249,7 @@ export class MatchStateMachine {
     const answerState: AnswerState = {
       playerId,
       answer,
+      submissionId: submissionId ?? `legacy-${playerId}-${serverTimestamp}`,
       isCorrect,
       responseTimeMs,
       submittedAt: serverTimestamp,
@@ -706,7 +719,25 @@ export class MatchStateMachine {
       const { answers, ...rest } = parsed.currentRound;
       instance.currentRound = {
         ...rest,
-        answers: new Map(answers),
+        // Backfill any missing `submissionId` on legacy answers
+        // serialized before that field was required on AnswerState.
+        // The replay check elsewhere (`existingAnswer.submissionId
+        // === payload.submissionId`) would otherwise collapse
+        // `undefined === undefined` to true and treat the first
+        // accepted submission as a replay. The format mirrors
+        // the one used in `submitAnswer` so the two paths agree
+        // and old in-flight records continue to work.
+        answers: new Map(
+          answers.map(([playerId, answer]) => [
+            playerId,
+            answer.submissionId
+              ? answer
+              : {
+                  ...answer,
+                  submissionId: `legacy-${playerId}-${answer.submittedAt ?? 0}`,
+                },
+          ]),
+        ),
         // L3: correctAnswer is undefined after deserialize. The
         // recovery caller MUST invoke attachCorrectAnswer() before
         // any evaluateRound() / submitAnswer() that depends on it.

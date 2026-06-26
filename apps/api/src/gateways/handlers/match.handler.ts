@@ -104,14 +104,18 @@ export class MatchHandler extends BaseHandler {
           throw new RoomError(ErrorCode.PLAYER_DISCONNECTED);
         }
 
+        const currentRoundBefore = stateMachine.getCurrentRound();
+        const existingAnswerBefore = currentRoundBefore?.answers.get(userId);
         const serverTimestamp = Date.now();
         const result = stateMachine.submitAnswer(
           userId,
           payload.answer,
           serverTimestamp,
+          payload.submissionId,
         );
 
-        // Persist state after mutation
+        // Persist state after mutation so a retry after a crash still sees
+        // the accepted submission in Redis before the answer is emitted.
         await this.matchService.persistStateMachine(payload.matchId);
 
         // Get roomId from state for early termination check
@@ -119,16 +123,21 @@ export class MatchHandler extends BaseHandler {
 
         client.emit(ServerEvent.ANSWER_RESULT, {
           matchId: payload.matchId,
-          submissionId: payload.submissionId,
+          submissionId: result.submissionId,
           // L4 fix: read roundNo from the state machine, not from the
           // client payload. The previous `?? payload.roundNo` fallback
-          // never fired in practice (getCurrentRound is non-null when
-          // submitAnswer succeeded) and trusting the client's roundNo
-          // was a UX trap: a stale or future round number from the
-          // client would be persisted to AnswerResult events. The
-          // state machine is the single source of truth for which
-          // round is currently active.
-          roundNo: stateMachine.getCurrentRound()!.roundNo,
+          // never fired in practice and trusting the client's roundNo
+          // was a UX trap. The state machine is the source of truth.
+          //
+          // Reuse `currentRoundBefore` (captured before submitAnswer)
+          // instead of re-calling getCurrentRound() after the persist
+          // await. During that await the round can transition (timer
+          // fires -> endRound), so a fresh getCurrentRound() may return
+          // null or a different roundNo — crashing via the `!`
+          // assertion or emitting the wrong round. currentRoundBefore
+          // is guaranteed non-null here because submitAnswer throws
+          // ROUND_NOT_ACTIVE when currentRound is null.
+          roundNo: currentRoundBefore!.roundNo,
           isCorrect: result.isCorrect,
           responseTimeMs: result.responseTimeMs,
         });
@@ -137,16 +146,34 @@ export class MatchHandler extends BaseHandler {
           `Answer submitted: ${userId} - ${result.isCorrect ? "correct" : "wrong"}`,
         );
 
-        // Check for early termination - all players answered
-        // Pass the server instance from the client's namespace
-        try {
-          await this.gameLoopService.checkEarlyTermination(
-            payload.matchId,
-            roomId,
-            client.nsp.server,
-          );
-        } catch (error) {
-          this.logger.error("Error checking early termination:", error);
+        // Replay check must require a real existing answer with a
+        // defined submissionId. Without the explicit guards,
+        // `undefined === undefined` would be true for the first
+        // submission whose payload also omits submissionId, falsely
+        // skipping the termination check below. The state machine
+        // guards the same comparison with `if (submissionId && ...)`
+        // (see match-state-machine.ts); this handler mirrors that
+        // guard so the wire path and the state-machine path agree.
+        const isReplay =
+          existingAnswerBefore !== undefined &&
+          existingAnswerBefore.submissionId !== undefined &&
+          existingAnswerBefore.submissionId === payload.submissionId;
+
+        // Only the first accepted submission should trigger termination
+        // checks. Duplicate retries with the same submissionId replay the
+        // canonical answer result but skip the side effect.
+        if (!isReplay) {
+          // Check for early termination - all players answered
+          // Pass the server instance from the client's namespace
+          try {
+            await this.gameLoopService.checkEarlyTermination(
+              payload.matchId,
+              roomId,
+              client.nsp.server,
+            );
+          } catch (error) {
+            this.logger.error("Error checking early termination:", error);
+          }
         }
       },
       (error) => {

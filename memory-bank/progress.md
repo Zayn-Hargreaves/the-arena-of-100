@@ -15,7 +15,7 @@ Baseline hiện tại đã xong:
 - match race + frontend correctness hardening
 - gateway/schema tightening + home gradient cleanup
 
-Admin kill-switch append-only audit event **chưa xong**.
+Admin kill-switch append-only audit event **đã xong**.
 
 ## Latest Known Test Counts
 
@@ -63,17 +63,18 @@ Run the relevant package tests before using these numbers in PR text.
 - Late join spectator baseline via `JoinMode = "SPECTATOR"`.
 - Eliminated player spectator UI.
 - Admin room termination baseline.
+- Admin kill-switch append-only audit event + paginated audit query.
 - Profile/rankings real APIs.
 - CSRF, throttling, and Zod validation baseline.
 - Socket handlers split into `AuthHandler`, `RoomHandler`, `MatchHandler`.
 - Moderation MVP boundary filtering / sanitizer (NFKD Unicode normalization, diacritic stripping, and post-masking re-validation).
+- `Room.maxPlayers` realtime payload exposure.
+- Optimistic answer rollback + server-side idempotency replay keyed by `submissionId`.
 
 ## What Is Not Done Yet
 
-- Admin kill-switch append-only audit event.
-- `Room.maxPlayers` realtime payload exposure.
-- Full optimistic answer rollback + idempotency key.
 - k6 load evidence for 100 concurrent WebSocket users.
+- Full reconnect/event replay contract behind `lastSeenSeqNo`.
 - Spectator transport split for scale.
 - Full WCAG / Playwright / rematch work.
 
@@ -87,15 +88,14 @@ Run the relevant package tests before using these numbers in PR text.
 
 ### P1 — Near-Term Implementation
 
-1. **Admin Kill-Switch Audit Event**
-   - Current gap: `AdminService.terminateRoom` mutates DB + Redis + timers + emits `ROOM_TERMINATED`, but does not write an append-only audit event.
-   - Expected scope: schema/model support if needed, capture admin user id, append event row, query endpoint only if required by UI.
-2. **`Room.maxPlayers` realtime payload**
-   - Frontend currently uses fallback `GAME_CONFIG.MAX_PLAYERS` when live payload lacks max player count.
-3. **Optimistic Answer Rollback**
-   - Current UI has lock-in behavior, but no full idempotency/rollback contract.
-4. **Moderation MVP** (Done)
-   - Unicode NFKD normalization, mark stripping, and post-masking re-validation are completed and verified with tests. Deeper device fingerprinting and shadow-ban are deferred as post-MVP.
+1. **k6 Load Test**
+   - Measure baseline 100 concurrent WS behavior before making spectator-transport scale decisions.
+2. **AFK Docs + UX Hardening**
+   - Keep semantics aligned with active-round deadline elimination and spectator/watch-only behavior.
+3. **Admin Audit Panel UI** (Optional)
+   - Backend audit baseline exists; UI/filter/pagination closeout is optional.
+4. **Replay Contract Follow-up**
+   - `submissionId` idempotency is done; `lastSeenSeqNo` delta replay remains deferred.
 
 ### P2 — Evidence / Scale
 

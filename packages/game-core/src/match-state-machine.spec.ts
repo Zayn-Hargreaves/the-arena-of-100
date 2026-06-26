@@ -210,6 +210,7 @@ describe("MatchStateMachine immutability and serialization", () => {
       currentRound.answers.set("fake-player", {
         playerId: "fake-player",
         answer: "fake",
+        submissionId: "s-fake",
         isCorrect: true,
         responseTimeMs: 1000,
         submittedAt: Date.now(),
@@ -871,10 +872,79 @@ describe("MatchStateMachine guard branches", () => {
       options: ["A", "B"],
       correctAnswer: "A",
     });
-    machine.submitAnswer("p1", "A", round.startedAt + 100);
+    machine.submitAnswer("p1", "A", round.startedAt + 100, "s1");
     expectRoomError(
-      () => machine.submitAnswer("p1", "B", round.startedAt + 200),
+      () => machine.submitAnswer("p1", "B", round.startedAt + 200, "s2"),
       ErrorCode.ALREADY_ANSWERED,
+    );
+  });
+
+  it("submitAnswer replays the same answer for the same submissionId", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    const round = machine.startRound({
+      id: "q1",
+      content: "Q?",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+
+    const first = machine.submitAnswer("p1", "A", round.startedAt + 100, "s1");
+    const replay = machine.submitAnswer("p1", "B", round.startedAt + 200, "s1");
+
+    // submitAnswer replays the same answer for the same
+    // submissionId. The replay path returns a shallow copy (not
+    // the live map entry) to prevent callers from mutating
+    // currentRound.answers, so we assert value-equality rather
+    // than reference-equality.
+    expect(replay).toEqual(first);
+    expect(replay).not.toBe(first);
+    expect(replay.submissionId).toBe("s1");
+    expect(replay.answer).toBe("A");
+  });
+
+  it("submitAnswer replays after the round is no longer active", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    const round = machine.startRound({
+      id: "q1",
+      content: "Q?",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+
+    const first = machine.submitAnswer("p1", "A", round.startedAt + 100, "s1");
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+
+    const replay = machine.submitAnswer("p1", "B", round.startedAt + 200, "s1");
+
+    expect(replay).toEqual(first);
+    expect(replay).not.toBe(first);
+  });
+
+  it("submitAnswer throws ROUND_NOT_ACTIVE when the round is COMPLETED and the player hasn't answered", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    const round = machine.startRound({
+      id: "q1",
+      content: "Q?",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+    // p1 answers; p2 does NOT → p2 has no existingAnswer entry
+    machine.submitAnswer("p1", "A", round.startedAt + 100, "s1");
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound(); // currentRound.status -> "COMPLETED"
+
+    // p2 never answered, so we skip the existingAnswer block and hit
+    // the status !== "ACTIVE" guard (line 217) BEFORE the player-status
+    // check. Round-not-active takes priority over player elimination.
+    expectRoomError(
+      () => machine.submitAnswer("p2", "A", round.startedAt + 200, "s2"),
+      ErrorCode.ROUND_NOT_ACTIVE,
     );
   });
 
@@ -1272,6 +1342,48 @@ describe("MatchStateMachine score accumulation (B2)", () => {
       expect(correctAnswer).toBeUndefined();
     });
 
+    it("serialize() preserves answer submissionIds across deserialize", () => {
+      const machine = new MatchStateMachine("m1", "r1", makePlayers());
+      machine.transition(MatchStatus.COUNTDOWN);
+      machine.transition(MatchStatus.ROUND_ACTIVE);
+      const round = machine.startRound({
+        id: "q1",
+        content: "Q?",
+        options: ["A", "B"],
+        correctAnswer: "A",
+      });
+
+      machine.submitAnswer("p1", "A", round.startedAt + 100, "s1");
+
+      const restored = MatchStateMachine.deserialize(machine.serialize());
+      expect(restored.getCurrentRound()?.answers.get("p1")).toMatchObject({
+        submissionId: "s1",
+        answer: "A",
+      });
+    });
+
+    it("deserialize() backfills missing submissionId on legacy answers", () => {
+      const machine = new MatchStateMachine("m1", "r1", makePlayers());
+      machine.transition(MatchStatus.COUNTDOWN);
+      machine.transition(MatchStatus.ROUND_ACTIVE);
+      const round = machine.startRound({
+        id: "q1",
+        content: "Q?",
+        options: ["A", "B"],
+        correctAnswer: "A",
+      });
+      machine.submitAnswer("p1", "A", round.startedAt + 100, "s1");
+
+      const parsed = JSON.parse(machine.serialize());
+      delete parsed.currentRound.answers[0][1].submissionId;
+
+      const restored = MatchStateMachine.deserialize(JSON.stringify(parsed));
+      expect(restored.getCurrentRound()?.answers.get("p1")).toMatchObject({
+        submissionId: `legacy-p1-${round.startedAt + 100}`,
+        answer: "A",
+      });
+    });
+
     it("attachCorrectAnswer() sets the correctAnswer for an ACTIVE round", () => {
       const machine = new MatchStateMachine("m1", "r1", makePlayers());
       machine.transition(MatchStatus.COUNTDOWN);
@@ -1297,6 +1409,7 @@ describe("MatchStateMachine score accumulation (B2)", () => {
         "p1",
         "A",
         restoredRound.startedAt + 100,
+        "s1",
       );
       expect(result.isCorrect).toBe(true);
     });

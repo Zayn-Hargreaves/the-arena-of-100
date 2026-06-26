@@ -10,7 +10,7 @@
 - **State machine + append-only event log** trong `packages/game-core`; chưa phải full event sourcing/replay source of truth.
 - **Socket.io realtime transport** hiện tại cho players và spectator baseline.
 - **Redis** cho transient state, room countdown, presence, reconnect snapshots.
-- **PostgreSQL + Prisma** cho persistence/history; admin audit event riêng vẫn là near-term gap.
+- **PostgreSQL + Prisma** cho persistence/history; admin audit event backend baseline đã có (append + paginated query), admin audit panel UI vẫn là optional closeout.
 
 ## Hard Invariants
 
@@ -37,7 +37,7 @@
 
 - Gameplay state changes phải đi qua state-machine methods / transitions.
 - Socket payload changes cần xem là shared contract changes vì `@arena/shared` là boundary chung.
-- Audit-style operational changes cần append-only mindset; admin kill-switch audit event vẫn chưa implemented.
+- Audit-style operational changes cần append-only mindset; admin kill-switch audit row append + paginated audit query đã có backend baseline.
 
 ## Implemented Patterns
 
@@ -141,9 +141,9 @@ Khi cần multi-instance:
 
 ### Optimistic UX
 
-- Hiện tại UI đã có answer lock-in cơ bản.
-- Chưa có full rollback + idempotency path.
-- Hướng đúng: lock ngay, gửi idempotency key, rollback rõ ràng nếu server reject.
+- UI có answer lock-in + correlated rollback theo `submissionId`.
+- Server-side `submitAnswer` đã replay canonical result cho duplicate retry cùng `submissionId` trong cùng round.
+- Defer tiếp: reconnect/event replay thật theo `lastSeenSeqNo`; hiện snapshot hydrate vẫn là baseline.
 
 ### Moderation
 
@@ -154,16 +154,15 @@ Khi cần multi-instance:
 ## Operational Patterns
 
 - Admin kill-switch hiện là best-effort orchestrator.
-- Admin kill-switch append-only audit event vẫn là gap.
-- Reset không nên purge audit rows sau khi audit event backend được implement.
+- Admin kill-switch audit row append + paginated audit query đã có backend baseline.
+- Reset không nên purge audit rows vì audit event backend đã có baseline.
 
 ## Core Risks Still Open
 
-1. Admin kill-switch chưa ghi append-only audit event.
-2. `Room.maxPlayers` chưa expose qua realtime join/create payload.
-3. Optimistic answer rollback chưa full.
-4. Moderation mới ở mức intent, chưa thành pipeline MVP.
-5. Load characteristics 100 concurrent WS chưa có evidence đo thực nghiệm.
+1. Reconnect/event replay theo `lastSeenSeqNo` vẫn chưa thành contract thật; snapshot hydrate là baseline hiện tại.
+2. Admin audit panel UI mới là optional closeout; backend audit baseline đã có.
+3. Moderation mới ở mức MVP boundary pipeline; deeper fingerprint/shadow-ban vẫn deferred.
+4. Load characteristics 100 concurrent WS chưa có evidence đo thực nghiệm.
 
 ## Supplementary / Legacy Docs
 
