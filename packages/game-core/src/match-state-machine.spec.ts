@@ -924,6 +924,30 @@ describe("MatchStateMachine guard branches", () => {
     expect(replay).not.toBe(first);
   });
 
+  it("submitAnswer throws ROUND_NOT_ACTIVE when the round is COMPLETED and the player hasn't answered", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    const round = machine.startRound({
+      id: "q1",
+      content: "Q?",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+    // p1 answers; p2 does NOT → p2 has no existingAnswer entry
+    machine.submitAnswer("p1", "A", round.startedAt + 100, "s1");
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound(); // currentRound.status -> "COMPLETED"
+
+    // p2 never answered, so we skip the existingAnswer block and hit
+    // the status !== "ACTIVE" guard (line 217) BEFORE the player-status
+    // check. Round-not-active takes priority over player elimination.
+    expectRoomError(
+      () => machine.submitAnswer("p2", "A", round.startedAt + 200, "s2"),
+      ErrorCode.ROUND_NOT_ACTIVE,
+    );
+  });
+
   it("submitAnswer throws when past deadline", () => {
     const machine = new MatchStateMachine("m1", "r1", makePlayers());
     machine.transition(MatchStatus.COUNTDOWN);

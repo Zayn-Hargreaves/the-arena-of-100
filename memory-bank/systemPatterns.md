@@ -10,7 +10,7 @@
 - **State machine + append-only event log** trong `packages/game-core`; chưa phải full event sourcing/replay source of truth.
 - **Socket.io realtime transport** hiện tại cho players và spectator baseline.
 - **Redis** cho transient state, room countdown, presence, reconnect snapshots.
-- **PostgreSQL + Prisma** cho persistence/history; admin audit event riêng vẫn là near-term gap.
+- **PostgreSQL + Prisma** cho persistence/history; admin audit event backend baseline đã có (append + paginated query), admin audit panel UI vẫn là optional closeout.
 
 ## Hard Invariants
 
@@ -37,7 +37,7 @@
 
 - Gameplay state changes phải đi qua state-machine methods / transitions.
 - Socket payload changes cần xem là shared contract changes vì `@arena/shared` là boundary chung.
-- Audit-style operational changes cần append-only mindset; admin kill-switch audit event vẫn chưa implemented.
+- Audit-style operational changes cần append-only mindset; admin kill-switch audit row append + paginated audit query đã có backend baseline.
 
 ## Implemented Patterns
 
@@ -155,7 +155,7 @@ Khi cần multi-instance:
 
 - Admin kill-switch hiện là best-effort orchestrator.
 - Admin kill-switch audit row append + paginated audit query đã có backend baseline.
-- Reset không nên purge audit rows sau khi audit event backend được implement.
+- Reset không nên purge audit rows vì audit event backend đã có baseline.
 
 ## Core Risks Still Open
 

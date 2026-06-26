@@ -126,13 +126,18 @@ export class MatchHandler extends BaseHandler {
           submissionId: result.submissionId,
           // L4 fix: read roundNo from the state machine, not from the
           // client payload. The previous `?? payload.roundNo` fallback
-          // never fired in practice (getCurrentRound is non-null when
-          // submitAnswer succeeded) and trusting the client's roundNo
-          // was a UX trap: a stale or future round number from the
-          // client would be persisted to AnswerResult events. The
-          // state machine is the single source of truth for which
-          // round is currently active.
-          roundNo: stateMachine.getCurrentRound()!.roundNo,
+          // never fired in practice and trusting the client's roundNo
+          // was a UX trap. The state machine is the source of truth.
+          //
+          // Reuse `currentRoundBefore` (captured before submitAnswer)
+          // instead of re-calling getCurrentRound() after the persist
+          // await. During that await the round can transition (timer
+          // fires -> endRound), so a fresh getCurrentRound() may return
+          // null or a different roundNo — crashing via the `!`
+          // assertion or emitting the wrong round. currentRoundBefore
+          // is guaranteed non-null here because submitAnswer throws
+          // ROUND_NOT_ACTIVE when currentRound is null.
+          roundNo: currentRoundBefore!.roundNo,
           isCorrect: result.isCorrect,
           responseTimeMs: result.responseTimeMs,
         });

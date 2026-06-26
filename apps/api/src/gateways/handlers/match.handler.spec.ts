@@ -264,6 +264,139 @@ describe("MatchHandler", () => {
       });
     });
 
+    // Replay race guard: the handler captures currentRoundBefore
+    // before submitAnswer and must reuse it for the roundNo in
+    // ANSWER_RESULT. A previous version re-called getCurrentRound()
+    // after the persistStateMachine await — during that await the
+    // round can transition (timer fires -> endRound -> currentRound
+    // becomes null or a different round), crashing via the `!`
+    // assertion or emitting the wrong roundNo. These two tests pin
+    // the fix by queueing a divergent second return value on
+    // getCurrentRound; if a future change re-introduces the second
+    // call, the mock sequence is consumed and the assertions fail.
+    it("replays a prior submissionId without crashing when getCurrentRound returns null after the round ends", async () => {
+      const matchId = "m1";
+      const roomId = "r1";
+      const roundWithAnswer = {
+        roundNo: 1,
+        answers: new Map([
+          [
+            "u1",
+            {
+              playerId: "u1",
+              answer: "A",
+              submissionId: "s1",
+              isCorrect: true,
+              responseTimeMs: 500,
+              submittedAt: 1234567890,
+            },
+          ],
+        ]),
+      };
+      const mockMachine = {
+        // First call (currentRoundBefore) returns the round; a
+        // second call (if re-introduced) returns null — simulating
+        // the round having ended during the persist await.
+        getCurrentRound: vi
+          .fn()
+          .mockReturnValueOnce(roundWithAnswer)
+          .mockReturnValueOnce(null),
+        getState: vi.fn().mockReturnValue({
+          roomId,
+          players: new Map([["u1", { id: "u1" }]]),
+        }),
+        submitAnswer: vi.fn().mockReturnValue({
+          submissionId: "s1",
+          isCorrect: true,
+          responseTimeMs: 500,
+        }),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+      vi.mocked(matchService.persistStateMachine).mockResolvedValue(undefined);
+
+      await handler.handleSubmitAnswer(client, {
+        matchId,
+        answer: "A",
+        roundNo: 1,
+        submissionId: "s1",
+        clientTimestamp: 1234567890,
+      });
+
+      expect(matchService.persistStateMachine).toHaveBeenCalledWith(matchId);
+      expect(gameLoopService.checkEarlyTermination).not.toHaveBeenCalled();
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ANSWER_RESULT, {
+        matchId,
+        roundNo: 1,
+        submissionId: "s1",
+        isCorrect: true,
+        responseTimeMs: 500,
+      });
+    });
+
+    it("replays a prior submissionId with the original roundNo when getCurrentRound returns a different round after transition", async () => {
+      const matchId = "m1";
+      const roomId = "r1";
+      const roundWithAnswer = {
+        roundNo: 1,
+        answers: new Map([
+          [
+            "u1",
+            {
+              playerId: "u1",
+              answer: "A",
+              submissionId: "s1",
+              isCorrect: true,
+              responseTimeMs: 500,
+              submittedAt: 1234567890,
+            },
+          ],
+        ]),
+      };
+      const mockMachine = {
+        // First call returns round 1 (the round the answer belongs
+        // to); a second call (if re-introduced) returns round 2 —
+        // simulating a new round having started during the persist
+        // await. The handler must emit roundNo: 1, not 2.
+        getCurrentRound: vi
+          .fn()
+          .mockReturnValueOnce(roundWithAnswer)
+          .mockReturnValueOnce({ roundNo: 2, answers: new Map() }),
+        getState: vi.fn().mockReturnValue({
+          roomId,
+          players: new Map([["u1", { id: "u1" }]]),
+        }),
+        submitAnswer: vi.fn().mockReturnValue({
+          submissionId: "s1",
+          isCorrect: true,
+          responseTimeMs: 500,
+        }),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+      vi.mocked(matchService.persistStateMachine).mockResolvedValue(undefined);
+
+      await handler.handleSubmitAnswer(client, {
+        matchId,
+        answer: "A",
+        roundNo: 1,
+        submissionId: "s1",
+        clientTimestamp: 1234567890,
+      });
+
+      expect(matchService.persistStateMachine).toHaveBeenCalledWith(matchId);
+      expect(gameLoopService.checkEarlyTermination).not.toHaveBeenCalled();
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ANSWER_RESULT, {
+        matchId,
+        roundNo: 1,
+        submissionId: "s1",
+        isCorrect: true,
+        responseTimeMs: 500,
+      });
+    });
+
     // Regression guard for the isReplay false-positive: when the
     // player has not yet answered AND the payload omits submissionId,
     // `existingAnswerBefore` is undefined and `payload.submissionId`
