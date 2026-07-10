@@ -1,0 +1,146 @@
+name: Load Test (k6)
+
+# Manual only — a full 100-VU load run is expensive and not something we
+# want on every push. Trigger from the Actions tab (or `gh workflow run
+# load-test.yml`) when you need fresh baseline numbers for the P2
+# spectator-transport decision.
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Scenario file under load-test/scenarios/"
+        type: choice
+        default: full-match
+        options:
+          - smoke
+          - full-match
+          - spectator-flood
+      players:
+        description: "PLAYERS (player VUs)"
+        default: "70"
+      spectators:
+        description: "SPECTATORS (spectator VUs)"
+        default: "30"
+      hold:
+        description: "HOLD (steady-state duration, e.g. 4m)"
+        default: "2m"
+
+env:
+  CI_DB_USER: arena_test
+  CI_DB_PASSWORD: arena_test
+  CI_DB_NAME: arena_test
+  K6_VERSION: v0.54.0
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: arena_test
+          POSTGRES_PASSWORD: arena_test
+          POSTGRES_DB: arena_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://arena_test:arena_test@localhost:5432/arena_test
+      REDIS_URL: redis://localhost:6379/2
+      JWT_SECRET: ci-load-test-secret-key
+      NODE_ENV: test
+      PORT: "3001"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Push schema
+        run: pnpm --filter @arena/api exec prisma db push
+
+      - name: Seed questions (required for the match loop)
+        run: pnpm --filter @arena/api prisma:seed:dev
+
+      - name: Build API
+        run: pnpm --filter @arena/api build
+
+      - name: Start API
+        run: |
+          nohup node apps/api/dist/main > api.log 2>&1 &
+          echo "API_PID=$!" >> "$GITHUB_ENV"
+
+      - name: Wait for API health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:3001/api/health > /dev/null; then
+              echo "API is up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "API did not become healthy in time"; cat api.log; exit 1
+
+      - name: Install k6
+        run: |
+          curl -sSL "https://github.com/grafana/k6/releases/download/${K6_VERSION}/k6-${K6_VERSION}-linux-amd64.tar.gz" -o k6.tar.gz
+          tar xzf k6.tar.gz
+          sudo cp k6-*/k6 /usr/local/bin/k6
+          k6 version
+
+      - name: Run k6 (${{ inputs.scenario }})
+        run: |
+          mkdir -p load-test/results
+          k6 run \
+            -e API_URL=http://localhost:3001 \
+            -e PLAYERS=${{ inputs.players }} \
+            -e SPECTATORS=${{ inputs.spectators }} \
+            -e HOLD=${{ inputs.hold }} \
+            --summary-export=load-test/results/${{ inputs.scenario }}-summary.json \
+            load-test/scenarios/${{ inputs.scenario }}.js
+
+      - name: Upload results + API log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: load-test-${{ inputs.scenario }}
+          path: |
+            load-test/results/
+            api.log
+
+      - name: Stop API
+        if: always()
+        run: kill "${API_PID}" 2>/dev/null || true

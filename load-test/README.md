@@ -1,0 +1,212 @@
+# Load Test — Đấu Trường 100 (Plan A)
+
+k6 load test for **100 concurrent WebSocket users** against the
+server-authoritative game loop. Goal: measure a real baseline (latency,
+disconnect rate, messages/sec, error rate) **before** deciding whether to
+split spectator transport (decision **P2** in `memory-bank/progress.md`).
+
+> This directory is **additive only** — it reads the API contract but does
+> not modify any symbol in `apps/` or `packages/`. Blast radius = 0.
+
+---
+
+## What it does
+
+Drives the exact client → server contract the web app uses:
+
+```
+guest-login (REST POST /api/auth/guest)   → handshake token + real User row
+  → ws connect  (socket.io v4 / Engine.IO 4, namespace "/game")
+  → AUTHENTICATE {token}         → AUTHENTICATED
+  → JOIN_ROOM {roomCode}         → ROOM_JOINED          (players + spectators)
+  → (host) START_MATCH {roomId}  → MATCH_STARTED
+  → on ROUND_STARTED → SUBMIT_ANSWER → ANSWER_RESULT     (latency sample)
+  → ... → MATCH_FINISHED
+```
+
+Three roles, one shared **PRIVATE** room (created once in `setup()` over
+REST):
+
+| Role          | Count (default) | Behaviour                                              |
+| ------------- | --------------- | ----------------------------------------------------- |
+| host          | 1               | creates the room, waits `WARMUP_MS`, fires START_MATCH |
+| players       | 70              | join before start, answer every round                 |
+| spectators    | 30              | join **after** start → admitted as drop-in `SPECTATOR`, receive-only |
+
+Players who arrive after `START_MATCH` naturally become spectators — the
+same player/spectator mix Plan A asks for.
+
+### Why socket.io is hand-framed
+
+k6 has no socket.io client, only raw WebSockets. `lib/socketio.js`
+implements the minimal Engine.IO v4 + Socket.IO v4 framing (handshake,
+namespace connect, `2`/`3` ping-pong, `42[...]` events) needed to talk to
+the gateway. The server is `socket.io ^4.8.1` → `EIO=4`. If the event
+names ever drift, update `lib/protocol.js` (mirrored from
+`packages/shared/src/socket.ts`).
+
+---
+
+## Prerequisites
+
+- **k6 ≥ v0.52** (uses `k6/experimental/websockets` + the async event loop).
+  Install: <https://grafana.com/docs/k6/latest/set-up/install-k6/>
+- The API running with a **real Redis + Postgres** (not mocked) — numbers
+  are only meaningful against real infra (Plan A "Rủi ro"). From repo root:
+
+  ```bash
+  pnpm docker:up            # Redis + Postgres
+  pnpm --filter @arena/api run prisma:seed:dev   # seed questions (required)
+  pnpm --filter @arena/api dev                    # API on :3001
+  ```
+
+  The load test creates its own throwaway guest users and room, so no demo
+  seed is strictly required — but questions **must** exist (the match loop
+  needs them), so run the dev seed once.
+
+---
+
+## Running
+
+All knobs are env vars (`-e NAME=value`). Defaults target a local stack.
+
+### A1 — Smoke (2 clients, 1 full match)
+
+Run this first. A green result validates the auth/protocol wiring before
+scaling up.
+
+```bash
+k6 run load-test/scenarios/smoke.js
+```
+
+Pass criteria: `setup_flow_errors 0`, `answers_submitted > 0`,
+`app_error_rate ~0%`.
+
+### A2 — Full match, 100 concurrent WS
+
+```bash
+k6 run load-test/scenarios/full-match.js
+# or tune the mix:
+k6 run -e PLAYERS=70 -e SPECTATORS=30 -e HOLD=4m load-test/scenarios/full-match.js
+```
+
+### A2 — Spectator flood (broadcast fan-out stress)
+
+Small player pool, large receive-only wave — the most direct P2 signal.
+
+```bash
+k6 run -e PLAYERS=5 -e SPECTATORS=95 load-test/scenarios/spectator-flood.js
+```
+
+### Environment variables
+
+| Var                | Default                 | Meaning                                        |
+| ------------------ | ----------------------- | ---------------------------------------------- |
+| `API_URL`          | `http://localhost:3001` | API origin; REST uses `${API_URL}/api`         |
+| `WS_URL`           | = `API_URL`             | socket.io origin (http→ws, https→wss)          |
+| `PLAYERS`          | `70`                    | player VUs                                      |
+| `SPECTATORS`       | `30`                    | spectator VUs                                   |
+| `RAMP_UP`          | `30s`                   | 0 → PLAYERS ramp                               |
+| `HOLD`             | `4m`                    | steady-state hold                              |
+| `WARMUP_MS`        | `35000`                 | host wait before START_MATCH                    |
+| `LATENCY_P95_MS`   | `1000`                  | p95 answer-latency threshold                    |
+| `LATENCY_P99_MS`   | `2500`                  | p99 answer-latency threshold                    |
+| `ERROR_RATE_MAX`   | `0.01`                  | app error-rate ceiling (Plan A: < 1%)           |
+
+Export a full JSON summary for the record:
+
+```bash
+k6 run --summary-export=load-test/results/full-match-$(date +%F).json \
+  load-test/scenarios/full-match.js
+```
+
+---
+
+## Key metrics
+
+| k6 metric                   | Meaning                                             |
+| --------------------------- | --------------------------------------------------- |
+| `answer_result_latency_ms`  | SUBMIT_ANSWER → ANSWER_RESULT round trip (p50/p95/p99) |
+| `app_error_rate`            | failed handshake steps + server ERROR frames / total |
+| `ws_messages_received`      | total inbound events (÷ test duration = messages/sec) |
+| `answers_submitted`         | answers sent                                        |
+| `round_started_received`    | ROUND_STARTED fan-out volume                         |
+| `setup_flow_errors`         | auth/join handshake failures                         |
+| `ws_connect_errors`         | socket connect failures                              |
+| `server_error_events`       | `ServerEvent.ERROR` frames received                  |
+
+Thresholds (fail the run if breached) are set in each scenario's `options`
+and are env-tunable.
+
+---
+
+## Server-side observation (run alongside k6)
+
+Plan A A2 also asks for CPU/mem + Redis + round-tick numbers. Capture them
+in parallel with the k6 run:
+
+```bash
+# API process CPU / memory (pick the apps/api node pid)
+top -b -d 1 -p "$(pgrep -f 'apps/api' | head -1)" | grep --line-buffered node
+
+# Redis live match-state key count
+watch -n 1 "redis-cli --scan --pattern 'match:state:*' | wc -l"
+# also useful:
+redis-cli info clients      # connected_clients during the run
+redis-cli info memory       # used_memory_human
+```
+
+Round-tick timing comes from the API logs (`GameLoopService` /
+`MatchStateMachine` log each round transition).
+
+---
+
+## Baseline results  ← fill after a real run
+
+> **Status: NOT YET RUN.** The harness is validated (`k6 inspect` parses all
+> three scenarios; smoke reaches `setup`), but no baseline has been captured
+> because it needs a live Redis + Postgres stack. Fill this table from a real
+> run, then update `memory-bank/progress.md` and write the P2 conclusion below.
+
+Run config: `PLAYERS=___ SPECTATORS=___ HOLD=___`, commit `______`.
+
+| Metric                          | Value |
+| ------------------------------- | ----- |
+| Peak concurrent WS              |       |
+| answer latency p50 / p95 / p99  |       |
+| Messages / sec (peak)           |       |
+| Error rate                      |       |
+| Disconnect / connect errors     |       |
+| API CPU % / RSS (peak)          |       |
+| Redis `match:state:*` peak keys |       |
+| Redis `connected_clients` peak  |       |
+| Round tick duration (typ.)      |       |
+
+### P2 conclusion — spectator transport split?  ← fill after a run
+
+- **Do we need it?** ☐ Yes ☐ No — _rationale from the numbers above._
+- Evidence: e.g. "p95 answer latency stayed under Xms with 95 receive-only
+  spectators sharing the ROUND_STARTED fan-out, error rate Y% → single
+  transport holds" **or** "latency degraded past the threshold at N
+  spectators → split justified."
+
+This section is the direct input to decision **P2** in
+`memory-bank/progress.md`.
+
+---
+
+## Notes & limitations
+
+- **Match length is elimination-bound.** The server never sends the correct
+  answer to clients (by design), so players answer with a random option and
+  are eliminated at roughly the per-round survival rate — a real match ends
+  in a handful of rounds. That still exercises the 100-socket broadcast
+  fan-out and answer round-trip, which is what P2 needs. For a longer
+  sustained window, raise `HOLD` (sockets stay connected receiving after the
+  match ends) or run back-to-back matches.
+- **VUs are gracefully stopped at the end of the stage window.** Each socket
+  is one long-lived iteration (`LIFETIME_MS` is intentionally large), so
+  there's no reconnect churn skewing the numbers; k6 reports the final VUs
+  as interrupted — expected.
+- Usernames are `lt_p_<idInTest>` / `lt_s_<idInTest>` — unique per VU so the
+  gateway's single-session kick never fires against our own sockets.

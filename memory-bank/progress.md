@@ -73,7 +73,7 @@ Run the relevant package tests before using these numbers in PR text.
 
 ## What Is Not Done Yet
 
-- k6 load evidence for 100 concurrent WebSocket users.
+- k6 load evidence for 100 concurrent WebSocket users. Harness landed in `load-test/` (Plan A — smoke + full-match + spectator-flood scenarios); baseline numbers + P2 conclusion still pending a run against a real Redis/Postgres stack (see `load-test/README.md`).
 - Full reconnect/event replay contract behind `lastSeenSeqNo`.
 - Spectator transport split for scale.
 - Full WCAG / Playwright / rematch work.
