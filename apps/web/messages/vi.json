@@ -191,7 +191,9 @@
     "antiHackDetails": "Thời gian phản hồi được máy chủ ghi nhận và so sánh độ lệch ping để đảm bảo tính công bằng tuyệt đối.",
     "eliminatedOverlay": {
       "title": "BẠN ĐÃ BỊ LOẠI!",
-      "subtitle": "Đang theo dõi những người chơi xuất sắc nhất..."
+      "subtitle": "Đang theo dõi những người chơi xuất sắc nhất...",
+      "reasonWrong": "Trả lời sai",
+      "reasonTimeout": "Hết giờ"
     },
     "spectatorMode": {
       "title": "CHẾ ĐỘ KHÁN GIẢ",

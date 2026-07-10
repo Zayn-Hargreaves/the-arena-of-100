@@ -73,6 +73,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   error: null,
   heartbeatInterval: null,
   isEliminated: false,
+  eliminationReason: null,
   roomTerminated: false,
   roomTerminationMessage: null,
 
@@ -274,7 +275,10 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           currentState.room?.currentMatchId ?? currentState.match?.id ?? null;
         if (activeMatchId === null || activeMatchId !== data.matchId) return;
         if (data.playerId === currentState.userId) {
-          set({ isEliminated: true });
+          // Stamp the reason (WRONG_ANSWER / TIMEOUT) alongside the flag
+          // so the eliminated overlay can explain *why* without waiting
+          // for any further event.
+          set({ isEliminated: true, eliminationReason: data.reason });
         }
         // F1 fix: stamp `status = "ELIMINATED"` on the affected
         // player in `match.players` so the sidebar / opponents

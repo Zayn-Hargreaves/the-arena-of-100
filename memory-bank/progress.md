@@ -55,6 +55,12 @@ Run the relevant package tests before using these numbers in PR text.
 - Validation bounds tightened for client timestamps and `lastSeenSeqNo`.
 - `game.gateway.ts` import dedupe and awaited disconnect handling.
 
+### 2026-07-11
+
+- **Track C — AFK docs + UX hardening.** Verified AFK/elimination semantics across state machine → round runner → UI; wrote `docs/afk-policy.md`.
+- `MatchStateMachine` public API unchanged (CRITICAL blast radius: ~20 flows). BE elimination logic already correct — added regression tests only (AFK, disconnect, reconnect-in-round, late answer, eliminated stays eliminated).
+- FE: elimination reason (`WRONG_ANSWER` / `TIMEOUT`) now shown in `eliminated-overlay`; `eliminationReason` added to socket store; reconnect snapshot hydrates `isEliminated` from roster so watch-only UI restores. New `EliminationReason` type in `@arena/shared`.
+
 ## What Is Done
 
 - Server-authoritative match loop.
@@ -100,9 +106,10 @@ Run the relevant package tests before using these numbers in PR text.
 
 1. **k6 Load Test**
    - Measure baseline 100 concurrent WS behavior before making spectator-transport scale decisions.
-2. **AFK Docs + UX Hardening**
-   - Keep semantics aligned with active-round deadline elimination and spectator/watch-only behavior.
-3. **Admin Audit Panel UI** (Done)
+2. **AFK Docs + UX Hardening** — ✅ done (Track C, 2026-07-11)
+   - Semantics verified across all 3 layers (state machine → round runner → UI); documented in `docs/afk-policy.md`.
+   - No `MatchStateMachine` change (public API unchanged); FE now surfaces elimination reason (wrong / timeout) + reconnect snapshot hydrates spectator state.
+3. **Admin Audit Panel UI** — ✅ done
    - Backend audit baseline exists; UI/filter/pagination closeout shipped.
    - FE consumes `GET /admin/audit-events` via `lib/api/audit.ts` +
      `hooks/use-audit-events.ts` (offset pagination, DTO-matched filters:

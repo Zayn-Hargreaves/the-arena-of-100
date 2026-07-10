@@ -6,6 +6,7 @@ import {
   applyMatchFinishedState,
   applyRoundEndedState,
   applyRoundStartedState,
+  applySnapshotState,
   applyUnauthorizedErrorState,
 } from "./socket-store.updaters";
 import type { SocketState } from "./socket-store.types";
@@ -44,6 +45,7 @@ function makeState(overrides: Partial<SocketState> = {}): SocketState {
     error: null,
     heartbeatInterval: null,
     isEliminated: false,
+    eliminationReason: null,
     roomTerminated: false,
     roomTerminationMessage: null,
     connect: () => Promise.resolve(),
@@ -405,5 +407,76 @@ describe("applyUnauthorizedErrorState", () => {
       roomTerminationMessage: null,
       error: "nope",
     });
+  });
+
+  it("resets eliminationReason to null alongside isEliminated", () => {
+    const state = makeState({
+      isEliminated: true,
+      eliminationReason: "TIMEOUT",
+    });
+
+    const result = applyUnauthorizedErrorState("nope");
+
+    expect(result.isEliminated).toBe(false);
+    expect(result.eliminationReason).toBeNull();
+    // sanity: the pre-state was actually eliminated
+    expect(state.eliminationReason).toBe("TIMEOUT");
+  });
+});
+
+describe("applySnapshotState — reconnect-after-elimination hydrate", () => {
+  const snapshot = (players: Array<{ id: string; status: PlayerStatus }>) => ({
+    matchId: "m1",
+    status: MatchStatus.ROUND_ACTIVE,
+    currentRoundNo: 4,
+    players: players.map((p) => ({
+      id: p.id,
+      name: p.id,
+      status: p.status,
+      score: 0,
+      isOnline: true,
+    })),
+    currentQuestion: null,
+    roundEndTime: null,
+    lastEventSeqNo: 10,
+  });
+
+  it("hydrates isEliminated=true when the local player is ELIMINATED in the snapshot roster", () => {
+    // userId is "p1" in makeState.
+    const state = makeState({ isEliminated: false });
+    const result = applySnapshotState(
+      state,
+      snapshot([
+        { id: "p1", status: PlayerStatus.ELIMINATED },
+        { id: "p2", status: PlayerStatus.ACTIVE },
+      ]) as never,
+    );
+
+    expect(result.isEliminated).toBe(true);
+  });
+
+  it("keeps isEliminated=false when the local player is still ACTIVE", () => {
+    const state = makeState({ isEliminated: false });
+    const result = applySnapshotState(
+      state,
+      snapshot([
+        { id: "p1", status: PlayerStatus.ACTIVE },
+        { id: "p2", status: PlayerStatus.ELIMINATED },
+      ]) as never,
+    );
+
+    expect(result.isEliminated).toBe(false);
+  });
+
+  it("clears a stale isEliminated=true when the snapshot shows the local player ACTIVE", () => {
+    // Defends the reconnect path: a leftover elimination flag from a
+    // previous match must not survive a snapshot that says we are alive.
+    const state = makeState({ isEliminated: true });
+    const result = applySnapshotState(
+      state,
+      snapshot([{ id: "p1", status: PlayerStatus.ACTIVE }]) as never,
+    );
+
+    expect(result.isEliminated).toBe(false);
   });
 });

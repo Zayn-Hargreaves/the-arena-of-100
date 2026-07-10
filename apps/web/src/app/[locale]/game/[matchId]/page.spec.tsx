@@ -118,6 +118,7 @@ function baseState(overrides: Record<string, unknown> = {}) {
     remainingCount: null,
     leaveRoom: vi.fn(),
     isEliminated: false,
+    eliminationReason: null,
     roomTerminated: false,
     roomTerminationMessage: null,
     room: null,
