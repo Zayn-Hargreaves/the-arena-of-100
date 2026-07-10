@@ -4,15 +4,18 @@ import { RoomHandler } from "./room.handler";
 import { RoomService } from "../../modules/room/room.service";
 import { PresenceService } from "../../modules/match/presence.service";
 import { GameLoopService } from "../../modules/match/game-loop.service";
+import { LobbyCountdownService } from "../../modules/match/lobby-countdown.service";
 
 describe("RoomHandler", () => {
   let handler: RoomHandler;
   let roomService: RoomService;
   let presenceService: PresenceService;
   let gameLoopService: {
+    handleMatchPlayerLeft: ReturnType<typeof vi.fn>;
+  };
+  let lobbyCountdownService: {
     maybeStartPublicCountdown: ReturnType<typeof vi.fn>;
     handleRoomPlayerLeft: ReturnType<typeof vi.fn>;
-    handleMatchPlayerLeft: ReturnType<typeof vi.fn>;
     getCountdownEnd: ReturnType<typeof vi.fn>;
   };
   let client: Socket;
@@ -28,14 +31,17 @@ describe("RoomHandler", () => {
       isPresent: vi.fn().mockResolvedValue(false),
     } as unknown as PresenceService;
     gameLoopService = {
+      handleMatchPlayerLeft: vi.fn().mockResolvedValue(undefined),
+    };
+    lobbyCountdownService = {
       maybeStartPublicCountdown: vi.fn().mockResolvedValue(null),
       handleRoomPlayerLeft: vi.fn().mockResolvedValue(undefined),
-      handleMatchPlayerLeft: vi.fn().mockResolvedValue(undefined),
       getCountdownEnd: vi.fn().mockResolvedValue(null),
     };
     handler = new RoomHandler(
       roomService,
       gameLoopService as unknown as GameLoopService,
+      lobbyCountdownService as unknown as LobbyCountdownService,
       presenceService,
     );
     client = {
@@ -230,10 +236,9 @@ describe("RoomHandler", () => {
           },
         ],
       });
-      expect(gameLoopService.maybeStartPublicCountdown).toHaveBeenCalledWith(
-        "r1",
-        client.nsp.server,
-      );
+      expect(
+        lobbyCountdownService.maybeStartPublicCountdown,
+      ).toHaveBeenCalledWith("r1", client.nsp.server);
     });
 
     it("joins IN_GAME room as SPECTATOR without broadcasting PLAYER_JOINED or triggering countdown", async () => {
@@ -266,7 +271,9 @@ describe("RoomHandler", () => {
       // But no PLAYER_JOINED broadcast to the rest of the room.
       expect(client.to).not.toHaveBeenCalled();
       // And no public-room countdown kick-off.
-      expect(gameLoopService.maybeStartPublicCountdown).not.toHaveBeenCalled();
+      expect(
+        lobbyCountdownService.maybeStartPublicCountdown,
+      ).not.toHaveBeenCalled();
       // The ROOM_JOINED payload must tell the client they are a
       // spectator so the UI can render the read-only banner.
       expect(client.emit).toHaveBeenCalledWith(
@@ -303,7 +310,9 @@ describe("RoomHandler", () => {
       await handler.handleJoinRoom(client, { roomCode: "ABC123" });
 
       expect(client.to).not.toHaveBeenCalled();
-      expect(gameLoopService.maybeStartPublicCountdown).not.toHaveBeenCalled();
+      expect(
+        lobbyCountdownService.maybeStartPublicCountdown,
+      ).not.toHaveBeenCalled();
     });
 
     it("emits error when roomCode is missing", async () => {
@@ -544,7 +553,7 @@ describe("RoomHandler", () => {
         playerId: "u1",
         reason: "LEFT",
       });
-      expect(gameLoopService.handleRoomPlayerLeft).toHaveBeenCalledWith(
+      expect(lobbyCountdownService.handleRoomPlayerLeft).toHaveBeenCalledWith(
         "r1",
         server,
       );
@@ -587,7 +596,7 @@ describe("RoomHandler", () => {
       // IN_GAME rooms) — we should not double-emit.
       expect(server.to).not.toHaveBeenCalled();
       // The COUNTDOWN path is NOT taken.
-      expect(gameLoopService.handleRoomPlayerLeft).not.toHaveBeenCalled();
+      expect(lobbyCountdownService.handleRoomPlayerLeft).not.toHaveBeenCalled();
     });
 
     it("C1 fix: notifies the game loop when leaving a FINISHED room", async () => {
@@ -637,7 +646,7 @@ describe("RoomHandler", () => {
 
       // Lobby path: PLAYER_LEFT broadcast + handleRoomPlayerLeft.
       expect(server.to).toHaveBeenCalledWith("room:r1");
-      expect(gameLoopService.handleRoomPlayerLeft).toHaveBeenCalledWith(
+      expect(lobbyCountdownService.handleRoomPlayerLeft).toHaveBeenCalledWith(
         "r1",
         server,
       );

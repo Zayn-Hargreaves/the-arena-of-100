@@ -768,7 +768,13 @@ describe("RoomService", () => {
       expect(prisma.room.findMany).toHaveBeenCalledWith({
         where: {
           status: {
-            in: [RoomStatus.WAITING, RoomStatus.COUNTDOWN, RoomStatus.STARTING],
+            in: [
+              RoomStatus.WAITING,
+              RoomStatus.COUNTDOWN,
+              RoomStatus.STARTING,
+              RoomStatus.IN_GAME,
+              RoomStatus.FINISHED,
+            ],
           },
         },
         include: { players: true },

@@ -5,6 +5,7 @@ import { AuthService } from "../../modules/auth/auth.service";
 import { RoomService } from "../../modules/room/room.service";
 import { MatchService } from "../../modules/match/match.service";
 import { GameLoopService } from "../../modules/match/game-loop.service";
+import { LobbyCountdownService } from "../../modules/match/lobby-countdown.service";
 import { PresenceService } from "../../modules/match/presence.service";
 
 describe("AuthHandler", () => {
@@ -13,6 +14,7 @@ describe("AuthHandler", () => {
   let roomService: RoomService;
   let matchService: MatchService;
   let gameLoopService: GameLoopService;
+  let lobbyCountdownService: LobbyCountdownService;
   let presenceService: PresenceService;
   let client: Socket;
 
@@ -29,8 +31,10 @@ describe("AuthHandler", () => {
     } as unknown as MatchService;
     gameLoopService = {
       handlePlayerDisconnect: vi.fn(),
-      getCountdownEnd: vi.fn().mockResolvedValue(null),
     } as unknown as GameLoopService;
+    lobbyCountdownService = {
+      getCountdownEnd: vi.fn().mockResolvedValue(null),
+    } as unknown as LobbyCountdownService;
     presenceService = {
       isPresent: vi.fn().mockResolvedValue(true),
       updatePresence: vi.fn().mockResolvedValue(undefined),
@@ -40,6 +44,7 @@ describe("AuthHandler", () => {
       roomService,
       matchService,
       gameLoopService,
+      lobbyCountdownService,
       presenceService,
     );
     mockSockets = new Map();

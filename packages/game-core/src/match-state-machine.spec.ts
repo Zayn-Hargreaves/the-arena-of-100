@@ -1235,7 +1235,7 @@ describe("MatchStateMachine score accumulation (B2)", () => {
     // Cast to access private tieBreak for this corruption test
     const tieBreak = (
       machine as unknown as {
-        tieBreak: (ids: string[]) => string;
+        tieBreak: (ids: string[]) => string | null;
       }
     ).tieBreak.bind(machine);
 
@@ -1243,6 +1243,8 @@ describe("MatchStateMachine score accumulation (B2)", () => {
     expect(tieBreak(["ghost", "p1"])).toBe("p1");
     expect(tieBreak(["ghost", "p2"])).toBe("p2");
     expect(tieBreak(["p1", "ghost", "p2"])).not.toBe("ghost");
+    expect(tieBreak(["ghost1", "ghost2"])).toBeNull();
+    expect(tieBreak([])).toBeNull();
   });
 
   // ---- M1 fix: responseTimeMs clamping ----
@@ -1441,7 +1443,7 @@ describe("MatchStateMachine score accumulation (B2)", () => {
 
       // Cast to access private tieBreak for direct testing
       const tieBreak = (
-        machine as unknown as { tieBreak: (ids: string[]) => string }
+        machine as unknown as { tieBreak: (ids: string[]) => string | null }
       ).tieBreak.bind(machine);
       const first = tieBreak(["p1", "p2"]);
       const second = tieBreak(["p1", "p2"]);
@@ -1457,10 +1459,10 @@ describe("MatchStateMachine score accumulation (B2)", () => {
       const machineB = new MatchStateMachine("same-match", "r1", makePlayers());
 
       const tieBreakA = (
-        machineA as unknown as { tieBreak: (ids: string[]) => string }
+        machineA as unknown as { tieBreak: (ids: string[]) => string | null }
       ).tieBreak.bind(machineA);
       const tieBreakB = (
-        machineB as unknown as { tieBreak: (ids: string[]) => string }
+        machineB as unknown as { tieBreak: (ids: string[]) => string | null }
       ).tieBreak.bind(machineB);
 
       expect(tieBreakA(["p1", "p2"])).toBe(tieBreakB(["p1", "p2"]));
@@ -1475,10 +1477,10 @@ describe("MatchStateMachine score accumulation (B2)", () => {
       const machineB = new MatchStateMachine("match-B", "r1", makePlayers());
 
       const tieBreakA = (
-        machineA as unknown as { tieBreak: (ids: string[]) => string }
+        machineA as unknown as { tieBreak: (ids: string[]) => string | null }
       ).tieBreak.bind(machineA);
       const tieBreakB = (
-        machineB as unknown as { tieBreak: (ids: string[]) => string }
+        machineB as unknown as { tieBreak: (ids: string[]) => string | null }
       ).tieBreak.bind(machineB);
 
       // p1 has a lower id than p2. The old alphabetical fallback

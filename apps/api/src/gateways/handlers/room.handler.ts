@@ -18,6 +18,7 @@ import {
 import { RoomService } from "../../modules/room/room.service";
 import { PresenceService } from "../../modules/match/presence.service";
 import { GameLoopService } from "../../modules/match/game-loop.service";
+import { LobbyCountdownService } from "../../modules/match/lobby-countdown.service";
 import { BaseHandler } from "./base.handler";
 
 const asRoomStatus = (value: string): RoomStatus => value as RoomStatus;
@@ -29,6 +30,7 @@ export class RoomHandler extends BaseHandler {
   constructor(
     private readonly roomService: RoomService,
     private readonly gameLoopService: GameLoopService,
+    private readonly lobbyCountdownService: LobbyCountdownService,
     private readonly presenceService: PresenceService,
   ) {
     super();
@@ -121,7 +123,9 @@ export class RoomHandler extends BaseHandler {
           roomStatus: asRoomStatus(room.status),
           maxPlayers: room.maxPlayers,
           currentMatchId: room.currentMatchId,
-          countdownEndsAt: await this.gameLoopService.getCountdownEnd(room.id),
+          countdownEndsAt: await this.lobbyCountdownService.getCountdownEnd(
+            room.id,
+          ),
           joinedAs: room.joinedAs,
           players: await Promise.all(
             room.players.map(async (player) => {
@@ -170,7 +174,7 @@ export class RoomHandler extends BaseHandler {
         } satisfies RoomJoinedPayload);
 
         if (room.joined && !isSpectator) {
-          await this.gameLoopService.maybeStartPublicCountdown(
+          await this.lobbyCountdownService.maybeStartPublicCountdown(
             room.id,
             client.nsp.server,
           );
@@ -248,7 +252,7 @@ export class RoomHandler extends BaseHandler {
             reason: "LEFT",
           } satisfies RoomPlayerLeftPayload);
 
-          await this.gameLoopService.handleRoomPlayerLeft(
+          await this.lobbyCountdownService.handleRoomPlayerLeft(
             payload.roomId,
             server,
           );

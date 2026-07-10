@@ -564,7 +564,13 @@ export class RoomService {
     return this.prisma.room.findMany({
       where: {
         status: {
-          in: [RoomStatus.WAITING, RoomStatus.COUNTDOWN, RoomStatus.STARTING],
+          in: [
+            RoomStatus.WAITING,
+            RoomStatus.COUNTDOWN,
+            RoomStatus.STARTING,
+            RoomStatus.IN_GAME,
+            RoomStatus.FINISHED,
+          ],
         },
       },
       include: {
