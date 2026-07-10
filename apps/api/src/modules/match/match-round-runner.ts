@@ -626,6 +626,7 @@ export class MatchRoundRunner {
     roomId: string,
     userId: string,
     server: Server,
+    reason: "LEFT" | "STALE" = "LEFT",
   ): Promise<void> {
     // 1. Get state machine. The match might already be FINISHED and the
     //    in-memory state machine gone; we still broadcast so other
@@ -649,13 +650,13 @@ export class MatchRoundRunner {
       );
     }
 
-    // 3. Broadcast PLAYER_LEFT (reason "LEFT") on the room channel so
+    // 3. Broadcast PLAYER_LEFT (reason "LEFT"/"STALE") on the room channel so
     //    lobby + in-match views stay in sync. FINISHED matches receive
     //    it too so spectators update their "players still here" badge.
-    emitMatchPlayerLeft(server, roomId, userId);
+    emitMatchPlayerLeft(server, roomId, userId, reason);
 
     this.logger.log(
-      `Player ${userId} voluntarily left match ${matchId} (room ${roomId})`,
+      `Player ${userId} left match ${matchId} (room ${roomId}) with reason ${reason}`,
     );
   }
 
@@ -687,7 +688,12 @@ export class MatchRoundRunner {
     const expected = this.timers.getExpectedAnswers(matchId);
 
     // 3. All surviving players answered while the round is still ACTIVE?
-    if (round && round.answers.size >= expected && round.status === "ACTIVE") {
+    if (
+      round &&
+      expected > 0 &&
+      round.answers.size >= expected &&
+      round.status === "ACTIVE"
+    ) {
       this.logger.log(
         `Early termination triggered for match ${matchId} - all players answered`,
       );

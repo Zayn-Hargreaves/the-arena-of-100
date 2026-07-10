@@ -36,9 +36,12 @@ export function resolveTieBreak(
   players: ReadonlyMap<string, PlayerInfo>,
   matchId: string,
 ): string | null {
+  // Filter out any players not present in the players map (missing/disconnected/desynced/corrupted/empty).
+  const activePlayerIds = playerIds.filter((id) => players.has(id));
+
   // Empty-roster short-circuit. Sort + seeded RNG on an empty array
   // is wasted work, and `sorted[0]` would be `undefined`.
-  if (playerIds.length === 0) {
+  if (activePlayerIds.length === 0) {
     return null;
   }
 
@@ -48,18 +51,13 @@ export function resolveTieBreak(
   const seed = hashStringToSeed(matchId);
   const offsets = new Map<string, number>();
   const rng = mulberry32(seed);
-  for (const id of playerIds) {
+  for (const id of activePlayerIds) {
     offsets.set(id, rng());
   }
 
-  const sorted = [...playerIds].sort((a, b) => {
-    const playerA = players.get(a);
-    const playerB = players.get(b);
-
-    // Missing players always sort last (positive number = `a` after `b`).
-    if (!playerA && !playerB) return a < b ? -1 : a > b ? 1 : 0;
-    if (!playerA) return 1;
-    if (!playerB) return -1;
+  const sorted = [...activePlayerIds].sort((a, b) => {
+    const playerA = players.get(a)!;
+    const playerB = players.get(b)!;
 
     // First: compare total response time (ascending = faster is better).
     if (playerA.totalResponseTimeMs !== playerB.totalResponseTimeMs) {

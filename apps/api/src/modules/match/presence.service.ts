@@ -13,6 +13,7 @@ import {
   type RoomPlayerLeftPayload,
 } from "@arena/shared";
 import { GameLoopService } from "./game-loop.service";
+import { emitMatchPlayerLeft } from "./game-loop.events";
 
 @Injectable()
 export class PresenceService implements OnModuleInit, OnModuleDestroy {
@@ -141,65 +142,99 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
         };
 
         if (isLobby) {
-          for (const userId of stalePlayerIds) {
-            try {
-              // 1. Invoke the lobby countdown callback before committing removal, with immediate retries
-              await executeWithRetry(() =>
-                this.lobbyCountdownService.handleRoomPlayerLeft(
-                  room.id,
-                  this.server!,
-                  [userId],
-                ),
-              );
-              // 2. Commit that player's removal, with immediate retries
-              await executeWithRetry(() =>
-                this.roomService.removePlayerBatch(room.id, [userId]),
-              );
-              // 3. Emit PLAYER_LEFT event
-              this.server!.to(`room:${room.id}`).emit(ServerEvent.PLAYER_LEFT, {
-                roomId: room.id,
-                playerId: userId,
-                reason: "STALE",
-              } satisfies RoomPlayerLeftPayload);
-            } catch (err) {
-              this.logger.error(
-                `Failed to remove stale player ${userId} from lobby room ${room.code}:`,
-                err,
-              );
+          try {
+            // 1. Invoke the lobby countdown callback before committing removal, with immediate retries
+            await executeWithRetry(() =>
+              this.lobbyCountdownService.handleRoomPlayerLeft(
+                room.id,
+                this.server!,
+                stalePlayerIds,
+              ),
+            );
+            // 2. Commit player removals in a single batch call, with immediate retries
+            await executeWithRetry(() =>
+              this.roomService.removePlayerBatch(room.id, stalePlayerIds),
+            );
+            // 3. Emit PLAYER_LEFT event for each stale player
+            for (const userId of stalePlayerIds) {
+              emitMatchPlayerLeft(this.server!, room.id, userId, "STALE");
             }
+          } catch (err) {
+            this.logger.error(
+              `Failed to remove stale players [${stalePlayerIds.join(", ")}] from lobby room ${room.code}:`,
+              err,
+            );
           }
-        } else if (
-          (room.status === RoomStatus.IN_GAME ||
-            room.status === RoomStatus.FINISHED) &&
-          room.currentMatchId
-        ) {
-          for (const userId of stalePlayerIds) {
-            try {
-              // 1. Invoke match callback before committing removal, with immediate retries
-              await executeWithRetry(() =>
-                this.gameLoopService.handleMatchPlayerLeft(
-                  room.currentMatchId!,
-                  room.id,
-                  userId,
-                  this.server!,
-                ),
-              );
-              // 2. Commit that player's removal, with immediate retries
-              await executeWithRetry(() =>
-                this.roomService.removePlayerBatch(room.id, [userId]),
-              );
-              // 3. Emit PLAYER_LEFT event
-              this.server!.to(`room:${room.id}`).emit(ServerEvent.PLAYER_LEFT, {
-                roomId: room.id,
-                playerId: userId,
-                reason: "STALE",
-              } satisfies RoomPlayerLeftPayload);
-            } catch (err) {
-              this.logger.error(
-                `Failed to remove stale player ${userId} from match room ${room.code}:`,
-                err,
-              );
-            }
+        } else if (room.status === RoomStatus.IN_GAME && room.currentMatchId) {
+          try {
+            // Mark each stale player DISCONNECTED in the match state machine
+            // WITHOUT deleting their RoomPlayer row. Deleting the row (as the
+            // lobby path does via removePlayerBatch) breaks reconnection:
+            // syncReconnection -> getUserActiveRooms locates players by their
+            // RoomPlayer row, so a deleted row makes the running match
+            // unreachable on a fresh socket. Marking DISCONNECTED still covers
+            // the anti-cheat needs (evaluateRound skips them, the submitAnswer
+            // gate rejects) while leaving reconnect intact for the rest of the
+            // match; the row is cleaned up when the match ends. We use
+            // handlePlayerDisconnect (reason "DISCONNECTED") rather than
+            // handleMatchPlayerLeft (reason "STALE") because a lost presence
+            // key is a network drop, not a voluntary leave.
+            //
+            // FINISHED rooms are intentionally left untouched: they are
+            // excluded from getUserActiveRooms (nothing to preserve) and their
+            // state machine is already gone.
+            const DISCONNECT_TIMEOUT_MS = 3000;
+            let chain = Promise.resolve();
+            const promises = stalePlayerIds.map((userId) => {
+              const task = () => {
+                let timeoutId: NodeJS.Timeout | undefined;
+                const timeoutPromise = new Promise<void>((_, reject) => {
+                  timeoutId = setTimeout(() => {
+                    reject(
+                      new Error(
+                        `Timeout: handlePlayerDisconnect for player ${userId} exceeded ${DISCONNECT_TIMEOUT_MS}ms`,
+                      ),
+                    );
+                  }, DISCONNECT_TIMEOUT_MS);
+                });
+
+                const disconnectPromise = executeWithRetry(() =>
+                  this.gameLoopService.handlePlayerDisconnect(
+                    room.currentMatchId!,
+                    userId,
+                    this.server!,
+                  ),
+                );
+
+                return Promise.race([
+                  disconnectPromise,
+                  timeoutPromise,
+                ]).finally(() => {
+                  if (timeoutId) {
+                    clearTimeout(timeoutId);
+                  }
+                });
+              };
+              const p = chain.then(task);
+              chain = p.catch(() => {});
+              return p;
+            });
+
+            const results = await Promise.allSettled(promises);
+            results.forEach((result, idx) => {
+              if (result.status === "rejected") {
+                const userId = stalePlayerIds[idx];
+                this.logger.error(
+                  `Failed to mark stale player ${userId} disconnected in match room ${room.code}:`,
+                  result.reason,
+                );
+              }
+            });
+          } catch (err) {
+            this.logger.error(
+              `Unexpected error during stale players disconnection sweep in match room ${room.code}:`,
+              err,
+            );
           }
         }
       }

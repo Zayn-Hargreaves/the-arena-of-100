@@ -121,12 +121,13 @@ export function emitMatchPlayerLeft(
   server: Server,
   roomId: string,
   playerId: string,
+  reason: "LEFT" | "STALE" = "LEFT",
 ) {
   const channel = getRoomChannel(roomId);
   server.to(channel).emit(ServerEvent.PLAYER_LEFT, {
     roomId,
     playerId,
-    reason: "LEFT",
+    reason,
   });
 }
 

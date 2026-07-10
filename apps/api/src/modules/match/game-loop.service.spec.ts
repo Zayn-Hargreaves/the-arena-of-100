@@ -4079,7 +4079,9 @@ describe("GameLoopService", () => {
           ServerEvent.ROOM_STATUS_UPDATED,
           expect.anything(),
         );
-        expect(clearCountdownSpy).not.toHaveBeenCalled();
+        expect(clearCountdownSpy).toHaveBeenCalledWith(
+          "room-retry-skip-rollback",
+        );
       });
 
       it("logs rollback failures during max-retry abort", async () => {

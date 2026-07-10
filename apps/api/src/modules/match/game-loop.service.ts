@@ -369,12 +369,14 @@ export class GameLoopService {
     roomId: string,
     userId: string,
     server: Server,
+    reason: "LEFT" | "STALE" = "LEFT",
   ): Promise<void> {
     return this.roundRunner.handleMatchPlayerLeft(
       matchId,
       roomId,
       userId,
       server,
+      reason,
     );
   }
 

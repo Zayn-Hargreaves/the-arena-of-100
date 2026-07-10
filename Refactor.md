@@ -11,10 +11,14 @@ Sau bản đầu, đã làm tiếp full-clean theo yêu cầu:
 - **LobbyCountdownService**: nâng thành `@Injectable` DI provider thật (logger riêng, vào `MatchModule`). Đã loại bỏ các delegator shim của LobbyCountdownService trên `GameLoopService`; các caller bên ngoài (như Room/Auth Handler) tự inject và gọi trực tiếp `LobbyCountdownService` để đảm bảo DI một chiều rõ ràng. GameLoopService vẫn duy trì một số public facade/delegator tương thích cho các tính năng khác (như delegate tới `MatchRoundRunner` và `forceStartRoomMatch`) để giữ nguyên interface tương thích.
 - **MatchRoundRunner** (Phase 1D): tách vòng đời trận (countdown→round→finish + player events) ra file riêng. GameLoopService còn **394 dòng** — orchestrator: launch + admin control + facade mỏng cho socket handler.
 - **Presence Sweep & Join Refactoring**: Cập nhật `PresenceService.sweep()` để phân nhánh xử lý người chơi stale dựa trên trạng thái phòng: gọi `GameLoopService.handleMatchPlayerLeft` cho các phòng `IN_GAME` hoặc `FINISHED` có trận đấu đang hoạt động, và chỉ gọi `LobbyCountdownService.handleRoomPlayerLeft` cho các phòng lobby/chờ (`WAITING`/`COUNTDOWN`/`STARTING`). Việc này thay thế hoàn toàn cơ chế join/countdown cũ luôn chạy countdown cho mọi trạng thái.
+- **Phase 1D Recovery & Stability Hardening**:
+  - Đã triển khai lệnh gọi `clearPersistedCountdown` bắt buộc trong nhánh guard `!room` của `LobbyCountdownService.scheduleRecoveryRetry` để xóa trạng thái Redis countdown stale khi rollback bị bỏ qua. Cập nhật test tương ứng trong `game-loop.service.spec.ts`.
+  - Thêm điều kiện `expected > 0` guard vào `MatchRoundRunner.checkEarlyTermination` nhằm ngăn chặn kết thúc vòng sớm trong các kịch bản phục hồi/khởi động lại hệ thống nơi số câu trả lời mong đợi tạm thời bằng 0.
+  - Xác minh test description chính xác trong `presence.service.spec.ts` cho các trường hợp disband phòng private và xử lý host stale.
 
-LOC cuối: `game-loop.service.ts` 1587→**394**, `match-round-runner.ts` 606, `lobby-countdown.service.ts` 550, `match-timer.registry.ts` 152, `match-state-machine.ts` 785→556.
+LOC cuối: `game-loop.service.ts` 1587→**394**, `match-round-runner.ts` 703, `lobby-countdown.service.ts` 562, `match-timer.registry.ts` 153, `match-state-machine.ts` 785→556.
 
-Verify: game-core **75/75**, api **891/891** (bao gồm test mới cho presence sweep), typecheck + lint sạch, `gitnexus check` **0 cycles** (re-indexed).
+Verify: game-core **75/75**, api **897/897** (bao gồm toàn bộ suite test kiểm tra presence sweep và recovery retry), typecheck + lint sạch, `gitnexus check` **0 cycles** (re-indexed).
 
 ---
 

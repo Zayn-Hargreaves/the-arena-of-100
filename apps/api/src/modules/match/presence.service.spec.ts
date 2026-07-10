@@ -81,6 +81,7 @@ describe("PresenceService", () => {
   };
   let gameLoopService: {
     handleMatchPlayerLeft: ReturnType<typeof vi.fn>;
+    handlePlayerDisconnect: ReturnType<typeof vi.fn>;
   };
   let mockServer: ReturnType<typeof makeMockServer>;
 
@@ -100,6 +101,7 @@ describe("PresenceService", () => {
 
     gameLoopService = {
       handleMatchPlayerLeft: vi.fn().mockResolvedValue(undefined),
+      handlePlayerDisconnect: vi.fn().mockResolvedValue(undefined),
     };
 
     mockServer = makeMockServer();
@@ -205,7 +207,7 @@ describe("PresenceService", () => {
       );
     });
 
-    it("calls GameLoopService.handleMatchPlayerLeft for IN_GAME or FINISHED rooms", async () => {
+    it("marks stale IN_GAME players DISCONNECTED without deleting their RoomPlayer row (preserves reconnect)", async () => {
       service.setServer(mockServer as unknown as Server);
       vi.mocked(roomService.getActiveRooms).mockResolvedValueOnce([
         makeActiveRoom({
@@ -221,16 +223,39 @@ describe("PresenceService", () => {
 
       await (service as any).sweep();
 
-      expect(roomService.removePlayerBatch).toHaveBeenCalledWith("rGame", [
-        "p2",
-      ]);
-      expect(gameLoopService.handleMatchPlayerLeft).toHaveBeenCalledWith(
+      // Player is marked DISCONNECTED in the match state machine...
+      expect(gameLoopService.handlePlayerDisconnect).toHaveBeenCalledWith(
         "m1",
-        "rGame",
         "p2",
         mockServer,
       );
+      // ...but the RoomPlayer row is NOT deleted — deleting it would break
+      // syncReconnection -> getUserActiveRooms. handleMatchPlayerLeft (the
+      // "STALE"/removal path) must not run for IN_GAME rooms.
+      expect(roomService.removePlayerBatch).not.toHaveBeenCalled();
+      expect(gameLoopService.handleMatchPlayerLeft).not.toHaveBeenCalled();
       expect(lobbyCountdownService.handleRoomPlayerLeft).not.toHaveBeenCalled();
+    });
+
+    it("leaves FINISHED rooms untouched (excluded from getUserActiveRooms, state machine gone)", async () => {
+      service.setServer(mockServer as unknown as Server);
+      vi.mocked(roomService.getActiveRooms).mockResolvedValueOnce([
+        makeActiveRoom({
+          id: "rDone",
+          status: RoomStatus.FINISHED,
+          currentMatchId: "m1",
+          players: [{ userId: "host1" }, { userId: "p2" }],
+        }),
+      ]);
+      vi.mocked(roomService.checkPresence).mockImplementation(
+        async (_room, userId) => userId !== "p2",
+      );
+
+      await (service as any).sweep();
+
+      expect(gameLoopService.handlePlayerDisconnect).not.toHaveBeenCalled();
+      expect(gameLoopService.handleMatchPlayerLeft).not.toHaveBeenCalled();
+      expect(roomService.removePlayerBatch).not.toHaveBeenCalled();
     });
 
     it("disbands a PRIVATE room whose host is stale, emitting HOST_STALE events", async () => {
@@ -396,7 +421,7 @@ describe("PresenceService", () => {
       ).toHaveLength(0);
       expect(logErrorSpy).toHaveBeenCalledWith(
         expect.stringContaining(
-          "Failed to remove stale player p2 from lobby room",
+          "Failed to remove stale players [p2] from lobby room",
         ),
         expect.any(Error),
       );
@@ -464,14 +489,14 @@ describe("PresenceService", () => {
       ).toHaveLength(0);
       expect(logErrorSpy).toHaveBeenCalledWith(
         expect.stringContaining(
-          "Failed to remove stale player p2 from lobby room",
+          "Failed to remove stale players [p2] from lobby room",
         ),
         expect.any(Error),
       );
       logErrorSpy.mockRestore();
     });
 
-    it("retries match player left callback if it fails initially but succeeds on retry", async () => {
+    it("retries the match disconnect callback if it fails initially but succeeds on retry", async () => {
       service.setServer(mockServer as unknown as Server);
       vi.mocked(roomService.getActiveRooms).mockResolvedValueOnce([
         makeActiveRoom({
@@ -485,22 +510,64 @@ describe("PresenceService", () => {
         async (_room, userId) => userId !== "p2",
       );
 
-      // handleMatchPlayerLeft fails twice then succeeds
-      vi.mocked(gameLoopService.handleMatchPlayerLeft)
+      // handlePlayerDisconnect fails twice then succeeds
+      vi.mocked(gameLoopService.handlePlayerDisconnect)
         .mockRejectedValueOnce(new Error("Transient match callback error"))
         .mockRejectedValueOnce(new Error("Transient match callback error"))
         .mockResolvedValueOnce(undefined);
 
       await (service as any).sweep();
 
-      expect(gameLoopService.handleMatchPlayerLeft).toHaveBeenCalledTimes(3);
-      expect(roomService.removePlayerBatch).toHaveBeenCalledWith(
-        "rMatchRetry",
-        ["p2"],
+      expect(gameLoopService.handlePlayerDisconnect).toHaveBeenCalledTimes(3);
+      // Reconnect must stay intact: the row is never deleted.
+      expect(roomService.removePlayerBatch).not.toHaveBeenCalled();
+    });
+
+    it("times out handlePlayerDisconnect if it hangs indefinitely, allowing next player in queue to proceed", async () => {
+      vi.useFakeTimers();
+      service.setServer(mockServer as unknown as Server);
+      vi.mocked(roomService.getActiveRooms).mockResolvedValueOnce([
+        makeActiveRoom({
+          id: "rMatchTimeout",
+          status: RoomStatus.IN_GAME,
+          currentMatchId: "m1",
+          players: [{ userId: "host1" }, { userId: "p2" }, { userId: "p3" }],
+        }),
+      ]);
+      vi.mocked(roomService.checkPresence).mockImplementation(
+        async (_room, userId) => userId !== "p2" && userId !== "p3",
       );
-      expect(
-        mockServer.emissions.filter((e) => e.event === ServerEvent.PLAYER_LEFT),
-      ).toHaveLength(1);
+
+      // p2 disconnect hangs indefinitely, but p3 resolves immediately
+      const p2DisconnectPromise = new Promise<void>(() => {});
+      vi.mocked(gameLoopService.handlePlayerDisconnect).mockImplementation(
+        async (_match, userId) => {
+          if (userId === "p2") {
+            return p2DisconnectPromise;
+          }
+          return;
+        },
+      );
+
+      const sweepPromise = (service as any).sweep();
+
+      // Trigger the first player's timeout (3000ms)
+      await vi.advanceTimersByTimeAsync(3000);
+
+      // Wait for sweep to complete
+      await sweepPromise;
+
+      // Both players should have been called
+      expect(gameLoopService.handlePlayerDisconnect).toHaveBeenCalledWith(
+        "m1",
+        "p2",
+        mockServer,
+      );
+      expect(gameLoopService.handlePlayerDisconnect).toHaveBeenCalledWith(
+        "m1",
+        "p3",
+        mockServer,
+      );
     });
   });
 

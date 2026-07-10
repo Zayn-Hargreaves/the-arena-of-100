@@ -171,7 +171,12 @@ export function deserializeMatch(json: string): DecodedMatchState {
 
   let currentRound: RoundWithAnswer | null;
   if (parsed.currentRound) {
-    const { answers, ...rest } = parsed.currentRound;
+    const {
+      answers,
+      correctAnswer: _omitCorrectAnswer,
+      ...rest
+    } = parsed.currentRound;
+    void _omitCorrectAnswer;
     currentRound = {
       ...rest,
       // Backfill any missing `submissionId` on legacy answers

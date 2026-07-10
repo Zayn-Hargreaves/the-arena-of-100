@@ -437,6 +437,7 @@ export class LobbyCountdownService implements OnModuleInit {
             this.logger.warn(
               `Skipping WAITING rollback for room ${entry.roomId}: room is already active or the countdown was cleared; only clearing persisted countdown`,
             );
+            void this.clearPersistedCountdown(entry.roomId);
             return;
           }
 
