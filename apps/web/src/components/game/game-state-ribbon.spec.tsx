@@ -2,6 +2,7 @@
 // Validates: round number + remaining/total player count rendering.
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
 import React from "react";
 import { GameStateRibbon } from "./game-state-ribbon";
 
@@ -11,6 +12,7 @@ describe("GameStateRibbon", () => {
       <GameStateRibbon
         roundNo={3}
         timeLeft={12}
+        roundDuration={15}
         livePlayerCount={7}
         maxPlayers={100}
       />,

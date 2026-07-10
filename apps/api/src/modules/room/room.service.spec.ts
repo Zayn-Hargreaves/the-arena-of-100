@@ -48,7 +48,7 @@ describe("RoomService", () => {
       getJSON: vi.fn(),
       sadd: vi.fn(),
       srem: vi.fn(),
-      smembers: vi.fn(),
+      smembers: vi.fn().mockResolvedValue([]),
       set: vi.fn(),
       get: vi.fn().mockResolvedValue(null),
       setIfAbsent: vi.fn().mockResolvedValue(true),
@@ -56,6 +56,20 @@ describe("RoomService", () => {
       exists: vi.fn(),
       incr: vi.fn().mockResolvedValue(1),
       eval: vi.fn().mockResolvedValue(0),
+      // Used by disbandRoom via clearPersistedCountdown, which issues a
+      // raw ioredis multi().del().srem().exec() pipeline.
+      getClient: vi.fn().mockReturnValue({
+        multi: vi.fn(() => {
+          const chain: any = {};
+          chain.del = vi.fn(() => chain);
+          chain.srem = vi.fn(() => chain);
+          chain.exec = vi.fn().mockResolvedValue([
+            [null, 1],
+            [null, 1],
+          ]);
+          return chain;
+        }),
+      }),
     } as unknown as RedisService;
     service = new RoomService(prisma, redis);
   });
@@ -103,7 +117,10 @@ describe("RoomService", () => {
       vi.mocked(prisma.roomPlayer.count).mockResolvedValue(1);
       vi.mocked(prisma.roomPlayer.create).mockResolvedValue({} as any);
       vi.mocked(redis.getJSON).mockResolvedValue({ playerCount: 1 });
-      vi.mocked(redis.incr).mockResolvedValue(2);
+      vi.mocked(redis.eval).mockImplementation(async (script: string) => {
+        if (script.includes("incr")) return 2;
+        return 0;
+      });
       vi.spyOn(service, "getRoom").mockResolvedValue({ id: "r1" } as any);
 
       const result = await service.joinRoom("ABC", "u2");
@@ -116,9 +133,13 @@ describe("RoomService", () => {
       });
       expect(prisma.roomPlayer.create).toHaveBeenCalled();
       expect(redis.sadd).toHaveBeenCalledWith("room:r1:players", "u2");
-      expect(redis.incr).toHaveBeenCalledWith("room:r1:playerCount");
       expect(redis.eval).toHaveBeenCalledWith(
-        expect.any(String),
+        expect.stringContaining("incr"),
+        ["room:r1:playerCount"],
+        ["3600"],
+      );
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("cjson"),
         ["room:r1"],
         ["2"],
       );
@@ -140,19 +161,22 @@ describe("RoomService", () => {
       vi.mocked(prisma.roomPlayer.count).mockResolvedValue(1);
       vi.mocked(prisma.roomPlayer.create).mockResolvedValue({} as any);
       vi.mocked(redis.getJSON).mockResolvedValue({ playerCount: 1 });
-      vi.mocked(redis.incr).mockResolvedValue(2);
+      vi.mocked(redis.eval).mockImplementation(async (script: string) => {
+        if (script.includes("incr")) return 2;
+        throw new Error("Redis connection lost");
+      });
       vi.spyOn(service, "getRoom").mockResolvedValue({ id: "r1" } as any);
-
-      vi.mocked(redis.eval).mockRejectedValue(
-        new Error("Redis connection lost"),
-      );
 
       const result = await service.joinRoom("ABC", "u2");
 
       expect(prisma.roomPlayer.create).toHaveBeenCalled();
-      expect(redis.incr).toHaveBeenCalledWith("room:r1:playerCount");
       expect(redis.eval).toHaveBeenCalledWith(
-        expect.any(String),
+        expect.stringContaining("incr"),
+        ["room:r1:playerCount"],
+        ["3600"],
+      );
+      expect(redis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("cjson"),
         ["room:r1"],
         ["2"],
       );
@@ -797,6 +821,34 @@ describe("RoomService", () => {
       expect(prisma.$transaction).toHaveBeenCalled();
       expect(redis.del).toHaveBeenCalledWith("room:r1:players");
       expect(redis.del).toHaveBeenCalledWith("room:r1");
+      expect(redis.del).toHaveBeenCalledWith("room:r1:playerCount");
+    });
+
+    it("clears presence keys for every player that was in the room", async () => {
+      vi.mocked(redis.smembers).mockResolvedValue(["u1", "u2"]);
+
+      await service.disbandRoom("r1");
+
+      expect(redis.del).toHaveBeenCalledWith("room:presence:r1:u1");
+      expect(redis.del).toHaveBeenCalledWith("room:presence:r1:u2");
+    });
+
+    it("clears the persisted lobby countdown key and index membership", async () => {
+      const chain: any = {};
+      chain.del = vi.fn(() => chain);
+      chain.srem = vi.fn(() => chain);
+      chain.exec = vi.fn().mockResolvedValue([
+        [null, 1],
+        [null, 1],
+      ]);
+      const client = { multi: vi.fn(() => chain) };
+      vi.mocked(redis.getClient).mockReturnValue(client as any);
+
+      await service.disbandRoom("r1");
+
+      expect(client.multi).toHaveBeenCalled();
+      expect(chain.del).toHaveBeenCalledWith("room:countdown:r1");
+      expect(chain.srem).toHaveBeenCalledWith("room:countdowns", "r1");
     });
   });
 

@@ -37,10 +37,12 @@ export async function syncQuestions(
     `Starting programmatically sync questions (clearExisting: ${clearExisting})...`,
   );
 
-  // PR 3 (Finding 4 follow-up): accumulators for the audit row.
-  // Declared outside the try so the finally block can reference
-  // them on the partial-failure path (when a mid-seed DB error
-  // leaves some counts populated and others at their default).
+  // Accumulators for the audit row. Declared outside the try so the
+  // finally block can reference them, but only ever assigned from the
+  // transaction's return value AFTER it resolves (see below) — a
+  // mid-seed failure rolls back the DB and leaves these at their zero
+  // default, so the audit row never reports counts that were never
+  // committed.
   let seededQuestions = 0;
   let seededQuestionTags = 0;
   let allTagNamesArray: string[] = [];
@@ -53,7 +55,7 @@ export async function syncQuestions(
     // as one atomic transaction: a failure partway through (e.g.
     // after the purge but before the seed completes) rolls back the
     // purge instead of leaving the question bank empty.
-    await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       if (clearExisting) {
         logger.warn(
           "Deleting all existing questions, tags, and dependencies...",
@@ -77,12 +79,12 @@ export async function syncQuestions(
         targetTags.forEach((tagName) => allTagNames.add(tagName));
       }
 
-      allTagNamesArray = Array.from(allTagNames);
+      const txAllTagNamesArray = Array.from(allTagNames);
 
       // Batch create or fetch tags
-      if (allTagNamesArray.length > 0) {
+      if (txAllTagNamesArray.length > 0) {
         await tx.tag.createMany({
-          data: allTagNamesArray.map((name) => ({ name })),
+          data: txAllTagNamesArray.map((name) => ({ name })),
           skipDuplicates: true,
         });
       }
@@ -118,6 +120,9 @@ export async function syncQuestions(
         existingTagIdsByQuestionId.set(qt.questionId, set);
       }
 
+      let txSeededQuestions = 0;
+      let txSeededQuestionTags = 0;
+
       for (const question of questionSeeds) {
         const normalizedContent = question.content.trim();
         const existingQuestion =
@@ -151,7 +156,7 @@ export async function syncQuestions(
             },
           });
         }
-        seededQuestions++;
+        txSeededQuestions++;
 
         // Sync tags
         const targetTags = question.tags
@@ -180,7 +185,7 @@ export async function syncQuestions(
               })),
               skipDuplicates: true,
             });
-            seededQuestionTags += tagsToCreate.length;
+            txSeededQuestionTags += tagsToCreate.length;
           }
         }
       }
@@ -194,7 +199,20 @@ export async function syncQuestions(
           role: "ADMIN",
         },
       });
+
+      return {
+        seededQuestions: txSeededQuestions,
+        seededQuestionTags: txSeededQuestionTags,
+        allTagNamesArray: txAllTagNamesArray,
+      };
     });
+
+    // Only assign the outer accumulators once the transaction has
+    // committed, so a rollback (caught below) leaves them at their zero
+    // default instead of the partial in-progress counts.
+    seededQuestions = result.seededQuestions;
+    seededQuestionTags = result.seededQuestionTags;
+    allTagNamesArray = result.allTagNamesArray;
 
     logger.log(
       `Programmatic question sync successful: ${seededQuestions} questions, ${allTagNamesArray.length} tags, ${seededQuestionTags} tag relationships.`,

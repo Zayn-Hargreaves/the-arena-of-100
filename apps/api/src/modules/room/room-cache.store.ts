@@ -50,6 +50,19 @@ end
 return v
 `;
 
+// Atomic Lua script that increments a player-count counter.
+// If the counter key has no TTL (meaning ttl == -1 or ttl < 0), sets the TTL
+// to the fallback TTL (seconds) carried in ARGV[1].
+// Returns the new incremented value.
+const INCR_PLAYER_COUNT_SCRIPT = `
+local v = redis.call('incr', KEYS[1])
+local ttl = redis.call('ttl', KEYS[1])
+if ttl < 0 then
+  redis.call('expire', KEYS[1], tonumber(ARGV[1]))
+end
+return v
+`;
+
 // Atomic Lua script that updates only the playerCount field of the cached
 // room JSON snapshot, preserving all other fields and the existing TTL.
 // Returns nil if the key does not exist (caller should no-op). Avoids the
@@ -81,10 +94,9 @@ interface RoomSnapshotInput {
 export const ROOM_CACHE_TTL_SECONDS = 3600;
 
 export class RoomCacheStore {
-  constructor(
-    private readonly redis: RedisService,
-    private readonly logger: Logger,
-  ) {}
+  private readonly logger = new Logger(RoomCacheStore.name);
+
+  constructor(private readonly redis: RedisService) {}
 
   async setSnapshot(room: RoomSnapshotInput, playerCount: number) {
     await this.redis.setJSON(
@@ -158,6 +170,28 @@ export class RoomCacheStore {
     } catch (error) {
       this.logger.error(
         `Failed to decrement cached player count for room ${roomId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return NaN;
+    }
+  }
+
+  // Atomically increments the room's player-count counter. If the key has no
+  // TTL (e.g. was recreated after eviction/expiry), sets the TTL to
+  // ROOM_CACHE_TTL_SECONDS. Returns the new count. Safe under concurrent
+  // join paths.
+  async incrementPlayerCount(roomId: string): Promise<number> {
+    try {
+      const result = await this.redis.eval(
+        INCR_PLAYER_COUNT_SCRIPT,
+        [roomPlayerCountKey(roomId)],
+        [String(ROOM_CACHE_TTL_SECONDS)],
+      );
+      return Number(result);
+    } catch (error) {
+      this.logger.error(
+        `Failed to increment cached player count for room ${roomId}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );

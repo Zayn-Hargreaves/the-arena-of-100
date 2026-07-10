@@ -36,7 +36,7 @@ export class AdminService {
     private readonly gameLoopService: GameLoopService,
   ) {}
 
-  syncQuestions(clearExisting: boolean = true, adminUserId: string) {
+  syncQuestions(clearExisting: boolean, adminUserId: string) {
     return syncQuestions(
       { prisma: this.prisma, logger: this.logger },
       clearExisting,

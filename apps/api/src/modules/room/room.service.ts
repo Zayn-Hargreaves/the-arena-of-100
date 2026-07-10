@@ -20,6 +20,7 @@ import {
   roomPlayersKey,
   ROOM_CACHE_TTL_SECONDS,
 } from "./room-cache.store";
+import { clearPersistedCountdown } from "../match/game-loop.countdown-store";
 
 @Injectable()
 export class RoomService {
@@ -30,7 +31,7 @@ export class RoomService {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
   ) {
-    this.cache = new RoomCacheStore(this.redis, this.logger);
+    this.cache = new RoomCacheStore(this.redis);
   }
 
   // Create room
@@ -223,14 +224,16 @@ export class RoomService {
       if (didCreate) {
         await this.redis.sadd(roomPlayersKey(room.id), userId);
 
-        // Atomically bump the player-count counter. INCR is safe for joins
-        // (the count can only go up) and avoids the getJSON->modify->setJSON
-        // race that loses concurrent increments.
-        const newCount = await this.redis.incr(roomPlayerCountKey(room.id));
+        // Atomically bump the player-count counter. Safe under concurrent
+        // joins, and ensures that if the key is recreated due to eviction or
+        // expiry, a proper TTL is set to prevent key leakage.
+        const newCount = await this.cache.incrementPlayerCount(room.id);
 
-        // Best-effort: mirror the new count into the cached room JSON. The
-        // counter is the source of truth; the JSON is for cheap reads.
-        await this.cache.syncPlayerCount(room.id, newCount);
+        // incrementPlayerCount returns NaN (best-effort) when Redis is
+        // unavailable — skip mirroring a NaN into the cached snapshot.
+        if (!Number.isNaN(newCount)) {
+          await this.cache.syncPlayerCount(room.id, newCount);
+        }
 
         this.logger.log(`Player ${userId} joined room ${roomCode}`);
       } else {
@@ -490,6 +493,11 @@ export class RoomService {
   }
 
   async disbandRoom(roomId: string) {
+    // Snapshot the player set before it's deleted below so the presence
+    // keys for each player can be cleared too — otherwise they only
+    // expire on their own 20s TTL, leaving a stale presence read window.
+    const userIds = await this.redis.smembers(roomPlayersKey(roomId));
+
     await this.prisma.$transaction([
       this.prisma.roomPlayer.deleteMany({ where: { roomId } }),
       this.prisma.room.delete({ where: { id: roomId } }),
@@ -498,6 +506,12 @@ export class RoomService {
     await Promise.all([
       this.redis.del(roomPlayersKey(roomId)),
       this.redis.del(roomSnapshotKey(roomId)),
+      this.redis.del(roomPlayerCountKey(roomId)),
+      ...userIds.map((userId) => this.clearPresence(roomId, userId)),
+      // Mirrors the admin kill-switch's Redis cleanup so both teardown
+      // paths leave no room:countdown:<id> key or room:countdowns
+      // membership behind.
+      clearPersistedCountdown(this.redis.getClient(), roomId),
     ]);
   }
 

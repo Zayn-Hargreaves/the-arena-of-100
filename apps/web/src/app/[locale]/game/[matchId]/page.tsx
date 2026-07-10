@@ -1,6 +1,13 @@
 "use client";
 
-import React, { useState, useEffect, use, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  use,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import {
   EliminatedOverlay,
@@ -59,6 +66,15 @@ export default function GamePage({ params }: GamePageProps) {
   // roundEndTime in match-round-runner.ts) instead of a
   // disconnected magic number.
   const roundDuration = GAME_CONFIG.ROUND_DURATION_MS / 1000;
+
+  const { hasCurrentQuestion, questionText, options } = useMemo(() => {
+    const has = Boolean(match?.currentQuestion);
+    return {
+      hasCurrentQuestion: has,
+      questionText: has ? (match?.currentQuestion?.content ?? "") : "",
+      options: has ? (match?.currentQuestion?.options ?? []) : [],
+    };
+  }, [match?.currentQuestion]);
 
   // Server-authoritative state
   const [timeLeft, setTimeLeft] = useState(roundDuration);
@@ -226,7 +242,16 @@ export default function GamePage({ params }: GamePageProps) {
     // The correct answer still comes from `lastAnswerResult` (set by
     // ROUND_ENDED) — we use it purely for display, not as a trigger.
     if (lastAnswerResult?.correctAnswer) {
-      setRevealedCorrectAnswer(lastAnswerResult.correctAnswer);
+      const rawAnswer = lastAnswerResult.correctAnswer;
+      const ANSWER_CODES = ["A", "B", "C", "D"];
+      let normalizedAnswer = rawAnswer;
+      if (!ANSWER_CODES.includes(rawAnswer)) {
+        const matchedIdx = options.indexOf(rawAnswer);
+        if (matchedIdx >= 0 && matchedIdx < ANSWER_CODES.length) {
+          normalizedAnswer = ANSWER_CODES[matchedIdx];
+        }
+      }
+      setRevealedCorrectAnswer(normalizedAnswer);
     }
 
     // F3 fix: outer 1s reveal → inner 3s continue, each with its
@@ -267,6 +292,7 @@ export default function GamePage({ params }: GamePageProps) {
     roundCompleted,
     clearTimers,
     roundDuration,
+    options,
     // Note: we intentionally do NOT depend on `matchId`,
     // `currentLocale`, or `router` — the legacy dependency list
     // was overly broad and contributed to unnecessary re-runs
@@ -378,15 +404,15 @@ export default function GamePage({ params }: GamePageProps) {
   );
 
   const getTileVariant = useCallback(
-    (option: string) => {
+    (answerCode: string) => {
       if (roundCompleted) {
-        if (revealedCorrectAnswer && option === revealedCorrectAnswer) {
+        if (revealedCorrectAnswer && answerCode === revealedCorrectAnswer) {
           return "correct";
         }
-        if (option === selectedAnswer) return "incorrect";
+        if (answerCode === selectedAnswer) return "incorrect";
         return "disabled";
       }
-      return selectedAnswer === option ? "selected" : "default";
+      return selectedAnswer === answerCode ? "selected" : "default";
     },
     [roundCompleted, revealedCorrectAnswer, selectedAnswer],
   );
@@ -398,13 +424,6 @@ export default function GamePage({ params }: GamePageProps) {
   // skeleton is purely presentational — it does not change any
   // business logic — and it makes the empty state honest to the
   // user.
-  const hasCurrentQuestion = Boolean(match?.currentQuestion);
-  const questionText = hasCurrentQuestion
-    ? (match?.currentQuestion?.content ?? "")
-    : "";
-  const options = hasCurrentQuestion
-    ? (match?.currentQuestion?.options ?? [])
-    : [];
 
   const maxPlayers = room?.maxPlayers ?? GAME_CONFIG.MAX_PLAYERS;
   const livePlayerCount = remainingCount ?? match?.players?.length ?? 0;
@@ -449,7 +468,7 @@ export default function GamePage({ params }: GamePageProps) {
                 activePendingAnswer !== null ||
                 activeAnswerResult !== null ||
                 !match?.id ||
-                match.currentRoundNo <= 0
+                match?.currentRoundNo <= 0
               }
             />
           </div>
