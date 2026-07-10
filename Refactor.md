@@ -1,189 +1,132 @@
-# Refactor Plan — `game-loop.service.ts` & `match-state-machine.ts`
+# Refactor Plan — `admin.service.ts` (SRP split)
 
-> Mục tiêu: giảm 2 god-file lớn nhất dự án về kích thước dễ bảo trì **mà không đổi hành vi runtime**.
-> Nguyên tắc: mỗi bước giữ nguyên public API surface → chạy test → `detect_changes` trước khi commit.
+> Mục tiêu: tách god-service lớn nhất repo (`admin.service.ts` **761 dòng**) thành các ops thuần
+> theo trách nhiệm, **không đổi hành vi runtime**, giữ nguyên public API + constructor để 1354 dòng
+> test (`admin.service.spec.ts` 51 tests + module/controller specs) xanh **không phải sửa**.
 
-## ✅ Trạng thái: CLEAN HOÀN TOÀN (2026-07-10)
+## ✅ Trạng thái: ĐÃ XONG (2026-07-11)
 
-Sau bản đầu, đã làm tiếp full-clean theo yêu cầu:
+| File                          | Trước | Sau    |
+| ----------------------------- | ----- | ------ |
+| `admin.service.ts` (facade)   | 761   | **86** |
+| `ops/admin-audit.ops.ts`      | —     | 99     |
+| `ops/question-sync.ops.ts`    | —     | 216    |
+| `ops/system-reset.ops.ts`     | —     | 169    |
+| `ops/room-termination.ops.ts` | —     | 330    |
 
-- **MatchTimerRegistry**: maps → `private`, test đi qua method ngữ nghĩa (không thọc map).
-- **LobbyCountdownService**: nâng thành `@Injectable` DI provider thật (logger riêng, vào `MatchModule`). Đã loại bỏ các delegator shim của LobbyCountdownService trên `GameLoopService`; các caller bên ngoài (như Room/Auth Handler) tự inject và gọi trực tiếp `LobbyCountdownService` để đảm bảo DI một chiều rõ ràng. GameLoopService vẫn duy trì một số public facade/delegator tương thích cho các tính năng khác (như delegate tới `MatchRoundRunner` và `forceStartRoomMatch`) để giữ nguyên interface tương thích.
-- **MatchRoundRunner** (Phase 1D): tách vòng đời trận (countdown→round→finish + player events) ra file riêng. GameLoopService còn **394 dòng** — orchestrator: launch + admin control + facade mỏng cho socket handler.
-- **Presence Sweep & Join Refactoring**: Cập nhật `PresenceService.sweep()` để phân nhánh xử lý người chơi stale dựa trên trạng thái phòng: gọi `GameLoopService.handleMatchPlayerLeft` cho các phòng `IN_GAME` hoặc `FINISHED` có trận đấu đang hoạt động, và chỉ gọi `LobbyCountdownService.handleRoomPlayerLeft` cho các phòng lobby/chờ (`WAITING`/`COUNTDOWN`/`STARTING`). Việc này thay thế hoàn toàn cơ chế join/countdown cũ luôn chạy countdown cho mọi trạng thái.
-- **Phase 1D Recovery & Stability Hardening**:
-  - Đã triển khai lệnh gọi `clearPersistedCountdown` bắt buộc trong nhánh guard `!room` của `LobbyCountdownService.scheduleRecoveryRetry` để xóa trạng thái Redis countdown stale khi rollback bị bỏ qua. Cập nhật test tương ứng trong `game-loop.service.spec.ts`.
-  - Thêm điều kiện `expected > 0` guard vào `MatchRoundRunner.checkEarlyTermination` nhằm ngăn chặn kết thúc vòng sớm trong các kịch bản phục hồi/khởi động lại hệ thống nơi số câu trả lời mong đợi tạm thời bằng 0.
-  - Xác minh test description chính xác trong `presence.service.spec.ts` cho các trường hợp disband phòng private và xử lý host stale.
+Verify: `admin` suite **99/99** xanh, full api **912/912** xanh, `tsc --noEmit` sạch, `eslint` sạch,
+`gitnexus check` **0 cycles**, `detect_changes` scope gọn trong admin (0 process ảnh hưởng).
+**Spec KHÔNG sửa 1 dòng** (mục tiêu đạt): constructor + public API + logger reference giữ nguyên.
+Còn lại (chưa re-index gitnexus): chạy `npx gitnexus analyze` để graph thấy các file ops/store mới.
 
-LOC cuối: `game-loop.service.ts` 1587→**394**, `match-round-runner.ts` 703, `lobby-countdown.service.ts` 562, `match-timer.registry.ts` 153, `match-state-machine.ts` 785→556.
+### Bonus — `room.service.ts` (cùng đợt)
 
-Verify: game-core **75/75**, api **897/897** (bao gồm toàn bộ suite test kiểm tra presence sweep và recovery retry), typecheck + lint sạch, `gitnexus check` **0 cycles** (re-indexed).
+`RoomService` blast **MEDIUM** (17 upstream, 10 caller, 0 process). Khác admin, file này **cohesive** —
+đa số method đúng về vòng đời room; tách CQRS query/command sẽ là over-engineer (memory cấm). Seam low-blast
+duy nhất đáng tách: cụm **Redis cache snapshot + atomic player-count (2 Lua script)** — toàn private, đúng loại
+concurrency-guard memory bảo cô lập sau method có tên rõ.
 
----
+| File                                                  | Trước | Sau     |
+| ----------------------------------------------------- | ----- | ------- |
+| `room.service.ts`                                     | 641   | **537** |
+| `room-cache.store.ts` (`RoomCacheStore`, plain class) | —     | 116     |
 
-## ✅ Trạng thái bản đầu (pragmatic)
+`RoomCacheStore(redis, logger)` khởi tạo như field trong constructor `RoomService` (constructor vẫn `(prisma, redis)`
+để spec `new RoomService(prisma, redis)` xanh). 4 private method → `setSnapshot`/`syncPlayerCount`/`syncRoomState`/
+`decrementPlayerCountClamped`. Verify: `room` suite **96/96** xanh, full api **912/912**, tsc + eslint sạch, 0 cycle.
+Lua concurrency script giờ **unit-test được độc lập** (follow-up: thêm `room-cache.store.spec.ts`).
 
-Tất cả 6 phase đã thực thi và verify. Kết quả:
+### Bonus 2 — `game/[matchId]/page.tsx` (atomic-design split, cùng đợt)
 
-| File                     | Trước | Sau      | Tách ra                                                             |
-| ------------------------ | ----- | -------- | ------------------------------------------------------------------- |
-| `match-state-machine.ts` | 785   | **556**  | `prng.ts` (40), `tie-break.ts` (84), `match-state.codec.ts` (201)   |
-| `game-loop.service.ts`   | 1587  | **1054** | `match-timer.registry.ts` (149), `lobby-countdown.service.ts` (551) |
+God-component **719 dòng** = ~400 logic (hooks/effects/handlers) + ~314 JSX với nhiều organism inline.
+Web theo convention **feature-folder** (`components/game/*` + barrel, giống `lobby/`), KHÔNG phải atoms/molecules/organisms thuần.
+File này **không có test** → tách **verbatim** (giữ nguyên className + `data-testid`), **giữ toàn bộ logic ở page** (phần rủi ro nhất, không đụng), verify bằng typecheck + build.
 
-Verify cuối: game-core **75/75**, api **891/891** (58 files, +registry spec), lint + typecheck sạch, `gitnexus check` **0 cycles** (re-indexed). Public API surface không đổi; không caller ngoài nào phải sửa. Log context giữ nguyên `[GameLoopService]`.
+Tách 9 organism vào `components/game/*`, mỗi cái tự gọi `useTranslations` (đúng convention `lobby/`):
+`EliminatedOverlay`, `SpectatorBanner`, `GameStateRibbon`, `QuestionCard`, `AnswerPanel`, `OpponentsSidebar`
+(ôm luôn `getPlayerAvatar`), `AntiHackNote`, `LeaveMatchButton`, `MatchFinishedOverlay` + barrel `index.ts`.
 
-Điểm cần biết: `MatchStateMachine` vẫn ở mức CRITICAL trong impact — đó là blast radius nội tại của domain core (số caller không đổi), việc tách chỉ là helper thuần nội bộ. Không tách core transitions/round/eval (đúng chủ trương).
+| File                                            | Trước | Sau     |
+| ----------------------------------------------- | ----- | ------- |
+| `game/[matchId]/page.tsx` (logic + composition) | 719   | **459** |
+| 9 organism + barrel trong `components/game/`    | —     | 499     |
 
----
+Page giờ chỉ còn state/effects/handlers + composition. Verify: web **typecheck** sạch, **eslint** sạch,
+`next build` **thành công** (route `/[locale]/game/[matchId]` compile OK).
 
-## Bối cảnh & số liệu (đo bằng GitNexus, index khớp HEAD)
+**Đã thêm test cho organism** (lấp lỗ hổng "route không có test"): 6 spec file, **21 test**, phủ logic thật —
+`OpponentsSidebar` (empty fallback, sort alive-trước-eliminated, badge, không mock-data), `AnswerPanel`
+(branch spectator/eliminated vs tile tương tác, map option→A/B/C/D, onSelect, disabled), `QuestionCard`
+(skeleton vs question, locked/waiting), `GameStateRibbon`, `LeaveMatchButton`, + smoke cho overlay/banner/note.
+**Đã thêm render-test cho page** (`page.spec.tsx`, **11 test**): mock socket-store (`vi.hoisted` + `getState`/`setState`),
+stub organism + `AppShellLayout`, fake timers + `Suspense` cho `use(params)`. Phủ: snapshot hydration (gọi 1 lần khi
+match=null, không gọi khi đã có match), answer-submit gating (submit khi active; chặn khi spectator; chặn khi round=0),
+eliminated overlay / spectator banner derivation, ribbon remaining/total, **finished→redirect `/result` sau 3s**,
+**admin-termination→toast + redirect `/` sau 1.5s**, leave-flow confirm.
 
-| File                                              | LOC hiện tại | Blast radius                                  | Ghi chú                                                                                                                                                                  |
-| ------------------------------------------------- | ------------ | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `apps/api/src/modules/match/game-loop.service.ts` | **1587**     | —                                             | Đã tách một phần: `game-loop.helpers.ts`, `game-loop.events.ts`, `game-loop.countdown-store.ts`, `game-loop.types.ts`. Phần orchestration + lobby + recovery vẫn inline. |
-| `packages/game-core/src/match-state-machine.ts`   | **785**      | **CRITICAL** — 28 upstream, 22 execution flow | Không được split core transitions. Chỉ tách phần pure, low-blast.                                                                                                        |
+Web test tổng: **50 → 82** xanh (21 organism + 11 page). typecheck + build sạch.
 
-Blast radius các symbol ứng viên tách (đã chạy `impact upstream`):
+## Bối cảnh (đo bằng GitNexus, index khớp HEAD)
 
-| Symbol                      | Risk         | Upstream                                                                  | Kết luận                                                     |
-| --------------------------- | ------------ | ------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `maybeStartPublicCountdown` | LOW          | 0                                                                         | An toàn move                                                 |
-| `serialize` (state machine) | LOW          | 0                                                                         | An toàn tách                                                 |
-| `tieBreak`                  | LOW          | 1 (chỉ `determineWinner`)                                                 | An toàn tách — đúng ứng viên Strategy mà memory-bank đã flag |
-| `launchRoomMatch`           | **CRITICAL** | 8 (afterInit, handleStartMatch, timer, onModuleInit, forceStartRoomMatch) | **Giữ nguyên vị trí + signature**, chỉ delegate nội bộ       |
+- Vòng trước đã dọn sạch server match-loop: `game-loop.service.ts` 1587→394, tách `match-round-runner.ts`,
+  `lobby-countdown.service.ts`, `match-timer.registry.ts`; `match-state-machine.ts` 785→556.
+- `socket-store` (client) **đã** refactor xong: `updaters`/`types`/`helpers` tách file + có test.
+- God-file lớn nhất còn lại: **`admin.service.ts` 761** — blast **LOW** (`impact AdminService upstream` = 4 upstream, 0 process).
+  Chứa **4 concern rời nhau** (vi phạm SRP rõ, đúng "rule of three" trong memory-bank), lại có **lưới test dày** → ứng viên an toàn & giá trị nhất.
+- Không chọn `game/[matchId]/page.tsx` (719): **không có test** → refactor behavior-preserving không verify được. Để sau, phải viết test trước.
 
-## Guardrails (áp dụng cho mọi bước)
+## 4 concern trong `admin.service.ts`
 
-1. **Giữ nguyên public method surface của `GameLoopService`** — gateway/handlers/admin gọi vào: `setServer`, `maybeStartPublicCountdown`, `forceStartRoomMatch`, `handleRoomPlayerLeft`, `getCountdownEnd`, `handlePlayerDisconnect`, `handleMatchPlayerLeft`, `checkEarlyTermination`, `stopRoomRuntime`, `emitRoomTerminated`, `isMatchFinishing`, `cancelMatchLoop`. Sau refactor các method này có thể chỉ còn là delegator, nhưng **chữ ký không đổi**.
-2. **Giữ nguyên public API của `MatchStateMachine`** — `serialize()`/`static deserialize()`/`tieBreak` behavior không đổi; nếu tách ra module thì để lại wrapper mỏng delegate.
-3. Test là safety net: `match-state-machine.spec.ts` (1500 dòng) + `game-loop.service.spec.ts` (3984 dòng) test qua public API → extraction nội bộ phải giữ chúng xanh. Cẩn thận vài spec import internals (vd `COUNTDOWN_INDEX_KEY` đã có re-export backward-compat — giữ pattern này).
-4. Mỗi bước: `gitnexus_impact` trên symbol sắp sửa → sửa → `pnpm --filter <pkg> test` → `gitnexus_detect_changes` → commit nhỏ.
+| Concern                        | Symbol                                                                       | ~LOC | Deps thực dùng                                                                |
+| ------------------------------ | ---------------------------------------------------------------------------- | ---- | ----------------------------------------------------------------------------- |
+| Question sync                  | `syncQuestions`                                                              | 192  | `prisma`, `logger`, `appendAudit`                                             |
+| System reset                   | `resetSystem`                                                                | 147  | `prisma`, `redis`, `logger`, `appendAudit`                                    |
+| Room termination (kill-switch) | `terminateRoom` + `recordPartialTerminationFailure` + `cleanupRoomRedisKeys` | 250  | `roomService`, `matchService`, `gameLoopService`, `redis`, `prisma`, `logger` |
+| Audit (cross-cutting)          | `appendAudit`, `getAuditEvents`                                              | 65   | `prisma`, `logger`                                                            |
 
----
+## Ràng buộc từ test (BẮT BUỘC giữ, nếu không spec vỡ)
 
-## FILE 1 — `game-loop.service.ts` (1587 → mục tiêu ~650)
+1. Spec dựng `new AdminService(prisma, redis, roomService, matchService, gameLoopService)` **trực tiếp** →
+   **constructor phải giữ đúng 5 tham số này**, không thêm bớt.
+2. Spec swap `(service as any).logger = new Logger(...)` **sau** khi construct, rồi `vi.spyOn(service.logger, "error")`
+   ở ~8 chỗ → **mọi log phải đi qua đúng reference `this.logger` tại thời điểm gọi**, không được cache logger cũ.
+3. Public method surface controller gọi: `syncQuestions`, `resetSystem`, `terminateRoom`, `getAuditEvents` — chữ ký không đổi.
+4. `export interface TerminateRoomResult` đang xuất từ `admin.service.ts` → giữ re-export để không vỡ import ngoài.
 
-Tách theo trách nhiệm. 3 cluster rõ ràng, gần như không overlap.
+## Thiết kế: ops là HÀM THUẦN nhận "deps bag"
 
-### Phase 1A — Tách `MatchTimerRegistry` (rủi ro THẤP, làm trước)
+Mỗi concern → 1 file export function nhận `deps` bag (chứa `this.prisma`/`this.logger`/... truyền sống mỗi lần gọi).
+`AdminService` giữ nguyên constructor + fields, mỗi public method thành **delegator 1 dòng** truyền `this.logger` sống vào
+→ thỏa ràng buộc #2 (logger đúng reference, spy thấy), và mỗi ops **unit-test được độc lập** (gọi với mock deps bag).
 
-**File mới:** `apps/api/src/modules/match/match-timer.registry.ts` (plain class, khởi tạo như field trong service — không cần `@Injectable`).
+File mới trong `apps/api/src/modules/admin/ops/`:
 
-Chuyển state in-memory + biến các `Set.has/add/delete` rải rác thành method có tên rõ nghĩa:
+- `admin-audit.ops.ts` — `appendAudit(deps, params)`, `getAuditEvents(deps, params)`; deps `{ prisma, logger }`.
+- `question-sync.ops.ts` — `syncQuestions(deps, clearExisting, adminUserId)`; deps `{ prisma, logger }`.
+- `system-reset.ops.ts` — `resetSystem(deps, adminUserId)`; deps `{ prisma, redis, logger }`.
+- `room-termination.ops.ts` — `terminateRoom(deps, roomId, adminUserId, message?)` + `TerminateRoomResult` type + helper private module-scope; deps `{ prisma, redis, roomService, matchService, gameLoopService, logger }`.
 
-- Di chuyển: `activeTimers`, `usedQuestionIds`, `expectedAnswers`, `endingRounds`, `finishingMatches`.
-- Di chuyển: `addTimer`, `clearTimers`.
-- Đóng gói các idempotency guard (H1/B1) thành API ý nghĩa:
-  - `beginEndRound(matchId): boolean` (false nếu đang ending) / `endEndRound(matchId)`
-  - `beginFinish(matchId): boolean` / `endFinish(matchId)` / `isFinishing(matchId)`
-  - `trackUsedQuestion(matchId, qId)` / `getUsedQuestionIds(matchId)`
-  - `setExpectedAnswers` / `getExpectedAnswers`
-  - `disposeMatch(matchId)` (clear timers + xoá mọi map cho match)
+`AdminService` sau cùng (~120 dòng): giữ interface tương thích, constructor 5 deps, 5 method delegate.
 
-**Lợi ích:** phần correctness tinh vi nhất (idempotency chống double-fire) trở thành **unit test độc lập được**, và `GameLoopService` bớt ~90 dòng bookkeeping + comment.
+## Thứ tự thực thi (an toàn → phụ thuộc)
 
-**Verify:** `game-loop.service.spec.ts` phải xanh nguyên. Thêm `match-timer.registry.spec.ts` cho các guard.
+1. **A — audit** (0-blast, cả 3 concern kia dùng chung → tách trước).
+2. **B — question-sync** (chỉ prisma).
+3. **C — system-reset** (prisma + redis).
+4. **D — room-termination** (nặng nhất, nhiều collaborator; helper + type đi kèm).
+5. **E — dọn AdminService** thành facade mỏng.
 
-### Phase 1B — Tách `LobbyCountdownService` (rủi ro TRUNG BÌNH)
+Sau MỖI phase: `pnpm --filter @arena/api test -- admin` phải xanh (99 tests).
 
-**File mới:** `apps/api/src/modules/match/lobby-countdown.service.ts` (`@Injectable`, thêm vào `MatchModule`).
+## Verify cuối
 
-Chuyển toàn bộ vòng đời **lobby countdown trước trận + boot recovery + dead-letter**:
-
-- `onModuleInit` (phần scan Redis recovery), `drainPendingRecovery`, `scheduleRecoveryRetry`, `sweepDeadLetterRooms`
-- `maybeStartPublicCountdown`, `armLobbyCountdownTimer`, `persistLobbyCountdown`, `clearPersistedCountdown`
-- `clearLobbyCountdown`, `clearLobbyCountdownBestEffort`, `getCountdownEnd`, `handleRoomPlayerLeft`
-- State: `lobbyCountdowns`, `pendingRecovery`, `recoveryInFlight`, `activeRecoveryRetries`, `server` ref
-
-**Xử lý coupling (quan trọng):** countdown hết giờ / recovery phải gọi `launchRoomMatch` (nằm ở `GameLoopService`), còn `launchRoomMatch` lại cần clear countdown → 2 chiều.
-
-- Giải pháp thực tế (tránh circular DI): `GameLoopService` inject trực tiếp `LobbyCountdownService` theo chiều NestJS DI một chiều sạch.
-- Để cho phép `LobbyCountdownService` kích hoạt trận đấu khi countdown kết thúc mà không gây circular dependency, sử dụng cơ chế callback `lobbyCountdown.setLauncher(fn)` được đăng ký trong constructor của `GameLoopService`.
-  - Khi countdown hết giờ, callback launcher này sẽ gọi `this.launchRoomMatch(...)` trong `GameLoopService`.
-  - `GameLoopService.launchRoomMatch` gọi `this.lobbyCountdown.clearCountdown(roomId)` ở đầu hàm.
-- `GameLoopService.setServer` sẽ delegate thêm `this.lobbyCountdown.setServer(server)`.
-- Các public method khác liên quan đến game-loop (như delegate tới `MatchRoundRunner`) được duy trì trên `GameLoopService` dưới dạng facade tương thích để đảm bảo gateway handler không cần thay đổi. Các caller ngoài trực tiếp tương tác với lobby countdown sẽ gọi trực tiếp `LobbyCountdownService`.
-
-**Lợi ích:** ~550 dòng (countdown + recovery + dead-letter) ra khỏi service; `GameLoopService` chỉ còn lo vòng đời **trận đang chạy**.
-
-**Verify:** `game-loop.countdown-store.spec.ts` + `game-loop.service.persistence.spec.ts` + `game-loop.service.spec.ts` xanh. Đây là bước chạm nhiều recovery-edge-case nhất → chạy full `apps/api` test.
-
-### Phase 1C — `GameLoopService` còn lại (orchestrator vòng đời trận)
-
-Sau 1A+1B, service chỉ còn phần đúng với tên nó — **the running match loop** (~600–650 dòng):
-
-- `launchRoomMatch` (**CRITICAL, giữ nguyên vị trí + logic B3 transaction**), `forceStartRoomMatch`
-- `startMatchLoop`, `executeCountdown`, `executeRound`, `endRound`, `checkMatchEnd`, `finishMatchLoop`/`finishMatchLoopInner`
-- `handlePlayerDisconnect`, `handleMatchPlayerLeft`, `checkEarlyTermination`
-- `cancelMatchLoop`, `stopRoomRuntime`, `emitRoomTerminated`, `isMatchFinishing` (delegate vào `MatchTimerRegistry`)
-
-**Phase 1D (tùy chọn, hoãn):** tách tiếp round loop (`startMatchLoop → finishMatchLoopInner`) thành `MatchRoundRunner`. **Khuyến nghị KHÔNG làm ngay** — đây chính là lõi CRITICAL (22 process). Làm 1A/1B trước, đo lại LOC, chỉ tách tiếp nếu vẫn thấy cần.
-
----
-
-## FILE 2 — `match-state-machine.ts` (785 → mục tiêu ~500)
-
-⚠️ **CRITICAL (28 upstream, 22 flow).** Tuyệt đối **không** split core state/transition/round/eval. Chỉ bóc các mảnh **pure, self-contained, low-blast** ra ngoài, class giữ nguyên public API.
-
-### Phase 2A — Tách PRNG helpers (rủi ro ~0)
-
-**File mới:** `packages/game-core/src/prng.ts`
-
-- Move `hashStringToSeed`, `mulberry32` thành pure exported functions.
-- Blast radius: **zero** (đang là private). Chỉ `tieBreak` dùng.
-
-### Phase 2B — Tách tie-break thành pure function (rủi ro THẤP, 1 caller)
-
-**File mới:** `packages/game-core/src/tie-break.ts`
-
-- Export `resolveTieBreak(playerIds: string[], players: ReadonlyMap<string, PlayerInfo>, matchId: string): string | null`.
-- Chuyển nguyên logic `tieBreak` hiện tại (L5 deterministic seed + sort contract) vào đây, import PRNG từ `prng.ts`.
-- Trong class: `tieBreak` thu về wrapper 1 dòng `return resolveTieBreak(ids, this.state.players, this.state.id)` — hoặc gọi trực tiếp trong `determineWinner`.
-- Đây đúng là **Strategy candidate** memory-bank đã ghi. Giữ dạng **pure function trước**; chỉ nâng lên interface `TieBreakStrategy` khi có variant thứ 2 thật sự. Không over-engineer.
-
-**Verify:** tie-break tests trong `match-state-machine.spec.ts` (reproducibility + strict-weak-ordering) phải xanh y hệt — behavior không đổi, chỉ đổi vị trí.
-
-### Phase 2C — Tách serialize/deserialize thành codec module (rủi ro THẤP)
-
-**File mới:** `packages/game-core/src/match-state.codec.ts`
-
-- Move `interface DeserializedMatch` + logic thân của `serialize()` và `static deserialize()` + validation (L3 omit `correctAnswer`, legacy `submissionId` backfill).
-- Export `serializeMatch(state, currentRound, eventLog): string` và `deserializeMatch(json): { state, currentRound, eventLog }` (trả về plain data, class tự dựng instance).
-- Trong class **giữ lại** `serialize()` / `static deserialize()` làm wrapper mỏng delegate (guardrail #2) → `matchService.getStateMachine` và `persistStateMachine` **không phải đổi gì**.
-- `attachCorrectAnswer` giữ trong class (chạm `this.currentRound`), nhưng validation shape đi kèm codec.
-
-**Verify:** serialize/deserialize round-trip tests + `game-loop.service.persistence.spec.ts` xanh.
-
-**Kết quả File 2:** class từ 785 → ~500 dòng; 2 concern rủi ro nhất (transitions, round/answer/eval) **không đụng tới**.
-
----
-
-## Thứ tự thực thi đề xuất (từ an toàn → rủi ro)
-
-1. **2A** PRNG (~0 risk, warm-up)
-2. **2B** tie-break pure function
-3. **2C** serialize/deserialize codec
-4. **1A** MatchTimerRegistry
-5. **1B** LobbyCountdownService (bước nặng nhất — làm khi 4 bước trên đã xanh)
-6. **1C** dọn phần còn lại của GameLoopService (phần lớn tự xong sau 1A/1B)
-7. (hoãn) 1D MatchRoundRunner — chỉ nếu còn thấy cần sau khi đo lại
-
-Mỗi PR = 1 phase. Commit nhỏ, revert dễ.
-
-## Checklist verify mỗi phase
-
-- [ ] `gitnexus_impact` trên symbol sắp sửa → confirm risk như bảng trên
-- [ ] Extraction giữ nguyên chữ ký public (guardrail #1, #2)
-- [ ] `pnpm --filter @arena/game-core test` (70 tests) cho File 2
-- [ ] `pnpm --filter @arena/api test` (866 tests) cho File 1
-- [ ] `pnpm lint` + `pnpm typecheck`
-- [ ] `gitnexus_detect_changes` → chỉ đúng scope kỳ vọng
-- [ ] `gitnexus_check` (cycles) vẫn `clean` — đặc biệt sau 1B vì thêm DI edge
+- [ ] `pnpm --filter @arena/api test` (toàn bộ ~897) xanh
+- [ ] `pnpm --filter @arena/api typecheck` + `pnpm --filter @arena/api lint` sạch
+- [ ] `gitnexus_detect_changes` → chỉ đúng scope admin
+- [ ] `gitnexus_check` (cycles) vẫn `clean`
 
 ## Không làm trong đợt này
 
 - Không đổi hành vi runtime, không "sửa luôn" logic khi tách.
-- Không split core transition của `MatchStateMachine`.
-- Không nâng tie-break/serialize lên interface/Strategy nếu chưa có variant thứ 2.
-- Không tách `MatchRoundRunner` (1D) cho tới khi đo lại.
+- Không đổi constructor/public API của `AdminService`, không sửa spec (mục tiêu: 0 dòng spec thay đổi).
+- Không đổi `admin.module.ts` / controller (DI graph giữ nguyên — ops là hàm thuần, không phải provider).

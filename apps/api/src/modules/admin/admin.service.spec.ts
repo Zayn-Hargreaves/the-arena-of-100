@@ -51,7 +51,7 @@ describe("AdminService", () => {
     };
     question: {
       deleteMany: ReturnType<typeof vi.fn>;
-      findFirst: ReturnType<typeof vi.fn>;
+      findMany: ReturnType<typeof vi.fn>;
       create: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
     };
@@ -103,7 +103,7 @@ describe("AdminService", () => {
       },
       question: {
         deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
-        findFirst: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([]),
         create: vi
           .fn()
           .mockImplementation(({ data }) =>
@@ -143,13 +143,19 @@ describe("AdminService", () => {
       match: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
       roomPlayer: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
       room: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
-      // Array-form $transaction: run every op and resolve with the
-      // resolved values in order. Mirrors Prisma's real behavior for
-      // a non-interactive transaction so the existing
-      // `invocationCallOrder` assertions on deleteMany still pass.
-      $transaction: vi
-        .fn()
-        .mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops)),
+      // $transaction supports two forms:
+      //   1. Array form (legacy) — used by resetSystem; resolves every
+      //      op and returns the resolved values in order, mirroring
+      //      Prisma's real behavior so the existing
+      //      `invocationCallOrder` assertions on deleteMany still pass.
+      //   2. Function form (interactive) — used by syncQuestions for the
+      //      atomic clear-and-reseed workflow. Invoked with the same
+      //      `prisma` mock as `tx` so `tx.question.findMany` etc.
+      //      resolve through the same vi.fn() instances already
+      //      configured in this setup.
+      $transaction: vi.fn((arg) =>
+        typeof arg === "function" ? arg(prisma) : Promise.all(arg),
+      ),
     };
 
     redisClient = {
@@ -274,10 +280,8 @@ describe("AdminService", () => {
         { id: "t1", name: "tag one" },
         { id: "t2", name: "tag two" },
       ]);
-      prisma.question.findFirst.mockResolvedValueOnce(null);
-      prisma.question.findFirst.mockResolvedValueOnce(null);
-      // For questionTag.findMany (existing question tags) - none
-      prisma.questionTag.findMany.mockResolvedValue([]);
+      // No existing questions match the seed content (bulk preload).
+      prisma.question.findMany.mockResolvedValueOnce([]);
 
       const result = await service.syncQuestions(false, "u-admin");
 
@@ -291,12 +295,10 @@ describe("AdminService", () => {
         { id: "t1", name: "tag one" },
         { id: "t2", name: "tag two" },
       ]);
-      // First question already exists
-      prisma.question.findFirst.mockResolvedValueOnce({
-        id: "q-existing",
-        content: "Mocked question 1",
-      });
-      prisma.question.findFirst.mockResolvedValueOnce(null);
+      // First seed question already exists (bulk preload finds it).
+      prisma.question.findMany.mockResolvedValueOnce([
+        { id: "q-existing", content: "Mocked question 1" },
+      ]);
       prisma.questionTag.findMany.mockResolvedValue([]);
 
       await service.syncQuestions(false, "u-admin");
@@ -315,17 +317,20 @@ describe("AdminService", () => {
         { id: "t1", name: "tag one" },
         { id: "t2", name: "tag two" },
       ]);
-      prisma.question.findFirst.mockResolvedValueOnce(null);
-      prisma.question.findFirst.mockResolvedValueOnce(null);
-      // For the first new question: t1 already linked, t2 not
+      // "Mocked question 1" (the only seed with tags) already exists,
+      // so the preloaded questionTag links apply to it.
+      prisma.question.findMany.mockResolvedValueOnce([
+        { id: "q-existing", content: "Mocked question 1" },
+      ]);
+      // Preloaded existing links: t1 already linked, t2 not.
       prisma.questionTag.findMany.mockResolvedValueOnce([
-        { questionId: "q-new", tagId: "t1" },
+        { questionId: "q-existing", tagId: "t1" },
       ]);
 
       const result = await service.syncQuestions(false, "u-admin");
 
       expect(prisma.questionTag.createMany).toHaveBeenCalledWith({
-        data: [{ questionId: "q-new", tagId: "t2" }],
+        data: [{ questionId: "q-existing", tagId: "t2" }],
         skipDuplicates: true,
       });
       expect(result.relationshipsCount).toBe(1);
@@ -336,12 +341,13 @@ describe("AdminService", () => {
         { id: "t1", name: "tag one" },
         { id: "t2", name: "tag two" },
       ]);
-      prisma.question.findFirst.mockResolvedValueOnce(null);
-      prisma.question.findFirst.mockResolvedValueOnce(null);
+      prisma.question.findMany.mockResolvedValueOnce([
+        { id: "q-existing", content: "Mocked question 1" },
+      ]);
       // Both tags already linked
       prisma.questionTag.findMany.mockResolvedValueOnce([
-        { questionId: "q-new", tagId: "t1" },
-        { questionId: "q-new", tagId: "t2" },
+        { questionId: "q-existing", tagId: "t1" },
+        { questionId: "q-existing", tagId: "t2" },
       ]);
 
       const result = await service.syncQuestions(false, "u-admin");

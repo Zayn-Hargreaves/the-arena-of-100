@@ -13,106 +13,24 @@ import {
   RoomError,
   type JoinMode,
 } from "@arena/shared";
-
-// Atomic Lua script that decrements a player-count counter and clamps the
-// result at 0. Returns the new (clamped) value. Avoids the read-modify-write
-// race in concurrent join/leave/remove paths.
-const DECR_PLAYER_COUNT_SCRIPT = `
-local v = tonumber(redis.call('get', KEYS[1]) or '0')
-v = v - tonumber(ARGV[1])
-if v < 0 then v = 0 end
-redis.call('set', KEYS[1], v, 'KEEPTTL')
-return v
-`;
-
-// Atomic Lua script that updates only the playerCount field of the cached
-// room JSON snapshot, preserving all other fields and the existing TTL.
-// Returns nil if the key does not exist (caller should no-op). Avoids the
-// read-modify-write race where a concurrent setCachedRoomSnapshot could be
-// overwritten by a stale full-object setJSON.
-const SET_PLAYER_COUNT_FIELD_SCRIPT = `
-local val = redis.call('get', KEYS[1])
-if not val then return nil end
-local obj = cjson.decode(val)
-obj['playerCount'] = tonumber(ARGV[1])
-redis.call('set', KEYS[1], cjson.encode(obj), 'KEEPTTL')
-return 1
-`;
+import {
+  RoomCacheStore,
+  roomSnapshotKey,
+  roomPlayerCountKey,
+  roomPlayersKey,
+  ROOM_CACHE_TTL_SECONDS,
+} from "./room-cache.store";
 
 @Injectable()
 export class RoomService {
   private readonly logger = new Logger(RoomService.name);
+  private readonly cache: RoomCacheStore;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
-  ) {}
-
-  private async setCachedRoomSnapshot(
-    room: {
-      id: string;
-      code: string;
-      status: string;
-      hostId: string;
-      currentMatchId: string | null;
-      timeLimit: number;
-      category: string;
-    },
-    playerCount: number,
   ) {
-    await this.redis.setJSON(
-      `room:${room.id}`,
-      {
-        id: room.id,
-        code: room.code,
-        status: room.status,
-        hostId: room.hostId,
-        playerCount,
-        currentMatchId: room.currentMatchId,
-        timeLimit: room.timeLimit,
-        category: room.category,
-      },
-      3600,
-    );
-  }
-
-  private async syncCachedPlayerCount(roomId: string, playerCount: number) {
-    try {
-      await this.redis.eval(
-        SET_PLAYER_COUNT_FIELD_SCRIPT,
-        [`room:${roomId}`],
-        [String(playerCount)],
-      );
-    } catch (error) {
-      this.logger.error(
-        `Failed to sync cached player count for room ${roomId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
-
-  private async syncCachedRoomState(room: {
-    id: string;
-    code: string;
-    status: string;
-    hostId: string;
-    currentMatchId: string | null;
-    timeLimit: number;
-    category: string;
-    players: unknown[];
-  }) {
-    const counterKey = `room:${room.id}:playerCount`;
-    const existingCounter = await this.redis.get(counterKey);
-    const playerCount =
-      existingCounter !== null && Number.isFinite(Number(existingCounter))
-        ? Number(existingCounter)
-        : room.players.length;
-
-    await this.setCachedRoomSnapshot(room, playerCount);
-    if (existingCounter === null) {
-      await this.redis.setIfAbsent(counterKey, String(playerCount), 3600);
-    }
+    this.cache = new RoomCacheStore(this.redis, this.logger);
   }
 
   // Create room
@@ -161,14 +79,18 @@ export class RoomService {
     });
 
     // Cache room in Redis
-    await this.setCachedRoomSnapshot(room, 1);
+    await this.cache.setSnapshot(room, 1);
 
     // Initialize the atomic player-count counter so concurrent joins/leaves
     // don't read a missing key.
-    await this.redis.set(`room:${room.id}:playerCount`, "1", 3600);
+    await this.redis.set(
+      roomPlayerCountKey(room.id),
+      "1",
+      ROOM_CACHE_TTL_SECONDS,
+    );
 
     // Add to player set
-    await this.redis.sadd(`room:${room.id}:players`, hostId);
+    await this.redis.sadd(roomPlayersKey(room.id), hostId);
 
     this.logger.log(`Room created: ${code} by host ${hostId}`);
     return room;
@@ -299,16 +221,16 @@ export class RoomService {
       // deliberately skips the sadd/incr/mirror to keep the cached
       // playerCount consistent with the authoritative DB.
       if (didCreate) {
-        await this.redis.sadd(`room:${room.id}:players`, userId);
+        await this.redis.sadd(roomPlayersKey(room.id), userId);
 
         // Atomically bump the player-count counter. INCR is safe for joins
         // (the count can only go up) and avoids the getJSON->modify->setJSON
         // race that loses concurrent increments.
-        const newCount = await this.redis.incr(`room:${room.id}:playerCount`);
+        const newCount = await this.redis.incr(roomPlayerCountKey(room.id));
 
         // Best-effort: mirror the new count into the cached room JSON. The
         // counter is the source of truth; the JSON is for cheap reads.
-        await this.syncCachedPlayerCount(room.id, newCount);
+        await this.cache.syncPlayerCount(room.id, newCount);
 
         this.logger.log(`Player ${userId} joined room ${roomCode}`);
       } else {
@@ -356,7 +278,7 @@ export class RoomService {
       where: { roomId, userId },
     });
 
-    await this.redis.srem(`room:${roomId}:players`, userId);
+    await this.redis.srem(roomPlayersKey(roomId), userId);
 
     // Clear the per-(room,user) presence key immediately so the sweeper does
     // not see this user as present in a room they have just left.
@@ -374,32 +296,20 @@ export class RoomService {
     // mirror the new value into the cached room JSON. The counter is the
     // source of truth; the JSON cache is updated best-effort from it.
     if (result.count > 0) {
-      const newCount = await this.decrementPlayerCountClamped(
+      const newCount = await this.cache.decrementPlayerCountClamped(
         roomId,
         result.count,
       );
-      await this.syncCachedPlayerCount(roomId, newCount);
+      // decrementPlayerCountClamped returns NaN (best-effort) when Redis
+      // failed — skip mirroring a NaN into the cached snapshot.
+      if (!Number.isNaN(newCount)) {
+        await this.cache.syncPlayerCount(roomId, newCount);
+      }
     }
 
     this.logger.log(`Player ${userId} left room ${roomId}`);
 
     return this.getRoom(roomId);
-  }
-
-  // Atomically decrements the room's player-count counter and clamps the
-  // result at 0. Returns the new (clamped) value. Safe under concurrent
-  // join/leave/remove because the decrement+clamp happens inside a single
-  // Lua execution on Redis.
-  private async decrementPlayerCountClamped(
-    roomId: string,
-    by: number,
-  ): Promise<number> {
-    const result = await this.redis.eval(
-      DECR_PLAYER_COUNT_SCRIPT,
-      [`room:${roomId}:playerCount`],
-      [String(by)],
-    );
-    return Number(result);
   }
 
   // Get room details
@@ -492,7 +402,7 @@ export class RoomService {
       });
 
       if (!room) return null;
-      await this.syncCachedRoomState(room);
+      await this.cache.syncRoomState(room);
       return room;
     }
 
@@ -505,13 +415,13 @@ export class RoomService {
       include: { players: true },
     });
 
-    await this.syncCachedRoomState(room);
+    await this.cache.syncRoomState(room);
     return room;
   }
 
   // Get room players from Redis
   async getRoomPlayerIds(roomId: string): Promise<string[]> {
-    return this.redis.smembers(`room:${roomId}:players`);
+    return this.redis.smembers(roomPlayersKey(roomId));
   }
 
   // Find active rooms for a user
@@ -586,8 +496,8 @@ export class RoomService {
     ]);
 
     await Promise.all([
-      this.redis.del(`room:${roomId}:players`),
-      this.redis.del(`room:${roomId}`),
+      this.redis.del(roomPlayersKey(roomId)),
+      this.redis.del(roomSnapshotKey(roomId)),
     ]);
   }
 
@@ -595,18 +505,22 @@ export class RoomService {
     const result = await this.prisma.roomPlayer.deleteMany({
       where: { roomId, userId },
     });
-    await this.redis.srem(`room:${roomId}:players`, userId);
+    await this.redis.srem(roomPlayersKey(roomId), userId);
     await this.clearPresence(roomId, userId);
 
     // Atomically decrement (clamped at 0) and mirror the new value into
     // the cached room JSON. The Lua-backed counter is the source of truth,
     // so concurrent leave/remove paths don't lose updates.
     if (result.count > 0) {
-      const newCount = await this.decrementPlayerCountClamped(
+      const newCount = await this.cache.decrementPlayerCountClamped(
         roomId,
         result.count,
       );
-      await this.syncCachedPlayerCount(roomId, newCount);
+      // decrementPlayerCountClamped returns NaN (best-effort) when Redis
+      // failed — skip mirroring a NaN into the cached snapshot.
+      if (!Number.isNaN(newCount)) {
+        await this.cache.syncPlayerCount(roomId, newCount);
+      }
     }
   }
 
@@ -624,18 +538,22 @@ export class RoomService {
       (userId) => `room:presence:${roomId}:${userId}`,
     );
     await Promise.all([
-      this.redis.srem(`room:${roomId}:players`, ...userIds),
+      this.redis.srem(roomPlayersKey(roomId), ...userIds),
       ...presenceKeys.map((key) => this.redis.del(key)),
     ]);
 
     // Atomic clamped decrement for the batch, then mirror the new value
     // into the cached room JSON. See removePlayer above.
     if (result.count > 0) {
-      const newCount = await this.decrementPlayerCountClamped(
+      const newCount = await this.cache.decrementPlayerCountClamped(
         roomId,
         result.count,
       );
-      await this.syncCachedPlayerCount(roomId, newCount);
+      // decrementPlayerCountClamped returns NaN (best-effort) when Redis
+      // failed — skip mirroring a NaN into the cached snapshot.
+      if (!Number.isNaN(newCount)) {
+        await this.cache.syncPlayerCount(roomId, newCount);
+      }
     }
   }
 }

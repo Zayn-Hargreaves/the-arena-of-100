@@ -454,7 +454,7 @@ describe("RoomService", () => {
       expect(redis.eval).toHaveBeenCalledWith(
         expect.stringContaining("redis.call"),
         ["room:r1:playerCount"],
-        ["1"],
+        ["1", "3600"],
       );
       // Second eval: atomic field update for the cached room JSON
       expect(redis.eval).toHaveBeenCalledWith(
@@ -838,7 +838,7 @@ describe("RoomService", () => {
       expect(redis.eval).toHaveBeenCalledWith(
         expect.stringContaining("redis.call"),
         ["room:r1:playerCount"],
-        ["1"],
+        ["1", "3600"],
       );
       expect(redis.eval).toHaveBeenCalledWith(
         expect.stringContaining("cjson"),
@@ -873,7 +873,7 @@ describe("RoomService", () => {
       expect(redis.eval).toHaveBeenCalledWith(
         expect.stringContaining("redis.call"),
         ["room:r1:playerCount"],
-        ["2"],
+        ["2", "3600"],
       );
       expect(redis.eval).toHaveBeenCalledWith(
         expect.stringContaining("cjson"),
