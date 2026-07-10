@@ -89,7 +89,12 @@ export async function syncQuestions(
         });
       }
 
-      const existingTags = await tx.tag.findMany();
+      const existingTags =
+        txAllTagNamesArray.length > 0
+          ? await tx.tag.findMany({
+              where: { name: { in: txAllTagNamesArray } },
+            })
+          : [];
       const tagMap = new Map(existingTags.map((tag) => [tag.name, tag]));
 
       // Preload every question that already matches a seed's content in
