@@ -518,7 +518,7 @@ describe("GameLoopService Persistence", () => {
       }
 
       // Mock questionService to return null (not found)
-      vi.mocked(questionService.findOne).mockResolvedValue(null);
+      vi.mocked(questionService.findOne).mockResolvedValue(null as any);
 
       const runnerLoggerSpy = vi
         .spyOn((service as any).roundRunner.logger, "warn")
