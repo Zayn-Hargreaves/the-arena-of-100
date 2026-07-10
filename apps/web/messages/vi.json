@@ -40,6 +40,7 @@
     "title": "TÁC VỤ HỆ THỐNG",
     "subtitle": "Hệ thống kiểm soát máy chủ trung tâm và đồng bộ cơ sở dữ liệu",
     "rootAccess": "QUYỀN ROOT",
+    "auditLog": "NHẬT KÝ KIỂM TOÁN",
     "cpuCoreLoad": "TẢI CPU CORE",
     "cpuCaption": "4 cores @ 3.2GHz tiến trình NestJS",
     "ramAllocation": "PHÂN BỔ RAM",
@@ -91,6 +92,57 @@
       "success": "Đã đóng phòng thành công. Người chơi đã được thông báo.",
       "partialTitle": "Đóng phòng một phần",
       "partialDescription": "Phòng đã được ngắt khỏi runtime và người chơi đã được thông báo, nhưng dọn database thất bại. Có thể cần reset hệ thống: {error}"
+    },
+    "audit": {
+      "title": "NHẬT KÝ KIỂM TOÁN",
+      "subtitle": "Lịch sử thao tác admin — ai làm gì, khi nào",
+      "backToConsole": "VỀ BẢNG ĐIỀU KHIỂN",
+      "accessDenied": {
+        "title": "TRUY CẬP BỊ TỪ CHỐI",
+        "description": "Bạn không có quyền quản trị để xem nhật ký kiểm toán.",
+        "returnHome": "Về trang chính"
+      },
+      "filters": {
+        "title": "BỘ LỌC",
+        "eventType": "LOẠI THAO TÁC",
+        "allEvents": "Tất cả thao tác",
+        "roomId": "ROOM ID",
+        "roomIdPlaceholder": "Lọc theo room ID (cuid)",
+        "adminUserId": "ADMIN USER ID",
+        "adminUserIdPlaceholder": "Lọc theo admin user ID (cuid)",
+        "apply": "ÁP DỤNG",
+        "reset": "ĐẶT LẠI"
+      },
+      "eventTypes": {
+        "ADMIN_TERMINATE_ROOM": "Đóng phòng",
+        "ADMIN_RESET_SYSTEM": "Reset hệ thống",
+        "ADMIN_SYNC_QUESTIONS": "Đồng bộ câu hỏi"
+      },
+      "table": {
+        "time": "THỜI GIAN",
+        "actor": "NGƯỜI THỰC HIỆN",
+        "action": "THAO TÁC",
+        "target": "ĐỐI TƯỢNG",
+        "metadata": "METADATA",
+        "roomLabel": "Phòng:",
+        "matchLabel": "Trận:",
+        "systemActor": "Hệ thống",
+        "none": "—"
+      },
+      "pagination": {
+        "summary": "Trang {page}/{pageCount} · {total} sự kiện",
+        "prev": "TRƯỚC",
+        "next": "SAU"
+      },
+      "empty": {
+        "title": "KHÔNG CÓ SỰ KIỆN",
+        "description": "Không có thao tác admin nào khớp bộ lọc hiện tại. Hãy chỉnh bộ lọc hoặc quay lại sau thao tác admin tiếp theo."
+      },
+      "error": {
+        "title": "KHÔNG TẢI ĐƯỢC NHẬT KÝ",
+        "description": "Không thể tải sự kiện kiểm toán. Có thể do lỗi mạng hoặc phiên đăng nhập đã hết hạn.",
+        "retry": "THỬ LẠI"
+      }
     }
   },
   "Sidebar": {

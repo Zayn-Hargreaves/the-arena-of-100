@@ -40,6 +40,7 @@
     "title": "CYBER OPERATIONS",
     "subtitle": "Central server control system and database synchronization",
     "rootAccess": "ROOT ACCESS",
+    "auditLog": "AUDIT LOG",
     "cpuCoreLoad": "CPU Core Load",
     "cpuCaption": "4 cores @ 3.2GHz NestJS Process",
     "ramAllocation": "RAM Allocation",
@@ -91,6 +92,57 @@
       "success": "Room terminated successfully. Players have been notified.",
       "partialTitle": "Partial termination",
       "partialDescription": "The room was disconnected from runtime and players were notified, but the database cleanup failed. A system reset may be required: {error}"
+    },
+    "audit": {
+      "title": "AUDIT LOG",
+      "subtitle": "Admin action history — who did what, and when",
+      "backToConsole": "BACK TO CONSOLE",
+      "accessDenied": {
+        "title": "ACCESS DENIED",
+        "description": "You do not have administrative clearance to view the audit log.",
+        "returnHome": "Return to Deck"
+      },
+      "filters": {
+        "title": "FILTERS",
+        "eventType": "ACTION TYPE",
+        "allEvents": "All actions",
+        "roomId": "ROOM ID",
+        "roomIdPlaceholder": "Filter by room ID (cuid)",
+        "adminUserId": "ADMIN USER ID",
+        "adminUserIdPlaceholder": "Filter by admin user ID (cuid)",
+        "apply": "APPLY",
+        "reset": "RESET"
+      },
+      "eventTypes": {
+        "ADMIN_TERMINATE_ROOM": "Terminate room",
+        "ADMIN_RESET_SYSTEM": "Reset system",
+        "ADMIN_SYNC_QUESTIONS": "Sync questions"
+      },
+      "table": {
+        "time": "TIME",
+        "actor": "ACTOR",
+        "action": "ACTION",
+        "target": "TARGET",
+        "metadata": "METADATA",
+        "roomLabel": "Room:",
+        "matchLabel": "Match:",
+        "systemActor": "System",
+        "none": "—"
+      },
+      "pagination": {
+        "summary": "Page {page} of {pageCount} · {total} events",
+        "prev": "PREV",
+        "next": "NEXT"
+      },
+      "empty": {
+        "title": "NO AUDIT EVENTS",
+        "description": "No admin actions match the current filters. Adjust the filters or check back after the next admin operation."
+      },
+      "error": {
+        "title": "FAILED TO LOAD AUDIT LOG",
+        "description": "The audit events could not be loaded. This may be a network issue or your session may have expired.",
+        "retry": "RETRY"
+      }
     }
   },
   "Sidebar": {

@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useSocketStore } from "@/stores/socket-store";
 import { API_URL, apiFetch } from "@/lib/api";
 import { ApiError, apiSendJson } from "@/lib/api-client";
+import { Link } from "@/i18n/routing";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,6 +21,7 @@ import {
   ShieldCheck,
   Terminal,
   Skull,
+  ScrollText,
 } from "lucide-react";
 
 // ── Response Types (mirrors API) ───────────────────────────
@@ -322,9 +324,18 @@ export default function AdminPage() {
             </p>
           </div>
 
-          <span className="shrink-0 relative z-10 px-4 py-2 bg-candy-yellow border-[3px] border-candy-ink rounded-2xl text-candy-ink font-display font-black text-xs shadow-[3px_3px_0_0_#000] uppercase tracking-wider">
-            {t("rootAccess")}
-          </span>
+          <div className="shrink-0 relative z-10 flex flex-col sm:flex-row items-center gap-3">
+            <Link
+              href="/admin/audit"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-white border-[3px] border-candy-ink rounded-2xl text-candy-ink font-display font-black text-xs shadow-[3px_3px_0_0_#000] uppercase tracking-wider hover:bg-candy-cloud active:translate-y-0.5 active:shadow-[1px_1px_0_0_#000] transition-all"
+            >
+              <ScrollText className="w-4 h-4 text-candy-blue" />
+              {t("auditLog")}
+            </Link>
+            <span className="px-4 py-2 bg-candy-yellow border-[3px] border-candy-ink rounded-2xl text-candy-ink font-display font-black text-xs shadow-[3px_3px_0_0_#000] uppercase tracking-wider">
+              {t("rootAccess")}
+            </span>
+          </div>
         </div>
 
         {/* Resources Metrics & Node statuses */}

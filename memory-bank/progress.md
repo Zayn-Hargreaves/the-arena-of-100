@@ -102,8 +102,14 @@ Run the relevant package tests before using these numbers in PR text.
    - Measure baseline 100 concurrent WS behavior before making spectator-transport scale decisions.
 2. **AFK Docs + UX Hardening**
    - Keep semantics aligned with active-round deadline elimination and spectator/watch-only behavior.
-3. **Admin Audit Panel UI** (Optional)
-   - Backend audit baseline exists; UI/filter/pagination closeout is optional.
+3. **Admin Audit Panel UI** (Done)
+   - Backend audit baseline exists; UI/filter/pagination closeout shipped.
+   - FE consumes `GET /admin/audit-events` via `lib/api/audit.ts` +
+     `hooks/use-audit-events.ts` (offset pagination, DTO-matched filters:
+     eventType/roomId/adminUserId — no date filter, backend DTO has none).
+   - Route `admin/audit/page.tsx` (role-guarded) with `components/admin/`
+     `audit-table.tsx` + `audit-filters.tsx`; skeleton/empty/error states;
+     i18n keys under `admin.audit` (en/vi); vitest specs green.
 4. **Replay Contract Follow-up**
    - `submissionId` idempotency is done; `lastSeenSeqNo` delta replay remains deferred.
 
