@@ -1,4 +1,5 @@
 import { GameLoopService } from "./game-loop.service";
+import { LobbyCountdownService } from "./lobby-countdown.service";
 import { MatchService } from "./match.service";
 import { QuestionService } from "../question/question.service";
 import { MatchStateMachine } from "@arena/game-core";
@@ -59,6 +60,13 @@ describe("GameLoopService Persistence", () => {
         correctAnswer: "A",
         difficulty: "MEDIUM",
       }),
+      findOne: vi.fn().mockResolvedValue({
+        id: "q1",
+        content: "Test question",
+        options: ["A", "B", "C", "D"],
+        correctAnswer: "A",
+        difficulty: "MEDIUM",
+      }),
     } as unknown as QuestionService;
 
     roomService = {
@@ -74,7 +82,6 @@ describe("GameLoopService Persistence", () => {
       matchService,
       questionService,
       roomService,
-      createMockRedisService() as any,
       // B3 fix: GameLoopService now takes a PrismaService for the
       // `SELECT ... FOR UPDATE` transaction in `launchRoomMatch`.
       // The persistence suite does not exercise that path, so a
@@ -89,6 +96,7 @@ describe("GameLoopService Persistence", () => {
         ),
         $queryRaw: vi.fn().mockResolvedValue([]),
       } as any,
+      new LobbyCountdownService(roomService, createMockRedisService() as any),
     );
   });
 
@@ -115,7 +123,11 @@ describe("GameLoopService Persistence", () => {
       stateMachine.submitAnswer("p2", "B", now);
 
       // Execute endRound
-      await (service as any).endRound("match-1", "room-1", mockServer);
+      await (service as any).roundRunner.endRound(
+        "match-1",
+        "room-1",
+        mockServer,
+      );
 
       // Verify saveRoundAndAnswers was called with the round metadata
       // and the per-player answer map. The answer rows no longer
@@ -160,7 +172,7 @@ describe("GameLoopService Persistence", () => {
       stateMachine.submitAnswer("p1", "A", Date.now());
 
       const loggerSpy = vi
-        .spyOn((service as any).logger, "error")
+        .spyOn((service as any).roundRunner.logger, "error")
         .mockImplementation(() => {});
 
       // Simulate a DB failure inside the round-write path. The
@@ -171,7 +183,7 @@ describe("GameLoopService Persistence", () => {
       );
 
       await expect(
-        (service as any).endRound("match-1", "room-1", mockServer),
+        (service as any).roundRunner.endRound("match-1", "room-1", mockServer),
       ).rejects.toThrow("connection reset");
 
       // Verify logger.error was called with the expected error message
@@ -187,10 +199,186 @@ describe("GameLoopService Persistence", () => {
       // advanced to ROUND_RESULT — that would orphan a future
       // retry.
       expect(stateMachine.getState().status).toBe(MatchStatus.ROUND_EVALUATING);
-      // persistStateMachine must NOT have been called either —
-      // the next timer needs to see ROUND_EVALUATING in Redis to
-      // decide whether to retry.
-      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+      // We verify that the state machine was persisted in Redis in the ROUND_EVALUATING state.
+      expect(matchService.persistStateMachine).toHaveBeenCalledTimes(1);
+    });
+
+    it("successfully recovers from ROUND_EVALUATING status if a retry occurs", async () => {
+      // Simulate state machine already in ROUND_EVALUATING status with completed round status
+      stateMachine.transition(MatchStatus.COUNTDOWN);
+      stateMachine.transition(MatchStatus.ROUND_ACTIVE);
+      stateMachine.startRound({
+        id: "q4",
+        content: "Recovery round",
+        options: ["A", "B"],
+        correctAnswer: "A",
+        difficulty: "EASY",
+      });
+      stateMachine.submitAnswer("p1", "A", Date.now());
+      stateMachine.submitAnswer("p2", "B", Date.now());
+
+      // Evaluate the round to transition state machine into ROUND_EVALUATING and COMPLETED round status
+      stateMachine.transition(MatchStatus.ROUND_EVALUATING);
+      stateMachine.evaluateRound();
+
+      // Reset mock states
+      vi.mocked(matchService.persistStateMachine).mockClear();
+      vi.mocked(matchService.saveRoundAndAnswers).mockClear();
+
+      // Mock questionService to support rehydration if correctAnswer is missing
+      const mockQuestion = {
+        id: "q4",
+        content: "Recovery round",
+        options: ["A", "B"],
+        correctAnswer: "A",
+        difficulty: "EASY",
+      };
+      vi.mocked(questionService.findOne).mockResolvedValue(mockQuestion as any);
+
+      // Execute endRound which should enter recovery path
+      await (service as any).roundRunner.endRound(
+        "match-1",
+        "room-1",
+        mockServer,
+      );
+
+      // It should still call saveRoundAndAnswers
+      expect(matchService.saveRoundAndAnswers).toHaveBeenCalledWith(
+        "match-1",
+        1,
+        "q4",
+        expect.arrayContaining([
+          expect.objectContaining({
+            userId: "p1",
+            answer: "A",
+            isCorrect: true,
+          }),
+          expect.objectContaining({
+            userId: "p2",
+            answer: "B",
+            isCorrect: false,
+          }),
+        ]),
+      );
+
+      // It should transition to ROUND_RESULT and persist the final state
+      expect(stateMachine.getState().status).toBe(MatchStatus.ROUND_RESULT);
+      expect(matchService.persistStateMachine).toHaveBeenCalledTimes(2); // once during saveRoundAndAnswers success, once during ROUND_RESULT transition
+    });
+
+    it("rehydrates correctAnswer from questionService if stripped during ROUND_EVALUATING recovery", async () => {
+      // Simulate state machine already in ROUND_EVALUATING status with completed round status
+      stateMachine.transition(MatchStatus.COUNTDOWN);
+      stateMachine.transition(MatchStatus.ROUND_ACTIVE);
+      stateMachine.startRound({
+        id: "q4",
+        content: "Recovery round",
+        options: ["A", "B"],
+        correctAnswer: "A",
+        difficulty: "EASY",
+      });
+      stateMachine.submitAnswer("p1", "A", Date.now());
+      stateMachine.submitAnswer("p2", "B", Date.now());
+
+      // Evaluate the round to transition state machine into ROUND_EVALUATING and COMPLETED round status
+      stateMachine.transition(MatchStatus.ROUND_EVALUATING);
+      stateMachine.evaluateRound();
+
+      // Simulate correctAnswer being stripped (e.g. for security/client filtering)
+      if ((stateMachine as any).currentRound) {
+        (stateMachine as any).currentRound.correctAnswer = "";
+      }
+
+      // Reset mock states
+      vi.mocked(matchService.persistStateMachine).mockClear();
+      vi.mocked(matchService.saveRoundAndAnswers).mockClear();
+
+      // Mock questionService to find our question
+      const mockQuestion = {
+        id: "q4",
+        content: "Recovery round",
+        options: ["A", "B"],
+        correctAnswer: "A",
+        difficulty: "EASY",
+      };
+      vi.mocked(questionService.findOne).mockResolvedValue(mockQuestion as any);
+
+      // Execute endRound which should enter recovery path
+      await (service as any).roundRunner.endRound(
+        "match-1",
+        "room-1",
+        mockServer,
+      );
+
+      // Assert questionService.findOne was called with the correct question id
+      expect(questionService.findOne).toHaveBeenCalledWith("q4");
+
+      // Verify saveRoundAndAnswers was called with correctly rehydrated data
+      expect(matchService.saveRoundAndAnswers).toHaveBeenCalledWith(
+        "match-1",
+        1,
+        "q4",
+        expect.arrayContaining([
+          expect.objectContaining({
+            userId: "p1",
+            answer: "A",
+            isCorrect: true,
+          }),
+          expect.objectContaining({
+            userId: "p2",
+            answer: "B",
+            isCorrect: false,
+          }),
+        ]),
+      );
+
+      // It should successfully finish recovery and transition to ROUND_RESULT
+      expect(stateMachine.getState().status).toBe(MatchStatus.ROUND_RESULT);
+    });
+
+    it("successfully triggers checkMatchEnd recovery if match is in ROUND_RESULT status", async () => {
+      // Simulate state machine already in ROUND_RESULT status
+      stateMachine.transition(MatchStatus.COUNTDOWN);
+      stateMachine.transition(MatchStatus.ROUND_ACTIVE);
+      stateMachine.startRound({
+        id: "q4",
+        content: "Result recovery round",
+        options: ["A", "B"],
+        correctAnswer: "A",
+        difficulty: "EASY",
+      });
+      stateMachine.submitAnswer("p1", "A", Date.now());
+      stateMachine.transition(MatchStatus.ROUND_EVALUATING);
+      stateMachine.evaluateRound();
+      stateMachine.transition(MatchStatus.ROUND_RESULT);
+
+      // Reset mock states
+      vi.mocked(matchService.persistStateMachine).mockClear();
+      vi.mocked(matchService.saveRoundAndAnswers).mockClear();
+      vi.useFakeTimers();
+
+      // Spy on checkMatchEnd to verify it is called
+      const checkMatchEndSpy = vi
+        .spyOn((service as any).roundRunner, "checkMatchEnd")
+        .mockImplementation(async () => {});
+
+      // Execute endRound
+      await (service as any).roundRunner.endRound(
+        "match-1",
+        "room-1",
+        mockServer,
+      );
+
+      // Verify that it scheduled checkMatchEnd timeout callback
+      vi.advanceTimersByTime(3000);
+      expect(checkMatchEndSpy).toHaveBeenCalledWith(
+        "match-1",
+        "room-1",
+        mockServer,
+      );
+
+      vi.useRealTimers();
+      checkMatchEndSpy.mockRestore();
     });
   });
 });

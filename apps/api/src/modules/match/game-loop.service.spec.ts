@@ -1,4 +1,5 @@
 import { GameLoopService, COUNTDOWN_INDEX_KEY } from "./game-loop.service";
+import { LobbyCountdownService } from "./lobby-countdown.service";
 import { MatchService } from "./match.service";
 import { QuestionService } from "../question/question.service";
 import { MatchStateMachine } from "@arena/game-core";
@@ -55,6 +56,7 @@ function createMockPrismaService() {
 
 describe("GameLoopService", () => {
   let service: GameLoopService;
+  let lobbyCountdown: LobbyCountdownService;
   let matchService: MatchService;
   let questionService: QuestionService;
   let roomService: RoomService;
@@ -119,12 +121,16 @@ describe("GameLoopService", () => {
       to: vi.fn().mockReturnValue({ emit: vi.fn() }),
     } as unknown as Server;
 
+    lobbyCountdown = new LobbyCountdownService(
+      roomService,
+      createMockRedisService() as any,
+    );
     service = new GameLoopService(
       matchService,
       questionService,
       roomService,
-      createMockRedisService() as any,
       createMockPrismaService() as any,
+      lobbyCountdown,
     );
   });
 
@@ -137,10 +143,10 @@ describe("GameLoopService", () => {
 
     // Mock executeCountdown to avoid timeout issues
     const executeCountdownSpy = vi
-      .spyOn(service as any, "executeCountdown")
+      .spyOn((service as any).roundRunner, "executeCountdown")
       .mockImplementation(() => {});
 
-    await service.startMatchLoop(
+    await (service as any).roundRunner.startMatchLoop(
       "match-1",
       "room-1",
       mockServer as unknown as Server,
@@ -178,11 +184,15 @@ describe("GameLoopService", () => {
 
     // Mock executeRound to avoid side effects
     const executeRoundSpy = vi
-      .spyOn(service as any, "executeRound")
+      .spyOn((service as any).roundRunner, "executeRound")
       .mockResolvedValue(undefined);
 
     // Call executeCountdown directly (now synchronous void)
-    (service as any).executeCountdown("match-1", "room-1", mockServer);
+    (service as any).roundRunner.executeCountdown(
+      "match-1",
+      "room-1",
+      mockServer,
+    );
 
     // Fast-forward timers
     await vi.advanceTimersByTimeAsync(GAME_CONFIG.COUNTDOWN_DURATION_MS);
@@ -205,10 +215,9 @@ describe("GameLoopService", () => {
       .spyOn(service as any, "launchRoomMatch")
       .mockResolvedValue({ id: "m1" });
 
-    const result = await service.maybeStartPublicCountdown(
-      "room-1",
-      mockServer,
-    );
+    const result = await (
+      service as any
+    ).lobbyCountdown.maybeStartPublicCountdown("room-1", mockServer);
 
     expect(result).not.toBeNull();
     expect(vi.mocked(roomService.updateRoomStatus)).toHaveBeenCalledWith(
@@ -246,8 +255,14 @@ describe("GameLoopService", () => {
         players: [{ userId: "p1" }],
       } as any);
 
-    await service.maybeStartPublicCountdown("room-1", mockServer);
-    await service.handleRoomPlayerLeft("room-1", mockServer);
+    await (service as any).lobbyCountdown.maybeStartPublicCountdown(
+      "room-1",
+      mockServer,
+    );
+    await (service as any).lobbyCountdown.handleRoomPlayerLeft(
+      "room-1",
+      mockServer,
+    );
 
     expect(vi.mocked(roomService.updateRoomStatus)).toHaveBeenCalledWith(
       "room-1",
@@ -272,10 +287,14 @@ describe("GameLoopService", () => {
     stateMachine.transition(MatchStatus.COUNTDOWN);
 
     // Initialize usedQuestionIds for this match
-    (service as any).usedQuestionIds.set("match-1", new Set());
+    (service as any).roundRunner.timers.initUsedQuestions("match-1");
 
     // Call executeRound directly
-    await (service as any).executeRound("match-1", "room-1", mockServer);
+    await (service as any).roundRunner.executeRound(
+      "match-1",
+      "room-1",
+      mockServer,
+    );
 
     // Check that state changed to ROUND_ACTIVE
     expect(stateMachine.getState().status).toBe(MatchStatus.ROUND_ACTIVE);
@@ -306,7 +325,9 @@ describe("GameLoopService", () => {
     );
 
     // Check that question tracking was initialized
-    const usedQuestions = (service as any).usedQuestionIds.get("match-1");
+    const usedQuestions = (service as any).roundRunner.timers.getUsedQuestions(
+      "match-1",
+    );
     expect(usedQuestions).toContain("q1");
 
     vi.useRealTimers();
@@ -335,7 +356,11 @@ describe("GameLoopService", () => {
     stateMachine.submitAnswer("p2", "B", Date.now());
 
     // Call endRound directly
-    await (service as any).endRound("match-1", "room-1", mockServer);
+    await (service as any).roundRunner.endRound(
+      "match-1",
+      "room-1",
+      mockServer,
+    );
 
     // Check state transitions
     expect(stateMachine.getState().status).toBe(MatchStatus.ROUND_RESULT);
@@ -393,7 +418,7 @@ describe("GameLoopService", () => {
 
     // Mock executeRound to avoid side effects
     const executeRoundSpy = vi
-      .spyOn(service as any, "executeRound")
+      .spyOn((service as any).roundRunner, "executeRound")
       .mockResolvedValue(undefined);
 
     // Set up state where match should continue (more than 1 surviving player)
@@ -411,7 +436,11 @@ describe("GameLoopService", () => {
     stateMachine.evaluateRound(); // Both survive
 
     // Call checkMatchEnd directly
-    await (service as any).checkMatchEnd("match-1", "room-1", mockServer);
+    await (service as any).roundRunner.checkMatchEnd(
+      "match-1",
+      "room-1",
+      mockServer,
+    );
 
     // Should call executeRound for next round
     expect(executeRoundSpy).toHaveBeenCalledWith(
@@ -429,7 +458,7 @@ describe("GameLoopService", () => {
 
     // Mock finishMatchLoop to avoid side effects
     const finishMatchLoopSpy = vi
-      .spyOn(service as any, "finishMatchLoop")
+      .spyOn((service as any).roundRunner, "finishMatchLoop")
       .mockResolvedValue(undefined);
 
     // Set up state where match should end (only 1 surviving player)
@@ -447,7 +476,11 @@ describe("GameLoopService", () => {
     stateMachine.evaluateRound(); // Only p1 survives
 
     // Call checkMatchEnd directly
-    await (service as any).checkMatchEnd("match-1", "room-1", mockServer);
+    await (service as any).roundRunner.checkMatchEnd(
+      "match-1",
+      "room-1",
+      mockServer,
+    );
 
     // Should call finishMatchLoop
     expect(finishMatchLoopSpy).toHaveBeenCalledWith(
@@ -481,7 +514,11 @@ describe("GameLoopService", () => {
     stateMachine.evaluateRound();
 
     // Call finishMatchLoop directly
-    await (service as any).finishMatchLoop("match-1", "room-1", mockServer);
+    await (service as any).roundRunner.finishMatchLoop(
+      "match-1",
+      "room-1",
+      mockServer,
+    );
 
     // Check final state
     expect(stateMachine.getState().status).toBe(MatchStatus.FINISHED);
@@ -513,8 +550,12 @@ describe("GameLoopService", () => {
     );
 
     // Check cleanup
-    expect((service as any).activeTimers.has("match-1")).toBeFalsy();
-    expect((service as any).usedQuestionIds.has("match-1")).toBeFalsy();
+    expect(
+      (service as any).roundRunner.timers.hasTimers("match-1"),
+    ).toBeFalsy();
+    expect(
+      (service as any).roundRunner.timers.hasUsedQuestions("match-1"),
+    ).toBeFalsy();
 
     vi.useRealTimers();
   });
@@ -522,18 +563,23 @@ describe("GameLoopService", () => {
   // === TEST 8: cancelMatchLoop ===
   it("should clear timers and remove tracking maps", () => {
     // Initialize tracking for match
-    (service as any).usedQuestionIds.set("match-1", new Set(["q1"]));
-    (service as any).activeTimers.set(
+    (service as any).roundRunner.timers.initUsedQuestions("match-1");
+    (service as any).roundRunner.timers.markQuestionUsed("match-1", "q1");
+    (service as any).roundRunner.timers.addTimer(
       "match-1",
-      new Set([setTimeout(() => {}, 1000)]),
+      setTimeout(() => {}, 1000),
     );
 
     // Call cancelMatchLoop
     service.cancelMatchLoop("match-1");
 
     // Check cleanup
-    expect((service as any).usedQuestionIds.has("match-1")).toBeFalsy();
-    expect((service as any).activeTimers.has("match-1")).toBeFalsy();
+    expect(
+      (service as any).roundRunner.timers.hasUsedQuestions("match-1"),
+    ).toBeFalsy();
+    expect(
+      (service as any).roundRunner.timers.hasTimers("match-1"),
+    ).toBeFalsy();
   });
 
   // === TEST 9: Error handling (F7) ===
@@ -574,10 +620,10 @@ describe("GameLoopService", () => {
     (mockServer.to as any).mockImplementation(toMock);
 
     // Initialize usedQuestionIds for this match
-    (service as any).usedQuestionIds.set("match-1", new Set());
+    (service as any).roundRunner.timers.initUsedQuestions("match-1");
 
     // Start the match loop which triggers countdown and resolves immediately
-    await service.startMatchLoop(
+    await (service as any).roundRunner.startMatchLoop(
       "match-1",
       "room-1",
       mockServer as unknown as Server,
@@ -627,11 +673,15 @@ describe("GameLoopService", () => {
     (mockServer.to as any).mockReturnValue({ emit: vi.fn() });
 
     // Initialize usedQuestionIds for this match
-    (service as any).usedQuestionIds.set("match-1", new Set());
+    (service as any).roundRunner.timers.initUsedQuestions("match-1");
 
     // First round - start from COUNTDOWN
     stateMachine.transition(MatchStatus.COUNTDOWN);
-    await (service as any).executeRound("match-1", "room-1", mockServer);
+    await (service as any).roundRunner.executeRound(
+      "match-1",
+      "room-1",
+      mockServer,
+    );
 
     // For the second call, we need to create a new state machine to avoid transition issues
     const players2 = [
@@ -661,10 +711,15 @@ describe("GameLoopService", () => {
     stateMachine2.transition(MatchStatus.COUNTDOWN);
 
     // Initialize usedQuestionIds for the second match with q1 already used
-    (service as any).usedQuestionIds.set("match-2", new Set(["q1"]));
+    (service as any).roundRunner.timers.initUsedQuestions("match-2");
+    (service as any).roundRunner.timers.markQuestionUsed("match-2", "q1");
 
     // Call executeRound for the second match
-    await (service as any).executeRound("match-2", "room-1", mockServer);
+    await (service as any).roundRunner.executeRound(
+      "match-2",
+      "room-1",
+      mockServer,
+    );
 
     // Check that the second call to getRandom was called with excludeIds
     expect(getRandomMock).toHaveBeenCalledTimes(2);
@@ -692,11 +747,11 @@ describe("GameLoopService", () => {
 
     // Mock endRound to avoid side effects
     const endRoundSpy = vi
-      .spyOn(service as any, "endRound")
+      .spyOn((service as any).roundRunner, "endRound")
       .mockResolvedValue(undefined);
 
     // Call checkEarlyTermination with all players having answered
-    (service as any).expectedAnswers.set("match-1", 2); // Expect 2 answers
+    (service as any).roundRunner.timers.setExpectedAnswers("match-1", 2); // Expect 2 answers
     stateMachine.submitAnswer("p1", "A", Date.now());
     stateMachine.submitAnswer("p2", "B", Date.now());
 
@@ -710,7 +765,9 @@ describe("GameLoopService", () => {
     expect(endRoundSpy).toHaveBeenCalledWith("match-1", "room-1", mockServer);
 
     // Should have cleared timers
-    expect((service as any).activeTimers.has("match-1")).toBeFalsy();
+    expect(
+      (service as any).roundRunner.timers.hasTimers("match-1"),
+    ).toBeFalsy();
 
     vi.useRealTimers();
   });
@@ -875,7 +932,7 @@ describe("GameLoopService", () => {
       stateMachine.submitAnswer("p2", "A", Date.now());
 
       // 1. Call endRound first time
-      const firstCall = (service as any).endRound(
+      const firstCall = (service as any).roundRunner.endRound(
         "match-1",
         "room-1",
         mockServer,
@@ -884,7 +941,7 @@ describe("GameLoopService", () => {
       // 2. Call endRound immediately a second time while first is running
       // Since JavaScript is single-threaded, if we call endRound again concurrently,
       // it should hit the `endingRounds` lock check and return early.
-      const secondCall = (service as any).endRound(
+      const secondCall = (service as any).roundRunner.endRound(
         "match-1",
         "room-1",
         mockServer,
@@ -907,7 +964,11 @@ describe("GameLoopService", () => {
       const evaluateSpy = vi.spyOn(stateMachine, "evaluateRound");
 
       // Call endRound directly
-      await (service as any).endRound("match-1", "room-1", mockServer);
+      await (service as any).roundRunner.endRound(
+        "match-1",
+        "room-1",
+        mockServer,
+      );
 
       // Since the match status is FINISHED, it should bypass transition and evaluation
       expect(transitionSpy).not.toHaveBeenCalled();
@@ -917,20 +978,27 @@ describe("GameLoopService", () => {
     it("should catch and log errors in timeout callbacks", async () => {
       vi.useFakeTimers();
 
-      const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
+      const loggerErrorSpy = vi.spyOn(
+        (service as any).roundRunner.logger,
+        "error",
+      );
 
       // Mock endRound and checkMatchEnd to throw errors
       const endRoundSpy = vi
-        .spyOn(service as any, "endRound")
+        .spyOn((service as any).roundRunner, "endRound")
         .mockRejectedValue(new Error("endRound failure"));
       const checkMatchEndSpy = vi
-        .spyOn(service as any, "checkMatchEnd")
+        .spyOn((service as any).roundRunner, "checkMatchEnd")
         .mockRejectedValue(new Error("checkMatchEnd failure"));
 
       // 1. Trigger the executeRound timeout
       stateMachine.transition(MatchStatus.COUNTDOWN);
-      (service as any).usedQuestionIds.set("match-1", new Set());
-      await (service as any).executeRound("match-1", "room-1", mockServer);
+      (service as any).roundRunner.timers.initUsedQuestions("match-1");
+      await (service as any).roundRunner.executeRound(
+        "match-1",
+        "room-1",
+        mockServer,
+      );
 
       // Fast forward to executeRound's 15s timeout
       await vi.advanceTimersByTimeAsync(GAME_CONFIG.ROUND_DURATION_MS);
@@ -947,7 +1015,10 @@ describe("GameLoopService", () => {
 
       // Reset mock endRound so we can call it successfully to schedule the 3s checkMatchEnd timer
       endRoundSpy.mockRestore();
-      const loggerErrorSpy2 = vi.spyOn((service as any).logger, "error");
+      const loggerErrorSpy2 = vi.spyOn(
+        (service as any).roundRunner.logger,
+        "error",
+      );
 
       // Re-mock saveRoundAndAnswers for endRound
       (matchService.saveRoundAndAnswers as any).mockResolvedValue({
@@ -992,7 +1063,11 @@ describe("GameLoopService", () => {
       (matchService.getStateMachine as any).mockResolvedValue(testStateMachine);
 
       // Call endRound directly, which will schedule the 3s checkMatchEnd timer
-      await (service as any).endRound("match-2", "room-1", mockServer);
+      await (service as any).roundRunner.endRound(
+        "match-2",
+        "room-1",
+        mockServer,
+      );
 
       // Fast forward to checkMatchEnd's 3s timeout
       await vi.advanceTimersByTimeAsync(GAME_CONFIG.RESULT_DISPLAY_MS);
@@ -1011,15 +1086,22 @@ describe("GameLoopService", () => {
     it("should catch and log error if executeRound throws in executeCountdown timer callback", async () => {
       vi.useFakeTimers();
 
-      const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
+      const loggerErrorSpy = vi.spyOn(
+        (service as any).roundRunner.logger,
+        "error",
+      );
 
       // Mock executeRound to throw/reject
-      vi.spyOn(service as any, "executeRound").mockRejectedValue(
+      vi.spyOn((service as any).roundRunner, "executeRound").mockRejectedValue(
         new Error("countdown round failure"),
       );
 
       // Call executeCountdown directly
-      (service as any).executeCountdown("match-1", "room-1", mockServer);
+      (service as any).roundRunner.executeCountdown(
+        "match-1",
+        "room-1",
+        mockServer,
+      );
 
       // Fast-forward timers
       await vi.advanceTimersByTimeAsync(GAME_CONFIG.COUNTDOWN_DURATION_MS);
@@ -1033,8 +1115,13 @@ describe("GameLoopService", () => {
     });
 
     it("should log string rejections in the endRound timeout callback", async () => {
-      const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
-      (service as any).usedQuestionIds.set("match-endround-string", new Set());
+      const loggerErrorSpy = vi.spyOn(
+        (service as any).roundRunner.logger,
+        "error",
+      );
+      (service as any).roundRunner.timers.initUsedQuestions(
+        "match-endround-string",
+      );
       const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
       let capturedTimeout: (() => Promise<void>) | undefined;
       setTimeoutSpy.mockImplementation(((handler: () => Promise<void>) => {
@@ -1082,11 +1169,13 @@ describe("GameLoopService", () => {
         fakeStateMachine,
       );
       // Throw a string so the timer catch logs via String(error).
-      vi.spyOn(service as any, "endRound").mockImplementationOnce(() => {
-        throw "endRound failure (string)";
-      });
+      vi.spyOn((service as any).roundRunner, "endRound").mockImplementationOnce(
+        () => {
+          throw "endRound failure (string)";
+        },
+      );
 
-      await (service as any).executeRound(
+      await (service as any).roundRunner.executeRound(
         "match-endround-string",
         "room-1",
         mockServer,
@@ -1125,7 +1214,11 @@ describe("GameLoopService", () => {
         fakeStateMachine,
       );
 
-      await (service as any).endRound("match-bypass", "room-1", mockServer);
+      await (service as any).roundRunner.endRound(
+        "match-bypass",
+        "room-1",
+        mockServer,
+      );
 
       expect(fakeStateMachine.transition).not.toHaveBeenCalled();
       expect(fakeStateMachine.evaluateRound).not.toHaveBeenCalled();
@@ -1151,7 +1244,11 @@ describe("GameLoopService", () => {
         fakeStateMachine,
       );
 
-      await (service as any).endRound("match-bypass-2", "room-1", mockServer);
+      await (service as any).roundRunner.endRound(
+        "match-bypass-2",
+        "room-1",
+        mockServer,
+      );
 
       expect(fakeStateMachine.transition).not.toHaveBeenCalled();
       expect(fakeStateMachine.evaluateRound).not.toHaveBeenCalled();
@@ -1168,16 +1265,19 @@ describe("GameLoopService", () => {
           difficulty: "MEDIUM",
         } as any);
 
-      const usedQuestionIds = (service as any).usedQuestionIds as Map<
-        string,
-        Set<string>
-      >;
-      const getSpy = vi.spyOn(usedQuestionIds, "get");
+      const getSpy = vi.spyOn(
+        (service as any).roundRunner.timers,
+        "getUsedQuestions",
+      );
       getSpy.mockImplementationOnce(() => undefined);
       getSpy.mockImplementationOnce(() => new Set());
 
       stateMachine.transition(MatchStatus.COUNTDOWN);
-      await (service as any).executeRound("match-unique", "room-1", mockServer);
+      await (service as any).roundRunner.executeRound(
+        "match-unique",
+        "room-1",
+        mockServer,
+      );
 
       expect(getRandomSpy).toHaveBeenCalledWith(undefined, []);
     });
@@ -1222,7 +1322,7 @@ describe("GameLoopService", () => {
       const emitSpy = vi.fn();
       (mockServer.to as any).mockReturnValue({ emit: emitSpy });
 
-      await (service as any).endRound(
+      await (service as any).roundRunner.endRound(
         "match-missing-player",
         "room-1",
         mockServer,
@@ -1238,7 +1338,10 @@ describe("GameLoopService", () => {
     });
 
     it("logs timeout callback failures when checkMatchEnd rejects with a non-Error", async () => {
-      const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
+      const loggerErrorSpy = vi.spyOn(
+        (service as any).roundRunner.logger,
+        "error",
+      );
       const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
       let capturedTimeout: (() => Promise<void>) | undefined;
       setTimeoutSpy.mockImplementation(((handler: () => Promise<void>) => {
@@ -1282,11 +1385,14 @@ describe("GameLoopService", () => {
       vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(
         testStateMachine,
       );
-      vi.spyOn(service as any, "checkMatchEnd").mockImplementationOnce(() => {
+      vi.spyOn(
+        (service as any).roundRunner,
+        "checkMatchEnd",
+      ).mockImplementationOnce(() => {
         throw "boom-string";
       });
 
-      await (service as any).endRound(
+      await (service as any).roundRunner.endRound(
         "match-string-error",
         "room-1",
         mockServer,
@@ -1312,7 +1418,7 @@ describe("GameLoopService", () => {
         testStateMachine,
       );
       const endRoundSpy = vi
-        .spyOn(service as any, "endRound")
+        .spyOn((service as any).roundRunner, "endRound")
         .mockResolvedValue(undefined);
 
       await service.checkEarlyTermination(
@@ -1329,10 +1435,17 @@ describe("GameLoopService", () => {
   describe("Missing Coverage (Null Guards & Optional Params)", () => {
     it("should throw RoomError in startMatchLoop if stateMachine is not found", async () => {
       vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
-      const loggerErrorSpy = vi.spyOn((service as any).logger, "error");
+      const loggerErrorSpy = vi.spyOn(
+        (service as any).roundRunner.logger,
+        "error",
+      );
 
       await expect(
-        service.startMatchLoop("match-nonexistent", "room-1", mockServer),
+        (service as any).roundRunner.startMatchLoop(
+          "match-nonexistent",
+          "room-1",
+          mockServer,
+        ),
       ).rejects.toThrow(RoomError);
 
       expect(loggerErrorSpy).toHaveBeenCalledWith(
@@ -1344,7 +1457,7 @@ describe("GameLoopService", () => {
       vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
       const startRoundSpy = vi.spyOn(stateMachine, "startRound");
 
-      await (service as any).executeRound(
+      await (service as any).roundRunner.executeRound(
         "match-nonexistent",
         "room-1",
         mockServer,
@@ -1357,7 +1470,7 @@ describe("GameLoopService", () => {
       vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
       const evaluateSpy = vi.spyOn(stateMachine, "evaluateRound");
 
-      await (service as any).endRound(
+      await (service as any).roundRunner.endRound(
         "match-nonexistent",
         "room-1",
         mockServer,
@@ -1370,7 +1483,7 @@ describe("GameLoopService", () => {
       vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
       const shouldEndSpy = vi.spyOn(stateMachine, "shouldEndMatch");
 
-      await (service as any).checkMatchEnd(
+      await (service as any).roundRunner.checkMatchEnd(
         "match-nonexistent",
         "room-1",
         mockServer,
@@ -1383,7 +1496,7 @@ describe("GameLoopService", () => {
       vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
       const transitionSpy = vi.spyOn(stateMachine, "transition");
 
-      await (service as any).finishMatchLoop(
+      await (service as any).roundRunner.finishMatchLoop(
         "match-nonexistent",
         "room-1",
         mockServer,
@@ -1394,7 +1507,10 @@ describe("GameLoopService", () => {
 
     it("should return early in handlePlayerDisconnect if stateMachine is not found", async () => {
       vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
-      const loggerWarnSpy = vi.spyOn((service as any).logger, "warn");
+      const loggerWarnSpy = vi.spyOn(
+        (service as any).roundRunner.logger,
+        "warn",
+      );
 
       await service.handlePlayerDisconnect(
         "match-nonexistent",
@@ -1433,7 +1549,7 @@ describe("GameLoopService", () => {
       // the dead parameter fail this test.
       expect(
         (
-          service as unknown as {
+          (service as any).roundRunner as unknown as {
             finishMatchLoop: (...args: unknown[]) => unknown;
           }
         ).finishMatchLoop.length,
@@ -1453,9 +1569,13 @@ describe("GameLoopService", () => {
       // Pre-mark this matchId as "already finishing" to simulate
       // an in-flight first call. The guard should detect the Set
       // membership and bail out.
-      (service as any).finishingMatches.add("match-1");
+      (service as any).roundRunner.timers.beginFinish("match-1");
       try {
-        await (service as any).finishMatchLoop("match-1", "room-1", mockServer);
+        await (service as any).roundRunner.finishMatchLoop(
+          "match-1",
+          "room-1",
+          mockServer,
+        );
 
         // No DB write, no broadcast, no state transition.
         expect(matchService.finishMatch).not.toHaveBeenCalled();
@@ -1465,7 +1585,7 @@ describe("GameLoopService", () => {
           expect.anything(),
         );
       } finally {
-        (service as any).finishingMatches.delete("match-1");
+        (service as any).roundRunner.timers.endFinish("match-1");
       }
 
       vi.useRealTimers();
@@ -1496,9 +1616,9 @@ describe("GameLoopService", () => {
 
       // Manually mark the Set (simulating "currently in flight")
       // and assert isMatchFinishing flips.
-      (service as any).finishingMatches.add("match-1");
+      (service as any).roundRunner.timers.beginFinish("match-1");
       expect(service.isMatchFinishing("match-1")).toBe(true);
-      (service as any).finishingMatches.delete("match-1");
+      (service as any).roundRunner.timers.endFinish("match-1");
       expect(service.isMatchFinishing("match-1")).toBe(false);
 
       vi.useRealTimers();
@@ -1521,13 +1641,19 @@ describe("GameLoopService", () => {
       stateMachine.submitAnswer("p1", "A", Date.now());
       stateMachine.evaluateRound();
 
-      await (service as any).finishMatchLoop("match-1", "room-1", mockServer);
+      await (service as any).roundRunner.finishMatchLoop(
+        "match-1",
+        "room-1",
+        mockServer,
+      );
 
       // After the call returns, the Set should no longer contain
       // the matchId. This is critical: a thrown DB error inside
       // finishMatchLoop must not lock the match out of future
       // finish attempts.
-      expect((service as any).finishingMatches.has("match-1")).toBe(false);
+      expect((service as any).roundRunner.timers.isFinishing("match-1")).toBe(
+        false,
+      );
       expect(service.isMatchFinishing("match-1")).toBe(false);
 
       vi.useRealTimers();
@@ -1558,10 +1684,16 @@ describe("GameLoopService", () => {
       );
 
       await expect(
-        (service as any).finishMatchLoop("match-1", "room-1", mockServer),
+        (service as any).roundRunner.finishMatchLoop(
+          "match-1",
+          "room-1",
+          mockServer,
+        ),
       ).rejects.toThrow("DB down");
 
-      expect((service as any).finishingMatches.has("match-1")).toBe(false);
+      expect((service as any).roundRunner.timers.isFinishing("match-1")).toBe(
+        false,
+      );
       expect(service.isMatchFinishing("match-1")).toBe(false);
 
       vi.useRealTimers();
@@ -1597,7 +1729,11 @@ describe("GameLoopService", () => {
       stateMachine.transition(MatchStatus.ROUND_EVALUATING);
       stateMachine.transition(MatchStatus.ROUND_RESULT);
 
-      await (service as any).finishMatchLoop("match-1", "room-1", mockServer);
+      await (service as any).roundRunner.finishMatchLoop(
+        "match-1",
+        "room-1",
+        mockServer,
+      );
 
       // finishMatch on the service must receive an explicit null,
       // not undefined (Prisma would drop the field for undefined).
@@ -1665,8 +1801,8 @@ describe("GameLoopService", () => {
         matchService,
         questionService,
         roomService,
-        redis,
         createMockPrismaService() as any,
+        new LobbyCountdownService(roomService, redis),
       );
       return { svc, redis, multiSpy };
     }
@@ -1676,17 +1812,21 @@ describe("GameLoopService", () => {
       it("returns null when no countdown is active for the room", async () => {
         // H4 fix follow-up: getCountdownEnd is now async because it
         // falls back to Redis. The test awaits the returned promise.
-        expect(await service.getCountdownEnd("r1")).toBeNull();
+        expect(
+          await (service as any).lobbyCountdown.getCountdownEnd("r1"),
+        ).toBeNull();
       });
 
       it("returns the recorded countdownEndsAt for an active countdown", async () => {
         const endsAt = Date.now() + 10_000;
-        (service as any).lobbyCountdowns.set("r1", {
+        (service as any).lobbyCountdown.lobbyCountdowns.set("r1", {
           timer: setTimeout(() => undefined, 100),
           countdownEndsAt: endsAt,
         });
         // H4 fix: same async-aware assertion.
-        expect(await service.getCountdownEnd("r1")).toBe(endsAt);
+        expect(
+          await (service as any).lobbyCountdown.getCountdownEnd("r1"),
+        ).toBe(endsAt);
       });
     });
 
@@ -1695,14 +1835,19 @@ describe("GameLoopService", () => {
       it("deletes the in-memory slot and clears Redis when no server is available", async () => {
         const { svc, multiSpy } = buildService();
         // No setServer() call → server is undefined
-        (svc as any).lobbyCountdowns.set("r1", {
+        (svc as any).lobbyCountdown.lobbyCountdowns.set("r1", {
           timer: setTimeout(() => undefined, 100),
           countdownEndsAt: Date.now() + 5000,
         });
 
-        (svc as any).armLobbyCountdownTimer("r1", Date.now() + 5000);
+        (svc as any).lobbyCountdown.armLobbyCountdownTimer(
+          "r1",
+          Date.now() + 5000,
+        );
 
-        expect((svc as any).lobbyCountdowns.has("r1")).toBe(false);
+        expect((svc as any).lobbyCountdown.lobbyCountdowns.has("r1")).toBe(
+          false,
+        );
         // clearPersistedCountdown fires the multi() chain
         expect(multiSpy).toHaveBeenCalled();
       });
@@ -1714,13 +1859,15 @@ describe("GameLoopService", () => {
           .spyOn(svc as any, "launchRoomMatch")
           .mockResolvedValue({ id: "m1" });
 
-        (svc as any).armLobbyCountdownTimer(
+        (svc as any).lobbyCountdown.armLobbyCountdownTimer(
           "r1",
           Date.now() + 5000,
           mockServer as unknown as Server,
         );
 
-        expect((svc as any).lobbyCountdowns.has("r1")).toBe(true);
+        expect((svc as any).lobbyCountdown.lobbyCountdowns.has("r1")).toBe(
+          true,
+        );
 
         await vi.advanceTimersByTimeAsync(5000);
 
@@ -1734,14 +1881,17 @@ describe("GameLoopService", () => {
     // ---- handleRoomPlayerLeft ----
     describe("handleRoomPlayerLeft", () => {
       it("is a no-op when no countdown is active for the room", async () => {
-        await service.handleRoomPlayerLeft("r1", mockServer);
+        await (service as any).lobbyCountdown.handleRoomPlayerLeft(
+          "r1",
+          mockServer,
+        );
         expect(roomService.updateRoomStatus).not.toHaveBeenCalled();
         expect(mockServer.to).not.toHaveBeenCalled();
       });
 
       it("is a no-op when the room is not in COUNTDOWN status", async () => {
         // Pre-arm a countdown so the entry exists
-        (service as any).lobbyCountdowns.set("r1", {
+        (service as any).lobbyCountdown.lobbyCountdowns.set("r1", {
           timer: setTimeout(() => undefined, 100),
           countdownEndsAt: Date.now() + 5000,
         });
@@ -1751,14 +1901,17 @@ describe("GameLoopService", () => {
           players: [{ userId: "p1" }],
         } as any);
 
-        await service.handleRoomPlayerLeft("r1", mockServer);
+        await (service as any).lobbyCountdown.handleRoomPlayerLeft(
+          "r1",
+          mockServer,
+        );
 
         expect(roomService.updateRoomStatus).not.toHaveBeenCalled();
         expect(mockServer.to).not.toHaveBeenCalled();
       });
 
       it("is a no-op when the room still has at least MIN_PLAYERS_TO_START players", async () => {
-        (service as any).lobbyCountdowns.set("r1", {
+        (service as any).lobbyCountdown.lobbyCountdowns.set("r1", {
           timer: setTimeout(() => undefined, 100),
           countdownEndsAt: Date.now() + 5000,
         });
@@ -1768,7 +1921,10 @@ describe("GameLoopService", () => {
           players: [{ userId: "p1" }, { userId: "p2" }, { userId: "p3" }],
         } as any);
 
-        await service.handleRoomPlayerLeft("r1", mockServer);
+        await (service as any).lobbyCountdown.handleRoomPlayerLeft(
+          "r1",
+          mockServer,
+        );
 
         expect(roomService.updateRoomStatus).not.toHaveBeenCalled();
         expect(mockServer.to).not.toHaveBeenCalled();
@@ -1777,7 +1933,7 @@ describe("GameLoopService", () => {
       it("cancels the countdown, updates status, and emits ROOM_COUNTDOWN_CANCELLED + ROOM_STATUS_UPDATED", async () => {
         const emitSpy = vi.fn();
         (mockServer.to as any).mockReturnValue({ emit: emitSpy });
-        (service as any).lobbyCountdowns.set("r1", {
+        (service as any).lobbyCountdown.lobbyCountdowns.set("r1", {
           timer: setTimeout(() => undefined, 100),
           countdownEndsAt: Date.now() + 5000,
         });
@@ -1787,7 +1943,10 @@ describe("GameLoopService", () => {
           players: [{ userId: "p1" }], // below MIN
         } as any);
 
-        await service.handleRoomPlayerLeft("r1", mockServer);
+        await (service as any).lobbyCountdown.handleRoomPlayerLeft(
+          "r1",
+          mockServer,
+        );
 
         expect(roomService.updateRoomStatus).toHaveBeenCalledWith(
           "r1",
@@ -1808,7 +1967,9 @@ describe("GameLoopService", () => {
             roomStatus: RoomStatus.WAITING,
           }),
         );
-        expect((service as any).lobbyCountdowns.has("r1")).toBe(false);
+        expect((service as any).lobbyCountdown.lobbyCountdowns.has("r1")).toBe(
+          false,
+        );
       });
     });
 
@@ -1900,7 +2061,7 @@ describe("GameLoopService", () => {
         const emitSpy = vi.fn();
         (mockServer.to as any).mockReturnValue({ emit: emitSpy });
         // Seed an active countdown
-        (service as any).lobbyCountdowns.set("r1", {
+        (service as any).lobbyCountdown.lobbyCountdowns.set("r1", {
           timer: setTimeout(() => undefined, 100),
           countdownEndsAt: Date.now() + 5000,
         });
@@ -1921,13 +2082,18 @@ describe("GameLoopService", () => {
           .fn()
           .mockResolvedValue({ id: "m1" });
         // Stub startMatchLoop to avoid the full round loop
-        vi.spyOn(service as any, "startMatchLoop").mockResolvedValue(undefined);
+        vi.spyOn(
+          (service as any).roundRunner,
+          "startMatchLoop",
+        ).mockResolvedValue(undefined);
 
         await (service as any).launchRoomMatch("r1", mockServer, {
           isAutoStart: true,
         });
 
-        expect((service as any).lobbyCountdowns.has("r1")).toBe(false);
+        expect((service as any).lobbyCountdown.lobbyCountdowns.has("r1")).toBe(
+          false,
+        );
       });
 
       it("happy path: updates status to STARTING, creates the match, and starts the loop", async () => {
@@ -1943,7 +2109,7 @@ describe("GameLoopService", () => {
           .fn()
           .mockResolvedValue({ id: "m1" });
         const startLoopSpy = vi
-          .spyOn(service as any, "startMatchLoop")
+          .spyOn((service as any).roundRunner, "startMatchLoop")
           .mockResolvedValue(undefined);
 
         // B3 fix: launchRoomMatch now uses `prisma.$transaction` with
@@ -2260,9 +2426,10 @@ describe("GameLoopService", () => {
           .fn()
           .mockResolvedValue({ id: "m1" });
 
-        vi.spyOn(service as any, "startMatchLoop").mockRejectedValueOnce(
-          new Error("startMatchLoop failed"),
-        );
+        vi.spyOn(
+          (service as any).roundRunner,
+          "startMatchLoop",
+        ).mockRejectedValueOnce(new Error("startMatchLoop failed"));
 
         const prisma = (service as any).prisma;
         const matchDeleteSpy = vi.spyOn(prisma.match, "delete");
@@ -2302,21 +2469,21 @@ describe("GameLoopService", () => {
     // ---- onModuleInit recovery ----
     describe("onModuleInit (lobby countdown recovery)", () => {
       it("returns immediately when recovery is already in flight", async () => {
-        (service as any).recoveryInFlight = true;
+        (service as any).lobbyCountdown.recoveryInFlight = true;
         const smembersSpy = vi.spyOn(
-          (service as any).redis.getClient(),
+          (service as any).lobbyCountdown.redis.getClient(),
           "smembers",
         );
 
-        await service.onModuleInit();
+        await (service as any).lobbyCountdown.onModuleInit();
 
         expect(smembersSpy).not.toHaveBeenCalled();
-        (service as any).recoveryInFlight = false;
+        (service as any).lobbyCountdown.recoveryInFlight = false;
       });
 
       it("is a no-op when the countdowns set is empty", async () => {
         const { svc } = buildService({ smembers: [] });
-        await svc.onModuleInit();
+        await (svc as any).lobbyCountdown.onModuleInit();
         // No further calls into Redis beyond the initial SMEMBERS
         expect(svc).toBeDefined();
       });
@@ -2327,7 +2494,7 @@ describe("GameLoopService", () => {
         });
         // get() returns null by default → direct srem path (no multi needed)
         const sremSpy = redis.getClient().srem;
-        await svc.onModuleInit();
+        await (svc as any).lobbyCountdown.onModuleInit();
         expect(sremSpy).toHaveBeenCalledWith(COUNTDOWN_INDEX_KEY, "rMissing");
       });
 
@@ -2342,7 +2509,7 @@ describe("GameLoopService", () => {
         // branch as a missing key: a single SREM on the index set
         // rather than a full clearPersistedCountdown multi() chain.
         const sremSpy = redis.getClient().srem;
-        await svc.onModuleInit();
+        await (svc as any).lobbyCountdown.onModuleInit();
         expect(sremSpy).toHaveBeenCalledWith(COUNTDOWN_INDEX_KEY, "rBad");
         // Pin the srem-only branch: the recovery path must NOT have
         // entered the clearPersistedCountdown multi()/exec() chain.
@@ -2367,10 +2534,12 @@ describe("GameLoopService", () => {
           .mockResolvedValue({ id: "m1" });
         (svc as any).setServer(mockServer as unknown as Server);
 
-        await svc.onModuleInit();
+        await (svc as any).lobbyCountdown.onModuleInit();
 
         // Countdown is now armed in-memory
-        expect((svc as any).lobbyCountdowns.has("rFuture")).toBe(true);
+        expect((svc as any).lobbyCountdown.lobbyCountdowns.has("rFuture")).toBe(
+          true,
+        );
         // Advancing past the future end fires launchRoomMatch
         await vi.advanceTimersByTimeAsync(60_000);
         expect(launchSpy).toHaveBeenCalledWith("rFuture", mockServer, {
@@ -2390,7 +2559,7 @@ describe("GameLoopService", () => {
           .mockResolvedValue({ id: "m1" });
         (svc as any).setServer(mockServer as unknown as Server);
 
-        await svc.onModuleInit();
+        await (svc as any).lobbyCountdown.onModuleInit();
         // Give the void promise chain a microtask to flush
         await Promise.resolve();
 
@@ -2411,19 +2580,20 @@ describe("GameLoopService", () => {
           smembers: ["rClearFail"],
           get: String(pastEnd),
         });
-        vi.spyOn(svc as any, "clearPersistedCountdown").mockResolvedValue(
-          false,
-        );
+        vi.spyOn(
+          (svc as any).lobbyCountdown,
+          "clearPersistedCountdown",
+        ).mockResolvedValue(false);
         const scheduleRetrySpy = vi
-          .spyOn(svc as any, "scheduleRecoveryRetry")
+          .spyOn((svc as any).lobbyCountdown, "scheduleRecoveryRetry")
           .mockImplementation(() => {});
         const launchSpy = vi
           .spyOn(svc as any, "launchRoomMatch")
           .mockResolvedValue({ id: "m1" });
-        const warnSpy = vi.spyOn((svc as any).logger, "warn");
+        const warnSpy = vi.spyOn((svc as any).lobbyCountdown.logger, "warn");
         (svc as any).setServer(mockServer as unknown as Server);
 
-        await svc.onModuleInit();
+        await (svc as any).lobbyCountdown.onModuleInit();
         // Flush the async clearPersistedCountdown → .then callback
         await Promise.resolve();
         await Promise.resolve();
@@ -2454,10 +2624,10 @@ describe("GameLoopService", () => {
         });
         // No setServer call → server is undefined
 
-        await svc.onModuleInit();
+        await (svc as any).lobbyCountdown.onModuleInit();
 
         // The recovery was buffered, NOT cleared.
-        expect((svc as any).pendingRecovery).toEqual([
+        expect((svc as any).lobbyCountdown.pendingRecovery).toEqual([
           {
             roomId: "rExpiredNoServer",
             countdownEndsAt: pastEnd,
@@ -2493,26 +2663,31 @@ describe("GameLoopService", () => {
           },
         );
 
-        await svc.onModuleInit();
-        expect((svc as any).pendingRecovery).toHaveLength(2);
+        await (svc as any).lobbyCountdown.onModuleInit();
+        expect((svc as any).lobbyCountdown.pendingRecovery).toHaveLength(2);
 
         const launchSpy = vi
           .spyOn(svc as any, "launchRoomMatch")
           .mockResolvedValue({ id: "m1" });
-        vi.spyOn(svc as any, "clearPersistedCountdown").mockResolvedValue(true);
+        vi.spyOn(
+          (svc as any).lobbyCountdown,
+          "clearPersistedCountdown",
+        ).mockResolvedValue(true);
 
         svc.setServer(mockServer as unknown as Server);
         await Promise.resolve();
         await Promise.resolve();
 
         // The buffer is drained atomically.
-        expect((svc as any).pendingRecovery).toEqual([]);
+        expect((svc as any).lobbyCountdown.pendingRecovery).toEqual([]);
         // Expired entry → launchRoomMatch was called.
         expect(launchSpy).toHaveBeenCalledWith("rExpired", mockServer, {
           isAutoStart: true,
         });
         // Future entry → the lobbyCountdowns map was populated.
-        expect((svc as any).lobbyCountdowns.has("rFuture")).toBe(true);
+        expect((svc as any).lobbyCountdown.lobbyCountdowns.has("rFuture")).toBe(
+          true,
+        );
       });
 
       it("onModuleInit after setServer does not re-buffer (C4)", async () => {
@@ -2535,27 +2710,30 @@ describe("GameLoopService", () => {
         const launchSpy = vi
           .spyOn(svc as any, "launchRoomMatch")
           .mockResolvedValue({ id: "m1" });
-        vi.spyOn(svc as any, "clearPersistedCountdown").mockResolvedValue(true);
+        vi.spyOn(
+          (svc as any).lobbyCountdown,
+          "clearPersistedCountdown",
+        ).mockResolvedValue(true);
 
         // First recovery (no server) → buffer populated.
-        await svc.onModuleInit();
-        expect((svc as any).pendingRecovery).toHaveLength(1);
+        await (svc as any).lobbyCountdown.onModuleInit();
+        expect((svc as any).lobbyCountdown.pendingRecovery).toHaveLength(1);
 
         // setServer drains the buffer; server is now set.
         svc.setServer(mockServer as unknown as Server);
         await Promise.resolve();
         await Promise.resolve();
         expect(launchSpy).toHaveBeenCalledTimes(1);
-        expect((svc as any).pendingRecovery).toEqual([]);
+        expect((svc as any).lobbyCountdown.pendingRecovery).toEqual([]);
 
         // Second recovery (server set) → launches directly, no
         // re-buffer. The buffer stays empty and launch is called a
         // second time (idempotency is launchRoomMatch's own
         // responsibility, tested elsewhere).
-        await svc.onModuleInit();
+        await (svc as any).lobbyCountdown.onModuleInit();
         await Promise.resolve();
         expect(launchSpy).toHaveBeenCalledTimes(2);
-        expect((svc as any).pendingRecovery).toEqual([]);
+        expect((svc as any).lobbyCountdown.pendingRecovery).toEqual([]);
       });
 
       it("logs and continues when a per-room recovery error is thrown", async () => {
@@ -2566,9 +2744,9 @@ describe("GameLoopService", () => {
         vi.mocked(redis.getClient().get).mockRejectedValueOnce(
           new Error("redis timeout"),
         );
-        const errorSpy = vi.spyOn((svc as any).logger, "error");
+        const errorSpy = vi.spyOn((svc as any).lobbyCountdown.logger, "error");
 
-        await svc.onModuleInit();
+        await (svc as any).lobbyCountdown.onModuleInit();
 
         expect(errorSpy).toHaveBeenCalledWith(
           expect.stringContaining("rBoom"),
@@ -2582,16 +2760,16 @@ describe("GameLoopService", () => {
         vi.mocked(redis.getClient().smembers).mockRejectedValueOnce(
           new Error("top-level boom"),
         );
-        const errorSpy = vi.spyOn((svc as any).logger, "error");
+        const errorSpy = vi.spyOn((svc as any).lobbyCountdown.logger, "error");
 
-        await svc.onModuleInit();
+        await (svc as any).lobbyCountdown.onModuleInit();
 
         expect(errorSpy).toHaveBeenCalledWith(
           "Lobby countdown recovery failed:",
           expect.any(Error),
         );
         // Guard must be reset so a later invocation can run
-        expect((svc as any).recoveryInFlight).toBe(false);
+        expect((svc as any).lobbyCountdown.recoveryInFlight).toBe(false);
       });
     });
 
@@ -2605,10 +2783,9 @@ describe("GameLoopService", () => {
           players: [{ userId: "p1" }, { userId: "p2" }],
         } as any);
 
-        const result = await service.maybeStartPublicCountdown(
-          "r1",
-          mockServer,
-        );
+        const result = await (
+          service as any
+        ).lobbyCountdown.maybeStartPublicCountdown("r1", mockServer);
         expect(result).toBeNull();
       });
 
@@ -2620,15 +2797,15 @@ describe("GameLoopService", () => {
           players: [{ userId: "p1" }, { userId: "p2" }],
         } as any);
 
-        const result = await service.maybeStartPublicCountdown(
-          "r1",
-          mockServer,
-        );
+        const result = await (
+          service as any
+        ).lobbyCountdown.maybeStartPublicCountdown("r1", mockServer);
         expect(result).toBeNull();
       });
 
       it("returns null when a countdown slot exists but the stored entry vanished", async () => {
-        const countdowns = (service as any).lobbyCountdowns as Map<
+        const countdowns = (service as any).lobbyCountdown
+          .lobbyCountdowns as Map<
           string,
           { timer: NodeJS.Timeout; countdownEndsAt: number }
         >;
@@ -2640,10 +2817,9 @@ describe("GameLoopService", () => {
           .spyOn(countdowns, "get")
           .mockReturnValueOnce(undefined);
 
-        const result = await service.maybeStartPublicCountdown(
-          "r1",
-          mockServer,
-        );
+        const result = await (
+          service as any
+        ).lobbyCountdown.maybeStartPublicCountdown("r1", mockServer);
 
         expect(result).toBeNull();
         expect(getSpy).toHaveBeenCalledWith("r1");
@@ -2657,24 +2833,22 @@ describe("GameLoopService", () => {
           players: [{ userId: "p1" }],
         } as any);
 
-        const result = await service.maybeStartPublicCountdown(
-          "r1",
-          mockServer,
-        );
+        const result = await (
+          service as any
+        ).lobbyCountdown.maybeStartPublicCountdown("r1", mockServer);
         expect(result).toBeNull();
       });
 
       it("returns the existing countdown entry when one is already armed", async () => {
         const endsAt = Date.now() + 30_000;
-        (service as any).lobbyCountdowns.set("r1", {
+        (service as any).lobbyCountdown.lobbyCountdowns.set("r1", {
           timer: setTimeout(() => undefined, 100),
           countdownEndsAt: endsAt,
         });
 
-        const result = await service.maybeStartPublicCountdown(
-          "r1",
-          mockServer,
-        );
+        const result = await (
+          service as any
+        ).lobbyCountdown.maybeStartPublicCountdown("r1", mockServer);
 
         // The service returns the whole entry (timer + countdownEndsAt);
         // we only care that the endsAt we stored is what comes back.
@@ -2720,8 +2894,8 @@ describe("GameLoopService", () => {
           matchService,
           questionService,
           roomService,
-          redis,
           createMockPrismaService() as any,
+          new LobbyCountdownService(roomService, redis),
         );
         return { svc, redis, failingExec, multiSpy };
       }
@@ -2730,7 +2904,10 @@ describe("GameLoopService", () => {
         const { svc, multiSpy } = buildServiceWithFailingMulti("set");
 
         await expect(
-          (svc as any).persistLobbyCountdown("r1", Date.now() + 5000),
+          (svc as any).lobbyCountdown.persistLobbyCountdown(
+            "r1",
+            Date.now() + 5000,
+          ),
         ).rejects.toThrow();
 
         expect(multiSpy).toHaveBeenCalled();
@@ -2738,9 +2915,9 @@ describe("GameLoopService", () => {
 
       it("logs and swallows errors thrown by clearPersistedCountdown (redis DEL chain fails)", async () => {
         const { svc, multiSpy } = buildServiceWithFailingMulti("del");
-        const warnSpy = vi.spyOn((svc as any).logger, "warn");
+        const warnSpy = vi.spyOn((svc as any).lobbyCountdown.logger, "warn");
 
-        await (svc as any).clearPersistedCountdown("r1");
+        await (svc as any).lobbyCountdown.clearPersistedCountdown("r1");
 
         expect(multiSpy).toHaveBeenCalled();
         expect(warnSpy).toHaveBeenCalledWith(
@@ -2768,12 +2945,12 @@ describe("GameLoopService", () => {
           matchService,
           questionService,
           roomService,
-          redis,
           createMockPrismaService() as any,
+          new LobbyCountdownService(roomService, redis),
         );
-        const warnSpy = vi.spyOn((svc as any).logger, "warn");
+        const warnSpy = vi.spyOn((svc as any).lobbyCountdown.logger, "warn");
 
-        await (svc as any).clearPersistedCountdown("r1");
+        await (svc as any).lobbyCountdown.clearPersistedCountdown("r1");
 
         expect(multiSpy).toHaveBeenCalled();
         expect(warnSpy).toHaveBeenCalledWith(
@@ -2790,19 +2967,30 @@ describe("GameLoopService", () => {
         vi.mocked(roomService.updateRoomStatus).mockRejectedValueOnce(
           new Error("db write failed"),
         );
-        const errorSpy = vi.spyOn((service as any).logger, "error");
+        const errorSpy = vi.spyOn(
+          (service as any).lobbyCountdown.logger,
+          "error",
+        );
         // The catch block fires void this.clearPersistedCountdown(roomId) —
         // spy on the redis client's multi() so we can assert the cleanup
         // pipeline runs (and therefore the dead persisted entry is wiped
         // so a retry can re-arm cleanly).
-        const multiSpy = vi.spyOn((service as any).redis.getClient(), "multi");
+        const multiSpy = vi.spyOn(
+          (service as any).lobbyCountdown.redis.getClient(),
+          "multi",
+        );
 
         await expect(
-          service.maybeStartPublicCountdown("r1", mockServer),
+          (service as any).lobbyCountdown.maybeStartPublicCountdown(
+            "r1",
+            mockServer,
+          ),
         ).rejects.toThrow("db write failed");
 
         // In-memory countdown slot must be cleared so a retry can re-arm
-        expect((service as any).lobbyCountdowns.has("r1")).toBe(false);
+        expect((service as any).lobbyCountdown.lobbyCountdowns.has("r1")).toBe(
+          false,
+        );
         // The cleanup pipeline (DEL + SREM) must have been queued to wipe
         // the persisted entry. multi() is called at least twice: once for
         // the initial persist attempt, once for the cleanup in the catch.
@@ -2818,9 +3006,9 @@ describe("GameLoopService", () => {
         const { svc } = buildService();
         const launchError = new Error("launch boom");
         vi.spyOn(svc as any, "launchRoomMatch").mockRejectedValue(launchError);
-        const errorSpy = vi.spyOn((svc as any).logger, "error");
+        const errorSpy = vi.spyOn((svc as any).lobbyCountdown.logger, "error");
 
-        (svc as any).armLobbyCountdownTimer(
+        (svc as any).lobbyCountdown.armLobbyCountdownTimer(
           "r1",
           Date.now() + 5000,
           mockServer as unknown as Server,
@@ -2851,9 +3039,9 @@ describe("GameLoopService", () => {
         const launchError = new Error("recovery launch boom");
         vi.spyOn(svc as any, "launchRoomMatch").mockRejectedValue(launchError);
         (svc as any).setServer(mockServer as unknown as Server);
-        const errorSpy = vi.spyOn((svc as any).logger, "error");
+        const errorSpy = vi.spyOn((svc as any).lobbyCountdown.logger, "error");
 
-        await svc.onModuleInit();
+        await (svc as any).lobbyCountdown.onModuleInit();
         // Flush the void promise chain
         await Promise.resolve();
         await Promise.resolve();
@@ -2878,10 +3066,13 @@ describe("GameLoopService", () => {
           smembers: ["rExpiredNoServer"],
           get: String(pastEnd),
         });
-        const clearSpy = vi.spyOn(svc as any, "clearPersistedCountdown");
-        const errorSpy = vi.spyOn((svc as any).logger, "error");
+        const clearSpy = vi.spyOn(
+          (svc as any).lobbyCountdown,
+          "clearPersistedCountdown",
+        );
+        const errorSpy = vi.spyOn((svc as any).lobbyCountdown.logger, "error");
 
-        await svc.onModuleInit();
+        await (svc as any).lobbyCountdown.onModuleInit();
         await Promise.resolve();
         await Promise.resolve();
 
@@ -2893,7 +3084,7 @@ describe("GameLoopService", () => {
           expect.any(Error),
         );
         // The recovery was buffered for later drain.
-        expect((svc as any).pendingRecovery).toEqual([
+        expect((svc as any).lobbyCountdown.pendingRecovery).toEqual([
           {
             roomId: "rExpiredNoServer",
             countdownEndsAt: pastEnd,
@@ -2950,7 +3141,7 @@ describe("GameLoopService", () => {
         it("clears the lobby countdown timer, removes the in-memory slot, and runs clearPersistedCountdown", async () => {
           const { svc, multiSpy } = buildService();
           // Seed an active lobby countdown
-          (svc as any).lobbyCountdowns.set("r1", {
+          (svc as any).lobbyCountdown.lobbyCountdowns.set("r1", {
             timer: setTimeout(() => undefined, 100),
             countdownEndsAt: Date.now() + 5000,
           });
@@ -2958,7 +3149,9 @@ describe("GameLoopService", () => {
           await svc.stopRoomRuntime("r1", null);
 
           // In-memory slot cleared
-          expect((svc as any).lobbyCountdowns.has("r1")).toBe(false);
+          expect((svc as any).lobbyCountdown.lobbyCountdowns.has("r1")).toBe(
+            false,
+          );
           // clearPersistedCountdown fires the multi() chain
           expect(multiSpy).toHaveBeenCalled();
         });
@@ -2966,17 +3159,20 @@ describe("GameLoopService", () => {
         it("calls cancelMatchLoop when a matchId is provided (no countdown active)", async () => {
           const { svc } = buildService();
           // Seed match-level state so we can assert cancellation
-          (svc as any).usedQuestionIds.set("m1", new Set(["q1"]));
-          (svc as any).activeTimers.set(
+          (svc as any).roundRunner.timers.initUsedQuestions("m1");
+          (svc as any).roundRunner.timers.markQuestionUsed("m1", "q1");
+          (svc as any).roundRunner.timers.addTimer(
             "m1",
-            new Set([setTimeout(() => undefined, 100)]),
+            setTimeout(() => undefined, 100),
           );
 
           await svc.stopRoomRuntime("r2", "m1");
 
           // match-level state was cleared
-          expect((svc as any).usedQuestionIds.has("m1")).toBe(false);
-          expect((svc as any).activeTimers.has("m1")).toBe(false);
+          expect((svc as any).roundRunner.timers.hasUsedQuestions("m1")).toBe(
+            false,
+          );
+          expect((svc as any).roundRunner.timers.hasTimers("m1")).toBe(false);
         });
 
         it("is a no-op for runtime state when neither countdown nor matchId are present", async () => {
@@ -2990,17 +3186,22 @@ describe("GameLoopService", () => {
 
         it("cancels match state when matchId is provided even with an active countdown", async () => {
           const { svc } = buildService();
-          (svc as any).lobbyCountdowns.set("r4", {
+          (svc as any).lobbyCountdown.lobbyCountdowns.set("r4", {
             timer: setTimeout(() => undefined, 100),
             countdownEndsAt: Date.now() + 5000,
           });
-          (svc as any).usedQuestionIds.set("m4", new Set(["q1"]));
+          (svc as any).roundRunner.timers.initUsedQuestions("m4");
+          (svc as any).roundRunner.timers.markQuestionUsed("m4", "q1");
 
           await svc.stopRoomRuntime("r4", "m4");
 
           // Both layers cleaned
-          expect((svc as any).lobbyCountdowns.has("r4")).toBe(false);
-          expect((svc as any).usedQuestionIds.has("m4")).toBe(false);
+          expect((svc as any).lobbyCountdown.lobbyCountdowns.has("r4")).toBe(
+            false,
+          );
+          expect((svc as any).roundRunner.timers.hasUsedQuestions("m4")).toBe(
+            false,
+          );
         });
       });
 
@@ -3089,7 +3290,10 @@ describe("GameLoopService", () => {
         // at game-loop.service.ts:109. Calling setServer on a fresh
         // service must not invoke armLobbyCountdownTimer or
         // launchRoomMatch.
-        const armSpy = vi.spyOn(service as any, "armLobbyCountdownTimer");
+        const armSpy = vi.spyOn(
+          (service as any).lobbyCountdown,
+          "armLobbyCountdownTimer",
+        );
         const launchSpy = vi.spyOn(service as any, "launchRoomMatch");
 
         service.setServer(mockServer as unknown as Server);
@@ -3097,7 +3301,7 @@ describe("GameLoopService", () => {
 
         expect(armSpy).not.toHaveBeenCalled();
         expect(launchSpy).not.toHaveBeenCalled();
-        expect((service as any).pendingRecovery).toEqual([]);
+        expect((service as any).lobbyCountdown.pendingRecovery).toEqual([]);
       });
 
       it("logs and swallows a launch failure for an expired entry in the buffer", async () => {
@@ -3110,15 +3314,19 @@ describe("GameLoopService", () => {
         vi.spyOn(service as any, "launchRoomMatch").mockRejectedValue(
           launchError,
         );
-        vi.spyOn(service as any, "clearPersistedCountdown").mockResolvedValue(
-          true,
-        );
-        (service as any).pendingRecovery.push({
+        vi.spyOn(
+          (service as any).lobbyCountdown,
+          "clearPersistedCountdown",
+        ).mockResolvedValue(true);
+        (service as any).lobbyCountdown.pendingRecovery.push({
           roomId: "rExpired",
           countdownEndsAt: Date.now() - 1000,
           expired: true,
         });
-        const errorSpy = vi.spyOn((service as any).logger, "error");
+        const errorSpy = vi.spyOn(
+          (service as any).lobbyCountdown.logger,
+          "error",
+        );
 
         service.setServer(mockServer as unknown as Server);
         // Flush the void promise chain several times — the
@@ -3136,7 +3344,7 @@ describe("GameLoopService", () => {
         );
         // The buffer is drained atomically even on the failure
         // path — we never leave the entry behind.
-        expect((service as any).pendingRecovery).toEqual([]);
+        expect((service as any).lobbyCountdown.pendingRecovery).toEqual([]);
       });
 
       it("re-queues via scheduleRecoveryRetry when clearPersistedCountdown returns false for an expired entry", async () => {
@@ -3146,22 +3354,26 @@ describe("GameLoopService", () => {
         // fails to actually remove the persisted countdown (returns
         // false), the entry must be re-queued via scheduleRecoveryRetry
         // rather than launching the match.
-        vi.spyOn(service as any, "clearPersistedCountdown").mockResolvedValue(
-          false,
-        );
+        vi.spyOn(
+          (service as any).lobbyCountdown,
+          "clearPersistedCountdown",
+        ).mockResolvedValue(false);
         const scheduleRetrySpy = vi
-          .spyOn(service as any, "scheduleRecoveryRetry")
+          .spyOn((service as any).lobbyCountdown, "scheduleRecoveryRetry")
           .mockImplementation(() => {});
         const launchSpy = vi
           .spyOn(service as any, "launchRoomMatch")
           .mockResolvedValue({ id: "m1" });
-        const warnSpy = vi.spyOn((service as any).logger, "warn");
+        const warnSpy = vi.spyOn(
+          (service as any).lobbyCountdown.logger,
+          "warn",
+        );
         const entry = {
           roomId: "rClearFail",
           countdownEndsAt: Date.now() - 1000,
           expired: true,
         };
-        (service as any).pendingRecovery.push(entry);
+        (service as any).lobbyCountdown.pendingRecovery.push(entry);
 
         service.setServer(mockServer as unknown as Server);
         // Flush the promise chain: clearPersistedCountdown resolves,
@@ -3177,7 +3389,7 @@ describe("GameLoopService", () => {
         // launchRoomMatch must NOT be called — the clear failed.
         expect(launchSpy).not.toHaveBeenCalled();
         // Buffer drained.
-        expect((service as any).pendingRecovery).toEqual([]);
+        expect((service as any).lobbyCountdown.pendingRecovery).toEqual([]);
       });
     });
 
@@ -3191,16 +3403,16 @@ describe("GameLoopService", () => {
         // non-expired arm was missing.
         const futureEnd = Date.now() + 60_000;
         vi.mocked(
-          (service as any).redis.getClient().smembers,
+          (service as any).lobbyCountdown.redis.getClient().smembers,
         ).mockResolvedValueOnce(["rFuture"] as any);
-        vi.mocked((service as any).redis.getClient().get).mockResolvedValueOnce(
-          String(futureEnd),
-        );
+        vi.mocked(
+          (service as any).lobbyCountdown.redis.getClient().get,
+        ).mockResolvedValueOnce(String(futureEnd));
         // No setServer call → server is undefined.
 
-        await service.onModuleInit();
+        await (service as any).lobbyCountdown.onModuleInit();
 
-        expect((service as any).pendingRecovery).toEqual([
+        expect((service as any).lobbyCountdown.pendingRecovery).toEqual([
           {
             roomId: "rFuture",
             countdownEndsAt: futureEnd,
@@ -3218,11 +3430,13 @@ describe("GameLoopService", () => {
         // happy path at game-loop.service.ts:391-394. The in-memory
         // hit path is already covered; the Redis hit path was not.
         const endsAt = Date.now() + 10_000;
-        vi.mocked((service as any).redis.getClient().get).mockResolvedValueOnce(
-          String(endsAt),
-        );
+        vi.mocked(
+          (service as any).lobbyCountdown.redis.getClient().get,
+        ).mockResolvedValueOnce(String(endsAt));
 
-        expect(await service.getCountdownEnd("r1")).toBe(endsAt);
+        expect(
+          await (service as any).lobbyCountdown.getCountdownEnd("r1"),
+        ).toBe(endsAt);
       });
 
       it("returns null when Redis returns a non-numeric string (parseInt → NaN)", async () => {
@@ -3231,11 +3445,13 @@ describe("GameLoopService", () => {
         // payload must be treated as "no countdown" — the
         // alternative (return NaN and crash downstream arithmetic)
         // is worse.
-        vi.mocked((service as any).redis.getClient().get).mockResolvedValueOnce(
-          "not-a-number",
-        );
+        vi.mocked(
+          (service as any).lobbyCountdown.redis.getClient().get,
+        ).mockResolvedValueOnce("not-a-number");
 
-        expect(await service.getCountdownEnd("r1")).toBeNull();
+        expect(
+          await (service as any).lobbyCountdown.getCountdownEnd("r1"),
+        ).toBeNull();
       });
 
       it("returns null and logs a warning when Redis throws", async () => {
@@ -3243,12 +3459,17 @@ describe("GameLoopService", () => {
         // game-loop.service.ts:395-402. A Redis outage must not
         // crash the WS handler that called `getCountdownEnd`
         // (e.g. AuthHandler.handleAuthenticate's reconnect path).
-        vi.mocked((service as any).redis.getClient().get).mockRejectedValueOnce(
-          new Error("redis down"),
+        vi.mocked(
+          (service as any).lobbyCountdown.redis.getClient().get,
+        ).mockRejectedValueOnce(new Error("redis down"));
+        const warnSpy = vi.spyOn(
+          (service as any).lobbyCountdown.logger,
+          "warn",
         );
-        const warnSpy = vi.spyOn((service as any).logger, "warn");
 
-        expect(await service.getCountdownEnd("r1")).toBeNull();
+        expect(
+          await (service as any).lobbyCountdown.getCountdownEnd("r1"),
+        ).toBeNull();
         expect(warnSpy).toHaveBeenCalledWith(
           expect.stringContaining(
             "getCountdownEnd: Redis read failed for room r1: redis down",
@@ -3257,12 +3478,17 @@ describe("GameLoopService", () => {
       });
 
       it("returns null and logs a warning when Redis throws a non-Error object (string)", async () => {
-        vi.mocked((service as any).redis.getClient().get).mockRejectedValueOnce(
-          "redis down string",
+        vi.mocked(
+          (service as any).lobbyCountdown.redis.getClient().get,
+        ).mockRejectedValueOnce("redis down string");
+        const warnSpy = vi.spyOn(
+          (service as any).lobbyCountdown.logger,
+          "warn",
         );
-        const warnSpy = vi.spyOn((service as any).logger, "warn");
 
-        expect(await service.getCountdownEnd("r1")).toBeNull();
+        expect(
+          await (service as any).lobbyCountdown.getCountdownEnd("r1"),
+        ).toBeNull();
         expect(warnSpy).toHaveBeenCalledWith(
           "getCountdownEnd: Redis read failed for room r1: redis down string",
         );
@@ -3322,9 +3548,9 @@ describe("GameLoopService", () => {
         // callback body reaching the state-machine lookup.
         vi.useFakeTimers();
         const executeRoundSpy = vi
-          .spyOn(service as any, "executeRound")
+          .spyOn((service as any).roundRunner, "executeRound")
           .mockResolvedValue(undefined);
-        const logSpy = vi.spyOn((service as any).logger, "log");
+        const logSpy = vi.spyOn((service as any).roundRunner.logger, "log");
 
         // Force the in-callback `getStateMachine` to return
         // undefined (simulating a torn-down match).
@@ -3332,7 +3558,11 @@ describe("GameLoopService", () => {
           undefined as any,
         );
 
-        (service as any).executeCountdown("match-1", "room-1", mockServer);
+        (service as any).roundRunner.executeCountdown(
+          "match-1",
+          "room-1",
+          mockServer,
+        );
         await vi.advanceTimersByTimeAsync(GAME_CONFIG.COUNTDOWN_DURATION_MS);
 
         expect(executeRoundSpy).not.toHaveBeenCalled();
@@ -3358,7 +3588,7 @@ describe("GameLoopService", () => {
         // to ROUND_RESULT).
         vi.useFakeTimers();
         const errorSpy = vi
-          .spyOn((service as any).logger, "error")
+          .spyOn((service as any).roundRunner.logger, "error")
           .mockImplementation(() => {});
         const emitSpy = vi.fn();
         (mockServer.to as any).mockReturnValue({ emit: emitSpy });
@@ -3379,7 +3609,11 @@ describe("GameLoopService", () => {
         );
 
         await expect(
-          (service as any).endRound("match-1", "room-1", mockServer),
+          (service as any).roundRunner.endRound(
+            "match-1",
+            "room-1",
+            mockServer,
+          ),
         ).rejects.toThrow("db connection reset");
 
         // The H3 fix guarantees the state machine is NOT
@@ -3388,7 +3622,7 @@ describe("GameLoopService", () => {
         expect(stateMachine.getState().status).toBe(
           MatchStatus.ROUND_EVALUATING,
         );
-        expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+        expect(matchService.persistStateMachine).toHaveBeenCalledTimes(1);
         // No ROUND_ENDED / MATCH_FINISHED broadcast — the
         // round did not complete.
         expect(emitSpy).not.toHaveBeenCalledWith(
@@ -3418,7 +3652,7 @@ describe("GameLoopService", () => {
         // on this log to detect matches that finished with
         // an empty roster or unresolvable tie-break.
         vi.useFakeTimers();
-        const warnSpy = vi.spyOn((service as any).logger, "warn");
+        const warnSpy = vi.spyOn((service as any).roundRunner.logger, "warn");
         const emitSpy = vi.fn();
         (mockServer.to as any).mockReturnValue({ emit: emitSpy });
 
@@ -3432,7 +3666,11 @@ describe("GameLoopService", () => {
         stateMachine.transition(MatchStatus.ROUND_EVALUATING);
         stateMachine.transition(MatchStatus.ROUND_RESULT);
 
-        await (service as any).finishMatchLoop("match-1", "room-1", mockServer);
+        await (service as any).roundRunner.finishMatchLoop(
+          "match-1",
+          "room-1",
+          mockServer,
+        );
 
         // The wire payload carries winnerId: null (existing
         // B2 assertion, restated for clarity).
@@ -3460,11 +3698,11 @@ describe("GameLoopService", () => {
         // caller reaches it). The guard must short-circuit
         // BEFORE we hit the state machine / executeRound.
         const endRoundSpy = vi
-          .spyOn(service as any, "endRound")
+          .spyOn((service as any).roundRunner, "endRound")
           .mockResolvedValue(undefined);
 
         // Pre-mark the matchId as already-ending.
-        (service as any).endingRounds.add("match-1");
+        (service as any).roundRunner.timers.beginEndRound("match-1");
         try {
           await service.checkEarlyTermination(
             "match-1",
@@ -3472,7 +3710,7 @@ describe("GameLoopService", () => {
             mockServer as unknown as Server,
           );
         } finally {
-          (service as any).endingRounds.delete("match-1");
+          (service as any).roundRunner.timers.endEndRound("match-1");
         }
 
         expect(endRoundSpy).not.toHaveBeenCalled();
@@ -3498,9 +3736,10 @@ describe("GameLoopService", () => {
           .mockResolvedValue({ id: "m1" });
 
         const loopError = new Error("loop initialization failed");
-        vi.spyOn(service as any, "startMatchLoop").mockRejectedValueOnce(
-          loopError,
-        );
+        vi.spyOn(
+          (service as any).roundRunner,
+          "startMatchLoop",
+        ).mockRejectedValueOnce(loopError);
 
         const deleteSpy = vi
           .spyOn((service as any).prisma.match, "delete")
@@ -3551,9 +3790,10 @@ describe("GameLoopService", () => {
           .mockResolvedValue({ id: "m1" });
 
         const loopError = new Error("loop initialization failed");
-        vi.spyOn(service as any, "startMatchLoop").mockRejectedValueOnce(
-          loopError,
-        );
+        vi.spyOn(
+          (service as any).roundRunner,
+          "startMatchLoop",
+        ).mockRejectedValueOnce(loopError);
 
         const deleteError = new Error("delete failed");
         const deleteSpy = vi
@@ -3632,13 +3872,20 @@ describe("GameLoopService", () => {
         stateMachine.transition(MatchStatus.COUNTDOWN);
 
         // Initialize usedQuestionIds for this match
-        (service as any).usedQuestionIds.set("match-1", new Set());
+        (service as any).roundRunner.timers.initUsedQuestions("match-1");
 
-        const endRoundSpy = vi.spyOn(service as any, "endRound");
-        const checkMatchEndSpy = vi.spyOn(service as any, "checkMatchEnd");
+        const endRoundSpy = vi.spyOn((service as any).roundRunner, "endRound");
+        const checkMatchEndSpy = vi.spyOn(
+          (service as any).roundRunner,
+          "checkMatchEnd",
+        );
 
         // 1. Call executeRound directly to transition to ROUND_ACTIVE and set the 15s endRound timer
-        await (service as any).executeRound("match-1", "room-1", mockServer);
+        await (service as any).roundRunner.executeRound(
+          "match-1",
+          "room-1",
+          mockServer,
+        );
 
         // 2. Fast forward 15s to trigger the endRound timer callback
         await vi.advanceTimersByTimeAsync(GAME_CONFIG.ROUND_DURATION_MS);
@@ -3675,21 +3922,23 @@ describe("GameLoopService", () => {
         };
 
         const drainSpy = vi
-          .spyOn(service as any, "drainPendingRecovery")
+          .spyOn((service as any).lobbyCountdown, "drainPendingRecovery")
           .mockImplementation(() => {});
 
-        (service as any).scheduleRecoveryRetry(entry);
+        (service as any).lobbyCountdown.scheduleRecoveryRetry(entry);
 
         // Check it was added to active recovery retries
-        expect((service as any).activeRecoveryRetries.has("room-retry-1")).toBe(
-          true,
-        );
+        expect(
+          (service as any).lobbyCountdown.activeRecoveryRetries.has(
+            "room-retry-1",
+          ),
+        ).toBe(true);
 
         // Fast forward 1000ms
         await vi.advanceTimersByTimeAsync(1000);
 
         // Should have pushed a new entry with nextRetry count to pendingRecovery
-        expect((service as any).pendingRecovery).toContainEqual({
+        expect((service as any).lobbyCountdown.pendingRecovery).toContainEqual({
           ...entry,
           retryCount: 1,
         });
@@ -3708,11 +3957,13 @@ describe("GameLoopService", () => {
         };
 
         // Mark it as already retrying
-        (service as any).activeRecoveryRetries.add("room-retry-dup");
+        (service as any).lobbyCountdown.activeRecoveryRetries.add(
+          "room-retry-dup",
+        );
 
         const setTimeoutSpy = vi.spyOn(global, "setTimeout");
 
-        (service as any).scheduleRecoveryRetry(entry);
+        (service as any).lobbyCountdown.scheduleRecoveryRetry(entry);
 
         // setTimeout should not be called since it was deduplicated
         expect(setTimeoutSpy).not.toHaveBeenCalled();
@@ -3731,18 +3982,21 @@ describe("GameLoopService", () => {
         };
 
         const errorSpy = vi
-          .spyOn((service as any).logger, "error")
+          .spyOn((service as any).lobbyCountdown.logger, "error")
           .mockImplementation(() => {});
         const clearCountdownSpy = vi
-          .spyOn(service as any, "clearPersistedCountdown")
+          .spyOn((service as any).lobbyCountdown, "clearPersistedCountdown")
           .mockResolvedValue(true);
         const setTimeoutSpy = vi.spyOn(global, "setTimeout");
-        const saddSpy = vi.spyOn((service as any).redis.getClient(), "sadd");
+        const saddSpy = vi.spyOn(
+          (service as any).lobbyCountdown.redis.getClient(),
+          "sadd",
+        );
         const roomEmitSpy = vi.fn();
         (mockServer.to as any).mockReturnValue({ emit: roomEmitSpy });
         service.setServer(mockServer as unknown as Server);
 
-        (service as any).scheduleRecoveryRetry(entry);
+        (service as any).lobbyCountdown.scheduleRecoveryRetry(entry);
 
         await vi.waitFor(() => {
           expect(roomService.updateRoomStatus).toHaveBeenCalledWith(
@@ -3794,19 +4048,25 @@ describe("GameLoopService", () => {
           retryCount: 5,
         };
 
-        vi.spyOn((service as any).logger, "error").mockImplementation(() => {});
-        const warnSpy = vi.spyOn((service as any).logger, "warn");
+        vi.spyOn(
+          (service as any).lobbyCountdown.logger,
+          "error",
+        ).mockImplementation(() => {});
+        const warnSpy = vi.spyOn(
+          (service as any).lobbyCountdown.logger,
+          "warn",
+        );
         vi.mocked(roomService.updateRoomStatus).mockResolvedValueOnce(
           null as any,
         );
         const clearCountdownSpy = vi
-          .spyOn(service as any, "clearPersistedCountdown")
+          .spyOn((service as any).lobbyCountdown, "clearPersistedCountdown")
           .mockResolvedValue(true);
         const roomEmitSpy = vi.fn();
         (mockServer.to as any).mockReturnValue({ emit: roomEmitSpy });
         service.setServer(mockServer as unknown as Server);
 
-        (service as any).scheduleRecoveryRetry(entry);
+        (service as any).lobbyCountdown.scheduleRecoveryRetry(entry);
         await Promise.resolve();
         await Promise.resolve();
 
@@ -3832,16 +4092,17 @@ describe("GameLoopService", () => {
 
         const rollbackError = new Error("rollback write failed");
         const errorSpy = vi
-          .spyOn((service as any).logger, "error")
+          .spyOn((service as any).lobbyCountdown.logger, "error")
           .mockImplementation(() => {});
         vi.mocked(roomService.updateRoomStatus).mockRejectedValueOnce(
           rollbackError,
         );
-        vi.spyOn(service as any, "clearPersistedCountdown").mockResolvedValue(
-          true,
-        );
+        vi.spyOn(
+          (service as any).lobbyCountdown,
+          "clearPersistedCountdown",
+        ).mockResolvedValue(true);
 
-        (service as any).scheduleRecoveryRetry(entry);
+        (service as any).lobbyCountdown.scheduleRecoveryRetry(entry);
         await Promise.resolve();
         await Promise.resolve();
 
@@ -3864,17 +4125,18 @@ describe("GameLoopService", () => {
 
         const saddError = new Error("redis sadd boom");
         vi.spyOn(
-          (service as any).redis.getClient(),
+          (service as any).lobbyCountdown.redis.getClient(),
           "sadd",
         ).mockRejectedValueOnce(saddError);
         const errorSpy = vi
-          .spyOn((service as any).logger, "error")
+          .spyOn((service as any).lobbyCountdown.logger, "error")
           .mockImplementation(() => {});
-        vi.spyOn(service as any, "clearPersistedCountdown").mockResolvedValue(
-          true,
-        );
+        vi.spyOn(
+          (service as any).lobbyCountdown,
+          "clearPersistedCountdown",
+        ).mockResolvedValue(true);
 
-        (service as any).scheduleRecoveryRetry(entry);
+        (service as any).lobbyCountdown.scheduleRecoveryRetry(entry);
         // Flush the void promise chain so the .catch handler runs
         await Promise.resolve();
         await Promise.resolve();
@@ -3896,14 +4158,15 @@ describe("GameLoopService", () => {
             retryCount: 5,
           };
 
-          const client = (service as any).redis.getClient();
+          const client = (service as any).lobbyCountdown.redis.getClient();
           const saddSpy = vi.spyOn(client, "sadd").mockResolvedValue(1);
           const setSpy = vi.spyOn(client, "set").mockResolvedValue("OK");
-          vi.spyOn(service as any, "clearPersistedCountdown").mockResolvedValue(
-            true,
-          );
+          vi.spyOn(
+            (service as any).lobbyCountdown,
+            "clearPersistedCountdown",
+          ).mockResolvedValue(true);
 
-          (service as any).scheduleRecoveryRetry(entry);
+          (service as any).lobbyCountdown.scheduleRecoveryRetry(entry);
 
           // flush promises
           await Promise.resolve();
@@ -3922,7 +4185,7 @@ describe("GameLoopService", () => {
         });
 
         it("sweepDeadLetterRooms sweeps and cleans up expired room IDs", async () => {
-          const client = (service as any).redis.getClient();
+          const client = (service as any).lobbyCountdown.redis.getClient();
           const smembersSpy = vi
             .spyOn(client, "smembers")
             .mockResolvedValue(["room-expired", "room-active"]);
@@ -3936,9 +4199,12 @@ describe("GameLoopService", () => {
             });
           const sremSpy = vi.spyOn(client, "srem").mockResolvedValue(1);
 
-          vi.spyOn((service as any).logger, "log").mockImplementation(() => {});
+          vi.spyOn(
+            (service as any).lobbyCountdown.logger,
+            "log",
+          ).mockImplementation(() => {});
 
-          await (service as any).sweepDeadLetterRooms();
+          await (service as any).lobbyCountdown.sweepDeadLetterRooms();
 
           expect(smembersSpy).toHaveBeenCalledWith("room:recovery:dead-letter");
           expect(existsSpy).toHaveBeenCalledWith(
@@ -3961,21 +4227,29 @@ describe("GameLoopService", () => {
           const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
           const fakeTimer = globalThis.setTimeout(() => {}, 10000);
 
-          (service as any).lobbyCountdowns.set("room-timer-test", {
-            timer: fakeTimer,
-            countdownEndsAt: Date.now() + 10000,
-          });
-
-          vi.spyOn(service as any, "clearPersistedCountdown").mockResolvedValue(
-            true,
+          (service as any).lobbyCountdown.lobbyCountdowns.set(
+            "room-timer-test",
+            {
+              timer: fakeTimer,
+              countdownEndsAt: Date.now() + 10000,
+            },
           );
 
-          (service as any).clearLobbyCountdownBestEffort("room-timer-test");
+          vi.spyOn(
+            (service as any).lobbyCountdown,
+            "clearPersistedCountdown",
+          ).mockResolvedValue(true);
+
+          (service as any).lobbyCountdown.clearLobbyCountdownBestEffort(
+            "room-timer-test",
+          );
 
           expect(clearTimeoutSpy).toHaveBeenCalledWith(fakeTimer);
-          expect((service as any).lobbyCountdowns.has("room-timer-test")).toBe(
-            false,
-          );
+          expect(
+            (service as any).lobbyCountdown.lobbyCountdowns.has(
+              "room-timer-test",
+            ),
+          ).toBe(false);
           globalThis.clearTimeout(fakeTimer); // clean up just in case
         });
       });

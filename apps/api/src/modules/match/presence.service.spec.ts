@@ -3,6 +3,7 @@ import { ServerEvent, RoomStatus } from "@arena/shared";
 import { vi, beforeEach, afterEach, it, expect, describe } from "vitest";
 import { PresenceService } from "./presence.service";
 import { RoomService } from "../room/room.service";
+import { LobbyCountdownService } from "./lobby-countdown.service";
 import { GameLoopService } from "./game-loop.service";
 
 /**
@@ -75,8 +76,11 @@ function makeActiveRoom(
 describe("PresenceService", () => {
   let service: PresenceService;
   let roomService: RoomService;
-  let gameLoopService: {
+  let lobbyCountdownService: {
     handleRoomPlayerLeft: ReturnType<typeof vi.fn>;
+  };
+  let gameLoopService: {
+    handleMatchPlayerLeft: ReturnType<typeof vi.fn>;
   };
   let mockServer: ReturnType<typeof makeMockServer>;
 
@@ -90,14 +94,19 @@ describe("PresenceService", () => {
       disbandRoom: vi.fn().mockResolvedValue(undefined),
     } as unknown as RoomService;
 
-    gameLoopService = {
+    lobbyCountdownService = {
       handleRoomPlayerLeft: vi.fn().mockResolvedValue(undefined),
+    };
+
+    gameLoopService = {
+      handleMatchPlayerLeft: vi.fn().mockResolvedValue(undefined),
     };
 
     mockServer = makeMockServer();
 
     service = new PresenceService(
       roomService,
+      lobbyCountdownService as unknown as LobbyCountdownService,
       gameLoopService as unknown as GameLoopService,
     );
   });
@@ -160,7 +169,7 @@ describe("PresenceService", () => {
       expect(roomService.checkPresence).toHaveBeenCalledTimes(2);
       expect(roomService.removePlayerBatch).not.toHaveBeenCalled();
       expect(mockServer.to).not.toHaveBeenCalled();
-      expect(gameLoopService.handleRoomPlayerLeft).not.toHaveBeenCalled();
+      expect(lobbyCountdownService.handleRoomPlayerLeft).not.toHaveBeenCalled();
     });
 
     it("removes stale non-host players, emits PLAYER_LEFT (STALE), and triggers handleRoomPlayerLeft", async () => {
@@ -189,10 +198,39 @@ describe("PresenceService", () => {
         event: ServerEvent.PLAYER_LEFT,
         payload: { roomId: "r9", playerId: "p2", reason: "STALE" },
       });
-      expect(gameLoopService.handleRoomPlayerLeft).toHaveBeenCalledWith(
+      expect(lobbyCountdownService.handleRoomPlayerLeft).toHaveBeenCalledWith(
         "r9",
         mockServer,
+        ["p2"],
       );
+    });
+
+    it("calls GameLoopService.handleMatchPlayerLeft for IN_GAME or FINISHED rooms", async () => {
+      service.setServer(mockServer as unknown as Server);
+      vi.mocked(roomService.getActiveRooms).mockResolvedValueOnce([
+        makeActiveRoom({
+          id: "rGame",
+          status: RoomStatus.IN_GAME,
+          currentMatchId: "m1",
+          players: [{ userId: "host1" }, { userId: "p2" }],
+        }),
+      ]);
+      vi.mocked(roomService.checkPresence).mockImplementation(
+        async (_room, userId) => userId !== "p2",
+      );
+
+      await (service as any).sweep();
+
+      expect(roomService.removePlayerBatch).toHaveBeenCalledWith("rGame", [
+        "p2",
+      ]);
+      expect(gameLoopService.handleMatchPlayerLeft).toHaveBeenCalledWith(
+        "m1",
+        "rGame",
+        "p2",
+        mockServer,
+      );
+      expect(lobbyCountdownService.handleRoomPlayerLeft).not.toHaveBeenCalled();
     });
 
     it("disbands a PRIVATE room whose host is stale, emitting HOST_STALE events", async () => {
@@ -240,7 +278,7 @@ describe("PresenceService", () => {
       });
 
       // No handleRoomPlayerLeft call (the room is being disbanded)
-      expect(gameLoopService.handleRoomPlayerLeft).not.toHaveBeenCalled();
+      expect(lobbyCountdownService.handleRoomPlayerLeft).not.toHaveBeenCalled();
     });
 
     it("treats a stale host in a PUBLIC room as a regular batch removal (not disband)", async () => {
@@ -293,6 +331,176 @@ describe("PresenceService", () => {
       expect(roomService.removePlayerBatch).toHaveBeenNthCalledWith(2, "r2", [
         "p2",
       ]);
+    });
+
+    it("retries lobby countdown callback if it fails initially but succeeds on retry", async () => {
+      service.setServer(mockServer as unknown as Server);
+      vi.mocked(roomService.getActiveRooms).mockResolvedValueOnce([
+        makeActiveRoom({
+          id: "rRetry",
+          players: [{ userId: "host1" }, { userId: "p2" }],
+        }),
+      ]);
+      vi.mocked(roomService.checkPresence).mockImplementation(
+        async (_room, userId) => userId !== "p2",
+      );
+
+      // Lobby countdown callback fails twice then succeeds
+      vi.mocked(lobbyCountdownService.handleRoomPlayerLeft)
+        .mockRejectedValueOnce(new Error("Transient callback error"))
+        .mockRejectedValueOnce(new Error("Transient callback error"))
+        .mockResolvedValueOnce(undefined);
+
+      await (service as any).sweep();
+
+      expect(lobbyCountdownService.handleRoomPlayerLeft).toHaveBeenCalledTimes(
+        3,
+      );
+      expect(roomService.removePlayerBatch).toHaveBeenCalledWith("rRetry", [
+        "p2",
+      ]);
+      expect(
+        mockServer.emissions.filter((e) => e.event === ServerEvent.PLAYER_LEFT),
+      ).toHaveLength(1);
+    });
+
+    it("aborts removal if lobby countdown callback consistently fails, leaving player in room", async () => {
+      service.setServer(mockServer as unknown as Server);
+      vi.mocked(roomService.getActiveRooms).mockResolvedValueOnce([
+        makeActiveRoom({
+          id: "rFail",
+          players: [{ userId: "host1" }, { userId: "p2" }],
+        }),
+      ]);
+      vi.mocked(roomService.checkPresence).mockImplementation(
+        async (_room, userId) => userId !== "p2",
+      );
+
+      // Lobby countdown callback consistently fails
+      vi.mocked(lobbyCountdownService.handleRoomPlayerLeft).mockRejectedValue(
+        new Error("Persistent callback error"),
+      );
+
+      const logErrorSpy = vi
+        .spyOn((service as any).logger, "error")
+        .mockImplementation(() => {});
+
+      await (service as any).sweep();
+
+      expect(lobbyCountdownService.handleRoomPlayerLeft).toHaveBeenCalledTimes(
+        3,
+      );
+      expect(roomService.removePlayerBatch).not.toHaveBeenCalled();
+      expect(
+        mockServer.emissions.filter((e) => e.event === ServerEvent.PLAYER_LEFT),
+      ).toHaveLength(0);
+      expect(logErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Failed to remove stale player p2 from lobby room",
+        ),
+        expect.any(Error),
+      );
+      logErrorSpy.mockRestore();
+    });
+
+    it("retries removePlayerBatch if it fails initially but succeeds on retry", async () => {
+      service.setServer(mockServer as unknown as Server);
+      vi.mocked(roomService.getActiveRooms).mockResolvedValueOnce([
+        makeActiveRoom({
+          id: "rRemoveRetry",
+          players: [{ userId: "host1" }, { userId: "p2" }],
+        }),
+      ]);
+      vi.mocked(roomService.checkPresence).mockImplementation(
+        async (_room, userId) => userId !== "p2",
+      );
+
+      // removePlayerBatch fails twice then succeeds
+      vi.mocked(roomService.removePlayerBatch)
+        .mockRejectedValueOnce(new Error("Transient db error"))
+        .mockRejectedValueOnce(new Error("Transient db error"))
+        .mockResolvedValueOnce(undefined);
+
+      await (service as any).sweep();
+
+      expect(lobbyCountdownService.handleRoomPlayerLeft).toHaveBeenCalledTimes(
+        1,
+      );
+      expect(roomService.removePlayerBatch).toHaveBeenCalledTimes(3);
+      expect(
+        mockServer.emissions.filter((e) => e.event === ServerEvent.PLAYER_LEFT),
+      ).toHaveLength(1);
+    });
+
+    it("does not emit PLAYER_LEFT if removePlayerBatch consistently fails, leaving player in room list", async () => {
+      service.setServer(mockServer as unknown as Server);
+      vi.mocked(roomService.getActiveRooms).mockResolvedValueOnce([
+        makeActiveRoom({
+          id: "rRemoveFail",
+          players: [{ userId: "host1" }, { userId: "p2" }],
+        }),
+      ]);
+      vi.mocked(roomService.checkPresence).mockImplementation(
+        async (_room, userId) => userId !== "p2",
+      );
+
+      // removePlayerBatch consistently fails
+      vi.mocked(roomService.removePlayerBatch).mockRejectedValue(
+        new Error("Persistent db error"),
+      );
+
+      const logErrorSpy = vi
+        .spyOn((service as any).logger, "error")
+        .mockImplementation(() => {});
+
+      await (service as any).sweep();
+
+      expect(lobbyCountdownService.handleRoomPlayerLeft).toHaveBeenCalledTimes(
+        1,
+      );
+      expect(roomService.removePlayerBatch).toHaveBeenCalledTimes(3);
+      expect(
+        mockServer.emissions.filter((e) => e.event === ServerEvent.PLAYER_LEFT),
+      ).toHaveLength(0);
+      expect(logErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Failed to remove stale player p2 from lobby room",
+        ),
+        expect.any(Error),
+      );
+      logErrorSpy.mockRestore();
+    });
+
+    it("retries match player left callback if it fails initially but succeeds on retry", async () => {
+      service.setServer(mockServer as unknown as Server);
+      vi.mocked(roomService.getActiveRooms).mockResolvedValueOnce([
+        makeActiveRoom({
+          id: "rMatchRetry",
+          status: RoomStatus.IN_GAME,
+          currentMatchId: "m1",
+          players: [{ userId: "host1" }, { userId: "p2" }],
+        }),
+      ]);
+      vi.mocked(roomService.checkPresence).mockImplementation(
+        async (_room, userId) => userId !== "p2",
+      );
+
+      // handleMatchPlayerLeft fails twice then succeeds
+      vi.mocked(gameLoopService.handleMatchPlayerLeft)
+        .mockRejectedValueOnce(new Error("Transient match callback error"))
+        .mockRejectedValueOnce(new Error("Transient match callback error"))
+        .mockResolvedValueOnce(undefined);
+
+      await (service as any).sweep();
+
+      expect(gameLoopService.handleMatchPlayerLeft).toHaveBeenCalledTimes(3);
+      expect(roomService.removePlayerBatch).toHaveBeenCalledWith(
+        "rMatchRetry",
+        ["p2"],
+      );
+      expect(
+        mockServer.emissions.filter((e) => e.event === ServerEvent.PLAYER_LEFT),
+      ).toHaveLength(1);
     });
   });
 

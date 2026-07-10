@@ -15,25 +15,8 @@ import {
   RoomError,
 } from "@arena/shared";
 import { computeRoundScore } from "./scoring";
-interface DeserializedMatch {
-  state: {
-    id: string;
-    roomId: string;
-    status: MatchStatus;
-    currentRoundNo: number;
-    totalRounds: number;
-    players: [string, PlayerInfo][];
-    survivingPlayerIds: string[];
-    eliminatedPlayerIds: string[];
-    winnerId: string | null;
-    startedAt: number;
-    endedAt: number | null;
-  };
-  currentRound:
-    | (RoundState & { correctAnswer: string; answers: [string, AnswerState][] })
-    | null;
-  eventLog: { type: string; payload?: unknown; timestamp: number }[];
-}
+import { resolveTieBreak } from "./tie-break";
+import { serializeMatch, deserializeMatch } from "./match-state.codec";
 
 // State Transition Handler (Strategy Pattern)
 export interface StateTransitionHandler {
@@ -320,6 +303,7 @@ export class MatchStateMachine {
       roundNo: this.currentRound.roundNo,
       survivingCount: survivingIds.length,
       eliminatedCount: eliminatedIds.length,
+      eliminatedIds,
     });
 
     return { survivingIds, eliminatedIds, correctAnswer };
@@ -374,94 +358,27 @@ export class MatchStateMachine {
     return this.tieBreak(survivors);
   }
 
-  // Tie-break Logic (Strategy Pattern)
+  // Tie-break Logic — delegates to the pure `resolveTieBreak`
+  // (see ./tie-break.ts). The state machine only owns the event-log
+  // side effect: the deterministic ordering + seeding lives in the
+  // extracted pure function so it can be unit-tested in isolation and
+  // is the low-blast-radius Strategy seam noted in the memory-bank.
   //
-  // B2 fix: return type widened to `string | null` and we early-return
-  // `null` for empty input. Previously the function would have
-  // returned `undefined` (the `sorted[0]` of an empty array), which
-  // the type system could not catch because the old signature was
-  // `string`. The non-null assertion in `finishMatchLoop` then
-  // passed that `undefined` down to Prisma's `match.update` payload
-  // — Prisma silently drops `undefined` fields, so the DB kept its
-  // stale winnerId. Returning `null` is the explicit "no winner"
-  // signal that downstream code (finishMatchLoop → matchService.finishMatch
-  // → Prisma) already supports.
+  // B2 fix: return type is `string | null`; the empty-roster case
+  // returns `null` WITHOUT logging a TIE_BREAK event (there was no
+  // tie to break), matching the original behaviour that downstream
+  // code (finishMatchLoop → matchService.finishMatch → Prisma) relies
+  // on to persist the explicit "no winner" signal.
   private tieBreak(playerIds: string[]): string | null {
-    // B2 fix: empty-roster short-circuit. Sort + seeded RNG on an
-    // empty array is wasted work, and `sorted[0]` would be
-    // `undefined` (the bug the non-null assertion in
-    // `finishMatchLoop` was hiding).
     if (playerIds.length === 0) {
       return null;
     }
 
-    // L5 fix: a deterministic, non-deterministic seed breaks the
-    // strict weak ordering contract that Array#sort requires to
-    // produce a stable, reproducible ordering. We use the match
-    // id (a stable per-match value) as the seed for a deterministic
-    // PRNG, then use the generated offset as a "true" tiebreaker
-    // BEFORE the alphabetical ID fallback. The two properties we
-    // want:
-    //
-    //   1. Reproducible: the same match + the same stats must
-    //      produce the same winner, every time. Verified by the
-    //      existing tie-break tests.
-    //   2. Not "first id wins": a player with id `a_player` should
-    //      not have a structural advantage over `z_player` when
-    //      they are otherwise identical.
-    //
-    // We achieve (1) by seeding mulberry32 with a hash of the
-    // match id, then generating a per-player random offset.
-    // Because the seed is identical across runs, the offset is
-    // identical across runs — the winner is determined by the
-    // combination of stats + match id. (2) is achieved by the
-    // offset being uniformly distributed, so no player has a
-    // structural edge.
-    const seed = this.hashStringToSeed(this.state.id);
-    const offsets = new Map<string, number>();
-    const rng = this.mulberry32(seed);
-    for (const id of playerIds) {
-      offsets.set(id, rng());
-    }
-
-    // Sort by total response time (ascending = faster is better).
-    // Missing players (state corruption / desync) are always ranked last so
-    // they can never win a tie-break, while still yielding a deterministic
-    // ordering that satisfies the strict weak ordering contract of Array#sort.
-    const sorted = [...playerIds].sort((a, b) => {
-      const playerA = this.state.players.get(a);
-      const playerB = this.state.players.get(b);
-
-      // Missing players always sort last (positive number = `a` goes after `b`).
-      if (!playerA && !playerB) return a < b ? -1 : a > b ? 1 : 0;
-      if (!playerA) return 1;
-      if (!playerB) return -1;
-
-      // First: compare total response time
-      if (playerA.totalResponseTimeMs !== playerB.totalResponseTimeMs) {
-        return playerA.totalResponseTimeMs - playerB.totalResponseTimeMs;
-      }
-
-      // Second: compare correct answers count
-      if (playerA.correctAnswers !== playerB.correctAnswers) {
-        return playerB.correctAnswers - playerA.correctAnswers;
-      }
-
-      // Third: deterministic random offset (per-match seed). This
-      // is the L5 fix: the offset breaks the "alphabetical id wins"
-      // bias without sacrificing reproducibility.
-      const offsetA = offsets.get(a) ?? 0;
-      const offsetB = offsets.get(b) ?? 0;
-      if (offsetA !== offsetB) return offsetA - offsetB;
-
-      // Final tie-breaker: alphabetical by player ID. This
-      // satisfies strict weak ordering for the rare case where
-      // two players somehow get identical offsets (which would
-      // require a broken PRNG).
-      return a < b ? -1 : a > b ? 1 : 0;
-    });
-
-    const winnerId = sorted[0];
+    const winnerId = resolveTieBreak(
+      playerIds,
+      this.state.players,
+      this.state.id,
+    );
 
     this.logEvent("TIE_BREAK", {
       winnerId,
@@ -588,48 +505,17 @@ export class MatchStateMachine {
     return this.eventLog.map((e) => structuredClone(e));
   }
 
-  // Serialize state to JSON string for Redis persistence
-  //
-  // L3 fix: `correctAnswer` is intentionally OMITTED from the
-  // serialized form. The in-flight question's correct answer is
-  // sensitive — exposing it via a Redis leak or log scrape would
-  // let any user who has the question id read the answer key for
-  // every active match. Instead, the recovery path (see
-  // MatchService.getStateMachine) re-attaches the correct answer
-  // from the Question DB row by `currentRound.question.id`. The
-  // Question table has stricter access controls than the Redis
-  // cache and is the natural single source of truth for answer
-  // keys.
+  // Serialize state to JSON string for Redis persistence. Delegates
+  // to the pure `serializeMatch` codec (see ./match-state.codec.ts),
+  // which enforces the L3 invariant that the sensitive `correctAnswer`
+  // is never written to the serialized form — the recovery path
+  // re-attaches it from the Question DB row via `attachCorrectAnswer`.
   serialize(): string {
-    const roundData = this.currentRound
-      ? (() => {
-          // L3: destructure correctAnswer out so the spread does
-          // not re-include it. The remaining fields are the safe
-          // round shape (question, timing, status, answers).
-          // The eslint rule for unused-vars is suppressed here:
-          // we deliberately destructure-out the field without
-          // binding it (the leading-underscore convention marks
-          // it as intentionally unused).
-          const { correctAnswer: _omitCorrectAnswer, ...rest } = this
-            .currentRound as RoundState & { correctAnswer: string };
-          void _omitCorrectAnswer;
-          return {
-            ...rest,
-            answers: Array.from(this.currentRound.answers.entries()),
-            // L3: correctAnswer deliberately omitted. Recovery
-            // re-attaches it from the DB via attachCorrectAnswer.
-          };
-        })()
-      : null;
-
-    return JSON.stringify({
-      state: {
-        ...this.state,
-        players: Array.from(this.state.players.entries()),
-      },
-      currentRound: roundData,
-      eventLog: this.eventLog,
-    });
+    return serializeMatch(
+      this.state,
+      this.currentRound as (RoundState & { correctAnswer?: string }) | null,
+      this.eventLog,
+    );
   }
 
   // Attach the correct answer to the in-flight round. Called by
@@ -649,137 +535,23 @@ export class MatchStateMachine {
     ).correctAnswer = correctAnswer;
   }
 
-  // Restore MatchStateMachine from serialized JSON string
+  // Restore MatchStateMachine from serialized JSON string. Parsing,
+  // validation, and Map reconstruction live in the pure
+  // `deserializeMatch` codec; here we only load the decoded data onto
+  // a fresh instance.
+  //
+  // L3: the decoded `currentRound.correctAnswer` is undefined. The
+  // recovery caller (MatchService.getStateMachine) MUST invoke
+  // `attachCorrectAnswer()` before any evaluateRound() / submitAnswer()
+  // that depends on it.
   static deserialize(json: string): MatchStateMachine {
-    let data: unknown;
+    const { state, currentRound, eventLog } = deserializeMatch(json);
 
-    try {
-      data = JSON.parse(json);
-    } catch (error) {
-      throw new Error(
-        `Failed to parse MatchStateMachine JSON: ${error instanceof Error ? error.message : String(error)} (payload omitted; length=${json.length})`,
-      );
-    }
-
-    const parsed = data as DeserializedMatch;
-    if (
-      !parsed ||
-      !parsed.state ||
-      !Array.isArray(parsed.state.players) ||
-      !Array.isArray(parsed.eventLog)
-    ) {
-      throw new Error(
-        `Invalid MatchStateMachine data (payload omitted; length=${json.length})`,
-      );
-    }
-    if (parsed.currentRound) {
-      const cr = parsed.currentRound;
-      const isValidQuestion =
-        cr.question &&
-        typeof cr.question === "object" &&
-        typeof cr.question.id === "string" &&
-        typeof cr.question.content === "string" &&
-        Array.isArray(cr.question.options);
-
-      const isValidStatus =
-        typeof cr.status === "string" &&
-        ["PENDING", "ACTIVE", "EVALUATING", "COMPLETED"].includes(cr.status);
-
-      // L3 fix: `correctAnswer` is now optional in the serialized
-      // form. The recovery path (MatchService.getStateMachine) is
-      // responsible for re-attaching it from the Question DB row
-      // before the round is evaluated. We validate that, IF
-      // present, it is a string — that catches corruption while
-      // allowing the new "absent" form.
-      const correctAnswerOk =
-        cr.correctAnswer === undefined || typeof cr.correctAnswer === "string";
-
-      if (
-        !correctAnswerOk ||
-        !Array.isArray(cr.answers) ||
-        !isValidQuestion ||
-        typeof cr.startedAt !== "number" ||
-        typeof cr.endsAt !== "number" ||
-        typeof cr.roundNo !== "number" ||
-        !isValidStatus
-      ) {
-        throw new Error(
-          `Invalid MatchStateMachine data (payload omitted; length=${json.length})`,
-        );
-      }
-    }
     const instance = new MatchStateMachine("", "", []);
-
-    instance.state = {
-      ...parsed.state,
-      players: new Map(parsed.state.players),
-    } as MatchState;
-
-    if (parsed.currentRound) {
-      const { answers, ...rest } = parsed.currentRound;
-      instance.currentRound = {
-        ...rest,
-        // Backfill any missing `submissionId` on legacy answers
-        // serialized before that field was required on AnswerState.
-        // The replay check elsewhere (`existingAnswer.submissionId
-        // === payload.submissionId`) would otherwise collapse
-        // `undefined === undefined` to true and treat the first
-        // accepted submission as a replay. The format mirrors
-        // the one used in `submitAnswer` so the two paths agree
-        // and old in-flight records continue to work.
-        answers: new Map(
-          answers.map(([playerId, answer]) => [
-            playerId,
-            answer.submissionId
-              ? answer
-              : {
-                  ...answer,
-                  submissionId: `legacy-${playerId}-${answer.submittedAt ?? 0}`,
-                },
-          ]),
-        ),
-        // L3: correctAnswer is undefined after deserialize. The
-        // recovery caller MUST invoke attachCorrectAnswer() before
-        // any evaluateRound() / submitAnswer() that depends on it.
-      } as RoundState & { correctAnswer: string };
-    } else {
-      instance.currentRound = null;
-    }
-
-    instance.eventLog = parsed.eventLog;
+    instance.state = state;
+    instance.currentRound = currentRound;
+    instance.eventLog = eventLog;
 
     return instance;
-  }
-
-  // ============================================================
-  // L5 HELPERS: deterministic PRNG for fair tie-breaks
-  // ============================================================
-
-  // FNV-1a 32-bit hash. Returns an unsigned 32-bit integer
-  // suitable for seeding a small PRNG. We use FNV-1a instead of
-  // crypto.createHash so this is a pure function with zero
-  // dependencies and the same output on every platform.
-  private hashStringToSeed(s: string): number {
-    let hash = 0x811c9dc5;
-    for (let i = 0; i < s.length; i++) {
-      hash ^= s.charCodeAt(i);
-      hash = Math.imul(hash, 0x01000193);
-    }
-    return hash >>> 0;
-  }
-
-  // mulberry32: a tiny, fast, statistically-good 32-bit PRNG.
-  // Returns a function that produces floats in [0, 1). The same
-  // seed always produces the same sequence, which is what makes
-  // the tie-break reproducible across process restarts.
-  private mulberry32(seed: number): () => number {
-    let a = seed >>> 0;
-    return function () {
-      a = (a + 0x6d2b79f5) >>> 0;
-      let t = a;
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
   }
 }

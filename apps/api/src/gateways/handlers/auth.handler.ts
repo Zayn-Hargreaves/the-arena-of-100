@@ -12,6 +12,7 @@ import { AuthService } from "../../modules/auth/auth.service";
 import { RoomService } from "../../modules/room/room.service";
 import { MatchService } from "../../modules/match/match.service";
 import { GameLoopService } from "../../modules/match/game-loop.service";
+import { LobbyCountdownService } from "../../modules/match/lobby-countdown.service";
 import { PresenceService } from "../../modules/match/presence.service";
 import { BaseHandler } from "./base.handler";
 
@@ -43,6 +44,7 @@ export class AuthHandler extends BaseHandler {
     private readonly roomService: RoomService,
     private readonly matchService: MatchService,
     private readonly gameLoopService: GameLoopService,
+    private readonly lobbyCountdownService: LobbyCountdownService,
     private readonly presenceService: PresenceService,
   ) {
     super();
@@ -317,7 +319,7 @@ export class AuthHandler extends BaseHandler {
       // slot; emitting more than one would race and clobber.
       // Presence is already updated for every room in Pass 1.
       const mostRecentRoom = mostRecent.room;
-      const countdownEndsAt = await this.gameLoopService.getCountdownEnd(
+      const countdownEndsAt = await this.lobbyCountdownService.getCountdownEnd(
         mostRecentRoom.id,
       );
 
