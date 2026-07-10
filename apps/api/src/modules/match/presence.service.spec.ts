@@ -569,6 +569,47 @@ describe("PresenceService", () => {
         mockServer,
       );
     });
+
+    it("handles unexpected errors during stale players disconnection sweep in match room (try/catch block)", async () => {
+      vi.useFakeTimers();
+      service.setServer(mockServer as unknown as Server);
+
+      // Setup room with 1 stale player in IN_GAME status
+      vi.mocked(roomService.getActiveRooms).mockResolvedValue([
+        makeActiveRoom({
+          id: "rMatchErr",
+          status: RoomStatus.IN_GAME,
+          currentMatchId: "m1",
+          players: [{ userId: "host1" }, { userId: "p2" }],
+        }),
+      ]);
+      vi.mocked(roomService.checkPresence).mockImplementation(
+        async (_room, userId) => userId !== "p2",
+      );
+
+      // Force Promise.allSettled to throw synchronously to enter catch block in sweep()
+      const originalAllSettled = Promise.allSettled;
+      Promise.allSettled = () => {
+        throw new Error("Simulated allSettled failure");
+      };
+
+      const errorSpy = vi
+        .spyOn((service as any).logger, "error")
+        .mockImplementation(() => {});
+
+      try {
+        await (service as any).sweep();
+      } finally {
+        Promise.allSettled = originalAllSettled;
+      }
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Unexpected error during stale players disconnection sweep in match room ABC123:",
+        ),
+        expect.any(Error),
+      );
+    });
   });
 
   // === Lifecycle (interval / destroy) ===
@@ -614,6 +655,28 @@ describe("PresenceService", () => {
         expect.any(String),
       );
       // isSweeping must reset even after a throw
+      expect((service as any).isSweeping).toBe(false);
+    });
+
+    it("the interval callback catches and logs errors when they are non-Error objects", async () => {
+      vi.useFakeTimers();
+      service.setServer(mockServer as unknown as Server);
+      vi.mocked(roomService.getActiveRooms).mockRejectedValueOnce(
+        "raw string error redis failure",
+      );
+      const errorSpy = vi
+        .spyOn((service as any).logger, "error")
+        .mockImplementation(() => {});
+
+      service.onModuleInit();
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Error during presence sweep: raw string error redis failure",
+        ),
+        undefined,
+      );
       expect((service as any).isSweeping).toBe(false);
     });
 
