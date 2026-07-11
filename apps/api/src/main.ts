@@ -3,7 +3,7 @@
 // NestJS + Fastify + Socket.io
 // ============================================================
 
-import { NestFactory } from "@nestjs/core";
+import { NestFactory, Reflector } from "@nestjs/core";
 import {
   FastifyAdapter,
   NestFastifyApplication,
@@ -11,11 +11,10 @@ import {
 import { AppModule } from "./app.module";
 import {
   Logger,
-  ValidationPipe,
   VersioningType,
+  ValidationPipe,
   ClassSerializerInterceptor,
 } from "@nestjs/common";
-import { Reflector } from "@nestjs/core";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import helmet from "@fastify/helmet";
 
@@ -59,8 +58,7 @@ async function bootstrap() {
     type: VersioningType.URI,
     defaultVersion: "1",
   });
-
-  // Global validation pipe
+  // Global validation and serialization
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -69,7 +67,6 @@ async function bootstrap() {
     }),
   );
   app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
-
   // Swagger Documentation
   const config = new DocumentBuilder()
     .setTitle("Arena of 100 API")

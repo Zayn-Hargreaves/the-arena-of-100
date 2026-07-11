@@ -20,13 +20,13 @@ on:
           - spectator-flood
       players:
         description: "PLAYERS (player VUs)"
-        default: "70"
+        default: "69"
       spectators:
         description: "SPECTATORS (spectator VUs)"
         default: "30"
       hold:
         description: "HOLD (steady-state duration, e.g. 4m)"
-        default: "2m"
+        default: "4m"
 
 env:
   CI_DB_USER: arena_test
@@ -107,7 +107,7 @@ jobs:
       - name: Wait for API health
         run: |
           for i in $(seq 1 60); do
-            if curl -sf http://localhost:3001/api/health > /dev/null; then
+            if curl -sf --max-time 1 http://localhost:3001/api/v1/health > /dev/null; then
               echo "API is up"; exit 0
             fi
             sleep 2
@@ -116,7 +116,9 @@ jobs:
 
       - name: Install k6
         run: |
-          curl -sSL "https://github.com/grafana/k6/releases/download/${K6_VERSION}/k6-${K6_VERSION}-linux-amd64.tar.gz" -o k6.tar.gz
+          echo "c7f03434854f837b6790ee81572e4b0f955241974c79a43cbb9f8d0fef069589  k6.tar.gz" > k6.sha256
+          curl -fsSL "https://github.com/grafana/k6/releases/download/${K6_VERSION}/k6-${K6_VERSION}-linux-amd64.tar.gz" -o k6.tar.gz
+          sha256sum -c k6.sha256
           tar xzf k6.tar.gz
           sudo cp k6-*/k6 /usr/local/bin/k6
           k6 version

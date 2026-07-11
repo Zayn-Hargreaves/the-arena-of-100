@@ -49,6 +49,48 @@ function wireCommon(client) {
   });
 }
 
+function createAndWireClient() {
+  let hasConnected = false;
+  let connectErrorLogged = false;
+
+  const client = createSocketIOClient(config.wsBase, {
+    onClose: (intentional) => {
+      if (!intentional) {
+        if (hasConnected) {
+          M.wsDisconnectErrors.add(1);
+        } else if (!connectErrorLogged) {
+          connectErrorLogged = true;
+          M.wsConnectErrors.add(1);
+        }
+        M.appErrorRate.add(true);
+      }
+    },
+    onError: () => {
+      if (!hasConnected && !connectErrorLogged) {
+        connectErrorLogged = true;
+        M.wsConnectErrors.add(1);
+        M.appErrorRate.add(true);
+      }
+    },
+  });
+
+  client.ready.then(
+    () => {
+      hasConnected = true;
+    },
+    () => {
+      if (!connectErrorLogged) {
+        connectErrorLogged = true;
+        M.wsConnectErrors.add(1);
+        M.appErrorRate.add(true);
+      }
+    },
+  );
+
+  wireCommon(client);
+  return client;
+}
+
 // Shared handshake: authenticate, then (optionally) join a room.
 // Returns true on success, false if a step failed/timed out.
 async function handshake(client, token, roomCode) {
@@ -64,7 +106,12 @@ async function handshake(client, token, roomCode) {
       M.appErrorRate.add(false);
     }
     return true;
-  } catch (_e) {
+  } catch (e) {
+    console.log(
+      "Handshake error detail:",
+      e.message || String(e),
+      e.stack || "",
+    );
     M.setupErrors.add(1);
     M.appErrorRate.add(true);
     return false;
@@ -73,8 +120,7 @@ async function handshake(client, token, roomCode) {
 
 // A registered player: joins before the match starts, answers each round.
 export async function playerFlow({ token, roomCode, vu, lifetimeMs }) {
-  const client = createSocketIOClient(config.wsBase);
-  wireCommon(client);
+  const client = createAndWireClient();
 
   const pending = {}; // submissionId -> sentAt (ms)
   let matchId = null;
@@ -131,8 +177,7 @@ export async function playerFlow({ token, roomCode, vu, lifetimeMs }) {
 // start_match. It does not answer (times out each round) — its job is
 // to drive the match and hold a connection.
 export async function hostFlow({ token, roomId, warmupMs, lifetimeMs }) {
-  const client = createSocketIOClient(config.wsBase);
-  wireCommon(client);
+  const client = createAndWireClient();
 
   client.on(ServerEvent.MATCH_FINISHED, () => M.matchFinished.add(1));
 
@@ -161,8 +206,7 @@ export async function hostFlow({ token, roomId, warmupMs, lifetimeMs }) {
 // A drop-in spectator: joins after the match is IN_GAME, so the server
 // admits it as SPECTATOR (receive-only). Never submits answers.
 export async function spectatorFlow({ token, roomCode, lifetimeMs }) {
-  const client = createSocketIOClient(config.wsBase);
-  wireCommon(client);
+  const client = createAndWireClient();
 
   client.on(ServerEvent.ROUND_STARTED, () => M.roundStarted.add(1));
   client.on(ServerEvent.MATCH_FINISHED, () => M.matchFinished.add(1));

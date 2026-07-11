@@ -89,6 +89,7 @@ export function createSocketIOClient(wsBase, opts = {}) {
   const anyHandlers = []; // (event, payload) -> void
   const waiters = {}; // event -> [{ resolve, reject, timer }]
   let closed = false;
+  let intentionalClose = false;
 
   let resolveReady, rejectReady;
   const ready = new Promise((res, rej) => {
@@ -140,6 +141,7 @@ export function createSocketIOClient(wsBase, opts = {}) {
 
     close() {
       if (closed) return;
+      intentionalClose = true;
       closed = true;
       try {
         ws.close();
@@ -234,7 +236,7 @@ export function createSocketIOClient(wsBase, opts = {}) {
   };
   ws.onclose = () => {
     closed = true;
-    if (opts.onClose) opts.onClose();
+    if (opts.onClose) opts.onClose(intentionalClose);
   };
 
   return client;

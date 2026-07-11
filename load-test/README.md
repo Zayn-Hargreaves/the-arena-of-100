@@ -27,11 +27,11 @@ guest-login (REST POST /api/auth/guest)   → handshake token + real User row
 Three roles, one shared **PRIVATE** room (created once in `setup()` over
 REST):
 
-| Role          | Count (default) | Behaviour                                              |
-| ------------- | --------------- | ----------------------------------------------------- |
-| host          | 1               | creates the room, waits `WARMUP_MS`, fires START_MATCH |
-| players       | 70              | join before start, answer every round                 |
-| spectators    | 30              | join **after** start → admitted as drop-in `SPECTATOR`, receive-only |
+| Role       | Count (default) | Behaviour                                                            |
+| ---------- | --------------- | -------------------------------------------------------------------- |
+| host       | 1               | creates the room, waits `WARMUP_MS`, fires START_MATCH               |
+| players    | 69              | join before start, answer every round                                |
+| spectators | 30              | join **after** start → admitted as drop-in `SPECTATOR`, receive-only |
 
 Players who arrive after `START_MATCH` naturally become spectators — the
 same player/spectator mix Plan A asks for.
@@ -87,7 +87,7 @@ Pass criteria: `setup_flow_errors 0`, `answers_submitted > 0`,
 ```bash
 k6 run load-test/scenarios/full-match.js
 # or tune the mix:
-k6 run -e PLAYERS=70 -e SPECTATORS=30 -e HOLD=4m load-test/scenarios/full-match.js
+k6 run -e PLAYERS=69 -e SPECTATORS=30 -e HOLD=4m load-test/scenarios/full-match.js
 ```
 
 ### A2 — Spectator flood (broadcast fan-out stress)
@@ -100,18 +100,18 @@ k6 run -e PLAYERS=5 -e SPECTATORS=95 load-test/scenarios/spectator-flood.js
 
 ### Environment variables
 
-| Var                | Default                 | Meaning                                        |
-| ------------------ | ----------------------- | ---------------------------------------------- |
-| `API_URL`          | `http://localhost:3001` | API origin; REST uses `${API_URL}/api`         |
-| `WS_URL`           | = `API_URL`             | socket.io origin (http→ws, https→wss)          |
-| `PLAYERS`          | `70`                    | player VUs                                      |
-| `SPECTATORS`       | `30`                    | spectator VUs                                   |
-| `RAMP_UP`          | `30s`                   | 0 → PLAYERS ramp                               |
-| `HOLD`             | `4m`                    | steady-state hold                              |
-| `WARMUP_MS`        | `35000`                 | host wait before START_MATCH                    |
-| `LATENCY_P95_MS`   | `1000`                  | p95 answer-latency threshold                    |
-| `LATENCY_P99_MS`   | `2500`                  | p99 answer-latency threshold                    |
-| `ERROR_RATE_MAX`   | `0.01`                  | app error-rate ceiling (Plan A: < 1%)           |
+| Var              | Default                 | Meaning                                |
+| ---------------- | ----------------------- | -------------------------------------- |
+| `API_URL`        | `http://localhost:3001` | API origin; REST uses `${API_URL}/api` |
+| `WS_URL`         | = `API_URL`             | socket.io origin (http→ws, https→wss)  |
+| `PLAYERS`        | `69`                    | player VUs                             |
+| `SPECTATORS`     | `30`                    | spectator VUs                          |
+| `RAMP_UP`        | `30s`                   | 0 → PLAYERS ramp                       |
+| `HOLD`           | `4m`                    | steady-state hold                      |
+| `WARMUP_MS`      | `35000`                 | host wait before START_MATCH           |
+| `LATENCY_P95_MS` | `1000`                  | p95 answer-latency threshold           |
+| `LATENCY_P99_MS` | `2500`                  | p99 answer-latency threshold           |
+| `ERROR_RATE_MAX` | `0.01`                  | app error-rate ceiling (Plan A: < 1%)  |
 
 Export a full JSON summary for the record:
 
@@ -124,16 +124,16 @@ k6 run --summary-export=load-test/results/full-match-$(date +%F).json \
 
 ## Key metrics
 
-| k6 metric                   | Meaning                                             |
-| --------------------------- | --------------------------------------------------- |
-| `answer_result_latency_ms`  | SUBMIT_ANSWER → ANSWER_RESULT round trip (p50/p95/p99) |
-| `app_error_rate`            | failed handshake steps + server ERROR frames / total |
-| `ws_messages_received`      | total inbound events (÷ test duration = messages/sec) |
-| `answers_submitted`         | answers sent                                        |
-| `round_started_received`    | ROUND_STARTED fan-out volume                         |
-| `setup_flow_errors`         | auth/join handshake failures                         |
-| `ws_connect_errors`         | socket connect failures                              |
-| `server_error_events`       | `ServerEvent.ERROR` frames received                  |
+| k6 metric                  | Meaning                                                |
+| -------------------------- | ------------------------------------------------------ |
+| `answer_result_latency_ms` | SUBMIT_ANSWER → ANSWER_RESULT round trip (p50/p95/p99) |
+| `app_error_rate`           | failed handshake steps + server ERROR frames / total   |
+| `ws_messages_received`     | total inbound events (÷ test duration = messages/sec)  |
+| `answers_submitted`        | answers sent                                           |
+| `round_started_received`   | ROUND_STARTED fan-out volume                           |
+| `setup_flow_errors`        | auth/join handshake failures                           |
+| `ws_connect_errors`        | socket connect failures                                |
+| `server_error_events`      | `ServerEvent.ERROR` frames received                    |
 
 Thresholds (fail the run if breached) are set in each scenario's `options`
 and are env-tunable.
@@ -150,10 +150,10 @@ in parallel with the k6 run:
 top -b -d 1 -p "$(pgrep -f 'apps/api' | head -1)" | grep --line-buffered node
 
 # Redis live match-state key count
-watch -n 1 "redis-cli --scan --pattern 'match:state:*' | wc -l"
+watch -n 1 "redis-cli -n 2 --scan --pattern 'match:state:*' | wc -l"
 # also useful:
-redis-cli info clients      # connected_clients during the run
-redis-cli info memory       # used_memory_human
+redis-cli -n 2 info clients      # connected_clients during the run
+redis-cli -n 2 info memory       # used_memory_human
 ```
 
 Round-tick timing comes from the API logs (`GameLoopService` /
@@ -161,28 +161,47 @@ Round-tick timing comes from the API logs (`GameLoopService` /
 
 ---
 
-## Baseline results  ← fill after a real run
+## Baseline results & Pass/Fail Criteria ← fill after a real run
 
 > **Status: NOT YET RUN.** The harness is validated (`k6 inspect` parses all
 > three scenarios; smoke reaches `setup`), but no baseline has been captured
 > because it needs a live Redis + Postgres stack. Fill this table from a real
 > run, then update `memory-bank/progress.md` and write the P2 conclusion below.
 
+### Tiêu chí Pass/Fail định lượng (Pass/Fail Criteria):
+
+- **Error Rate**: `app_error_rate` < 1%
+- **Latency**: p95 answer latency < 1000ms, p99 answer latency < 2500ms
+- **Disconnect Rate**: Tỉ lệ disconnect đột ngột / ws_connect_errors < 1%
+- **CPU & Memory**: API CPU usage < 80% peak, RSS < 500MB, không có tình trạng rò rỉ bộ nhớ (leak)
+- **Redis**: Số lượng key `match:state:*` và bộ nhớ Redis phải ổn định, dọn dẹp sạch sẽ sau trận đấu
+
+_Lưu ý: Chỉ kết luận P2 (có cần spectator transport split hay không) khi toàn bộ các tiêu chí định lượng trên đều đạt._
+
+### Metadata bắt buộc để tái lập kết quả (Required Metadata):
+
+- **Phiên bản build**: [Commit Hash hoặc Tag]
+- **Cấu hình môi trường**: [Thông số phần cứng CPU/RAM, Hệ điều hành, phiên bản Node.js & Redis]
+- **Số lượng VU**: [Số lượng Virtual Users đồng thời, mặc định 100]
+- **Thời lượng**: [Tổng thời gian chạy test]
+- **Dữ liệu / Match**: [Số câu hỏi mỗi trận, số người chơi thật, số spectator]
+- **Lệnh chạy**: [Lệnh k6 đầy đủ được sử dụng]
+
 Run config: `PLAYERS=___ SPECTATORS=___ HOLD=___`, commit `______`.
 
-| Metric                          | Value |
-| ------------------------------- | ----- |
-| Peak concurrent WS              |       |
-| answer latency p50 / p95 / p99  |       |
-| Messages / sec (peak)           |       |
-| Error rate                      |       |
-| Disconnect / connect errors     |       |
-| API CPU % / RSS (peak)          |       |
-| Redis `match:state:*` peak keys |       |
-| Redis `connected_clients` peak  |       |
-| Round tick duration (typ.)      |       |
+| Metric                          | Value | Ngưỡng (Threshold)    | Kết quả (Pass/Fail) |
+| ------------------------------- | ----- | --------------------- | ------------------- |
+| Peak concurrent WS              |       | -                     | -                   |
+| answer latency p50 / p95 / p99  |       | p95 < 1s, p99 < 2.5s  |                     |
+| Messages / sec (peak)           |       | -                     | -                   |
+| Error rate                      |       | < 1%                  |                     |
+| Disconnect / connect errors     |       | < 1%                  |                     |
+| API CPU % / RSS (peak)          |       | CPU < 80%, RSS < 500M |                     |
+| Redis `match:state:*` peak keys |       | Phải dọn dẹp sạch     |                     |
+| Redis `connected_clients` peak  |       | -                     | -                   |
+| Round tick duration (typ.)      |       | -                     | -                   |
 
-### P2 conclusion — spectator transport split?  ← fill after a run
+### P2 conclusion — spectator transport split? ← fill after a run
 
 - **Do we need it?** ☐ Yes ☐ No — _rationale from the numbers above._
 - Evidence: e.g. "p95 answer latency stayed under Xms with 95 receive-only

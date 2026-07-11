@@ -152,7 +152,7 @@ export class GameLoopService {
           Array<{ id: string; status: string; currentMatchId: string | null }>
         >`
           SELECT id, status, "currentMatchId"
-          FROM "Room"
+          FROM "rooms"
           WHERE id = ${roomId}
           FOR UPDATE
         `;

@@ -27,12 +27,12 @@ const RAW_WS = strEnv("WS_URL", RAW_HTTP).replace(/\/$/, "");
 
 export const config = {
   // REST base including the server's global `api` prefix.
-  httpBase: `${RAW_HTTP}/api`,
+  httpBase: `${RAW_HTTP}/api/v1`,
   // WebSocket origin (the socket.io path is appended by the client).
   wsBase: RAW_WS.replace(/^http/, "ws"),
 
   // Population sizing (per scenario). Overridable per run.
-  players: intEnv("PLAYERS", 70),
+  players: intEnv("PLAYERS", 69),
   spectators: intEnv("SPECTATORS", 30),
 
   // Ramp / hold windows (k6 stage strings).
@@ -63,5 +63,9 @@ export const config = {
   latencyP99Ms: intEnv("LATENCY_P99_MS", 2500),
 
   // Acceptance: app-level error rate ceiling (Plan A proposes < 1%).
-  errorRateMax: Number.parseFloat(strEnv("ERROR_RATE_MAX", "0.01")),
+  errorRateMax: (() => {
+    const raw = strEnv("ERROR_RATE_MAX", "0.01");
+    const parsed = Number.parseFloat(raw);
+    return Number.isFinite(parsed) ? parsed : 0.01;
+  })(),
 };

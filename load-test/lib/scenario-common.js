@@ -7,7 +7,7 @@
 
 import exec from "k6/execution";
 import { config } from "../config.js";
-import { guestLogin, createRoom } from "./auth.js";
+import { guestLogin, createRoom, verifyRoomExists } from "./auth.js";
 import { hostFlow, playerFlow, spectatorFlow } from "./flows.js";
 import * as M from "./metrics.js";
 
@@ -36,6 +36,11 @@ export function host(data) {
 }
 
 export function player(data) {
+  if (!verifyRoomExists(config.httpBase, data.roomCode)) {
+    M.setupErrors.add(1);
+    M.appErrorRate.add(true);
+    return;
+  }
   // idInTest is unique across the whole test (and across scenarios), so
   // usernames never collide -> no single-session self-kicks.
   const uid = exec.vu.idInTest;
@@ -54,6 +59,11 @@ export function player(data) {
 }
 
 export function spectator(data) {
+  if (!verifyRoomExists(config.httpBase, data.roomCode)) {
+    M.setupErrors.add(1);
+    M.appErrorRate.add(true);
+    return;
+  }
   const uid = exec.vu.idInTest;
   const acct = guestLogin(config.httpBase, `lt_s_${uid}`);
   if (!acct) {

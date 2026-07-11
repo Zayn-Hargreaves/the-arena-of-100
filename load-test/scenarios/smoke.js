@@ -47,7 +47,7 @@ export const options = {
 };
 
 export function setup() {
-  const host = guestLogin(config.httpBase, `ltsmoke_host_${uniq()}`);
+  const host = guestLogin(config.httpBase, `lt_smh_${uniq()}`);
   if (!host) throw new Error("smoke setup: host guest-login failed");
 
   const room = createRoom(config.httpBase, host.token, {
@@ -69,7 +69,10 @@ export function host(data) {
 }
 
 export function player(data) {
-  const acct = guestLogin(config.httpBase, `ltsmoke_p_${exec.vu.idInTest}`);
+  const acct = guestLogin(
+    config.httpBase,
+    `lt_smp_${exec.vu.idInTest}_${uniq()}`,
+  );
   if (!acct) {
     M.authErrors.add(1);
     return;

@@ -171,7 +171,7 @@ export class RoomService {
           Array<{ id: string; maxPlayers: number }>
         >`
           SELECT id, "maxPlayers"
-          FROM "Room"
+          FROM "rooms"
           WHERE id = ${room.id}
           FOR UPDATE
         `;

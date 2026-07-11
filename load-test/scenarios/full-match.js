@@ -2,9 +2,9 @@
 // Phase A2 — full match under 100 concurrent WebSocket users.
 //
 //   k6 run load-test/scenarios/full-match.js
-//   k6 run -e PLAYERS=70 -e SPECTATORS=30 load-test/scenarios/full-match.js
+//   k6 run -e PLAYERS=69 -e SPECTATORS=30 load-test/scenarios/full-match.js
 //
-// Population (default 1 host + 70 players + 30 spectators = 101 WS):
+// Population (default 1 host + 69 players + 30 spectators = 100 WS):
 //   host        1 VU  — creates the room (in setup) + fires start_match
 //   players     ramp 0 -> PLAYERS over RAMP_UP, hold for HOLD; join then
 //               answer every round.
