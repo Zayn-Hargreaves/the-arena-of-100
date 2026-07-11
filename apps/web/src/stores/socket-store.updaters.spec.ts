@@ -8,6 +8,7 @@ import type { JoinMode, RoomType } from "@arena/shared";
 import { describe, expect, it } from "vitest";
 import {
   applyAnswerResultState,
+  applyEventBatchState,
   applyMatchFinishedState,
   applyRoundEndedState,
   applyRoundStartedState,
@@ -15,6 +16,7 @@ import {
   applyUnauthorizedErrorState,
 } from "./socket-store.updaters";
 import type { SocketState } from "./socket-store.types";
+import type { EventBatchPayload } from "@arena/shared";
 
 const basePlayers = [
   {
@@ -47,6 +49,7 @@ function makeState(overrides: Partial<SocketState> = {}): SocketState {
     lastAnswerResult: null,
     pendingAnswer: null,
     remainingCount: null,
+    lastSeenSeqNo: 0,
     error: null,
     heartbeatInterval: null,
     isEliminated: false,
@@ -491,5 +494,16 @@ describe("applySnapshotState — reconnect-after-elimination hydrate", () => {
 
     expect(result.isEliminated).toBe(false);
     expect(result.eliminationReason).toBeNull();
+  });
+
+  it("sets the delta cursor from the snapshot lastEventSeqNo", () => {
+    const state = makeState({ lastSeenSeqNo: 0 });
+    const result = applySnapshotState(
+      state,
+      snapshot([{ id: "p1", status: PlayerStatus.ACTIVE }]),
+    );
+
+    expect(result.lastSeenSeqNo).toBe(10);
+  });
   });
 });

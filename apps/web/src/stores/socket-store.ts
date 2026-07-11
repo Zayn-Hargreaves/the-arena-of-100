@@ -9,6 +9,7 @@ import {
   ServerEvent,
   type RoomCreatedPayload,
   type SnapshotPayload,
+  type EventBatchPayload,
   type AnswerResultPayload,
   type ErrorPayload,
   type RoomJoinedPayload,
@@ -53,6 +54,7 @@ import {
   applyRoundEndedState,
   applyRoundStartedState,
   applySnapshotState,
+  applyEventBatchState,
   applyUnauthorizedErrorState,
 } from "./socket-store.updaters";
 
@@ -70,6 +72,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   lastAnswerResult: null,
   pendingAnswer: null,
   remainingCount: null,
+  lastSeenSeqNo: 0,
   error: null,
   heartbeatInterval: null,
   isEliminated: false,
@@ -301,6 +304,15 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       if (get().socket !== newSocket) return;
       set((state) => applySnapshotState(state, data));
       console.log("📸 Snapshot received");
+    });
+
+    // Plan D delta replay: the server may answer REQUEST_SNAPSHOT with a
+    // delta of only the events after our cursor. Apply them onto the
+    // current match (idempotent) instead of re-hydrating the whole roster.
+    newSocket.on(ServerEvent.EVENT_BATCH, (data: EventBatchPayload) => {
+      if (get().socket !== newSocket) return;
+      set((state) => applyEventBatchState(state, data));
+      console.log(`🔁 Event batch received (${data.events.length} events)`);
     });
 
     newSocket.on(ServerEvent.ANSWER_RESULT, (data: AnswerResultPayload) => {

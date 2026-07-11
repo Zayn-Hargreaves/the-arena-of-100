@@ -166,21 +166,25 @@ export default function GamePage({ params }: GamePageProps) {
   // ROUND_STARTED has fired for them yet. Without this, they see a
   // blank/stale screen until the next round starts.
   //
-  // We only fire when `match` is null: for an active player who
-  // already received MATCH_STARTED/ROUND_STARTED, the local state
-  // is fresh and a redundant snapshot would wipe the in-flight
-  // `lastAnswerResult` / `remainingCount` (the SNAPSHOT handler
-  // resets those to null). The `snapshotHydratedRef` guard makes
-  // the intent explicit and survives React 18 strict-mode double-
-  // invoke during development.
+  // Plan D delta resync: we send our delta cursor (`lastSeenSeqNo`)
+  // rather than a hardcoded 0. It is 0 when we have no state yet (a
+  // late-joiner / fresh page load) so the server full-hydrates us via
+  // SNAPSHOT; when the store survived a client-side navigation the
+  // cursor is our last applied seqNo, so the server replies with a
+  // lightweight EVENT_BATCH delta instead of the whole roster.
+  //
+  // Firing when `match` already exists is now safe: applying a delta is
+  // non-destructive (it preserves the in-flight `lastAnswerResult` /
+  // `remainingCount`, unlike the full SNAPSHOT handler which resets them
+  // to null). The `snapshotHydratedRef` guard fires this once per mount
+  // and survives React 18 strict-mode double-invoke during development.
   const snapshotHydratedRef = useRef(false);
   useEffect(() => {
     if (snapshotHydratedRef.current) return;
-    if (match) return;
     if (!matchId) return;
     snapshotHydratedRef.current = true;
-    requestSnapshot(matchId, 0);
-  }, [matchId, match, requestSnapshot]);
+    requestSnapshot(matchId, useSocketStore.getState().lastSeenSeqNo);
+  }, [matchId, requestSnapshot]);
 
   // Calculate time left based on server timestamp
   const calculateTimeLeft = useCallback(() => {

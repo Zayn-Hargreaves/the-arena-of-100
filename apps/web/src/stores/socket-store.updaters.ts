@@ -19,6 +19,8 @@ import {
   type RoundEndedPayload,
   type RoundStartedPayload,
   type SnapshotPayload,
+  type EventBatchPayload,
+  type ReplayEvent,
 } from "@arena/shared";
 import type {
   LastAnswerResult,
@@ -492,6 +494,103 @@ export function applySnapshotState(
     remainingCount: null,
     lastAnswerResult: null,
     pendingAnswer: null,
+    // Plan D: a full hydrate resets the delta cursor to the log head,
+    // so subsequent reconnects can ask for only newer events.
+    lastSeenSeqNo: data.lastEventSeqNo,
+  };
+}
+
+// Plan D — delta replay. Fold an EVENT_BATCH onto the current match,
+// event by event in seqNo order, so the resulting state equals what a
+// continuously connected client would hold (each case mirrors the
+// matching live updater above). Applied only on top of an existing
+// match for the same id — a delta has no base to reconstruct a question
+// from scratch, so a client with no match must full-hydrate first.
+//
+// Idempotent: events with seqNo <= the current cursor are skipped, so a
+// duplicated or out-of-order batch is a no-op. The cursor advances to
+// the highest applied seqNo.
+export function applyEventBatchState(
+  state: SocketState,
+  data: EventBatchPayload,
+): Partial<SocketState> {
+  // Match guard (mirrors the live round updaters): ignore a batch for a
+  // stale or different match.
+  const activeMatchId = state.room?.currentMatchId ?? state.match?.id ?? null;
+  if (activeMatchId === null || activeMatchId !== data.matchId) return {};
+
+  // A delta applies onto the live match only. Without a base match for
+  // this id there is nothing to fold onto (the question/timer cannot be
+  // rebuilt from summary events) — the caller must full-hydrate.
+  if (state.match?.id !== data.matchId) return {};
+
+  let match = state.match;
+  let remainingCount = state.remainingCount;
+  let cursor = state.lastSeenSeqNo;
+
+  for (const rawEvent of data.events) {
+    if (rawEvent.seqNo <= cursor) continue; // idempotent skip
+    cursor = rawEvent.seqNo;
+
+    const event = rawEvent as unknown as ReplayEvent;
+    switch (event.type) {
+      case "STATE_TRANSITION":
+        match = { ...match, status: event.payload.to };
+        break;
+      case "ROUND_STARTED":
+        match = {
+          ...match,
+          status: MatchStatus.ROUND_ACTIVE,
+          currentRoundNo: event.payload.roundNo,
+          currentQuestion: event.payload.question,
+          roundEndTime: event.payload.endsAt,
+        };
+        break;
+      case "ROUND_EVALUATED": {
+        const eliminated = new Set(event.payload.eliminatedIds);
+        match = {
+          ...match,
+          status: MatchStatus.ROUND_RESULT,
+          players: match.players.map((player) =>
+            eliminated.has(player.id)
+              ? { ...player, status: PlayerStatus.ELIMINATED }
+              : player,
+          ),
+          roundEndTime: null,
+        };
+        remainingCount = event.payload.survivingCount;
+        break;
+      }
+      case "MATCH_FINISHED":
+        match = { ...match, status: MatchStatus.FINISHED, roundEndTime: null };
+        break;
+      // No-op on match state (cursor still advances above):
+      //  - ANSWER_SUBMITTED / TIE_BREAK: peers' submissions and the
+      //    internal tie-break do not change the rendered match (mirrors
+      //    live play).
+      //  - PLAYER_DISCONNECTED / PLAYER_RECONNECTED: presence lives on
+      //    `room.players`, not `match.players` — live play never updates
+      //    match-roster `isOnline` either. A full SNAPSHOT refreshes
+      //    presence; the delta deliberately leaves it untouched so a
+      //    reconnecting client matches a continuously connected one.
+      default:
+        break;
+    }
+  }
+
+  // Recompute self-elimination from the resulting roster (mirrors
+  // applySnapshotState) so the watch-only overlay + answer lock are
+  // correct after the delta.
+  const selfEliminated = state.userId
+    ? match.players.find((p) => p.id === state.userId)?.status ===
+      PlayerStatus.ELIMINATED
+    : state.isEliminated;
+
+  return {
+    match,
+    remainingCount,
+    isEliminated: selfEliminated,
+    lastSeenSeqNo: cursor,
   };
 }
 

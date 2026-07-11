@@ -121,6 +121,7 @@ function baseState(overrides: Record<string, unknown> = {}) {
     lastAnswerResult: null,
     pendingAnswer: null,
     remainingCount: null,
+    lastSeenSeqNo: 0,
     leaveRoom: vi.fn(),
     isEliminated: false,
     eliminationReason: null,
@@ -174,17 +175,24 @@ afterEach(() => {
 });
 
 describe("GamePage — snapshot hydration", () => {
-  it("requests a snapshot exactly once on mount when match is null", async () => {
-    h.state = baseState({ match: null });
+  it("requests a full snapshot (cursor 0) once on mount when there is no state yet", async () => {
+    // Fresh load / late-joiner: no delta cursor, so the server must
+    // full-hydrate us.
+    h.state = baseState({ match: null, lastSeenSeqNo: 0 });
     await renderPage("m1");
     expect(h.state.requestSnapshot).toHaveBeenCalledTimes(1);
     expect(h.state.requestSnapshot).toHaveBeenCalledWith("m1", 0);
   });
 
-  it("does NOT request a snapshot when match state already exists", async () => {
-    h.state = baseState({ match: matchFixture() });
+  it("Plan D: requests a delta resync with the current cursor when match state already exists", async () => {
+    // The store survived a client-side navigation, so we hold a cursor.
+    // We still resync on mount, but sending the cursor lets the server
+    // reply with a lightweight EVENT_BATCH delta instead of a full
+    // roster — and applying a delta is non-destructive.
+    h.state = baseState({ match: matchFixture(), lastSeenSeqNo: 7 });
     await renderPage("m1");
-    expect(h.state.requestSnapshot).not.toHaveBeenCalled();
+    expect(h.state.requestSnapshot).toHaveBeenCalledTimes(1);
+    expect(h.state.requestSnapshot).toHaveBeenCalledWith("m1", 7);
   });
 });
 

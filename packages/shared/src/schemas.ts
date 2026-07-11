@@ -125,34 +125,28 @@ export type SubmitAnswerPayload = z.infer<typeof SubmitAnswerPayloadSchema>;
 
 export const RequestSnapshotPayloadSchema = z.object({
   matchId: idSchema,
-  // lastSeenSeqNo is the cursor the client sends when asking for a
-  // snapshot. NOTE: it is currently a pass-through echo, not a real
-  // event-log cursor — `MatchStateMachine.getSnapshot` returns the
-  // value verbatim in the snapshot payload and does not filter
-  // events. Both current call sites hardcode 0 (the client hydrate
-  // path in `game/[matchId]/page.tsx` and the server reconnect path
-  // in `auth.handler.ts`).
+  // lastSeenSeqNo is the delta-replay cursor the client sends when
+  // asking for a snapshot: "I have applied every event up to this
+  // seqNo — give me what's newer." The server (`match.handler`
+  // handleRequestSnapshot) answers with either a full SNAPSHOT
+  // (cursor 0 / out of range) or an EVENT_BATCH delta of events with
+  // `seqNo > lastSeenSeqNo` (see MatchStateMachine.getDelta). A fresh
+  // hydrate sends 0.
   //
-  // The `MAX_ROUNDS * 2` (= 100) cap is therefore a sanity bound
-  // against hostile fuzz inputs (sentinels, bit-flips, obviously
-  // bogus cursors) rather than a tight upper bound on the number
-  // of event-log entries a match can produce. A 100-player match
-  // with N round transitions, up to 100 `ANSWER_SUBMITTED` events
-  // per round, plus `STATE_TRANSITION` / `ROUND_EVALUATED` /
-  // `TIE_BREAK` / `MATCH_FINISHED` / `PLAYER_DISCONNECTED` /
-  // `PLAYER_RECONNECTED` events (see `match-state-machine.ts`) can
-  // generate thousands of log entries — far above 100. The
-  // previous `Number.MAX_SAFE_INTEGER` ceiling was a leftover that
-  // would have accepted obviously bogus cursors.
-  //
-  // If a future change implements real delta-based filtering using
-  // this field as a real cursor, the cap must be re-derived from
-  // the actual per-match event-log size and the comment updated.
+  // The cap is derived from the real worst-case event-log size so a
+  // legitimate cursor is never rejected while obviously bogus fuzz
+  // (sentinels, bit-flips) still is. A match logs up to ~MAX_PLAYERS
+  // `ANSWER_SUBMITTED` per round plus round/transition/elimination
+  // events across up to MAX_ROUNDS rounds, plus disconnect/reconnect
+  // churn: `MAX_ROUNDS * MAX_PLAYERS` bounds the answer events and the
+  // `* 2` factor covers transitions and presence churn with headroom.
+  // Server-side `getFloorSeqNo`/`getHeadSeqNo` bounds validate the
+  // cursor precisely; this cap is only the coarse fuzz guard.
   lastSeenSeqNo: z
     .number()
     .int()
     .nonnegative()
-    .max(GAME_CONFIG.MAX_ROUNDS * 2),
+    .max(GAME_CONFIG.MAX_ROUNDS * GAME_CONFIG.MAX_PLAYERS * 2),
 });
 export type RequestSnapshotPayload = z.infer<
   typeof RequestSnapshotPayloadSchema

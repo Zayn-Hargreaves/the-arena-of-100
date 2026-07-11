@@ -83,6 +83,13 @@ export interface SocketState extends ConnectionState {
   lastAnswerResult: LastAnswerResult | null;
   pendingAnswer: PendingAnswer | null;
   remainingCount: number | null;
+  // Plan D delta replay: the highest event seqNo this client has
+  // applied. Set from SNAPSHOT.lastEventSeqNo on a full hydrate and
+  // advanced by each applied EVENT_BATCH event. Sent back as the
+  // REQUEST_SNAPSHOT cursor so the server can reply with only newer
+  // events. 0 means "have not applied anything" → the server sends a
+  // full snapshot.
+  lastSeenSeqNo: number;
   error: string | null;
   heartbeatInterval: ReturnType<typeof setInterval> | null;
   isEliminated: boolean;

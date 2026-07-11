@@ -120,7 +120,14 @@ export interface SnapshotPayload {
   lastEventSeqNo: number;
 }
 
+// Delta replay batch (ServerEvent.EVENT_BATCH). Emitted instead of a
+// full SNAPSHOT when a reconnecting client sends a valid, in-range
+// `lastSeenSeqNo` cursor: it carries only the events with
+// `seqNo > lastSeenSeqNo`, in ascending seqNo order. The client applies
+// them sequentially onto its current state and advances its cursor to
+// the last seqNo. See MatchStateMachine.getDelta.
 export interface EventBatchPayload {
+  matchId: string;
   events: Array<{
     id: string;
     type: string;

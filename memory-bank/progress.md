@@ -61,6 +61,8 @@ Run the relevant package tests before using these numbers in PR text.
 - `MatchStateMachine` public API unchanged (CRITICAL blast radius snapshot at rev `7935cdc..4832e72`: 29 impactedCount / 18 processes / 3 modules — canonical, see `docs/afk-policy.md` §5; current HEAD `ba64ef5` re-run reports 3 / 16 / 2 because two follow-up commits `eba3d73`, `ba64ef5` post-date the snapshot — re-run `gitnexus_impact` if you need live numbers). BE elimination logic already correct — added regression tests only (AFK, disconnect, reconnect-in-round, late answer, eliminated stays eliminated).
 - FE: elimination reason (`WRONG_ANSWER` / `TIMEOUT`) now shown in `eliminated-overlay`; `eliminationReason` added to socket store; reconnect snapshot hydrates `isEliminated` from roster so watch-only UI restores. New `EliminationReason` type in `@arena/shared`.
 - Pre-edit impact analysis artifact (Plan §C1 §30-51): `docs/impact-analysis-C.md` — 10 symbol `gitnexus_impact` outputs verbatim, scope confirmation (no public API change, blast radius ≤ 11 file), revision binding `7935cdc..4832e72`. `§4` records a POLICY EXCEPTION (no independent reviewer); `§5` author-self-attestation timestamp `2026-07-13T07:55:28Z` — not an approval, no independent approval yet.
+- **Track D — Replay contract (`lastSeenSeqNo` delta replay).** `getSnapshot` used to ignore its cursor and always full-hydrate. Now: monotonic `seqNo` on every event-log entry (persisted through Redis serialize/rehydrate, counter resumed from max to avoid collision); `getDelta`/`getHeadSeqNo`/`getFloorSeqNo` on `MatchStateMachine` (public `getSnapshot` signature unchanged). `MatchHandler.handleRequestSnapshot` emits an `EVENT_BATCH` delta when the client cursor is in `[floor, head]`, else a full `SNAPSHOT` (fallback: cursor 0 / older than retention / ahead of head). `ROUND_STARTED` event enriched with the client-safe question + `endsAt` (no `correctAnswer`) so a delta can rebuild the in-flight round. Client: `lastSeenSeqNo` tracked in socket store, `applyEventBatchState` folds events idempotently (mirrors live reducers → `delta == live-continuity`), `REQUEST_SNAPSHOT` sends the real cursor. Backward-compat: cursor 0 / old clients still get full `SNAPSHOT`. Reused the pre-provisioned `ServerEvent.EVENT_BATCH` + `EventBatchPayload` (added `matchId`). Cap on `lastSeenSeqNo` widened to `MAX_ROUNDS * MAX_PLAYERS * 2`.
+- **Deferred (needs Track C coordination):** `auth.handler.syncReconnection` still pushes a full `SNAPSHOT` on reconnect; making the reconnect push itself delta-aware is a follow-up.
 
 ## What Is Done
 
@@ -77,6 +79,7 @@ Run the relevant package tests before using these numbers in PR text.
 - Moderation MVP boundary filtering / sanitizer (NFKD Unicode normalization, diacritic stripping, and post-masking re-validation).
 - `Room.maxPlayers` realtime payload exposure.
 - Optimistic answer rollback + server-side idempotency replay keyed by `submissionId`.
+- Reconnect/event replay contract behind `lastSeenSeqNo` (delta `EVENT_BATCH` vs full `SNAPSHOT`, client-driven cursor). Reconnect auto-push still full — see deferred item under 2026-07-11.
 
 ## What Is Not Done Yet
 
@@ -91,7 +94,7 @@ Run the relevant package tests before using these numbers in PR text.
   p95) are observable on multi-core hosts. Baseline numbers + P2
   conclusion still pending a real run against a real Redis/Postgres
   stack (see `load-test/README.md`).
-- Full reconnect/event replay contract behind `lastSeenSeqNo`.
+- Delta-aware server reconnect push (`auth.handler.syncReconnection`) — needs Track C coordination.
 - Spectator transport split for scale.
 - Full WCAG / Playwright / rematch work.
 
@@ -118,8 +121,8 @@ Run the relevant package tests before using these numbers in PR text.
    - Route `admin/audit/page.tsx` (role-guarded) with `components/admin/`
      `audit-table.tsx` + `audit-filters.tsx`; skeleton/empty/error states;
      i18n keys under `admin.audit` (en/vi); vitest specs green.
-4. **Replay Contract Follow-up**
-   - `submissionId` idempotency is done; `lastSeenSeqNo` delta replay remains deferred.
+4. **Replay Contract** — ✅ done (Track D, 2026-07-11)
+   - `submissionId` idempotency + `lastSeenSeqNo` delta replay both shipped. Follow-up: make the reconnect auto-push (`auth.handler`) delta-aware (Track C coordination).
 
 ### P2 — Evidence / Scale
 

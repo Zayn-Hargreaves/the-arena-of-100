@@ -226,12 +226,40 @@ export class MatchHandler extends BaseHandler {
         // whether the requester is in the player roster here, because
         // spectators are exactly the new caller profile that the baseline
         // unlocks.
-        const snapshot = stateMachine.getSnapshot(payload.lastSeenSeqNo);
-        client.emit(ServerEvent.SNAPSHOT, snapshot);
+        // Delta replay contract (Plan D): decide delta vs full from the
+        // client's `lastSeenSeqNo` cursor and the current event-log
+        // window. Emit a delta EVENT_BATCH only when the cursor is
+        // in-range — the client has applied events up to `cursor` and
+        // the log still retains everything after it. Otherwise fall
+        // back to a full SNAPSHOT: fresh hydrate (cursor 0), a cursor
+        // older than the retained log (missed events are gone), a
+        // cursor ahead of head (corrupt client state), or an empty log.
+        const head = stateMachine.getHeadSeqNo();
+        const floor = stateMachine.getFloorSeqNo();
+        const cursor = payload.lastSeenSeqNo;
+        const canDelta =
+          cursor > 0 && head > 0 && cursor >= floor && cursor <= head;
 
-        this.logger.log(
-          `Snapshot sent to ${userId} for match ${payload.matchId}`,
-        );
+        if (canDelta) {
+          const events = stateMachine.getDelta(cursor);
+          client.emit(ServerEvent.EVENT_BATCH, {
+            matchId: payload.matchId,
+            events,
+          });
+          this.logger.log(
+            `Delta sent to ${userId} for match ${payload.matchId} ` +
+              `(${events.length} events, cursor ${cursor}→${head})`,
+          );
+        } else {
+          // Pass `head` (not the client's cursor) so the snapshot's
+          // lastEventSeqNo reflects the real log head — that is how the
+          // client learns which cursor to send on its next reconnect.
+          const snapshot = stateMachine.getSnapshot(head);
+          client.emit(ServerEvent.SNAPSHOT, snapshot);
+          this.logger.log(
+            `Snapshot sent to ${userId} for match ${payload.matchId}`,
+          );
+        }
       },
       (error) => {
         const code = this.getErrorCode(error);
