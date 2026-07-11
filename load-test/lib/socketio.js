@@ -236,6 +236,9 @@ export function createSocketIOClient(wsBase, opts = {}) {
   };
   ws.onclose = () => {
     closed = true;
+    rejectReady(
+      new Error("socket closed before namespace connection acknowledgement"),
+    );
     if (opts.onClose) opts.onClose(intentionalClose);
   };
 

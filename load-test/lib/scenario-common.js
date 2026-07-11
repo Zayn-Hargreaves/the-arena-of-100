@@ -32,6 +32,7 @@ export function host(data) {
     roomId: data.roomId,
     warmupMs: config.warmupMs,
     lifetimeMs: config.lifetimeMs,
+    vu: exec.vu.idInTest,
   });
 }
 

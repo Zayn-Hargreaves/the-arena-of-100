@@ -5,6 +5,13 @@
 // lives on a dedicated provider instead of the singleton
 // controller (where concurrent /health/monitoring requests could
 // overwrite each other).
+//
+// Convention (Plan A k6 acceptance):
+//   `cpu` is reported as a percentage of ONE core. A value of
+//   `200` means two cores are fully utilised. The previous
+//   implementation capped the result at `100` ("% of total
+//   cores"), which made the load-test thresholds (≤ 80% peak,
+//   ≤ 70% p95) effectively unobservable on multi-core hosts.
 // ============================================================
 
 import { Injectable } from "@nestjs/common";
@@ -17,7 +24,7 @@ export class CpuSamplerService {
 
   /**
    * Record a new CPU sample and return the delta CPU usage as a
-   * percentage of total cores. Returns null on the first call
+   * percentage of ONE core. Returns null on the first call
    * (no baseline yet).
    */
   sample(): number | null {
@@ -33,9 +40,11 @@ export class CpuSamplerService {
       const numCpus = os.cpus().length;
 
       if (elapsedMs > 0 && numCpus > 0) {
+        // `% of 1 core`; cap at `100 * numCpus` so a 4-core host
+        // can report up to 400% (= 4 fully loaded cores).
         cpuUsage = Math.min(
-          100,
-          (deltaCpuMicros / 1000 / (elapsedMs * numCpus)) * 100,
+          100 * numCpus,
+          (deltaCpuMicros / 1000 / elapsedMs) * 100,
         );
       }
     }

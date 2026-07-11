@@ -18,6 +18,10 @@ import { createSocketIOClient } from "./socketio.js";
 import { ClientEvent, ServerEvent } from "./protocol.js";
 import { config } from "../config.js";
 import * as M from "./metrics.js";
+import { reportVuReady } from "./readiness.js";
+
+const COORDINATOR_URL = __ENV.COORDINATOR_URL || null;
+const READINESS_RUN_ID = __ENV.READINESS_RUN_ID || null;
 
 function sleepMs(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -56,6 +60,9 @@ function createAndWireClient() {
   const client = createSocketIOClient(config.wsBase, {
     onClose: (intentional) => {
       if (!intentional) {
+        if (client && client.handshakeCompleted) {
+          M.wsUnexpectedDisconnect.add(1);
+        }
         if (hasConnected) {
           M.wsDisconnectErrors.add(1);
         } else if (!connectErrorLogged) {
@@ -73,6 +80,8 @@ function createAndWireClient() {
       }
     },
   });
+
+  client.handshakeCompleted = false;
 
   client.ready.then(
     () => {
@@ -93,18 +102,36 @@ function createAndWireClient() {
 
 // Shared handshake: authenticate, then (optionally) join a room.
 // Returns true on success, false if a step failed/timed out.
-async function handshake(client, token, roomCode) {
+async function handshake(client, token, roomCode, vuId) {
   try {
     await client.ready;
     client.emit(ClientEvent.AUTHENTICATE, { token });
     await client.waitFor(ServerEvent.AUTHENTICATED, config.authTimeoutMs);
     M.appErrorRate.add(false);
 
+    // Plan A readiness barrier: report this VU as AUTHENTICATED to
+    // the coordinator. Idempotent on the server (SADD), so retries
+    // do not inflate the count. Only active when the workflow has
+    // spawned the coordinator sidecar.
+    if (COORDINATOR_URL && READINESS_RUN_ID && vuId != null) {
+      let ok;
+      try {
+        ok = reportVuReady(COORDINATOR_URL, READINESS_RUN_ID, String(vuId));
+      } catch (_e) {
+        ok = false;
+      }
+      if (!ok) {
+        M.appErrorRate.add(true);
+      }
+    }
+
     if (roomCode) {
       client.emit(ClientEvent.JOIN_ROOM, { roomCode });
       await client.waitFor(ServerEvent.ROOM_JOINED, config.joinTimeoutMs);
       M.appErrorRate.add(false);
     }
+    client.handshakeCompleted = true;
+    M.wsConnectSuccess.add(1);
     return true;
   } catch (e) {
     console.log(
@@ -162,7 +189,7 @@ export async function playerFlow({ token, roomCode, vu, lifetimeMs }) {
     }
   });
 
-  const ok = await handshake(client, token, roomCode);
+  const ok = await handshake(client, token, roomCode, vu);
   if (!ok) {
     client.close();
     return;
@@ -176,12 +203,12 @@ export async function playerFlow({ token, roomCode, vu, lifetimeMs }) {
 // row. It authenticates, waits for players to join, then fires
 // start_match. It does not answer (times out each round) — its job is
 // to drive the match and hold a connection.
-export async function hostFlow({ token, roomId, warmupMs, lifetimeMs }) {
+export async function hostFlow({ token, roomId, warmupMs, lifetimeMs, vu }) {
   const client = createAndWireClient();
 
   client.on(ServerEvent.MATCH_FINISHED, () => M.matchFinished.add(1));
 
-  const ok = await handshake(client, token, null);
+  const ok = await handshake(client, token, null, vu);
   if (!ok) {
     client.close();
     return;
@@ -205,13 +232,13 @@ export async function hostFlow({ token, roomId, warmupMs, lifetimeMs }) {
 
 // A drop-in spectator: joins after the match is IN_GAME, so the server
 // admits it as SPECTATOR (receive-only). Never submits answers.
-export async function spectatorFlow({ token, roomCode, lifetimeMs }) {
+export async function spectatorFlow({ token, roomCode, lifetimeMs, vu }) {
   const client = createAndWireClient();
 
   client.on(ServerEvent.ROUND_STARTED, () => M.roundStarted.add(1));
   client.on(ServerEvent.MATCH_FINISHED, () => M.matchFinished.add(1));
 
-  const ok = await handshake(client, token, roomCode);
+  const ok = await handshake(client, token, roomCode, vu);
   if (!ok) {
     client.close();
     return;

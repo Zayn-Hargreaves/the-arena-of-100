@@ -33,7 +33,28 @@ C và D cùng đụng `match-state-machine.ts` và `socket-store.ts`. **C phải
 
 ### Phase C2 — Hardening logic (BE)
 
-- [ ] Đảm bảo player không answer trước `roundEndTime` bị đánh ELIMINATED nhất quán (kiểm tra cả nhánh recovery trong `endRound`).
+- [ ] **Server-authoritative deadline validation cho answer handling**: dùng server clock (không tin frontend) để reject answer nhận được sau `roundEndTime` (`currentRound.endsAt`), bất kể trạng thái FE. Đã có sẵn ở `MatchStateMachine.submitAnswer` (line ~203: `if (serverTimestamp > this.currentRound.endsAt) throw new RoomError(ANSWER_SUBMISSION_CLOSED)`) — verify hành vi và **giữ nguyên invariant này** ở mọi nhánh (normal + recovery). Nếu chưa phủ, bổ sung test xác nhận answer gửi sau `endsAt` luôn bị reject, dù frontend còn `roundEndTime` lớn hơn.
+- [ ] **Elimination semantics nhất quán giữa normal flow và `endRound` recovery path**:
+  - Normal flow: `evaluateRound()` đánh ELIMINATED cho mọi player không có `answer.isCorrect` trong round hiện tại (line ~272-294).
+  - Recovery path: `match-round-runner.ts:endRound` (line ~298-340) **PHẢI** xác định `eliminatedIds` dựa trên dữ liệu của **đúng round hiện tại**, KHÔNG dựa trên trạng thái tích luỹ của player. Hiện tại fallback heuristic `p.status === ELIMINATED && p.correctAnswers === round.roundNo - 1` (`match-round-runner.ts:332-339`) suy ra từ state tích luỹ, không phải round-scoped evidence — KHÔNG đủ.
+  - **Vị trí logic (resolve boundary conflict)**:
+    - **KHÔNG ĐƯỢC thêm public method mới vào `MatchStateMachine` ở Track C**. Scope rule Plan1 cấm tuyệt đối việc này (xem `Plan1.md`). Mọi đề xuất thêm public method phải được **escalate** (review với reviewer + Track D) trước khi thay đổi Plan1.md; mặc định là KHÔNG làm.
+    - **Phương án duy nhất được phép ở Track C**: **Shared pure helper module bên ngoài class**. Tạo helper pure (ví dụ `eliminationsForRound(round, players)` trong một module dùng chung, ví dụ `packages/game-core/src/round-elimination.ts`), không phải method của class. Helper này dựa trên `currentRound.answers` + `correctAnswer` để xác định player bị loại; **thiếu answer cũng được coi là eliminated**. `match-round-runner.ts` import helper này và gọi từ nhánh recovery.
+  - **Semantics của helper** (áp dụng cho pure helper ở trên):
+    - Input: `currentRound` (chỉ round hiện tại) + `players` đang sống trước round đó.
+    - Player bị loại trong round hiện tại nếu:
+      1. Player không có entry trong `currentRound.answers` ⇒ **eliminated** (đã bao gồm AFK/disconnect-mid-round), HOẶC
+      2. Player có entry trong `currentRound.answers` nhưng `isCorrect === false` ⇒ **eliminated**.
+    - KHÔNG dùng `correctAnswers`, KHÔNG dùng `status` tích luỹ, KHÔNG dùng `eventLog` của round trước.
+  - Thứ tự ưu tiên cho recovery (cập nhật Phase C2):
+    1. **Ưu tiên 1**: đọc event `ROUND_EVALUATED` từ `eventLog` của state machine có cùng `roundNo` với round hiện tại (`match-round-runner.ts:310-330`); lấy `eliminatedIds` trực tiếp từ payload event.
+    2. **Ưu tiên 2**: nếu event không có/không hợp lệ, dùng helper theo lựa chọn ở trên (Move-to-API hoặc Shared pure helper) dựa trên `currentRound.answers` + `correctAnswer` của state machine.
+  - Thay thế hoàn toàn fallback dựa trên `p.correctAnswers` ở `match-round-runner.ts:332-339`; tập `eliminatedIds` cuối cùng phải **bằng đúng** tập mà `evaluateRound()` trả về trong normal flow cho cùng round đó.
+  - **Bổ sung test** (cập nhật `match-round-runner.spec.ts` / `match-state-machine.spec.ts`):
+    - Recovery xác nhận `eliminatedIds` chỉ gồm player bị loại trong round hiện tại (KHÔNG bao gồm player đã bị ELIMINATED ở round trước).
+    - Player bị loại mới ở round hiện tại phải xuất hiện đúng trong `eliminatedIds` recovery.
+    - Player KHÔNG có answer trong round hiện tại (AFK/disconnect) cũng xuất hiện trong `eliminatedIds` recovery.
+    - So sánh: trong cùng điều kiện (cùng `currentRound.answers`, cùng `correctAnswer`), `eliminatedIds` của recovery ≡ `eliminatedIds` của `evaluateRound()`.
 - [ ] Edge: disconnect giữa round vs. AFK (không answer nhưng còn kết nối) — cùng kết quả loại trong round, khác đường đi. Verify cả hai.
 - [ ] Chỉ **thêm** helper/guard nếu cần; **không** đổi chữ ký public của `MatchStateMachine`. Nếu phải thêm method → giữ nhỏ, pure, có unit test riêng (theo [[refactor-thresholds]]).
 

@@ -55,8 +55,8 @@ export function guestLogin(httpBase, username) {
     },
   );
 
-  console.log("guestLogin status:", res.status, "body:", res.body);
   if (res.status !== 200) {
+    console.log(`guestLogin status: ${res.status}`);
     return null;
   }
 

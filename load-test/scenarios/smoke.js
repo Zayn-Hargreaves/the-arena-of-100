@@ -75,6 +75,7 @@ export function player(data) {
   );
   if (!acct) {
     M.authErrors.add(1);
+    M.appErrorRate.add(true);
     return;
   }
   return playerFlow({

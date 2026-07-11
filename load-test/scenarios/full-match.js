@@ -14,12 +14,26 @@
 // Measures: answer->result latency (p50/p95/p99), disconnect rate,
 // messages/sec, error rate. Pair with server-side CPU/mem + Redis
 // `match:state:*` observation (see README "Server-side observation").
+//
+// Plan A readiness barrier:
+//   * setup() spawns a coordinator sidecar (Node) and resolves once
+//     a /ready/:runId HTTP endpoint is live.
+//   * Each VU emits POST /ready/:runId {vuId: idInTest} on
+//     AUTHENTICATED. Idempotent SADD keyed by idInTest.
+//   * A poller waits until the coordinator's /count reports
+//     size == (1 host + PLAYERS + SPECTATORS) or until 2*HOLD
+//     elapses. The result is written to a manifest for the
+//     post-run validator.
+//   * Steady-state measurement is anchored to the readiness time
+//     and the MATCH_FINISHED detection (driven by the k6 run).
 // ============================================================
 
 import { config } from "../config.js";
 import { sharedSetup } from "../lib/scenario-common.js";
 
 export { host, player, spectator } from "../lib/scenario-common.js";
+
+const TOTAL_VUS = 1 + config.players + config.spectators;
 
 export const options = {
   setupTimeout: "30s",

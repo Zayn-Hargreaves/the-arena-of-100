@@ -14,7 +14,7 @@
 
 ## Phân tích phụ thuộc & xung đột file
 
-```
+```text
 Track A (k6)          ── độc lập tuyệt đối (chỉ thêm thư mục load-test/)
 Track B (admin UI)    ── độc lập (FE admin area; backend đã xong)
 Track C (AFK)         ┐
@@ -57,4 +57,15 @@ Track D (replay)      ┘
 
 - Mọi PR merge qua GitHub PR (xem lịch sử: PR #55–#69).
 - Trước khi commit mỗi PR: `gitnexus_impact` trên symbol đụng tới + `gitnexus_detect_changes` xác nhận scope.
-- `MatchStateMachine` là hub CRITICAL (22 flow) → track C/D chỉ thêm method/đọc eventLog, **không** đổi chữ ký core hiện có.
+- `MatchStateMachine` là hub CRITICAL (22 flow) → scope rule (cập nhật):
+  - **Existing public/core method signatures phải giữ nguyên hoàn toàn** — KHÔNG được thay đổi tên, tham số, kiểu trả về của bất kỳ method nào trong danh sách: `constructor`, `submitAnswer`, `startRound`, `evaluateRound`, `finishMatch`, `disconnectPlayer`, `reconnectPlayer`, `getSnapshot`, `logEvent`, `getEventLog`, `serialize`, `deserialize`, `attachCorrectAnswer`. Đây là constraint cứng, áp dụng cho cả Track C và Track D.
+  - **Track C**: được phép **harden/sửa nội bộ** logic state-transition elimination (thêm/bỏ guard nội bộ, điều chỉnh nhánh recovery). **TUYỆT ĐỐI KHÔNG** thêm public method mới trên `MatchStateMachine` ở Track C. Cho helper liên quan elimination recovery (`endRound` fallback), **phương án duy nhất được chấp nhận**:
+    - **Helper dùng chung dạng pure function** ở một module riêng trong `packages/game-core/src/` (ví dụ `round-elimination.ts`), export và dùng được từ `match-round-runner.ts`. Helper này:
+      - Pure, không phụ thuộc instance state ngoài input.
+      - Nhận `currentRound` + `players` đang sống trước round đó.
+      - Quy tắc eliminated: thiếu answer trong `currentRound.answers` HOẶC `isCorrect === false`. KHÔNG dùng `correctAnswers` tích luỹ.
+    - Nếu Track C phát hiện cần method public mới trên `MatchStateMachine` ⇒ **KHÔNG** tự ý thêm. Phải escalate: tạo issue/PR riêng, review với reviewer + Track D, và cập nhật scope rule Plan1.md trước khi thay đổi. Mặc định giữ nguyên rule "không thêm public method".
+  - **Track D**: được phép **thêm method public mới** (ví dụ `getDelta(lastSeenSeqNo)`) đọc `eventLog`. Bắt buộc:
+    - Thêm method không xung đột với scope rule trên (không sửa các method đã có).
+    - Cập nhật wire contract (`packages/shared/src/{events,schemas}.ts`, `socket.ts`) và handler tests (`match.handler.spec.ts`, `auth.handler.spec.ts`) tương ứng cho method mới.
+    - Thêm unit test trong `match-state-machine.spec.ts` cho `getDelta` (replay đúng, fallback full khi gap, không infer match từ `lastSeenSeqNo`).

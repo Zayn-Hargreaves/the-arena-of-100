@@ -15,7 +15,7 @@ split spectator transport (decision **P2** in `memory-bank/progress.md`).
 Drives the exact client → server contract the web app uses:
 
 ```
-guest-login (REST POST /api/auth/guest)   → handshake token + real User row
+guest-login (REST POST /api/v1/auth/guest)   → handshake token + real User row
   → ws connect  (socket.io v4 / Engine.IO 4, namespace "/game")
   → AUTHENTICATE {token}         → AUTHENTICATED
   → JOIN_ROOM {roomCode}         → ROOM_JOINED          (players + spectators)
@@ -100,18 +100,18 @@ k6 run -e PLAYERS=5 -e SPECTATORS=95 load-test/scenarios/spectator-flood.js
 
 ### Environment variables
 
-| Var              | Default                 | Meaning                                |
-| ---------------- | ----------------------- | -------------------------------------- |
-| `API_URL`        | `http://localhost:3001` | API origin; REST uses `${API_URL}/api` |
-| `WS_URL`         | = `API_URL`             | socket.io origin (http→ws, https→wss)  |
-| `PLAYERS`        | `69`                    | player VUs                             |
-| `SPECTATORS`     | `30`                    | spectator VUs                          |
-| `RAMP_UP`        | `30s`                   | 0 → PLAYERS ramp                       |
-| `HOLD`           | `4m`                    | steady-state hold                      |
-| `WARMUP_MS`      | `35000`                 | host wait before START_MATCH           |
-| `LATENCY_P95_MS` | `1000`                  | p95 answer-latency threshold           |
-| `LATENCY_P99_MS` | `2500`                  | p99 answer-latency threshold           |
-| `ERROR_RATE_MAX` | `0.01`                  | app error-rate ceiling (Plan A: < 1%)  |
+| Var              | Default                 | Meaning                                   |
+| ---------------- | ----------------------- | ----------------------------------------- |
+| `API_URL`        | `http://localhost:3001` | API origin; REST uses `${API_URL}/api/v1` |
+| `WS_URL`         | = `API_URL`             | socket.io origin (http→ws, https→wss)     |
+| `PLAYERS`        | `69`                    | player VUs                                |
+| `SPECTATORS`     | `30`                    | spectator VUs                             |
+| `RAMP_UP`        | `30s`                   | 0 → PLAYERS ramp                          |
+| `HOLD`           | `4m`                    | steady-state hold                         |
+| `WARMUP_MS`      | `35000`                 | host wait before START_MATCH              |
+| `LATENCY_P95_MS` | `1000`                  | p95 answer-latency threshold              |
+| `LATENCY_P99_MS` | `2500`                  | p99 answer-latency threshold              |
+| `ERROR_RATE_MAX` | `0.01`                  | app error-rate ceiling (Plan A: < 1%)     |
 
 Export a full JSON summary for the record:
 
@@ -143,18 +143,18 @@ and are env-tunable.
 ## Server-side observation (run alongside k6)
 
 Plan A A2 also asks for CPU/mem + Redis + round-tick numbers. Capture them
-in parallel with the k6 run:
+in parallel with the k6 run. The harness is intended to be paired with
+the in-repo `scripts/sample-monitoring.mjs` (Node, no extra deps) which
+is the source of truth for the raw CPU/RSS/Redis JSONL artifacts; the
+notes below are kept for the manual workflow on a developer machine.
 
-```bash
-# API process CPU / memory (pick the apps/api node pid)
-top -b -d 1 -p "$(pgrep -f 'apps/api' | head -1)" | grep --line-buffered node
-
-# Redis live match-state key count
-watch -n 1 "redis-cli -n 2 --scan --pattern 'match:state:*' | wc -l"
-# also useful:
-redis-cli -n 2 info clients      # connected_clients during the run
-redis-cli -n 2 info memory       # used_memory_human
-```
+> The sampler reads `REDIS_URL` / `REDIS_KEY_PREFIX` from the same env
+> the API uses (`apps/api/src/modules/redis/redis.service.ts`) — it
+> does NOT hard-code `redis-cli -n 2` or a fixed pattern. **Do not log
+> the full URL**: only `scheme`, `host`, `port`, `db`, `tls`, `keyPrefix`,
+> `pattern` may be written into reports/artifacts. Auth, if any, is
+> carried via env (e.g. `REDISCLI_AUTH`) or a per-host config file —
+> never on the command line.
 
 Round-tick timing comes from the API logs (`GameLoopService` /
 `MatchStateMachine` log each round transition).
@@ -172,9 +172,24 @@ Round-tick timing comes from the API logs (`GameLoopService` /
 
 - **Error Rate**: `app_error_rate` < 1%
 - **Latency**: p95 answer latency < 1000ms, p99 answer latency < 2500ms
-- **Disconnect Rate**: Tỉ lệ disconnect đột ngột / ws_connect_errors < 1%
-- **CPU & Memory**: API CPU usage < 80% peak, RSS < 500MB, không có tình trạng rò rỉ bộ nhớ (leak)
-- **Redis**: Số lượng key `match:state:*` và bộ nhớ Redis phải ổn định, dọn dẹp sạch sẽ sau trận đấu
+- **Disconnect Rate**: `ws_unexpected_disconnect / ws_connect_success` < 1%
+  (`ws_connect_success = 0` ⇒ fails the threshold, not 0%)
+- **CPU & Memory** (steady-state):
+  peak CPU ≤ 80% (sampled per second),
+  p95 CPU ≤ 70%,
+  peak RSS ≤ 500 MB,
+  RSS delta cleanup ≤ +50 MB.
+  **CPU convention**: `%` = `% of 1 core`; `200%` = 2 fully loaded cores.
+- **Redis**:
+  `match:state:*` count == expected at every steady-state sample
+  (A2 full-match = 1),
+  3 trailing cleanup samples == 0 (or baseline),
+  `usedMemoryBytes(cleanup_window_end) − usedMemoryBytes(pre_run_baseline)`
+  ≤ +10%.
+- **Readiness**: 100 VU `AUTHENTICATED` ack set đầy trong `2 * HOLD`,
+  VU ID là `exec.vu.idInTest` (không dùng `idInInstance`).
+- **Steady-state**: `HOLD_MIN = max(30s, parsed HOLD)`;
+  `N_MIN = max(20, ceil(HOLD_MIN))` mẫu CPU hợp lệ trong steady-state.
 
 _Lưu ý: Chỉ kết luận P2 (có cần spectator transport split hay không) khi toàn bộ các tiêu chí định lượng trên đều đạt._
 
@@ -186,20 +201,39 @@ _Lưu ý: Chỉ kết luận P2 (có cần spectator transport split hay không)
 - **Thời lượng**: [Tổng thời gian chạy test]
 - **Dữ liệu / Match**: [Số câu hỏi mỗi trận, số người chơi thật, số spectator]
 - **Lệnh chạy**: [Lệnh k6 đầy đủ được sử dụng]
+- **Tool versions**: `k6 --version`, `redis-cli --version`,
+  commit hash API, commit hash web, `node --version` của sampler.
+- **Resolved Redis target (REDACTED)**: scheme / host / port / db /
+  tls / `REDIS_KEY_PREFIX` / scan pattern. KHÔNG ghi `REDIS_URL` nguyên
+  bản, userinfo, password, token vào README hoặc raw artifact.
 
-Run config: `PLAYERS=___ SPECTATORS=___ HOLD=___`, commit `______`.
+### Raw artifacts bắt buộc (để bất kỳ tiêu chí nào ở trên đều có thể recalculate/audit lại):
 
-| Metric                          | Value | Ngưỡng (Threshold)    | Kết quả (Pass/Fail) |
-| ------------------------------- | ----- | --------------------- | ------------------- |
-| Peak concurrent WS              |       | -                     | -                   |
-| answer latency p50 / p95 / p99  |       | p95 < 1s, p99 < 2.5s  |                     |
-| Messages / sec (peak)           |       | -                     | -                   |
-| Error rate                      |       | < 1%                  |                     |
-| Disconnect / connect errors     |       | < 1%                  |                     |
-| API CPU % / RSS (peak)          |       | CPU < 80%, RSS < 500M |                     |
-| Redis `match:state:*` peak keys |       | Phải dọn dẹp sạch     |                     |
-| Redis `connected_clients` peak  |       | -                     | -                   |
-| Round tick duration (typ.)      |       | -                     | -                   |
+- `load-test/results/<scenario>-<commit>-<ts>.json` — k6 `--summary-export` raw.
+- `load-test/results/<scenario>-<commit>-<ts>.cpu.jsonl` — CPU/RSS JSONL
+  (mỗi dòng: `ts`, `cpu`, `rssBytes`, `totalMemBytes`, `roomCount`, optional `error`).
+- `load-test/results/<scenario>-<commit>-<ts>.redis.jsonl` — Redis JSONL
+  (mỗi dòng: `ts`, `usedMemoryBytes`, `connectedClients`, `keyCount`,
+  `pattern`, `db`, `redisUrl` đã redacted).
+- Validator chạy `scripts/validate-results.mjs` xuất
+  `load-test/results/<scenario>-<commit>-<ts>.report.json` +
+  `<scenario>-<commit>-<ts>.report.md` (pass/fail + anchor timestamps).
+
+Mọi giá trị p95/peak/delta trong bảng "Baseline results" PHẢI truy
+ngược được về raw artifact (đường dẫn + số dòng / timestamp).
+
+| Metric                                            | Value | Ngưỡng (Threshold)             | Kết quả (Pass/Fail) |
+| ------------------------------------------------- | ----- | ------------------------------ | ------------------- |
+| Peak concurrent WS                                |       | -                              | -                   |
+| answer latency p50 / p95 / p99                    |       | p95 < 1s, p99 < 2.5s           |                     |
+| Messages / sec (peak)                             |       | -                              | -                   |
+| Error rate                                        |       | < 1%                           |                     |
+| Disconnect rate (unexpected / ws_connect_success) |       | < 1%                           |                     |
+| API CPU % / RSS (peak)                            |       | CPU < 80% (1 core), RSS < 500M |                     |
+| Redis `match:state:*` peak keys                   |       | Phải dọn dẹp sạch              |                     |
+| Redis `usedMemoryBytes` delta                     |       | ≤ +10% (pre→end)               |                     |
+| Readiness barrier (AUTHENTICATED)                 |       | 100 VU < 2\*HOLD               |                     |
+| Steady-state samples (CPU)                        |       | n_steady ≥ 20                  |                     |
 
 ### P2 conclusion — spectator transport split? ← fill after a run
 

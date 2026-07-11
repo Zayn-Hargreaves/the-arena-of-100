@@ -41,7 +41,7 @@ Chỉ thêm code trong `apps/web/src/app/[locale]/admin/` + component/hook FE. K
 
 ## File dự kiến
 
-```
+```text
 apps/web/src/app/[locale]/admin/
   audit/page.tsx            # hoặc tab trong page.tsx hiện có
 apps/web/src/hooks/
@@ -58,6 +58,16 @@ apps/web/src/lib/api/
 - [ ] Panel liệt kê audit events, phân trang chạy đúng với backend.
 - [ ] Filter theo action + thời gian + room hoạt động.
 - [ ] Test FE pass; type FE khớp DTO backend.
+- [ ] **Authorization coverage** (FE-only — phù hợp với phạm vi Track B là `apps/web/src/app/[locale]/admin/`):
+  - **Frontend route guard** (`apps/web/src/app/[locale]/admin/page.tsx` và trang audit mới thêm): user không phải `ADMIN` bị chặn ngay tại UI (không gọi API, render "ACCESS DENIED" hoặc redirect). Có component test xác nhận guard kích hoạt đúng với `userRole !== "ADMIN"`.
+  - **Backend / API authorization** là **pre-existing dependency, NGOÀI scope Track B**. Track B KHÔNG yêu cầu thêm test backend, KHÔNG sửa `apps/api`. Bằng chứng hiện có (chỉ mang tính tham chiếu, không phải deliverable của Track B):
+    - Global guards: `JwtAuthGuard` + `RolesGuard` đăng ký ở `apps/api/src/app.module.ts:69-84`.
+    - Controller-level guard: `@Roles(Role.ADMIN)` ở `apps/api/src/modules/admin/admin.controller.ts:48-49`.
+    - Tests contract/validation đã có:
+      - `apps/api/src/modules/admin/admin.controller.spec.ts` (delegation + validation).
+      - `apps/api/src/modules/admin/admin.service.spec.ts` (filter forwarding).
+      - `apps/api/src/modules/admin/dto/get-audit-events.dto.spec.ts` (DTO validation).
+  - Nếu muốn bổ sung test auth-rejection cho `GET /admin/audit-events` (401/403 tuỳ `RolesGuard`), mở một Track API riêng; không chặn Track B.
 
 ## Rủi ro
 

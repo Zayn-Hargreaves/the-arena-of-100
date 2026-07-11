@@ -25,6 +25,8 @@ export const setupErrors = new Counter("setup_flow_errors"); // auth/join handsh
 export const serverErrors = new Counter("server_error_events"); // ServerEvent.ERROR frames
 export const wsConnectErrors = new Counter("ws_connect_errors");
 export const wsDisconnectErrors = new Counter("ws_disconnect_errors");
+export const wsConnectSuccess = new Counter("ws_connect_success");
+export const wsUnexpectedDisconnect = new Counter("ws_unexpected_disconnect");
 
 // App-level error rate: false on each successful handshake step, true on
 // each failure. Threshold target is config.errorRateMax (Plan A: < 1%).
