@@ -58,6 +58,28 @@ apps/web/src/lib/api/
 - [ ] Panel liệt kê audit events, phân trang chạy đúng với backend.
 - [ ] Filter theo action + thời gian + room hoạt động.
 - [ ] Test FE pass; type FE khớp DTO backend.
+- [ ] **Pre-edit impact analysis (required, every symbol Track B will add or modify)**:
+  - Track B touches the FE admin area. Run `gitnexus_impact({direction: "upstream"})` for **every** function, class, or method that will be added or modified — NOT only the existing `AdminPage`. The minimum set (recorded here; expand if a new symbol is added):
+    - `apps/web/src/app/[locale]/admin/page.tsx:AdminPage` (existing route guard — pre-existing symbol).
+    - `apps/web/src/app/[locale]/admin/audit/page.tsx` (new — `AuditPage` if introduced, otherwise the page export; new in Track B).
+    - `apps/web/src/hooks/use-audit-events.ts` (new — `useAuditEvents`; new in Track B).
+    - `apps/web/src/lib/api/audit.ts` (new — `getAuditEvents` and any sibling request helpers; new in Track B).
+    - `apps/web/src/components/admin/audit-table.tsx` (new — `AuditTable`; new in Track B).
+    - `apps/web/src/components/admin/audit-filters.tsx` (new — `AuditFilters`; new in Track B).
+  - For each symbol, record: **direct callers** (split into `pre-existing callers` and `callers introduced by this change set`), **affected processes** (full list, not abbreviated), **risk level**. The recorded result for each symbol must be the **complete** upstream set the index returns, not a partial summary — the PR description and the Plan update must show the full list of direct callers and the full list of affected processes so the next agent can re-verify.
+  - **Callers introduced by this change set** (per-symbol, recorded explicitly):
+    - `AuditPage` (`apps/web/src/app/[locale]/admin/audit/page.tsx`): introduced by this change set. When wired, its direct callers include any in-PR composition root that mounts the page (e.g. `apps/web/src/app/[locale]/admin/layout.tsx` or a route entry) and any test that imports it. Record these as `callers introduced by this change set`; do NOT classify them as `pre-existing-by-construction`.
+    - `useAuditEvents` (`apps/web/src/hooks/use-audit-events.ts`): introduced by this change set. When wired, its direct callers include `AuditPage` and any FE component that calls the hook. These are also `callers introduced by this change set`, not pre-existing.
+    - `getAuditEvents` (`apps/web/src/lib/api/audit.ts`): introduced by this change set. Its direct callers include `useAuditEvents` and any sibling helper. `callers introduced by this change set`.
+    - `AuditTable` (`apps/web/src/components/admin/audit-table.tsx`): introduced by this change set. Direct callers include `AuditPage` (and any test). `callers introduced by this change set`.
+    - `AuditFilters` (`apps/web/src/components/admin/audit-filters.tsx`): introduced by this change set. Direct callers include `AuditPage` (and any test). `callers introduced by this change set`.
+    - The internal relationship graph (e.g. `AuditPage → useAuditEvents → getAuditEvents`, `AuditPage → AuditTable`, `AuditPage → AuditFilters`) is the expected composition and is part of the change set, not a pre-existing property of the codebase.
+  - **STOP conditions** (any of the following):
+    - Risk is `HIGH` or `CRITICAL` (e.g. changing `AdminPage` breaks an existing route other than the admin guard).
+    - Blast radius (sum of pre-existing + new direct callers across the matrix, or affected processes) exceeds the planned Track B scope (i.e. the change reaches outside `apps/web/src/app/[locale]/admin/` + `apps/web/src/hooks/use-audit-events.ts` + `apps/web/src/lib/api/audit.ts` + `apps/web/src/components/admin/`).
+  - **NOT a STOP**: a non-zero count of pre-existing direct callers on a single existing symbol (e.g. `AdminPage` had N pre-existing callers in the index). That is informational only — review it, but proceed if the risk is `LOW` / `MEDIUM` and the change is bounded to the route guard.
+  - **Index freshness**: if the index reports a symbol as missing, run `npx gitnexus analyze` and re-run `gitnexus_impact`. Do not record `LOW` from a missing symbol; record `UNKNOWN` and apply the STOP rule.
+  - **Bounded-scope shortcut (consistency note)**: an implementer MAY use the shortcut "only the existing `AdminPage` route guard is modified" **only when** none of the new Track B symbols above are introduced in the same change set. If the PR adds `AuditPage` / `useAuditEvents` / `getAuditEvents` / `AuditTable` / `AuditFilters`, the per-symbol matrix above MUST be run for those symbols and the full caller / process lists MUST be recorded. The shortcut is recorded in the PR description so reviewers see the explicit scope statement.
 - [ ] **Authorization coverage** (FE-only — phù hợp với phạm vi Track B là `apps/web/src/app/[locale]/admin/`):
   - **Frontend route guard** (`apps/web/src/app/[locale]/admin/page.tsx` và trang audit mới thêm): user không phải `ADMIN` bị chặn ngay tại UI (không gọi API, render "ACCESS DENIED" hoặc redirect). Có component test xác nhận guard kích hoạt đúng với `userRole !== "ADMIN"`.
   - **Backend / API authorization** là **pre-existing dependency, NGOÀI scope Track B**. Track B KHÔNG yêu cầu thêm test backend, KHÔNG sửa `apps/api`. Bằng chứng hiện có (chỉ mang tính tham chiếu, không phải deliverable của Track B):

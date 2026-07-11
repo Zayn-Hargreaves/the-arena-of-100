@@ -27,6 +27,9 @@ on:
       hold:
         description: "HOLD (steady-state duration, e.g. 4m)"
         default: "4m"
+      ramp_up:
+        description: "RAMP_UP (ramp window added to HOLD for sampler coverage, e.g. 30s)"
+        default: "30s"
 
 env:
   CI_DB_USER: arena_test
@@ -160,18 +163,22 @@ jobs:
           OUT_DIR: load-test/results
           OUT_NAME: ${{ steps.meta.outputs.out_name }}
           SCENARIO: ${{ inputs.scenario }}
+          HOLD: ${{ inputs.hold }}
+          RAMP_UP: ${{ inputs.ramp_up }}
         run: |
           mkdir -p load-test/results
           # Add a generous window on top of HOLD so the sampler
-          # covers ramp + steady-state + cleanup.
-          HOLD="${{ inputs.hold }}"; \
-          RAMP="${{ inputs.RAMP_UP || '30s' }}"; \
+          # covers ramp + steady-state + cleanup. HOLD and RAMP_UP
+          # are workflow inputs promoted to env above (never
+          # interpolate ${{ inputs.* }} inside the shell script —
+          # that path is parsed before the runner has a chance to
+          # reject undefined inputs).
           to_sec() { case "$1" in *s) echo "${1%s}";;
                                      *m) echo "$((${1%m}*60))";;
                                      *h) echo "$((${1%h}*3600))";;
                                      *)  echo "$1";; esac; }; \
-          TOTAL=$(($(to_sec "$HOLD") + $(to_sec "$RAMP") + 120)); \
-          echo "Sampler duration=${TOTAL}s"; \
+          TOTAL=$(($(to_sec "$HOLD") + $(to_sec "$RAMP_UP") + 120)); \
+          echo "Sampler duration=${TOTAL}s (HOLD=${HOLD}, RAMP_UP=${RAMP_UP})"; \
           nohup node load-test/scripts/sample-monitoring.mjs \
             --scenario "$SCENARIO" \
             --duration "${TOTAL}s" \
@@ -251,10 +258,22 @@ jobs:
           HOLD: ${{ inputs.hold }}
           PLAYERS: ${{ inputs.players }}
           SPECTATORS: ${{ inputs.spectators }}
+          READINESS_RUN_ID: ${{ steps.meta.outputs.scenario }}-${{ steps.meta.outputs.ts }}
+          COORDINATOR_URL: http://127.0.0.1:7171
         run: |
-          node - <<NODE
+          # Quote the heredoc delimiter ('NODE') so bash performs
+          # NO parameter / arithmetic / command substitution on the
+          # body. With an unquoted delimiter (e.g. `<<NODE`) bash
+          # would expand `${...}` (template literals, JS template
+          # strings, regex repetition like `${1+}`) and `$VAR`
+          # references BEFORE Node ever sees the script, silently
+          # corrupting regex character classes, error messages, and
+          # any path-with-interpolation. Quoting preserves the
+          # script byte-for-byte.
+          node - <<'NODE'
           const fs = require('fs');
           const path = require('path');
+          const http = require('http');
           const outName = process.env.OUT_NAME;
           const dir = 'load-test/results';
           // Parse a duration string in the same shapes k6 accepts:
@@ -282,33 +301,116 @@ jobs:
           // Expected match:state:* keys per scenario.
           const expected =
             process.env.SCENARIO === 'smoke' ? 0 : 1;
-          const manifest = {
-            name: outName,
-            scenario: process.env.SCENARIO,
-            thresholds: {
-              errorRateMax: 0.01,
-              latencyP95Ms: 1000,
-              latencyP99Ms: 2500,
-              disconnectMax: 0.01,
-              cpuPeakMax: 80,
-              cpuP95Max: 70,
-              rssPeakMaxMb: 500,
-              rssDeltaMaxMb: 50,
-              redisMemDeltaMaxPct: 10,
-            },
-            steadyState: {
-              holdMinSeconds: holdMin,
-              startTs: null,
-              endTs: null,
-            },
-            expectedRedisKeys: expected,
-            k6Summary: path.join(dir, outName + '.k6.json'),
-            cpuJsonl: path.join(dir, outName + '.cpu.jsonl'),
-            redisJsonl: path.join(dir, outName + '.redis.jsonl'),
-            anchorJson: path.join(dir, outName + '.anchor.json'),
-            readiness: { ready: false, size: 0, target: 1 + Number(process.env.PLAYERS) + Number(process.env.SPECTATORS) },
-          };
-          fs.writeFileSync(path.join(dir, outName + '.manifest.json'), JSON.stringify(manifest, null, 2));
+
+          // Readiness report: query the coordinator for size/missing.
+          // Target = 1 host + PLAYERS + SPECTATORS (matches what the
+          // k6 scenarios seed). The 2*HOLD deadline is the
+          // fail-closed contract the validator (validate-results.mjs)
+          // checks: achievedAt must be inside that window or the
+          // readiness gate fails.
+          const target = 1 + Number(process.env.PLAYERS) + Number(process.env.SPECTATORS);
+          const runId = process.env.READINESS_RUN_ID;
+          const coordinatorUrl = process.env.COORDINATOR_URL;
+          const deadlineAt = new Date(Date.now() + 2 * holdSec * 1000).toISOString();
+
+          function fetchJson(urlPath) {
+            return new Promise((resolve) => {
+              const url = new URL(urlPath, coordinatorUrl);
+              const req = http.get(url, (res) => {
+                const chunks = [];
+                res.on('data', (c) => chunks.push(c));
+                res.on('end', () => {
+                  const body = Buffer.concat(chunks).toString('utf8');
+                  let parsed = null;
+                  try { parsed = JSON.parse(body); } catch (_) { /* keep null */ }
+                  resolve({ status: res.statusCode || 0, body: parsed, raw: body });
+                });
+              });
+              req.on('error', (err) => resolve({ status: 0, body: null, raw: '', error: String(err.message || err) }));
+              req.setTimeout(2000, () => { req.destroy(new Error('timeout')); });
+            });
+          }
+
+          (async () => {
+            let countReport = null;
+            let missingReport = null;
+            let fetchError = null;
+            try {
+              // String concatenation (matches the `path.join` style
+              // used below) for the URL path. Template literals
+              // would also work because the heredoc delimiter is
+              // quoted — we use concat for consistency with the
+              // surrounding `outName + '.json'` pattern.
+              const countPath = '/count/' + encodeURIComponent(runId) + '?target=' + target;
+              const missingPath = '/missing/' + encodeURIComponent(runId) + '?target=' + target;
+              [countReport, missingReport] = await Promise.all([
+                fetchJson(countPath),
+                fetchJson(missingPath),
+              ]);
+            } catch (e) {
+              fetchError = String(e.message || e);
+            }
+
+            const size = countReport && countReport.body && typeof countReport.body.size === 'number'
+              ? countReport.body.size
+              : 0;
+            const reportedTarget = countReport && countReport.body && typeof countReport.body.target === 'number'
+              ? countReport.body.target
+              : target;
+            const missing = missingReport && missingReport.body && Array.isArray(missingReport.body.missing)
+              ? missingReport.body.missing
+              : [];
+            const ready = !fetchError
+              && countReport && countReport.status === 200
+              && missingReport && missingReport.status === 200
+              && size === reportedTarget
+              && missing.length === 0;
+            const achievedAt = ready ? new Date().toISOString() : null;
+
+            const manifest = {
+              name: outName,
+              scenario: process.env.SCENARIO,
+              thresholds: {
+                errorRateMax: 0.01,
+                latencyP95Ms: 1000,
+                latencyP99Ms: 2500,
+                disconnectMax: 0.01,
+                cpuPeakMax: 80,
+                cpuP95Max: 70,
+                rssPeakMaxMb: 500,
+                rssDeltaMaxMb: 50,
+                redisMemDeltaMaxPct: 10,
+              },
+              steadyState: {
+                holdMinSeconds: holdMin,
+                startTs: null,
+                endTs: null,
+              },
+              expectedRedisKeys: expected,
+              k6Summary: path.join(dir, outName + '.k6.json'),
+              cpuJsonl: path.join(dir, outName + '.cpu.jsonl'),
+              redisJsonl: path.join(dir, outName + '.redis.jsonl'),
+              anchorJson: path.join(dir, outName + '.anchor.json'),
+              readiness: {
+                ready,
+                size,
+                target: reportedTarget,
+                achievedAt,
+                deadlineAt,
+                missing,
+                // Preserve the actual coordinator responses for
+                // debugging and for the validator's "raw" check.
+                report: {
+                  runId,
+                  coordinatorUrl,
+                  count: countReport ? { status: countReport.status, body: countReport.body } : null,
+                  missingReport: missingReport ? { status: missingReport.status, body: missingReport.body } : null,
+                  error: fetchError,
+                },
+              },
+            };
+            fs.writeFileSync(path.join(dir, outName + '.manifest.json'), JSON.stringify(manifest, null, 2));
+          })();
           NODE
 
       - name: Validate results

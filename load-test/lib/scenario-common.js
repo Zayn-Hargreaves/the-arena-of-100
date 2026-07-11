@@ -75,6 +75,11 @@ export function spectator(data) {
   return spectatorFlow({
     token: acct.token,
     roomCode: data.roomCode,
+    // Pass the VU identifier so spectatorFlow can forward it to
+    // handshake() and the coordinator readiness report. Without
+    // this, the readiness barrier would undercount spectators and
+    // fail the manifest gate (size < target).
+    vu: uid,
     lifetimeMs: config.lifetimeMs,
   });
 }
