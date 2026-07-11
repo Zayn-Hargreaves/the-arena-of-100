@@ -87,11 +87,12 @@ Cùng đụng `packages/game-core/src/match-state-machine.ts` và `apps/web/src/
 
   - Quy ước cứng: `mode === "full"` PHẢI có `snapshot` và KHÔNG có `events`; `mode === "delta"` PHẢI có `events` (cho phép mảng rỗng) và KHÔNG có `snapshot`. Cả hai variants PHẢI có `lastEventSeqNo`. Tất cả nested object (`snapshot.players`, `snapshot.currentQuestion`, event-metadata fields, v.v.) cũng PHẢI dùng `.strict()` — unknown field ở bất kỳ cấp nào ⇒ reject (không silently fall-back). **Ngoại lệ duy nhất**: `events[*].payload` vẫn là `z.unknown()` (xem `EventItemSchema` ở trên). Nếu sau này một payload trở thành discriminated, cây con đó phải tự `.strict()` rõ ràng.
   - **Empty event log (chốt rõ — phân biệt client mới vs client đã hydrate)**:
-    - **Client mới (chưa hydrate, không gửi `replayCursor`, không kèm capability flag hoặc gửi capability flag lần đầu)**: handler KHÔNG dùng `getDelta`. Handler gọi `getSnapshot(0)` và trả **raw full snapshot** (client cũ) HOẶC envelope `mode: "full"` (client mới gửi capability flag) — cả hai đều là full snapshot. Đây là hợp đồng "client mới phải nhận full snapshot" bất kể eventLog rỗng hay không.
+    - **Client chưa hydrate (khi `replayCursor` vắng mặt/absent — bao gồm cả client cũ không gửi capability flag và client mới gửi flag lần đầu)**: handler KHÔNG dùng `getDelta`. Handler gọi `getSnapshot(0)` và trả **raw full snapshot** (client cũ) HOẶC envelope `mode: "full"` (client mới gửi capability flag) làm hành vi initial full snapshot. Không thực hiện validation hay ghi log cảnh báo vì cursor vắng mặt. Đây là hợp đồng "client chưa hydrate phải nhận full snapshot" bất kể eventLog rỗng hay không.
+    - **Client gửi `replayCursor` nhưng bị lỗi/không hợp lệ (field có mặt nhưng verify thất bại — như sai chữ ký, sai match, hoặc token hết hạn)**: handler **luôn** kiểm tra chữ ký, match, và expiry của cursor. Khi xác thực thất bại, handler phải trả envelope `mode: "full"` (full snapshot) cùng với warning log ghi chi tiết lỗi xác thực, thay vì đối xử như một client kết nối lần đầu (không silent fallback).
     - **Client đã hydrate hợp lệ tại cursor 0** (gửi `replayCursor` hợp lệ với `seqNo === 0`, server verify chữ ký + match ok, `latestSeqNo === 0`, `eventLog` rỗng): handler trả envelope `mode: "delta"` với `events: []` và `lastEventSeqNo: 0` (delta hợp lệ, rỗng). KHÔNG ép full snapshot trong trường hợp này.
     - **Cursor tương lai (`replayCursor.seqNo > latestSeqNo`, kể cả khi `latestSeqNo === 0` mà token cũng `seqNo === 0` thì hợp lệ — chỉ khi `> 0`)**: handler fallback full + log cảnh báo (xem "Cursor sai match fallback" trong Phase D2).
     - **Log bị cắt (`replayCursor.seqNo < firstEventSeqNo - 1`, tức `latestSeqNo > 0` mà cursor quá cũ)**: handler fallback full + log cảnh báo.
-    - Một match chưa có event nào với **client đã hydrate hợp lệ tại cursor 0** vẫn phải trả envelope delta hợp lệ (rỗng). Đây là test case bắt buộc (xem "Test cho match chưa có event nào" trong Phase D4). Và **client mới** cho cùng match đó phải nhận full snapshot — đây là test case bắt buộc thứ hai.
+    - Một match chưa có event nào với **client đã hydrate hợp lệ tại cursor 0** vẫn phải trả envelope delta hợp lệ (rỗng). Đây là test case bắt buộc (xem "Test cho match chưa có event nào" trong Phase D4). Và **client chưa hydrate** cho cùng match đó phải nhận full snapshot — đây là test case bắt buộc thứ hai.
 
 - [ ] **Parser/client handling rõ ràng** (cập nhật socket-store FE):
   - Trong `apps/web/src/stores/socket-store.ts` (`ServerEvent.SNAPSHOT` handler) và `socket-store.updaters.ts:447-477`, **unwrap envelope trước** khi gọi `applySnapshotState`. Hàm `applySnapshotState` tiếp tục nhận raw shape để giữ ổn định.
@@ -104,21 +105,22 @@ Cùng đụng `packages/game-core/src/match-state-machine.ts` và `apps/web/src/
   - Nếu `payload.matchId` không resolve được state machine ⇒ reject với `MATCH_NOT_FOUND` (đã có); không rơi vào fallback "trả full snapshot từ state machine khác".
 - [ ] **Backward-compat — chuẩn hóa ba nhánh client trong `MatchHandler.handleRequestSnapshot`**:
   - **Nhánh 1 — Client cũ (request KHÔNG kèm capability flag)**: gọi `getSnapshot(0)` và emit **raw full snapshot** (giữ nguyên `SnapshotPayload` cũ — KHÔNG có field `mode`/`replayCursor`). Đây là wire contract cũ; client cũ không parse envelope.
-  - **Nhánh 2 — Client mới (request CÓ capability flag nhưng KHÔNG có `replayCursor` hợp lệ — lần đầu, hoặc cursor bị mất/hỏng)**: gọi `getSnapshot(0)` và emit **envelope `mode: "full"`** (`SnapshotFullSchema`, gồm `snapshot`, `lastEventSeqNo`, `replayCursor` mới). Server vẫn phát `replayCursor` mới ở đây để client echo lại ở lần reconnect kế tiếp.
-  - **Nhánh 3 — Client mới (request CÓ capability flag VÀ CÓ `replayCursor` hợp lệ)**:
-    - Verify `replayCursor` (schema, chữ ký HMAC, khớp `matchId` của match đã resolve, và chưa hết hạn `expiresAt`).
-    - Verify fail ⇒ fallback full envelope (`mode: "full"`) + log cảnh báo. RETURN.
-    - Đọc `eventLog` để lấy `firstEventSeqNo` và `latestSeqNo`.
+  - **Nhánh 2 — Client mới (request CÓ capability flag nhưng `replayCursor` vắng mặt/absent — lần đầu)**: gọi `getSnapshot(0)` và emit **envelope `mode: "full"`** (`SnapshotFullSchema`, gồm `snapshot`, `lastEventSeqNo`, `replayCursor` mới). Server vẫn phát `replayCursor` mới ở đây để client echo lại ở lần reconnect kế tiếp. Không thực hiện validation hay ghi log cảnh báo.
+  - **Nhánh 3 — Client mới (request CÓ capability flag VÀ CÓ `replayCursor` (field có mặt))**:
+    - Thực hiện xác thực `replayCursor` (kiểm tra schema, chữ ký HMAC, khớp `matchId` của match đã resolve, và chưa hết hạn `expiresAt`).
+    - Nếu xác thực thất bại (signature fail, matchId mismatch, hoặc token hết hạn): **luôn** trả về full envelope (`mode: "full"`) kèm newly issued valid `replayCursor` (được bound vào resolved match), cùng với warning log chi tiết, phân biệt rõ với trường hợp cursor vắng mặt (không đối xử như client kết nối lần đầu và không trả về/omitting token cũ không hợp lệ). RETURN.
+    - Nếu xác thực thành công: đọc `eventLog` để lấy `firstEventSeqNo` và `latestSeqNo`.
     - Thực hiện các kiểm tra replayability (future-cursor `seqNo > latestSeqNo`, truncated-log `seqNo < firstEventSeqNo - 1`, và gap checks).
-    - Nếu vi phạm bất kỳ kiểm tra nào trong các kiểm tra trên ⇒ fallback full envelope (`mode: "full"`) + log cảnh báo. RETURN. (Ngoại lệ: trường hợp empty-eventLog carve-out cho phép replay delta rỗng nếu `eventLog.length === 0` AND `replayCursor.seqNo === 0` AND `latestSeqNo === 0`).
+    - Nếu vi phạm bất kỳ kiểm tra nào trong các kiểm tra trên ⇒ fallback full envelope (`mode: "full"`) + log cảnh báo (không cần warning log bảo mật nếu xác thực cursor đã thành công nhưng dữ liệu log không khả dụng). RETURN. (Ngoại lệ: trường hợp empty-eventLog carve-out cho phép replay delta rỗng nếu `eventLog.length === 0` AND `replayCursor.seqNo === 0` AND `latestSeqNo === 0`).
     - Nếu hợp lệ ⇒ emit envelope `mode: "delta"` với `events` (kể cả rỗng) và `replayCursor` mới.
   - Ba nhánh là tách biệt, không dùng chung wire shape. Client cũ nhận raw; client mới luôn nhận envelope.
 - [ ] **Quy tắc fallback** (cập nhật điều kiện, đồng bộ với "Empty event log" và "Fallback ownership"): chỉ trả full snapshot khi MỘT TRONG các trường hợp sau xảy ra ở handler (`MatchHandler.handleRequestSnapshot`):
-  - Client mới: request không có `replayCursor` hợp lệ và không có capability flag ⇒ gọi `getSnapshot(0)` và trả **raw full snapshot** (client cũ) hoặc envelope `mode: "full"` (client mới có capability flag). Bắt buộc bất kể eventLog rỗng hay không — xem "Client mới" trong "Empty event log".
+  - Legacy client: request không có capability flag ⇒ gọi `getSnapshot(0)` và trả **raw full snapshot** (không validate hay ghi warning log).
+  - Capable client với `replayCursor` vắng mặt/absent: request có capability flag nhưng không có `replayCursor` ⇒ gọi `getSnapshot(0)` và trả envelope `mode: "full"` chứa newly issued valid `replayCursor` (không validate hay ghi warning log).
+  - `replayCursor` có mặt nhưng xác thực thất bại (signature fail, `matchId` trong token không khớp match đã resolve, hoặc token hết hạn) — match identity xác định qua `payload.matchId`/room, KHÔNG qua seqNo. Trong trường hợp này, **luôn** trả về full envelope (`mode: "full"`) kèm theo newly issued valid `replayCursor` (được bound vào resolved match) và warning log chi tiết, không đối xử như client kết nối lần đầu (xử lý riêng biệt với warning log).
   - `replayCursor.seqNo` vượt quá `latestSeqNo` (cursor tương lai/gap ngược), HOẶC
   - `replayCursor.seqNo` nhỏ hơn `firstEventSeqNo - 1` (log bị cắt), HOẶC
   - Phát hiện gap bất thường (seqNo trong eventLog không liên tục), HOẶC
-  - Cursor sai match (signature fail / `matchId` trong token không khớp match đã resolve / token hết hạn) — match identity xác định qua `payload.matchId`/room, KHÔNG qua seqNo.
   - **KHÔNG fallback full** trong trường hợp sau (đây là rule bắt buộc để không mâu thuẫn với "Empty event log"):
     - Client đã hydrate hợp lệ tại cursor 0 (gửi `replayCursor` hợp lệ với `seqNo === 0`, server verify chữ ký + match ok, `latestSeqNo === 0`, `eventLog` rỗng) ⇒ handler trả envelope `mode: "delta"` với `events: []` và `lastEventSeqNo: 0`. KHÔNG fallback full.
   - Lưu ý: trường hợp `replayCursor.seqNo = 9` và `eventLog[0].seqNo = 10` (client đã thấy tới seq 9, log bắt đầu từ 10) vẫn replay được: server trả delta các event có `seqNo > 9` (tức từ 10 trở đi). KHÔNG ép full fallback trong trường hợp này.
@@ -167,9 +169,9 @@ Cùng đụng `packages/game-core/src/match-state-machine.ts` và `apps/web/src/
     2. Resolve match identity qua `payload.matchId` + room membership (KHÔNG dùng seqNo cho match identity).
     3. **Phân nhánh client theo ba nhánh của "Backward-compat"**:
        - **Nhánh 1** (client cũ, không capability flag) ⇒ gọi `getSnapshot(0)`, emit raw full snapshot. RETURN.
-       - **Nhánh 2** (client mới có capability flag nhưng KHÔNG có `replayCursor` hợp lệ) ⇒ gọi `getSnapshot(0)`, emit envelope `mode: "full"` với `replayCursor` mới. RETURN.
-       - **Nhánh 3** (client mới có capability flag VÀ CÓ `replayCursor` hợp lệ) ⇒ tiếp tục bước 4.
-    4. Verify `replayCursor` (schema + chữ ký HMAC + match identity + chưa hết hạn `expiresAt`). Sai bất kỳ mục nào ⇒ fallback full envelope (`mode: "full"`) + log cảnh báo. RETURN.
+       - **Nhánh 2** (client mới có capability flag nhưng `replayCursor` vắng mặt/absent) ⇒ gọi `getSnapshot(0)`, emit envelope `mode: "full"` với `replayCursor` mới. RETURN.
+       - **Nhánh 3** (client mới có capability flag VÀ CÓ `replayCursor` (field có mặt)) ⇒ tiếp tục bước 4.
+    4. Thực hiện xác thực `replayCursor` (schema + chữ ký HMAC + match identity + chưa hết hạn `expiresAt`). Nếu xác thực thất bại (sai bất kỳ mục nào) ⇒ fallback full envelope (`mode: "full"`) kèm newly issued valid `replayCursor` (được bound vào resolved match) và warning log chi tiết (không đối xử như client kết nối lần đầu). RETURN.
     5. Đọc `eventLog` để xác định `eventLog.length`, `firstEventSeqNo`, và `latestSeqNo` (dùng trực tiếp từ `eventLog`, không qua `getDelta`).
     6. **Empty-eventLog carve-out (Ngoại lệ hóa điều kiện eventLog rỗng)**: nếu `eventLog.length === 0` AND `replayCursor` đã verify ở bước 4 AND `replayCursor.seqNo === 0` AND `latestSeqNo === 0` ⇒ handler emit envelope `mode: "delta"` với `events: []` và `lastEventSeqNo: 0`. KHÔNG fallback full. Đây là trường hợp "match chưa có event nào, client đã hydrate hợp lệ tại cursor 0". RETURN.
     7. **Kiểm tra replayability (future-cursor, truncated-log, và gap checks)**:
@@ -232,11 +234,12 @@ Cùng đụng `packages/game-core/src/match-state-machine.ts` và `apps/web/src/
 ### Phase D4 — Test & chốt
 
 - [ ] Unit game-core: `getDelta` trả đúng tập event sau mốc. KHÔNG throw trong bất kỳ trường hợp cursor không hợp lệ nào — trả `events: []` cho: (1) `inputSeqNo > latestSeqNo` (cursor tương lai), (2) `inputSeqNo < firstEventSeqNo - 1` (log bị cắt), (3) `inputSeqNo === latestSeqNo === 0` + eventLog rỗng (client đã hydrate hợp lệ tại cursor 0). KHÔNG có test fallback full ở `getDelta` (fallback là việc của handler, xem "Fallback ownership" trong Phase D2).
-- [ ] Handler test: reconnect với client cũ & mới, bao phủ cả phản hồi full và delta. Thêm test bao phủ từng trường hợp fallback (eventLog rỗng + client mới ⇒ full, `replayCursor` sai match, `replayCursor.seqNo > latestSeqNo`, gap giữa các seqNo, log bị cắt) và xác nhận response mode là full. Test mode assertion ở handler, không ở `getDelta`.
+- [ ] Handler test: reconnect với client cũ & mới, bao phủ cả phản hồi full và delta. Thêm test bao phủ từng trường hợp fallback (eventLog rỗng + client mới ⇒ full, `replayCursor` sai match, `replayCursor.seqNo > latestSeqNo`, gap giữa các seqNo, log bị cắt) và xác nhận response mode là full. Assert rằng mọi fallback full envelope dành cho capable client luôn chứa newly issued valid `replayCursor`. Test mode assertion ở handler, không ở `getDelta`.
 - [ ] **Test cho match chưa có event nào, phân biệt hai client**:
-  - **Client mới (lần đầu, không có `replayCursor` hoặc capability flag mới)**: handler phải trả **full snapshot** (raw với client cũ, envelope `mode: "full"` với client mới có capability flag). KHÔNG trả delta.
+  - **Client mới (lần đầu, `replayCursor` vắng mặt hoặc không có capability flag mới)**: handler phải trả **full snapshot** (raw với client cũ, envelope `mode: "full"` với client mới có capability flag) mà không validate hay ghi warning log. KHÔNG trả delta.
+  - **Client mới có `replayCursor` (field có mặt) nhưng xác thực thất bại**: handler phải trả envelope `mode: "full"` kèm theo warning log chi tiết và newly issued valid `replayCursor`.
   - **Client đã hydrate hợp lệ tại cursor 0** (gửi `replayCursor` hợp lệ với `seqNo === 0`, `latestSeqNo === 0`): handler phải trả envelope `mode: "delta"`, `events: []`, `lastEventSeqNo: 0` — KHÔNG fallback full.
-  - Hai test này bảo vệ contract khi eventLog rỗng.
+  - Ba test này bảo vệ contract khi eventLog rỗng hoặc cursor invalid.
 - [ ] Test client-side: empty-events branch (`socket-store.updaters.ts`) chỉ kiểm tra `envelope.lastEventSeqNo === currentLastSeenSeqNo`, KHÔNG truy cập `events[0]` / `events[last]`. Test non-empty branch với contiguous + `event.matchId === currentMatchId` (mọi event bắt buộc) + last-seqNo checks.
 - [ ] Test Redis round-trip: xác nhận serialize/rehydrate bảo toàn `seqNo` và bộ đếm `next-sequence`, khởi động lại không tạo `seqNo` trùng, và xác nhận delta replay không bỏ sót hoặc trả sai event.
 - [ ] `gitnexus_detect_changes()` xác nhận scope (kỳ vọng: `MatchStateMachine` (CRITICAL) cho `getDelta` mới, `MatchHandler.handleRequestSnapshot` (HIGH) cho handler ordering + envelope, `shared` schemas cho token + envelope, FE socket-store cho client validation); cập nhật `progress.md` (xoá "Full reconnect/event replay contract" khỏi "Not Done Yet").

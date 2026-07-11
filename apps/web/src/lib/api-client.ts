@@ -52,9 +52,11 @@ async function parseError(response: Response) {
         return raw.trim() ? raw : fallback;
       }
       if (Array.isArray(raw)) {
-        const parts = raw.filter(
-          (p): p is string => typeof p === "string" && p.trim().length > 0,
-        );
+        const parts = raw
+          .filter(
+            (p): p is string => typeof p === "string" && p.trim().length > 0,
+          )
+          .map((p) => p.trim());
         if (parts.length === raw.length && parts.length > 0) {
           return parts.join(", ");
         }

@@ -7,6 +7,10 @@ name: Load Test (k6)
 permissions:
   contents: read
 
+concurrency:
+  group: load-test
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
     inputs:
@@ -403,8 +407,8 @@ jobs:
                 report: {
                   runId,
                   coordinatorUrl,
-                  count: countReport ? { status: countReport.status, body: countReport.body } : null,
-                  missingReport: missingReport ? { status: missingReport.status, body: missingReport.body } : null,
+                  count: countReport ? { status: countReport.status, body: countReport.body, error: countReport.error || null } : null,
+                  missing: missingReport ? { status: missingReport.status, body: missingReport.body, error: missingReport.error || null } : null,
                   error: fetchError,
                 },
               },
