@@ -312,7 +312,10 @@ jobs:
           // fail-closed contract the validator (validate-results.mjs)
           // checks: achievedAt must be inside that window or the
           // readiness gate fails.
-          const target = 1 + Number(process.env.PLAYERS) + Number(process.env.SPECTATORS);
+          const target =
+            process.env.SCENARIO === 'smoke'
+              ? 2
+              : 1 + Number(process.env.PLAYERS) + Number(process.env.SPECTATORS);
           const runId = process.env.READINESS_RUN_ID;
           const coordinatorUrl = process.env.COORDINATOR_URL;
           const deadlineAt = new Date(Date.now() + 2 * holdSec * 1000).toISOString();
@@ -424,7 +427,7 @@ jobs:
         run: |
           node load-test/scripts/validate-results.mjs \
             --manifest "load-test/results/${OUT_NAME}.manifest.json" \
-            --out-dir load-test/results || true
+            --out-dir load-test/results
 
       - name: Upload results + API log
         if: always()
@@ -435,6 +438,7 @@ jobs:
             load-test/results/
             api.log
             coordinator.log
+            sampler.log
 
       - name: Stop coordinator
         if: always()

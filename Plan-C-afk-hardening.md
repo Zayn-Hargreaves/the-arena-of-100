@@ -61,16 +61,25 @@ C và D cùng đụng `match-state-machine.ts` và `socket-store.ts`. **C phải
   - Recovery path: `match-round-runner.ts:endRound` (line ~298-340) **PHẢI** xác định `eliminatedIds` dựa trên dữ liệu của **đúng round hiện tại**, KHÔNG dựa trên trạng thái tích luỹ của player. Hiện tại fallback heuristic `p.status === ELIMINATED && p.correctAnswers === round.roundNo - 1` (`match-round-runner.ts:332-339`) suy ra từ state tích luỹ, không phải round-scoped evidence — KHÔNG đủ.
   - **Vị trí logic (resolve boundary conflict)**:
     - **KHÔNG ĐƯỢC thêm public method mới vào `MatchStateMachine` ở Track C**. Scope rule Plan1 cấm tuyệt đối việc này (xem `Plan1.md`). Mọi đề xuất thêm public method phải được **escalate** (review với reviewer + Track D) trước khi thay đổi Plan1.md; mặc định là KHÔNG làm.
-    - **Phương án duy nhất được phép ở Track C**: **Shared pure helper module bên ngoài class**. Tạo helper pure (ví dụ `eliminationsForRound(round, players)` trong một module dùng chung, ví dụ `packages/game-core/src/round-elimination.ts`), không phải method của class. Helper này dựa trên `currentRound.answers` + `correctAnswer` để xác định player bị loại; **thiếu answer cũng được coi là eliminated**. `match-round-runner.ts` import helper này và gọi từ nhánh recovery.
-  - **Semantics của helper** (áp dụng cho pure helper ở trên):
-    - Input: `currentRound` (chỉ round hiện tại) + `players` đang sống trước round đó.
+    - **Shared pure helper trong game-core**: Tạo helper pure `eliminationsForRound(round)` trong một module dùng chung `packages/game-core/src/round-elimination.ts`, không phải method của class. Helper nhận `currentRound` object có kiểu `RoundState & { correctAnswer: string; startingPlayers: string[] }` và xác định correctness bằng **so sánh trực tiếp `answer.answer === currentRound.correctAnswer`** (raw string equality, giống hệt `submitAnswer` trong state machine) — **không dựa vào field `isCorrect` đã lưu** (field đó có thể chưa được populate trên recovery path). `match-round-runner.ts` và `evaluateRound()` trong state machine cùng sử dụng helper này để bảo đảm cả hai nhánh tính correctness bằng cùng một phép so sánh duy nhất.
+  - **Lưu trữ startingPlayers**:
+    - Bổ sung thuộc tính round-scoped `startingPlayers: string[]` (snapshot danh sách `survivingPlayerIds` **tại thời điểm `startRound()` được gọi**, trước mọi mutation của round) trên `currentRound`. Thuộc tính này PHẢI được serialize cùng state (trong `serializeMatch`) và PHẢI được rehydrate đầy đủ (trong `deserializeMatch`). **Migration/fail-closed**: trong `deserializeMatch`, nếu blob Redis có `currentRound` nhưng thiếu `startingPlayers` (state cũ trước khi trường này được thêm), **không được suy diễn hay mặc định** `startingPlayers` từ danh sách player hiện tại — thay vào đó đánh dấu round là không thể dùng cho recovery (`startingPlayers: null | undefined`), và recovery path trong `match-round-runner.ts` phải nhận diện trạng thái này, **bỏ qua helper-based fallback**, và fallback trực tiếp về full snapshot (fail-closed). Thêm trường `_stateVersion: number` vào serialized blob (bắt đầu từ version 1 khi `startingPlayers` được thêm) để migration future-proof; version 0 (không có trường) tương đương với trường hợp `startingPlayers` bị thiếu.
+  - **Semantics của helper**:
+    - Input: `currentRound` đầy đủ với `startingPlayers` đã được chụp snapshot hợp lệ (non-null, non-empty) và `correctAnswer` đã được attach (qua `attachCorrectAnswer`).
     - Player bị loại trong round hiện tại nếu:
-      1. Player không có entry trong `currentRound.answers` ⇒ **eliminated** (đã bao gồm AFK/disconnect-mid-round), HOẶC
-      2. Player có entry trong `currentRound.answers` nhưng `isCorrect === false` ⇒ **eliminated**.
-    - KHÔNG dùng `correctAnswers`, KHÔNG dùng `status` tích luỹ, KHÔNG dùng `eventLog` của round trước.
+      1. Player nằm trong `currentRound.startingPlayers` nhưng không có entry trong `currentRound.answers` ⇒ **eliminated** (bao gồm AFK/disconnect-mid-round), HOẶC
+      2. Player có entry trong `currentRound.answers` nhưng `answer.answer !== currentRound.correctAnswer` (so sánh raw string) ⇒ **eliminated**.
+    - KHÔNG dùng `answer.isCorrect` (có thể sai trên recovery path), KHÔNG dùng `correctAnswers` tích luỹ, KHÔNG dùng `status` tích luỹ, KHÔNG dùng `eventLog` của round trước.
   - Thứ tự ưu tiên cho recovery (cập nhật Phase C2):
-    1. **Ưu tiên 1**: đọc event `ROUND_EVALUATED` từ `eventLog` của state machine có cùng `roundNo` với round hiện tại (`match-round-runner.ts:310-330`); lấy `eliminatedIds` trực tiếp từ payload event.
-    2. **Ưu tiên 2**: nếu event không có/không hợp lệ, dùng helper theo lựa chọn ở trên (Move-to-API hoặc Shared pure helper) dựa trên `currentRound.answers` + `correctAnswer` của state machine.
+    1. **Ưu tiên 1**: đọc event `ROUND_EVALUATED` từ `eventLog` của state machine. Chỉ chấp nhận event khi **tất cả** điều kiện sau đều thoả:
+       - `e.type === "ROUND_EVALUATED"`.
+       - `e.payload` là object có `roundNo: number` và `eliminatedIds: string[]`.
+       - `(e.payload as { roundNo: number }).roundNo === currentRound.roundNo` (khớp đúng round).
+       - `eliminatedIds` là mảng (có thể rỗng), mọi phần tử là string, **không trùng lặp** (`new Set(eliminatedIds).size === eliminatedIds.length`).
+       - Mọi phần tử trong `eliminatedIds` đều thuộc `currentRound.startingPlayers` (subset check).
+       - **Bắt buộc cross-check với helper**: `eliminatedIds` từ event PHẢI khớp chính xác với kết quả `eliminationsForRound(currentRound)` (same set, same cardinality) — nếu không khớp, **loại bỏ event và dùng helper**.
+       - Nếu bất kỳ điều kiện nào thất bại ⇒ loại bỏ event, chuyển sang Ưu tiên 2.
+    2. **Ưu tiên 2**: nếu event không có/không hợp lệ hoặc không pass cross-check, dùng `eliminationsForRound(currentRound)` trực tiếp. Chỉ sử dụng helper khi `currentRound.startingPlayers` hợp lệ (non-null, non-empty) và `correctAnswer` đã được attach; nếu `startingPlayers` bị thiếu/null (state cũ không có migration) ⇒ fail-closed (xem **Migration/fail-closed** ở trên).
   - Thay thế hoàn toàn fallback dựa trên `p.correctAnswers` ở `match-round-runner.ts:332-339`; tập `eliminatedIds` cuối cùng phải **bằng đúng** tập mà `evaluateRound()` trả về trong normal flow cho cùng round đó.
   - **Bổ sung test** (cập nhật `match-round-runner.spec.ts` / `match-state-machine.spec.ts`):
     - Recovery xác nhận `eliminatedIds` chỉ gồm player bị loại trong round hiện tại (KHÔNG bao gồm player đã bị ELIMINATED ở round trước).

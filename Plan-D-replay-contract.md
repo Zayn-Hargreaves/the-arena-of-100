@@ -23,8 +23,29 @@ Cùng đụng `packages/game-core/src/match-state-machine.ts` và `apps/web/src/
 
 - [ ] `gitnexus_impact({target: "getSnapshot", direction: "upstream"})` + trace flow `handleRequestSnapshot`.
 - [ ] **Định danh client mới KHÔNG dựa vào sự hiện diện của `lastSeenSeqNo`** (client cũ cũng luôn gửi field này với giá trị 0, xem `apps/web/src/stores/socket-store.ts:620-625`). Triển khai **capability/version negotiation** hoặc một **compatibility flag** riêng trong `SNAPSHOT` request/response, ví dụ:
-  - Thêm `protocolVersion` hoặc `supports: "delta"` vào `RequestSnapshotPayloadSchema` (`packages/shared/src/schemas.ts`) và vào handler.
-  - Server đọc flag để quyết định trả raw full snapshot (client cũ) hay envelope `{ mode, ... }` (client mới).
+  - Cập nhật `RequestSnapshotPayloadSchema` thành một discriminated union rõ ràng để phân biệt legacy client (không hỗ trợ delta, không có capability flags) và capable client (có capability flags, ví dụ `supports: ["delta"]`).
+  - Thiết kế Schema cụ thể:
+    - `RequestSnapshotLegacySchema` (.strict()): chỉ cho phép `matchId` và `lastSeenSeqNo` (bắt buộc). Các trường `supports` hay `replayCursor` KHÔNG được phép xuất hiện.
+    - `RequestSnapshotCapableSchema` (.strict()): chỉ cho phép `matchId`, `supports` (mảng chứa `"delta"`), và `replayCursor` (optional). Trường `lastSeenSeqNo` KHÔNG được phép xuất hiện.
+    - **Thiết kế union tương thích Zod v3 (^3.24.x)**: không dùng `z.preprocess` bọc ngoài `z.discriminatedUnion` vì `z.preprocess` không truyền kiểu discriminant sang cây union bên trong, gây lỗi runtime. Thay vào đó dùng:
+      ```ts
+      export const RequestSnapshotPayloadSchema = z
+        .union([RequestSnapshotLegacySchema, RequestSnapshotCapableSchema])
+        .superRefine((val, ctx) => {
+          // reject mixed payloads: has both lastSeenSeqNo AND (supports|replayCursor)
+          const hasLegacy = "lastSeenSeqNo" in val;
+          const hasCapable = "supports" in val || "replayCursor" in val;
+          if (hasLegacy && hasCapable) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "mixed legacy and capable fields are not allowed",
+            });
+          }
+        });
+      ```
+      Không đưa trường phân biệt nội bộ (`clientType`) vào parsed output; handler tự suy diễn nhánh dựa trên sự hiện diện của `supports`/`replayCursor`. Kiểm chứng việc `z.union` chấp nhận `.strict()` ở cả hai member trước khi triển khai.
+    - Đảm bảo từ chối nghiêm ngặt các trường mixed hoặc unsupported, bổ sung các test bao phủ mọi tổ hợp trường không hợp lệ và kiểm chứng hành vi với phiên bản Zod được cài đặt (^3.24.x) trong repository.
+  - Đảm bảo handler có các nhánh logic phân định rõ ràng (deterministic branching) cho legacy client (trả raw full snapshot) và capable client (xác thực cursor, trả envelope full hoặc delta).
   - Cập nhật `SnapshotPayload` (`packages/shared/src/socket.ts:104-121`) + `packages/shared/src/{events,schemas}.ts` tương ứng; giữ payload snapshot raw khi `mode === "full"` để `applySnapshotState` tiếp tục hydrate đúng shape hiện có.
 - [ ] **CHỐT MỘT wire shape duy nhất cho snapshot response** (Phase D1 yêu cầu cứng, không được mơ hồ):
   - **Client cũ** (không kèm capability flag) ⇒ trả **raw full snapshot** (giữ nguyên shape `SnapshotPayload` hiện tại, KHÔNG áp dụng discriminated union cho client cũ).
@@ -57,19 +78,25 @@ Cùng đụng `packages/game-core/src/match-state-machine.ts` và `apps/web/src/
       id: z.string().min(1),
       type: z.string().min(1),
       timestamp: z.number().int().nonnegative(),
-      // `payload` is treated as opaque on the wire: replay is
-      // strictly event-metadata driven (seqNo, matchId, type). The
-      // schema therefore does NOT require events[*].payload to be
-      // `.strict()`, and the all-levels strictness rule below is
-      // documented as applying to envelope / event-metadata
-      // objects, not to nested payload shapes. If a future change
-      // makes any payload discriminated and recursive, the rule
-      // must be re-stated for that subtree only.
       payload: z.unknown(),
       seqNo: z.number().int().nonnegative(),
       // matchId PHẢI có mặt trong mỗi event (server dùng để bind với match).
       matchId: idSchema,
     }).strict();
+
+    // RATIONALE FOR METADATA GENERATION & STORAGE:
+    // Vì event-log lưu trong Redis của match state cũ có thể thiếu metadata (như id, seqNo, matchId),
+    // quá trình deserialize/rehydrate trong MatchStateMachine sẽ kiểm tra và migrate/backfill, nhưng KHÔNG bao giờ:
+    //   (a) tự động điền seqNo từ chỉ số mảng (array index) — seqNo PHẢI có sequence anchor đáng tin cậy
+    //       (giá trị `next-sequence` đã được persist trước đó hoặc counter từ state serialized);
+    //   (b) sinh `id` hay `matchId` ngẫu nhiên (random UUID mới) — ID PHẢI xác định (deterministic)
+    //       dựa trên nội dung event (hash của type + timestamp + seqNo) hoặc đã có sẵn từ blob;
+    //   (c) cho phép nhiều writer đồng thời chạy migration — phải serialize qua single-writer hoặc lock;
+    //   (d) trả delta trước khi migration commit hoàn chỉnh (persist metadata + state + next-sequence-counter
+    //       trong cùng một atomic write): nếu commit thất bại, fallback thẳng về mode "full"
+    //       mà không phát bất kỳ delta nào.
+    // Coi các log bị truncated (cắt ngắn), gapped (bị hở), reordered (sai thứ tự), hoặc không thể xác minh là non-replayable và fallback trực tiếp về mode "full" mà không phát ra bất kỳ delta lỗi nào.
+    // Khi quá trình migration thành công, lưu trữ nguyên tử (atomically persist) metadata của event đã sửa đổi cùng với state và giá trị next-sequence để khi restart luôn tạo ra cùng ID và thứ tự sequence giống hệt nhau.
 
     const SnapshotDeltaSchema = z.object({
       mode: z.literal("delta"),
@@ -108,16 +135,16 @@ Cùng đụng `packages/game-core/src/match-state-machine.ts` và `apps/web/src/
   - **Nhánh 2 — Client mới (request CÓ capability flag nhưng `replayCursor` vắng mặt/absent — lần đầu)**: gọi `getSnapshot(0)` và emit **envelope `mode: "full"`** (`SnapshotFullSchema`, gồm `snapshot`, `lastEventSeqNo`, `replayCursor` mới). Server vẫn phát `replayCursor` mới ở đây để client echo lại ở lần reconnect kế tiếp. Không thực hiện validation hay ghi log cảnh báo.
   - **Nhánh 3 — Client mới (request CÓ capability flag VÀ CÓ `replayCursor` (field có mặt))**:
     - Thực hiện xác thực `replayCursor` (kiểm tra schema, chữ ký HMAC, khớp `matchId` của match đã resolve, và chưa hết hạn `expiresAt`).
-    - Nếu xác thực thất bại (signature fail, matchId mismatch, hoặc token hết hạn): **luôn** trả về full envelope (`mode: "full"`) kèm newly issued valid `replayCursor` (được bound vào resolved match), cùng với warning log chi tiết, phân biệt rõ với trường hợp cursor vắng mặt (không đối xử như client kết nối lần đầu và không trả về/omitting token cũ không hợp lệ). RETURN.
+    - Nếu xác thực thất bại (signature fail, matchId mismatch, hoặc token hết hạn): **luôn** trả về full envelope (`mode: "full"`) kèm **newly issued valid `replayCursor`** được bound vào resolved match. **Invariant bắt buộc**: `replayCursor` mới này PHẢI có `seqNo` bằng đúng `lastEventSeqNo` của full snapshot vừa trả về (tức `getSnapshot(0).lastEventSeqNo`). Cùng logic áp dụng cho mọi nhánh fallback full envelope khác (cursor vắng mặt với client mới, future-cursor, truncated-log, gap): `replayCursor.seqNo === lastEventSeqNo` trong response. Nhánh delta cũng phải phát `replayCursor` mới với `seqNo === lastEventSeqNo` của event cuối cùng được đưa vào delta. Cùng với warning log chi tiết (tuyệt đối KHÔNG bao giờ log HMAC secret, computed signatures, raw tokens, hoặc raw requests để tránh rò rỉ bảo mật), phân biệt rõ với trường hợp cursor vắng mặt (không đối xử như client kết nối lần đầu và không trả về/omitting token cũ không hợp lệ). RETURN.
     - Nếu xác thực thành công: đọc `eventLog` để lấy `firstEventSeqNo` và `latestSeqNo`.
     - Thực hiện các kiểm tra replayability (future-cursor `seqNo > latestSeqNo`, truncated-log `seqNo < firstEventSeqNo - 1`, và gap checks).
-    - Nếu vi phạm bất kỳ kiểm tra nào trong các kiểm tra trên ⇒ fallback full envelope (`mode: "full"`) + log cảnh báo (không cần warning log bảo mật nếu xác thực cursor đã thành công nhưng dữ liệu log không khả dụng). RETURN. (Ngoại lệ: trường hợp empty-eventLog carve-out cho phép replay delta rỗng nếu `eventLog.length === 0` AND `replayCursor.seqNo === 0` AND `latestSeqNo === 0`).
+    - Nếu vi phạm bất kỳ kiểm tra nào trong các kiểm tra trên ⇒ fallback full envelope (`mode: "full"`) + log cảnh báo (không bao giờ ghi log HMAC secret, computed signatures, tokens, hay raw requests; giữ log có tính chất thông tin về lỗi validation của cursor mà không leak keys hoặc raw tokens). RETURN. (Ngoại lệ: trường hợp empty-eventLog carve-out cho phép replay delta rỗng nếu `eventLog.length === 0` AND `replayCursor.seqNo === 0` AND `latestSeqNo === 0`).
     - Nếu hợp lệ ⇒ emit envelope `mode: "delta"` với `events` (kể cả rỗng) và `replayCursor` mới.
   - Ba nhánh là tách biệt, không dùng chung wire shape. Client cũ nhận raw; client mới luôn nhận envelope.
 - [ ] **Quy tắc fallback** (cập nhật điều kiện, đồng bộ với "Empty event log" và "Fallback ownership"): chỉ trả full snapshot khi MỘT TRONG các trường hợp sau xảy ra ở handler (`MatchHandler.handleRequestSnapshot`):
   - Legacy client: request không có capability flag ⇒ gọi `getSnapshot(0)` và trả **raw full snapshot** (không validate hay ghi warning log).
   - Capable client với `replayCursor` vắng mặt/absent: request có capability flag nhưng không có `replayCursor` ⇒ gọi `getSnapshot(0)` và trả envelope `mode: "full"` chứa newly issued valid `replayCursor` (không validate hay ghi warning log).
-  - `replayCursor` có mặt nhưng xác thực thất bại (signature fail, `matchId` trong token không khớp match đã resolve, hoặc token hết hạn) — match identity xác định qua `payload.matchId`/room, KHÔNG qua seqNo. Trong trường hợp này, **luôn** trả về full envelope (`mode: "full"`) kèm theo newly issued valid `replayCursor` (được bound vào resolved match) và warning log chi tiết, không đối xử như client kết nối lần đầu (xử lý riêng biệt với warning log).
+  - `replayCursor` có mặt nhưng xác thực thất bại (signature fail, `matchId` trong token không khớp match đã resolve, hoặc token hết hạn) — match identity xác định qua `payload.matchId`/room, KHÔNG qua seqNo. Trong trường hợp này, **luôn** trả về full envelope (`mode: "full"`) kèm theo newly issued valid `replayCursor` (được bound vào resolved match) và warning log chi tiết (nhưng tuyệt đối KHÔNG bao giờ log HMAC secret, computed signatures, raw tokens, hoặc raw requests), không đối xử như client kết nối lần đầu (xử lý riêng biệt với warning log).
   - `replayCursor.seqNo` vượt quá `latestSeqNo` (cursor tương lai/gap ngược), HOẶC
   - `replayCursor.seqNo` nhỏ hơn `firstEventSeqNo - 1` (log bị cắt), HOẶC
   - Phát hiện gap bất thường (seqNo trong eventLog không liên tục), HOẶC
@@ -242,6 +269,10 @@ Cùng đụng `packages/game-core/src/match-state-machine.ts` và `apps/web/src/
   - Ba test này bảo vệ contract khi eventLog rỗng hoặc cursor invalid.
 - [ ] Test client-side: empty-events branch (`socket-store.updaters.ts`) chỉ kiểm tra `envelope.lastEventSeqNo === currentLastSeenSeqNo`, KHÔNG truy cập `events[0]` / `events[last]`. Test non-empty branch với contiguous + `event.matchId === currentMatchId` (mọi event bắt buộc) + last-seqNo checks.
 - [ ] Test Redis round-trip: xác nhận serialize/rehydrate bảo toàn `seqNo` và bộ đếm `next-sequence`, khởi động lại không tạo `seqNo` trùng, và xác nhận delta replay không bỏ sót hoặc trả sai event.
+  - Bổ sung kiểm thử cụ thể cho state cũ lưu trong Redis có các event bị thiếu metadata (như `id`, `matchId` hoặc `seqNo`).
+  - Viết test bao phủ tất cả biến thể thiếu từng trường (ví dụ: chỉ thiếu `id`, chỉ thiếu `matchId`, chỉ thiếu `seqNo`, hoặc thiếu đồng thời nhiều trường).
+  - Xác nhận quá trình deserialize/rehydrate trong `MatchStateMachine` nhận diện, tự động migrate/backfill dữ liệu hợp lệ để vượt qua schema validation khi tạo delta envelope, HOẶC fallback an toàn sang full snapshot (tuyệt đối không phát delta chứa event bị malformed hay thiếu metadata lên socket wire).
+  - Giữ nguyên toàn bộ các kiểm thử state mới hiện có để tránh regression.
 - [ ] `gitnexus_detect_changes()` xác nhận scope (kỳ vọng: `MatchStateMachine` (CRITICAL) cho `getDelta` mới, `MatchHandler.handleRequestSnapshot` (HIGH) cho handler ordering + envelope, `shared` schemas cho token + envelope, FE socket-store cho client validation); cập nhật `progress.md` (xoá "Full reconnect/event replay contract" khỏi "Not Done Yet").
 
 ## File dự kiến chạm
