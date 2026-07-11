@@ -312,10 +312,23 @@ jobs:
           // fail-closed contract the validator (validate-results.mjs)
           // checks: achievedAt must be inside that window or the
           // readiness gate fails.
+          //
+          // Normalize and validate PLAYERS / SPECTATORS the same way
+          // load-test/config.js `intEnv` does: parseInt(raw, 10) +
+          // Number.isFinite guard, falling back to the same defaults
+          // (69 / 30). This prevents NaN in the arithmetic when an
+          // operator types a non-numeric value in workflow_dispatch.
+          function parseVUs(raw, fallback) {
+            if (raw === undefined || raw === null || raw === '') return fallback;
+            const n = Number.parseInt(String(raw).trim(), 10);
+            return Number.isFinite(n) ? n : fallback;
+          }
+          const players    = parseVUs(process.env.PLAYERS,    69);
+          const spectators = parseVUs(process.env.SPECTATORS, 30);
           const target =
             process.env.SCENARIO === 'smoke'
               ? 2
-              : 1 + Number(process.env.PLAYERS) + Number(process.env.SPECTATORS);
+              : 1 + players + spectators;
           const runId = process.env.READINESS_RUN_ID;
           const coordinatorUrl = process.env.COORDINATOR_URL;
           const deadlineAt = new Date(Date.now() + 2 * holdSec * 1000).toISOString();

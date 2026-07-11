@@ -21,13 +21,23 @@ Cùng đụng `packages/game-core/src/match-state-machine.ts` và `apps/web/src/
 
 ### Phase D1 — Thiết kế contract (không code)
 
-- [ ] `gitnexus_impact({target: "getSnapshot", direction: "upstream"})` + trace flow `handleRequestSnapshot`.
+- [ ] **Pre-edit impact analysis bắt buộc — chạy `gitnexus_impact` trước khi chỉnh sửa BẤT KỲ symbol nào trong danh sách sau. Với mỗi symbol, ghi lại: direct callers, affected processes, và risk level. Nếu kết quả là HIGH hoặc CRITICAL, BLOCK hoặc escalate trước khi tiến hành edit:**
+  - `getSnapshot` (`packages/game-core/src/match-state-machine.ts`): ghi rõ direct callers (kỳ vọng ít nhất `handleRequestSnapshot`, `syncReconnection`), affected processes, risk. Nếu HIGH/CRITICAL và thay đổi chữ ký hoặc return type → STOP và escalate.
+  - `getDelta` (method mới, `match-state-machine.ts`): impact upstream sau khi thêm — ghi direct callers (kỳ vọng chỉ `handleRequestSnapshot`), risk. Nếu CRITICAL → escalate.
+  - `MatchHandler.handleRequestSnapshot` (`apps/api/src/gateways/handlers/match.handler.ts`): ghi direct callers (gateway event binding), affected processes, risk. Nếu HIGH/CRITICAL → phải có approval artifact trước khi edit.
+  - Shared request schema (`RequestSnapshotPayloadSchema`, `packages/shared/src/schemas.ts`): ghi importers (tất cả handler + test files), affected processes, risk.
+  - Shared response schema (`SnapshotPayload`, `packages/shared/src/socket.ts`): ghi importers, risk.
+  - `applySnapshotState` (`apps/web/src/stores/socket-store.updaters.ts`): ghi direct callers, affected processes, risk.
+  - Delta state updaters (mọi updater mới hoặc đã sửa trong `socket-store.updaters.ts`): ghi callers, risk.
+  - Quy tắc xử lý: **HIGH hoặc CRITICAL trên handler path hoặc state-machine path** → BLOCK edit cho đến khi có approval artifact gồm: (1) impact output verbatim, (2) confirmed scope, (3) diff/revision binding, (4) reviewer name + handle, (5) ISO timestamp. **UNKNOWN risk** (index stale) → re-run `npx gitnexus analyze` rồi re-run impact; nếu vẫn UNKNOWN → STOP. Giữ bước `gitnexus_detect_changes()` cuối cùng sau khi hoàn thành toàn bộ thay đổi — bước này KHÔNG thay thế pre-edit analysis.
+- [ ] `gitnexus_impact({target: "getSnapshot", direction: "upstream"})` + trace flow `handleRequestSnapshot` (xem bullet trên).
 - [ ] **Định danh client mới KHÔNG dựa vào sự hiện diện của `lastSeenSeqNo`** (client cũ cũng luôn gửi field này với giá trị 0, xem `apps/web/src/stores/socket-store.ts:620-625`). Triển khai **capability/version negotiation** hoặc một **compatibility flag** riêng trong `SNAPSHOT` request/response, ví dụ:
   - Cập nhật `RequestSnapshotPayloadSchema` thành một discriminated union rõ ràng để phân biệt legacy client (không hỗ trợ delta, không có capability flags) và capable client (có capability flags, ví dụ `supports: ["delta"]`).
   - Thiết kế Schema cụ thể:
     - `RequestSnapshotLegacySchema` (.strict()): chỉ cho phép `matchId` và `lastSeenSeqNo` (bắt buộc). Các trường `supports` hay `replayCursor` KHÔNG được phép xuất hiện.
     - `RequestSnapshotCapableSchema` (.strict()): chỉ cho phép `matchId`, `supports` (mảng chứa `"delta"`), và `replayCursor` (optional). Trường `lastSeenSeqNo` KHÔNG được phép xuất hiện.
     - **Thiết kế union tương thích Zod v3 (^3.24.x)**: không dùng `z.preprocess` bọc ngoài `z.discriminatedUnion` vì `z.preprocess` không truyền kiểu discriminant sang cây union bên trong, gây lỗi runtime. Thay vào đó dùng:
+
       ```ts
       export const RequestSnapshotPayloadSchema = z
         .union([RequestSnapshotLegacySchema, RequestSnapshotCapableSchema])
@@ -43,10 +53,14 @@ Cùng đụng `packages/game-core/src/match-state-machine.ts` và `apps/web/src/
           }
         });
       ```
+
       Không đưa trường phân biệt nội bộ (`clientType`) vào parsed output; handler tự suy diễn nhánh dựa trên sự hiện diện của `supports`/`replayCursor`. Kiểm chứng việc `z.union` chấp nhận `.strict()` ở cả hai member trước khi triển khai.
+
     - Đảm bảo từ chối nghiêm ngặt các trường mixed hoặc unsupported, bổ sung các test bao phủ mọi tổ hợp trường không hợp lệ và kiểm chứng hành vi với phiên bản Zod được cài đặt (^3.24.x) trong repository.
+
   - Đảm bảo handler có các nhánh logic phân định rõ ràng (deterministic branching) cho legacy client (trả raw full snapshot) và capable client (xác thực cursor, trả envelope full hoặc delta).
   - Cập nhật `SnapshotPayload` (`packages/shared/src/socket.ts:104-121`) + `packages/shared/src/{events,schemas}.ts` tương ứng; giữ payload snapshot raw khi `mode === "full"` để `applySnapshotState` tiếp tục hydrate đúng shape hiện có.
+
 - [ ] **CHỐT MỘT wire shape duy nhất cho snapshot response** (Phase D1 yêu cầu cứng, không được mơ hồ):
   - **Client cũ** (không kèm capability flag) ⇒ trả **raw full snapshot** (giữ nguyên shape `SnapshotPayload` hiện tại, KHÔNG áp dụng discriminated union cho client cũ).
   - **Client mới** (kèm capability flag) ⇒ LUÔN trả **envelope** theo strict runtime discriminated union keyed by `mode`:
@@ -89,8 +103,14 @@ Cùng đụng `packages/game-core/src/match-state-machine.ts` và `apps/web/src/
     // quá trình deserialize/rehydrate trong MatchStateMachine sẽ kiểm tra và migrate/backfill, nhưng KHÔNG bao giờ:
     //   (a) tự động điền seqNo từ chỉ số mảng (array index) — seqNo PHẢI có sequence anchor đáng tin cậy
     //       (giá trị `next-sequence` đã được persist trước đó hoặc counter từ state serialized);
-    //   (b) sinh `id` hay `matchId` ngẫu nhiên (random UUID mới) — ID PHẢI xác định (deterministic)
-    //       dựa trên nội dung event (hash của type + timestamp + seqNo) hoặc đã có sẵn từ blob;
+    //   (b) sinh `id` ngẫu nhiên (random UUID mới) — event `id` PHẢI xác định (deterministic)
+    //       dựa trên nội dung event (hash của **matchId + type + timestamp + seqNo**); tức là
+    //       `id = hash(validatedMatchId + type + timestamp + seqNo)` trong đó `validatedMatchId`
+    //       PHẢI lấy từ serialized match state (blob Redis đang được rehydrate) TRƯỚC khi sinh `id`.
+    //       Event hashing chỉ dùng để tạo stable event `id`, KHÔNG ĐƯỢC dùng để suy luận hay
+    //       backfill `matchId`. Nếu `matchId` không tìm thấy từ nguồn được xác thực
+    //       (serialized match state), đánh dấu event là non-replayable và fallback về mode
+    //       "full" mà không phát bất kỳ delta nào — không sinh `id` từ hash khi thiếu `matchId`;
     //   (c) cho phép nhiều writer đồng thời chạy migration — phải serialize qua single-writer hoặc lock;
     //   (d) trả delta trước khi migration commit hoàn chỉnh (persist metadata + state + next-sequence-counter
     //       trong cùng một atomic write): nếu commit thất bại, fallback thẳng về mode "full"
@@ -126,6 +146,22 @@ Cùng đụng `packages/game-core/src/match-state-machine.ts` và `apps/web/src/
   - Khi envelope có `mode: "delta"`, áp dụng tuần tự `events` lên state hiện tại (cập nhật `lastSeenSeqNo` để gửi kèm reconnect sau).
   - **Regression**: client cũ vẫn nhận raw full snapshot ⇒ parser phải phân biệt được bằng flag hoặc presence của field `mode`; KHÔNG ép unwrap nếu payload đã là raw.
   - **Envelope invalid (server trả về shape không hợp lệ)**: client PHẢI request full snapshot mới và KHÔNG apply bất kỳ event nào từ envelope. Lỗi phải được log + metric (nếu có).
+
+- [ ] **Delta replay contract (`ServerEvent.SNAPSHOT` handler + `socket-store.updaters.ts` — bắt buộc định nghĩa đầy đủ trước khi implement)**:
+  - **Typed event union**: định nghĩa `ReplayableEvent` là discriminated union của tất cả event type mà delta replay hỗ trợ (ví dụ `ROUND_STARTED`, `ROUND_ENDED`, `PLAYER_ELIMINATED`, `ANSWER_RESULT`, v.v.). Event type nào không nằm trong union ⇒ reject toàn bộ envelope (không apply partial), request full snapshot.
+  - **Supported event-to-state reducers**: mỗi member của `ReplayableEvent` union PHẢI có một pure reducer tương ứng (`(state: GameState, event: T) => GameState`). Reducer KHÔNG được mutate state gốc (apply delta PHẢI tạo object mới, KHÔNG sửa trực tiếp state hiện tại); PHẢI pure và idempotent **về mặt logic reducer** — tức là reducer thuần túy có thể được test hoặc gọi lại độc lập cho live-event retry mà không gây side effect. **Phân biệt rõ ràng**: idempotency này là tính chất của **reducer đơn lẻ** phục vụ unit test và live-event retry — nó KHÔNG phải cơ chế xử lý duplicate trong delta protocol. Delta protocol duplicate handling là trách nhiệm riêng ở tầng envelope (xem bullet "Duplicate / delta-protocol duplicate handling" bên dưới).
+  - **Strict Sequence Contiguity Validation (Yêu cầu liên tục tuyệt đối)**:
+    - Nếu danh sách `events` trong envelope không rỗng:
+      - Phần tử đầu tiên PHẢI có `events[0].seqNo === currentLastSeenSeqNo + 1` (bắt đầu chính xác ngay sau event cuối cùng client đã xử lý).
+      - Mỗi phần tử tiếp theo `events[i]` PHẢI có `events[i].seqNo === events[i-1].seqNo + 1` (các sequence number phải liên tục tăng dần, không được có bất kỳ khoảng trống/gap hoặc nhảy cóc nào).
+      - Phần tử cuối cùng PHẢI có `events[events.length - 1].seqNo === lastEventSeqNo` (khớp hoàn toàn với sequence number cuối cùng mà server công bố trong envelope).
+    - Nếu danh sách `events` rỗng:
+      - `lastEventSeqNo` PHẢI bằng đúng `currentLastSeenSeqNo`.
+    - Bất kỳ vi phạm nào về tính liên tục hoặc khớp đầu/cuối này PHẢI dẫn đến reject toàn bộ envelope và kích hoạt full snapshot request ngay lập tức.
+  - **Ordered application**: events PHẢI được apply tuần tự theo thứ tự `seqNo` tăng dần. Trước khi apply bất kỳ event nào, validate toàn bộ danh sách events (xem "Trước khi apply delta phía client" trong Phase D2 và phần Strict Sequence Contiguity ở trên) — nếu bất kỳ validation nào fail ⇒ KHÔNG apply bất kỳ event nào, request full snapshot ngay.
+  - **Duplicate / delta-protocol duplicate handling** (tách biệt hoàn toàn với reducer idempotency): delta replay validation PHẢI **reject toàn bộ envelope ngay lập tức** nếu bất kỳ `events[i].seqNo <= currentLastSeenSeqNo` (event đã thấy hoặc cũ hơn mốc hiện tại) — việc này xảy ra TRƯỚC khi gọi bất kỳ reducer nào. Client KHÔNG tự ý skip hay deduplicate event trong delta envelope; duplicate trong envelope là protocol violation và phải dẫn đến request full snapshot. **Không nhầm lẫn** rule này với idempotency của reducer: reducer được phép idempotent để phục vụ live-event retry, nhưng delta protocol không dựa vào idempotency đó để xử lý duplicate — reject tại envelope level là bắt buộc.
+  - **Reject unknown hoặc invalid events**: nếu bất kỳ event nào trong envelope có `type` không thuộc `ReplayableEvent` union, hoặc payload không pass schema validation cho type đó ⇒ reject toàn bộ envelope (KHÔNG apply partial từ đầu đến event lỗi), request full snapshot, log failure với event index + type (không log raw payload nếu có thể chứa PII).
+  - **Reject invalid envelope**: nếu envelope shape không pass `SnapshotEnvelopeSchema` (mode, replayCursor, lastEventSeqNo thiếu/sai) ⇒ reject, request full snapshot, log failure.
 - [ ] **Ràng buộc request với match trước khi đánh giá replayability**:
   - Trong `RequestSnapshotPayloadSchema` (`packages/shared/src/schemas.ts:124-156`) và handler `match.handler.ts:handleRequestSnapshot` (`apps/api/src/gateways/handlers/match.handler.ts:197-249`): PHẢI dựa trên `payload.matchId` VÀ socket room membership (`client.rooms.has(\`room:\${roomId}\`)`) — đây là 2 nguồn xác định match identity chính.
   - Server CÓ THỂ thêm kiểm tra event metadata (ví dụ `event.matchId` hoặc seqNo-to-match mapping) khi cần, nhưng KHÔNG ĐƯỢC suy luận match từ `lastSeenSeqNo` một mình.
@@ -135,7 +171,11 @@ Cùng đụng `packages/game-core/src/match-state-machine.ts` và `apps/web/src/
   - **Nhánh 2 — Client mới (request CÓ capability flag nhưng `replayCursor` vắng mặt/absent — lần đầu)**: gọi `getSnapshot(0)` và emit **envelope `mode: "full"`** (`SnapshotFullSchema`, gồm `snapshot`, `lastEventSeqNo`, `replayCursor` mới). Server vẫn phát `replayCursor` mới ở đây để client echo lại ở lần reconnect kế tiếp. Không thực hiện validation hay ghi log cảnh báo.
   - **Nhánh 3 — Client mới (request CÓ capability flag VÀ CÓ `replayCursor` (field có mặt))**:
     - Thực hiện xác thực `replayCursor` (kiểm tra schema, chữ ký HMAC, khớp `matchId` của match đã resolve, và chưa hết hạn `expiresAt`).
-    - Nếu xác thực thất bại (signature fail, matchId mismatch, hoặc token hết hạn): **luôn** trả về full envelope (`mode: "full"`) kèm **newly issued valid `replayCursor`** được bound vào resolved match. **Invariant bắt buộc**: `replayCursor` mới này PHẢI có `seqNo` bằng đúng `lastEventSeqNo` của full snapshot vừa trả về (tức `getSnapshot(0).lastEventSeqNo`). Cùng logic áp dụng cho mọi nhánh fallback full envelope khác (cursor vắng mặt với client mới, future-cursor, truncated-log, gap): `replayCursor.seqNo === lastEventSeqNo` trong response. Nhánh delta cũng phải phát `replayCursor` mới với `seqNo === lastEventSeqNo` của event cuối cùng được đưa vào delta. Cùng với warning log chi tiết (tuyệt đối KHÔNG bao giờ log HMAC secret, computed signatures, raw tokens, hoặc raw requests để tránh rò rỉ bảo mật), phân biệt rõ với trường hợp cursor vắng mặt (không đối xử như client kết nối lần đầu và không trả về/omitting token cũ không hợp lệ). RETURN.
+    - Nếu xác thực thất bại (signature fail, matchId mismatch, hoặc token hết hạn): **luôn** trả về full envelope (`mode: "full"`) kèm **newly issued valid `replayCursor`** được bound vào resolved match.
+    - **Invariant bắt buộc — atomicity & Concrete Enforcement**: `snapshot` (hoặc `events`), `lastEventSeqNo`, và `replayCursor` mới PHẢI được tạo ra từ **cùng một lần đọc/lock trên cùng một phiên bản state** — không đọc snapshot rồi đọc lại eventLog hay sinh cursor ở một thời điểm khác. `replayCursor.seqNo` PHẢI bằng đúng `lastEventSeqNo` được emit trong cùng response đó; invariant này áp dụng cho mọi nhánh (full fallback, delta, và mọi fallback path khác, bao gồm cả khi signature validation failure). Để thực thi nghiêm ngặt atomicity này, server phải áp dụng một trong hai cơ chế sau:
+      - **Cơ chế 1: Optimistic Version Checking với Retry**: Trước khi đọc dữ liệu, đọc giá trị `stateVersion` (hoặc update counter) hiện tại của match trong Redis. Sau đó tiến hành đọc snapshot và event log. Trước khi serialize/sinh cursor, kiểm tra lại `stateVersion`. Nếu version đã thay đổi, hủy kết quả và thực hiện đọc lại (retry) tối đa 3 lần. Nếu vẫn không khớp, trả về full snapshot thu được ở lần đọc cuối cùng và sinh cursor tương ứng với version cụ thể đó.
+      - **Cơ chế 2: Lock-based Read-Isolation (Khuyên dùng)**: Thực hiện toàn bộ thao tác đọc state machine và event log trong một Redis transaction (using `MULTI/EXEC` hoặc một Lua script) để cô lập việc đọc dữ liệu khỏi các thay đổi đồng thời từ game loop thread khác.
+        Nếu không đảm bảo atomicity (ví dụ: state thay đổi giữa các lần đọc và retry thất bại), phải fallback về full snapshot từ lần đọc duy nhất. Cùng với warning log chi tiết (tuyệt đối KHÔNG bao giờ log HMAC secret, computed signatures, raw tokens, hoặc raw requests để tránh rò rỉ bảo mật), phân biệt rõ với trường hợp cursor vắng mặt (không đối xử như client kết nối lần đầu và không trả về/omitting token cũ không hợp lệ). RETURN.
     - Nếu xác thực thành công: đọc `eventLog` để lấy `firstEventSeqNo` và `latestSeqNo`.
     - Thực hiện các kiểm tra replayability (future-cursor `seqNo > latestSeqNo`, truncated-log `seqNo < firstEventSeqNo - 1`, và gap checks).
     - Nếu vi phạm bất kỳ kiểm tra nào trong các kiểm tra trên ⇒ fallback full envelope (`mode: "full"`) + log cảnh báo (không bao giờ ghi log HMAC secret, computed signatures, tokens, hay raw requests; giữ log có tính chất thông tin về lỗi validation của cursor mà không leak keys hoặc raw tokens). RETURN. (Ngoại lệ: trường hợp empty-eventLog carve-out cho phép replay delta rỗng nếu `eventLog.length === 0` AND `replayCursor.seqNo === 0` AND `latestSeqNo === 0`).

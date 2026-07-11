@@ -6,6 +6,11 @@
 // State Machine
 export { MatchStateMachine } from "./match-state-machine";
 export type { StateTransitionHandler } from "./match-state-machine";
+export { eliminationsForRound, UNAVAILABLE } from "./round-elimination";
+export type {
+  RoundStartingPlayers,
+  RoundWithEliminationInputs,
+} from "./round-elimination";
 
 // Pure domain scoring
 export { computeRoundScore } from "./scoring";

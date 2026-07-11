@@ -1,12 +1,16 @@
 import { Logger } from "@nestjs/common";
 import { Server } from "socket.io";
 import {
+  eliminationsForRound,
+  UNAVAILABLE,
+  type RoundStartingPlayers,
+} from "@arena/game-core";
+import {
   GAME_CONFIG,
   MatchStatus,
   RoomStatus,
   RoomError,
   ErrorCode,
-  PlayerStatus,
 } from "@arena/shared";
 import { MatchService } from "./match.service";
 import { QuestionService } from "../question/question.service";
@@ -21,6 +25,14 @@ import {
   emitRoundEnded,
   emitRoundStarted,
 } from "./game-loop.events";
+
+type RecoveryRound = {
+  roundNo: number;
+  question: { id: string };
+  answers: Map<string, { answer: string }>;
+  correctAnswer?: string;
+  startingPlayers?: RoundStartingPlayers;
+};
 
 // ============================================================
 // MatchRoundRunner — the timer-driven match loop
@@ -306,6 +318,21 @@ export class MatchRoundRunner {
 
         // Reconstruct evaluation results
         survivingIds = [...state.survivingPlayerIds];
+        const recoveryRound = round as typeof round & RecoveryRound;
+
+        correctAnswer = recoveryRound.correctAnswer || "";
+        if (!correctAnswer) {
+          const questionObj = await this.questionService.findOne(
+            round.question.id,
+          );
+          if (questionObj) {
+            correctAnswer = questionObj.correctAnswer;
+          } else {
+            this.logger.warn(
+              `Failed to rehydrate correctAnswer in recovery: question ${round.question.id} not found in DB for match ${matchId} round ${round.roundNo}`,
+            );
+          }
+        }
 
         // Retrieve from stateMachine's eventLog if available
         const roundEvaluatedEvent = stateMachine
@@ -329,29 +356,33 @@ export class MatchRoundRunner {
             roundEvaluatedEvent.payload as { eliminatedIds: string[] }
           ).eliminatedIds;
         } else {
-          // Players eliminated in *this* round (fallback)
-          eliminatedIds = Array.from(state.players.values())
-            .filter(
-              (p) =>
-                p.status === PlayerStatus.ELIMINATED &&
-                p.correctAnswers === round.roundNo - 1,
-            )
-            .map((p) => p.id);
-        }
-
-        // correctAnswer might have been omitted due to L3 security pattern
-        correctAnswer =
-          (round as { correctAnswer?: string }).correctAnswer || "";
-        if (!correctAnswer) {
-          const questionObj = await this.questionService.findOne(
-            round.question.id,
+          const startingPlayers = this.getRecoveryStartingPlayers(
+            recoveryRound,
+            matchId,
           );
-          if (questionObj) {
-            correctAnswer = questionObj.correctAnswer;
-          } else {
+
+          if (startingPlayers === UNAVAILABLE) {
+            // The round-start roster is not recoverable; do not
+            // infer eliminations from cumulative state. Skip
+            // eliminating players this round and warn so the
+            // operator can investigate the missing snapshot.
             this.logger.warn(
-              `Failed to rehydrate correctAnswer in recovery: question ${round.question.id} not found in DB for match ${matchId} round ${round.roundNo}`,
+              `Recovery for match ${matchId} round ${round.roundNo} skipped eliminatedIds: startingPlayers is UNAVAILABLE`,
             );
+            eliminatedIds = [];
+          } else if (!correctAnswer) {
+            // We can still derive the eliminated set from the persisted
+            // snapshot, but we must not call the helper without an answer key.
+            const survivingSet = new Set(survivingIds);
+            eliminatedIds = startingPlayers.filter(
+              (playerId) => !survivingSet.has(playerId),
+            );
+          } else {
+            eliminatedIds = eliminationsForRound({
+              ...recoveryRound,
+              correctAnswer,
+              startingPlayers,
+            });
           }
         }
       } else if (state.status === MatchStatus.ROUND_RESULT) {
@@ -464,6 +495,27 @@ export class MatchRoundRunner {
     } finally {
       this.timers.endEndRound(matchId);
     }
+  }
+
+  private getRecoveryStartingPlayers(
+    round: RecoveryRound,
+    matchId: string,
+  ): string[] | typeof UNAVAILABLE {
+    if (round.startingPlayers === UNAVAILABLE) {
+      this.logger.warn(
+        `Recovery round snapshot unavailable for match ${matchId} round ${round.roundNo}: startingPlayers is UNAVAILABLE`,
+      );
+      return UNAVAILABLE;
+    }
+
+    if (Array.isArray(round.startingPlayers)) {
+      return round.startingPlayers;
+    }
+
+    this.logger.warn(
+      `Recovery round snapshot unavailable for match ${matchId} round ${round.roundNo}: startingPlayers missing`,
+    );
+    return UNAVAILABLE;
   }
 
   // ============================================================

@@ -18,9 +18,16 @@ import type {
   AnswerState,
   PlayerInfo,
 } from "@arena/shared";
+import { UNAVAILABLE, type RoundStartingPlayers } from "./round-elimination";
 
 /** In-memory round shape — RoundState plus the sensitive answer key. */
-type RoundWithAnswer = RoundState & { correctAnswer?: string };
+type RoundWithAnswer = RoundState & {
+  correctAnswer?: string;
+  startingPlayers?: RoundStartingPlayers;
+};
+
+const SERIALIZED_STATE_VERSION = 1;
+const UNAVAILABLE_SENTINEL = "__UNAVAILABLE__";
 
 /** One entry in the append-only event log. */
 export interface EventLogEntry {
@@ -31,6 +38,7 @@ export interface EventLogEntry {
 
 /** Wire shape produced by JSON.parse before reconstruction into Maps. */
 export interface DeserializedMatch {
+  _stateVersion?: unknown;
   state: {
     id: string;
     roomId: string;
@@ -47,6 +55,7 @@ export interface DeserializedMatch {
   currentRound:
     | (RoundState & {
         correctAnswer?: string;
+        startingPlayers?: unknown;
         answers: [string, AnswerState][];
       })
     | null;
@@ -83,12 +92,19 @@ export function serializeMatch(
         void _omitCorrectAnswer;
         return {
           ...rest,
+          startingPlayers:
+            currentRound.startingPlayers === UNAVAILABLE
+              ? UNAVAILABLE_SENTINEL
+              : Array.isArray(currentRound.startingPlayers)
+                ? [...currentRound.startingPlayers]
+                : UNAVAILABLE_SENTINEL,
           answers: Array.from(currentRound.answers.entries()),
         };
       })()
     : null;
 
   return JSON.stringify({
+    _stateVersion: SERIALIZED_STATE_VERSION,
     state: {
       ...state,
       players: Array.from(state.players.entries()),
@@ -118,6 +134,10 @@ export function deserializeMatch(json: string): DecodedMatchState {
   }
 
   const parsed = data as DeserializedMatch;
+  const hasSupportedStateVersion =
+    typeof parsed?._stateVersion === "number" &&
+    Number.isInteger(parsed._stateVersion) &&
+    parsed._stateVersion === SERIALIZED_STATE_VERSION;
   if (
     !parsed ||
     !parsed.state ||
@@ -200,10 +220,36 @@ export function deserializeMatch(json: string): DecodedMatchState {
       // L3: correctAnswer is undefined after deserialize. The recovery
       // caller MUST invoke attachCorrectAnswer() before any
       // evaluateRound() / submitAnswer() that depends on it.
+      startingPlayers: deserializeStartingPlayers(
+        parsed.currentRound.startingPlayers,
+        hasSupportedStateVersion,
+      ),
     } as RoundWithAnswer;
   } else {
     currentRound = null;
   }
 
   return { state, currentRound, eventLog: parsed.eventLog };
+}
+
+function deserializeStartingPlayers(
+  rawStartingPlayers: unknown,
+  hasSupportedStateVersion: boolean,
+): RoundStartingPlayers {
+  if (!hasSupportedStateVersion) {
+    return UNAVAILABLE;
+  }
+
+  if (rawStartingPlayers === UNAVAILABLE_SENTINEL) {
+    return UNAVAILABLE;
+  }
+
+  if (
+    Array.isArray(rawStartingPlayers) &&
+    rawStartingPlayers.every((playerId) => typeof playerId === "string")
+  ) {
+    return [...rawStartingPlayers];
+  }
+
+  return UNAVAILABLE;
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { MatchStateMachine } from "./match-state-machine";
 import { ErrorCode, MatchStatus, PlayerStatus, RoomError } from "@arena/shared";
+import { UNAVAILABLE } from "./round-elimination";
 
 function expectRoomError(operation: () => unknown, code: ErrorCode) {
   try {
@@ -1342,6 +1343,112 @@ describe("MatchStateMachine score accumulation (B2)", () => {
         restoredRound as unknown as { correctAnswer?: string }
       ).correctAnswer;
       expect(correctAnswer).toBeUndefined();
+      expect(
+        (
+          restoredRound as unknown as {
+            startingPlayers?: string[] | typeof UNAVAILABLE;
+          }
+        ).startingPlayers,
+      ).toEqual(["p1", "p2"]);
+    });
+
+    it("serialize() emits version 1 and preserves startingPlayers when correctAnswer is omitted", () => {
+      const machine = new MatchStateMachine("m1", "r1", makePlayers());
+      machine.transition(MatchStatus.COUNTDOWN);
+      machine.transition(MatchStatus.ROUND_ACTIVE);
+      machine.startRound({
+        id: "q1",
+        content: "Q?",
+        options: ["A", "B"],
+        correctAnswer: "A",
+      });
+
+      const json = machine.serialize();
+      const parsed = JSON.parse(json);
+
+      expect(parsed._stateVersion).toBe(1);
+      expect(parsed.currentRound.correctAnswer).toBeUndefined();
+      expect(parsed.currentRound.startingPlayers).toEqual(["p1", "p2"]);
+
+      const restoredRound =
+        MatchStateMachine.deserialize(json).getCurrentRound();
+      expect(restoredRound).not.toBeNull();
+      expect(
+        (
+          restoredRound as unknown as {
+            startingPlayers?: string[] | typeof UNAVAILABLE;
+          }
+        ).startingPlayers,
+      ).toEqual(["p1", "p2"]);
+    });
+
+    it("deserialize() preserves the UNAVAILABLE startingPlayers sentinel", () => {
+      const machine = new MatchStateMachine("m1", "r1", makePlayers());
+      machine.transition(MatchStatus.COUNTDOWN);
+      machine.transition(MatchStatus.ROUND_ACTIVE);
+      machine.startRound({
+        id: "q1",
+        content: "Q?",
+        options: ["A", "B"],
+        correctAnswer: "A",
+      });
+
+      (
+        machine as unknown as {
+          currentRound: { startingPlayers: typeof UNAVAILABLE };
+        }
+      ).currentRound.startingPlayers = UNAVAILABLE;
+
+      const restoredRound = MatchStateMachine.deserialize(
+        machine.serialize(),
+      ).getCurrentRound();
+
+      expect(restoredRound).not.toBeNull();
+      expect(
+        (
+          restoredRound as unknown as {
+            startingPlayers?: string[] | typeof UNAVAILABLE;
+          }
+        ).startingPlayers,
+      ).toBe(UNAVAILABLE);
+    });
+
+    it("deserialize() returns UNAVAILABLE startingPlayers for missing or unsupported state versions", () => {
+      const machine = new MatchStateMachine("m1", "r1", makePlayers());
+      machine.transition(MatchStatus.COUNTDOWN);
+      machine.transition(MatchStatus.ROUND_ACTIVE);
+      machine.startRound({
+        id: "q1",
+        content: "Q?",
+        options: ["A", "B"],
+        correctAnswer: "A",
+      });
+
+      const parsed = JSON.parse(machine.serialize());
+
+      delete parsed._stateVersion;
+      const legacyRound = MatchStateMachine.deserialize(
+        JSON.stringify(parsed),
+      ).getCurrentRound();
+      expect(
+        (
+          legacyRound as unknown as {
+            startingPlayers?: string[] | typeof UNAVAILABLE;
+          }
+        ).startingPlayers,
+      ).toBe(UNAVAILABLE);
+
+      parsed._stateVersion = 2;
+      const futureRound = MatchStateMachine.deserialize(
+        JSON.stringify(parsed),
+      ).getCurrentRound();
+      expect(
+        (
+          futureRound as unknown as {
+            startingPlayers?: string[] | typeof UNAVAILABLE;
+          }
+        ).startingPlayers,
+      ).toBe(UNAVAILABLE);
     });
 
     it("serialize() preserves answer submissionIds across deserialize", () => {
