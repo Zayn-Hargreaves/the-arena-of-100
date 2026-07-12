@@ -52,14 +52,13 @@ async function parseError(response: Response) {
         return raw.trim() ? raw : fallback;
       }
       if (Array.isArray(raw)) {
-        const parts = raw
-          .filter(
-            (p): p is string => typeof p === "string" && p.trim().length > 0,
-          )
-          .map((p) => p.trim());
-        if (parts.length === raw.length && parts.length > 0) {
-          return parts.join(", ");
-        }
+        if (raw.length === 0) return fallback;
+        const allValid = raw.every(
+          (p) => typeof p === "string" && p.trim().length > 0,
+        );
+        if (!allValid) return fallback;
+        const parts = raw.map((p) => (p as string).trim());
+        return parts.join(", ") || fallback;
       }
     }
     return fallback;

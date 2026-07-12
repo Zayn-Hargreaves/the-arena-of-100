@@ -174,9 +174,10 @@ jobs:
           # Add a generous window on top of HOLD so the sampler
           # covers ramp + steady-state + cleanup. HOLD and RAMP_UP
           # are workflow inputs promoted to env above (never
-          # interpolate ${{ inputs.* }} inside the shell script —
-          # that path is parsed before the runner has a chance to
-          # reject undefined inputs).
+          # interpolate the inputs object directly inside the shell
+          # script — the runner expands templating expressions
+          # before the shell sees them, and an undefined input can
+          # fail the step).
           to_sec() { case "$1" in *s) echo "${1%s}";;
                                      *m) echo "$((${1%m}*60))";;
                                      *h) echo "$((${1%h}*3600))";;
@@ -203,6 +204,7 @@ jobs:
           fi
 
       - name: Run k6 (${{ inputs.scenario }})
+        id: k6
         env:
           PLAYERS: ${{ inputs.players }}
           SPECTATORS: ${{ inputs.spectators }}
@@ -210,6 +212,11 @@ jobs:
           COORDINATOR_URL: http://127.0.0.1:7171
           READINESS_RUN_ID: ${{ steps.meta.outputs.scenario }}-${{ steps.meta.outputs.ts }}
         run: |
+          # Capture the k6 start instant (seconds since epoch) so the
+          # readiness deadline below is anchored to k6 start, not to
+          # the later "Write manifest" step.
+          K6_START_EPOCH=$(date -u +%s)
+          echo "k6_start_epoch=${K6_START_EPOCH}" >> "$GITHUB_OUTPUT"
           k6 run \
             -e API_URL=http://localhost:3001 \
             -e PLAYERS="$PLAYERS" \
@@ -264,6 +271,7 @@ jobs:
           SPECTATORS: ${{ inputs.spectators }}
           READINESS_RUN_ID: ${{ steps.meta.outputs.scenario }}-${{ steps.meta.outputs.ts }}
           COORDINATOR_URL: http://127.0.0.1:7171
+          K6_START_EPOCH: ${{ steps.k6.outputs.k6_start_epoch }}
         run: |
           # Quote the heredoc delimiter ('NODE') so bash performs
           # NO parameter / arithmetic / command substitution on the
@@ -331,7 +339,21 @@ jobs:
               : 1 + players + spectators;
           const runId = process.env.READINESS_RUN_ID;
           const coordinatorUrl = process.env.COORDINATOR_URL;
-          const deadlineAt = new Date(Date.now() + 2 * holdSec * 1000).toISOString();
+          // Anchor the readiness deadline to the k6 start instant
+          // captured by the "Run k6" step, not to manifest-write time.
+          // The validator (validate-results.mjs) requires
+          //   deadlineAt = k6_start + 2 * HOLD
+          // so that a late readiness barrier still falls inside the
+          // window even when the k6 run took longer than expected.
+          // Falls back to manifest-write time only when the k6 step
+          // did not run (skipped/failed and outputs are empty).
+          const k6StartEpoch = Number.parseInt(
+            String(process.env.K6_START_EPOCH || '').trim(), 10,
+          );
+          const deadlineEpoch = Number.isFinite(k6StartEpoch) && k6StartEpoch > 0
+            ? k6StartEpoch + 2 * holdSec
+            : Math.floor(Date.now() / 1000) + 2 * holdSec;
+          const deadlineAt = new Date(deadlineEpoch * 1000).toISOString();
 
           function fetchJson(urlPath) {
             return new Promise((resolve) => {
@@ -417,6 +439,11 @@ jobs:
                 target: reportedTarget,
                 achievedAt,
                 deadlineAt,
+                // k6-start instant the deadline was anchored to
+                // (Unix seconds). null when the k6 step did not run.
+                k6StartAt: Number.isFinite(k6StartEpoch) && k6StartEpoch > 0
+                  ? new Date(k6StartEpoch * 1000).toISOString()
+                  : null,
                 missing,
                 // Preserve the actual coordinator responses for
                 // debugging and for the validator's "raw" check.

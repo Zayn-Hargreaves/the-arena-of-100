@@ -236,6 +236,11 @@ export function createSocketIOClient(wsBase, opts = {}) {
   };
   ws.onclose = () => {
     closed = true;
+    // Always reject on close so callers awaiting client.ready never hang,
+    // even if the socket closes before the namespace CONNECT ack fires.
+    // (Subsequent rejectReady calls after resolveReady are no-ops, so this
+    // is safe to call regardless of whether the namespace already
+    // connected.)
     rejectReady(
       new Error("socket closed before namespace connection acknowledgement"),
     );

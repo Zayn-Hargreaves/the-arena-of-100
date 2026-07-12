@@ -89,7 +89,10 @@ apps/web/src/lib/api/
       - `apps/api/src/modules/admin/admin.controller.spec.ts` (delegation + validation).
       - `apps/api/src/modules/admin/admin.service.spec.ts` (filter forwarding).
       - `apps/api/src/modules/admin/dto/get-audit-events.dto.spec.ts` (DTO validation).
-  - Nếu muốn bổ sung test auth-rejection cho `GET /admin/audit-events` (401/403 tuỳ `RolesGuard`), mở một Track API riêng; không chặn Track B.
+  - **Acceptance nhỏ trong Track B (không cần backend test mới):** với MỌI endpoint admin/audit UI mới hoặc bị sửa, người implementer phải dùng **GitNexus `query` / `context` (không dùng `grep`)** để truy ngược decorator + metadata trực tiếp trên `apps/api/src/modules/admin/admin.controller.ts` (không chỉ `admin.controller.spec.ts`) và chứng minh rằng `@Roles(Role.ADMIN)` (hoặc metadata tương đương qua `RolesGuard`) đã được áp dụng. Evidence chấp nhận được (ít nhất một trong hai):
+    1. Quote trực tiếp decorator/metadata trên handler tương ứng (qua `gitnexus_context` cho từng method), **HOẶC**
+    2. Test hiện có đã cover authorization rejection (401/403) cho endpoint đó.
+       Lưu evidence này (GitNexus output + quote) vào PR description. Track API riêng (ngoài Track B) vẫn chịu trách nhiệm bổ sung test rejection 401/403 explicit nếu evidence ở mục (2) chưa có.
 
 ## Rủi ro
 

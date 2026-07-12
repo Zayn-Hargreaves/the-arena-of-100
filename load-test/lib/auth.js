@@ -70,6 +70,9 @@ export function guestLogin(httpBase, username) {
   if (!body || !body.data || !body.data.accessToken || !body.data.user)
     return null;
 
+  // NOTE: never console.log `body` or `res.body` here. The guest-login
+  // response carries a long-lived accessToken; logging it would expose
+  // real JWTs to CI logs / artifact uploads.
   return {
     token: body.data.accessToken,
     userId: body.data.user.id,
