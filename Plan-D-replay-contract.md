@@ -72,7 +72,7 @@ Cùng đụng `packages/game-core/src/match-state-machine.ts` và `apps/web/src/
       - PHẢI có field `events: EventBatchPayload["events"]` (mảng event từ `eventLog` có `seqNo > lastSeenSeqNo`).
       - KHÔNG được có field `snapshot` (validator phải reject nếu `snapshot` tồn tại cùng `mode: "delta"`).
       - PHẢI có `lastEventSeqNo: number`.
-    - **Strict unknown-field validation**: envelope validator (Zod với `.strict()`) phải reject payload có field nào ngoài `mode` / `snapshot` / `events` / `lastEventSeqNo`. Payload malformed/trống/sai shape ⇒ reject trước khi tới handler logic.
+    - **Strict unknown-field validation**: envelope validator (Zod với `.strict()`) phải reject payload có field nào ngoài `mode` / `snapshot` / `events` / `lastEventSeqNo` / `replayCursor`. Payload malformed/trống/sai shape ⇒ reject trước khi tới handler logic.
   - **Triển khai Zod discriminated union** (tất cả nested object PHẢI dùng `.strict()` để reject field lạ ở mọi cấp):
 
     ```text
@@ -175,7 +175,7 @@ Cùng đụng `packages/game-core/src/match-state-machine.ts` và `apps/web/src/
     - **Invariant bắt buộc — atomicity & Concrete Enforcement**: `snapshot` (hoặc `events`), `lastEventSeqNo`, và `replayCursor` mới PHẢI được tạo ra từ **cùng một lần đọc/lock trên cùng một phiên bản state** — không đọc snapshot rồi đọc lại eventLog hay sinh cursor ở một thời điểm khác. `replayCursor.seqNo` PHẢI bằng đúng `lastEventSeqNo` được emit trong cùng response đó; invariant này áp dụng cho mọi nhánh (full fallback, delta, và mọi fallback path khác, bao gồm cả khi signature validation failure). Để thực thi nghiêm ngặt atomicity này, server phải áp dụng một trong hai cơ chế sau:
       - **Cơ chế 1: Optimistic Version Checking với Retry**: Trước khi đọc dữ liệu, đọc giá trị `stateVersion` (hoặc update counter) hiện tại của match trong Redis. Sau đó tiến hành đọc snapshot và event log. Trước khi serialize/sinh cursor, kiểm tra lại `stateVersion`. Nếu version đã thay đổi, hủy kết quả và thực hiện đọc lại (retry) tối đa 3 lần. Nếu vẫn không khớp, trả về full snapshot thu được ở lần đọc cuối cùng và sinh cursor tương ứng với version cụ thể đó.
       - **Cơ chế 2: Lock-based Read-Isolation (Khuyên dùng)**: Thực hiện toàn bộ thao tác đọc state machine và event log trong một Redis transaction (using `MULTI/EXEC` hoặc một Lua script) để cô lập việc đọc dữ liệu khỏi các thay đổi đồng thời từ game loop thread khác.
-        Nếu không đảm bảo atomicity (ví dụ: state thay đổi giữa các lần đọc và retry thất bại), phải fallback về full snapshot từ lần đọc duy nhất. Cùng với warning log chi tiết (tuyệt đối KHÔNG bao giờ log HMAC secret, computed signatures, raw tokens, hoặc raw requests để tránh rò rỉ bảo mật), phân biệt rõ với trường hợp cursor vắng mặt (không đối xử như client kết nối lần đầu và không trả về/omitting token cũ không hợp lệ). RETURN.
+        Nếu không đảm bảo atomicity (ví dụ: state thay đổi giữa các lần đọc và retry thất bại), server chỉ được emit khi có **cùng một tuple nhất quán** `{ snapshot | events, lastEventSeqNo, replayCursor }` từ cùng `stateVersion` hoặc cùng lock-protected read session. Nếu retry không tạo ra được tuple nhất quán này, phải **fail closed**: emit một event lỗi `SNAPSHOT_UNAVAILABLE` rõ ràng (hoặc triển khai cơ chế client timeout tương đương được tài liệu hóa) để các client gọi `requestSnapshot` không phải đợi vô hạn và có thể tự động retry với cơ chế backoff. Tuyệt đối không phát bất kỳ envelope nào chứa cursor/snapshot lệch version, không degrade sang một envelope "full" với `replayCursor` lấy từ lần đọc khác, tránh xử lý trường hợp này như thể thiếu cursor (không đối xử như client kết nối lần đầu và không trả về/omitting token cũ không hợp lệ), và ghi log warning chi tiết (tuyệt đối KHÔNG bao giờ log HMAC secret, computed signatures, raw tokens, hoặc raw requests để tránh rò rỉ bảo mật). RETURN.
     - Nếu xác thực thành công: đọc `eventLog` để lấy `firstEventSeqNo` và `latestSeqNo`.
     - Thực hiện các kiểm tra replayability (future-cursor `seqNo > latestSeqNo`, truncated-log `seqNo < firstEventSeqNo - 1`, và gap checks).
     - Nếu vi phạm bất kỳ kiểm tra nào trong các kiểm tra trên ⇒ fallback full envelope (`mode: "full"`) + log cảnh báo (không bao giờ ghi log HMAC secret, computed signatures, tokens, hay raw requests; giữ log có tính chất thông tin về lỗi validation của cursor mà không leak keys hoặc raw tokens). RETURN. (Ngoại lệ: trường hợp empty-eventLog carve-out cho phép replay delta rỗng nếu `eventLog.length === 0` AND `replayCursor.seqNo === 0` AND `latestSeqNo === 0`).
@@ -191,14 +191,6 @@ Cùng đụng `packages/game-core/src/match-state-machine.ts` và `apps/web/src/
   - **KHÔNG fallback full** trong trường hợp sau (đây là rule bắt buộc để không mâu thuẫn với "Empty event log"):
     - Client đã hydrate hợp lệ tại cursor 0 (gửi `replayCursor` hợp lệ với `seqNo === 0`, server verify chữ ký + match ok, `latestSeqNo === 0`, `eventLog` rỗng) ⇒ handler trả envelope `mode: "delta"` với `events: []` và `lastEventSeqNo: 0`. KHÔNG fallback full.
   - Lưu ý: trường hợp `replayCursor.seqNo = 9` và `eventLog[0].seqNo = 10` (client đã thấy tới seq 9, log bắt đầu từ 10) vẫn replay được: server trả delta các event có `seqNo > 9` (tức từ 10 trở đi). KHÔNG ép full fallback trong trường hợp này.
-- [ ] Cập nhật schema/event liên quan (capability flag, envelope delta/full, giữ raw payload cho `mode: "full"`).
-- [ ] Bổ sung handler tests:
-  - Client cũ (không có capability flag) nhận raw full snapshot.
-  - Client mới (có capability flag) nhận envelope đúng shape (`mode: "delta"` khi replayable, `mode: "full"` khi fallback).
-  - `applySnapshotState` vẫn hydrate đúng khi payload là raw full snapshot (regression).
-  - **Empty eventLog — hai nhánh tách biệt** (xem "Empty event log" trong Phase D1):
-    - Client mới + eventLog rỗng ⇒ raw full snapshot (client cũ) hoặc envelope `mode: "full"` (client mới).
-    - Client đã hydrate hợp lệ tại cursor 0 + eventLog rỗng ⇒ envelope `mode: "delta"`, `events: []`, `lastEventSeqNo: 0`.
 - [ ] Cập nhật schema/event liên quan (capability flag, envelope delta/full, giữ raw payload cho `mode: "full"`).
 - [ ] Bổ sung handler tests:
   - Client cũ (không có capability flag) nhận raw full snapshot.

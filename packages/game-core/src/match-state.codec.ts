@@ -248,6 +248,9 @@ function deserializeStartingPlayers(
     Array.isArray(rawStartingPlayers) &&
     rawStartingPlayers.every((playerId) => typeof playerId === "string")
   ) {
+    if (new Set(rawStartingPlayers).size !== rawStartingPlayers.length) {
+      return UNAVAILABLE;
+    }
     return [...rawStartingPlayers];
   }
 

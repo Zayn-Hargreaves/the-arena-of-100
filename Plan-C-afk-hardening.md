@@ -83,8 +83,8 @@ C và D cùng đụng `match-state-machine.ts` và `socket-store.ts`. **C phải
         - `_stateVersion > 1` (phiên bản tương lai chưa biết — fail-closed, KHÔNG throw, KHÔNG parse tiếp).
         - Bất kỳ giá trị nào khác không phải exact `1` integer.
       - Blob có `_stateVersion === 1` (pass strict check ở trên) nhưng `currentRound` thiếu `startingPlayers` ⇒ `UNAVAILABLE`.
-      - Blob có `_stateVersion === 1` nhưng `currentRound` thiếu `correctAnswer` (cross-check sẽ không thể chạy nên coi như không thể khôi phục) ⇒ `UNAVAILABLE`.
-        Recovery path nhận `UNAVAILABLE` (từ bất kỳ lý do nào ở trên) PHẢI fallback về full snapshot **ngay lập tức** mà **không gọi helper** (`eliminationsForRound` KHÔNG được invoked) — recovery code kiểm tra `startingPlayers === UNAVAILABLE` trước bất kỳ logic nào khác. Thêm trường `_stateVersion: number` vào serialized blob (bắt đầu từ version 1 khi `startingPlayers` được thêm) để migration future-proof; version 0 (không có trường) tương đương với trường hợp `startingPlayers` bị thiếu.
+      - Blob có `_stateVersion === 1` nhưng `currentRound` thiếu `correctAnswer` sau deserialize ⇒ **KHÔNG** set `startingPlayers = UNAVAILABLE`. Đây là trạng thái bình thường của L3 vì codec cố ý không serialize answer key; recovery path phải giữ `startingPlayers` nguyên bản, gọi `attachCorrectAnswer`, và chỉ fallback full nếu attach/re-hydrate answer thất bại.
+        Recovery path chỉ PHẢI fallback về full snapshot **ngay lập tức** khi `startingPlayers === UNAVAILABLE`; ở nhánh này recovery code kiểm tra sentinel trước bất kỳ logic nào khác và **không gọi helper** (`eliminationsForRound` KHÔNG được invoked). Nếu `startingPlayers` hợp lệ nhưng `correctAnswer` vắng mặt, caller phải thử attach answer trước; chỉ khi attach không thành công mới fallback. Thêm trường `_stateVersion: number` vào serialized blob (bắt đầu từ version 1 khi `startingPlayers` được thêm) để migration future-proof; version 0 (không có trường) tương đương với trường hợp `startingPlayers` bị thiếu.
     - **Test codec bắt buộc** (thêm vào `match-state.codec.spec.ts` hoặc tương đương):
       1. **Round-trip preservation — `startingPlayers`**: `deserialize(serialize(state))` bảo toàn chính xác `currentRound.startingPlayers` và `_stateVersion === 1`; không có field nào bị mất hay biến đổi. Test cả hai nhánh: `startingPlayers` là `string[]` hợp lệ (bảo toàn mảng) VÀ `startingPlayers === UNAVAILABLE` (bảo toàn sentinel qua mapping `"__UNAVAILABLE__"` → `Symbol`).
       2. **Round-trip preservation — `correctAnswer`**: vì L3 invariant omit `correctAnswer` khi serialize (bảo mật), `deserialize(serialize(state))` PHẢI trả `currentRound.correctAnswer === undefined`. Test xác nhận: (a) `correctAnswer` KHÔNG xuất hiện trong serialized JSON blob, (b) sau `deserialize`, `currentRound.correctAnswer` là `undefined`, (c) chỉ sau khi gọi `attachCorrectAnswer(answer)` thì `currentRound.correctAnswer === answer`. Đây là hành vi thiết kế (L3), không phải lỗi — nhưng khi `_stateVersion === 1` mà `correctAnswer` vắng mặt (trường hợp bình thường sau deserialize), `startingPlayers` vẫn được bảo toàn (KHÔNG set thành `UNAVAILABLE` chỉ vì `correctAnswer` chưa attach). **Thay đổi so với rule trước**: condition "thiếu `correctAnswer` → `UNAVAILABLE`" chỉ áp dụng khi **recovery path cần `correctAnswer` để gọi helper** — tức là caller (`match-round-runner.ts`) kiểm tra `correctAnswer` vắng mặt VÀ `startingPlayers` hợp lệ ⇒ gọi `attachCorrectAnswer` trước; nếu attach thất bại ⇒ fallback. Codec `deserialize` **KHÔNG** tự set `startingPlayers = UNAVAILABLE` chỉ vì `correctAnswer` vắng mặt — nó trả `startingPlayers` nguyên bản từ blob (hoặc `UNAVAILABLE` nếu blob version không hợp lệ / thiếu `startingPlayers`).
@@ -146,9 +146,9 @@ C và D cùng đụng `match-state-machine.ts` và `socket-store.ts`. **C phải
 
 - [ ] AFK/elimination khớp semantics đã chốt ở cả 3 lớp, có test bao phủ edge case.
 - [ ] Doc AFK policy tồn tại và khớp code.
-- [ ] `MatchStateMachine` public API không đổi (chỉ thêm, không sửa/xoá).
+- [ ] `MatchStateMachine` public API không đổi (không thêm/sửa/xoá public method).
 
 ## Rủi ro
 
-- **CRITICAL blast radius**: mọi thay đổi state machine ảnh hưởng ~19 flow → chỉ thêm, verify bằng full game-core + match suite trước khi PR.
+- **CRITICAL blast radius**: mọi thay đổi state machine ảnh hưởng ~19 flow → giữ diff nhỏ, không mở rộng public API, verify bằng full game-core + match suite trước khi PR.
 - Giao với D ở `socket-store.ts` → merge C trước, D rebase sau.

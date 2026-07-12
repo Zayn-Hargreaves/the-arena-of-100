@@ -1451,6 +1451,47 @@ describe("MatchStateMachine score accumulation (B2)", () => {
       ).toBe(UNAVAILABLE);
     });
 
+    // L3 coverage: the `else if (this.currentRound.startingPlayers
+    // === UNAVAILABLE) { round.startingPlayers = UNAVAILABLE; }`
+    // branch in getCurrentRound. The previous "preserves the
+    // UNAVAILABLE startingPlayers sentinel" test only asserted
+    // the value through the deserialize path, never through
+    // getCurrentRound. The branch is the runtime mirror of the
+    // codec sentinel, so it must also be exercised end-to-end.
+    it("getCurrentRound preserves UNAVAILABLE startingPlayers (does not coerce to undefined)", () => {
+      const machine = new MatchStateMachine(
+        "m-unav-getter",
+        "r-unav",
+        makePlayers(),
+      );
+      machine.transition(MatchStatus.COUNTDOWN);
+      machine.transition(MatchStatus.ROUND_ACTIVE);
+      machine.startRound({
+        id: "q1",
+        content: "Q?",
+        options: ["A", "B"],
+        correctAnswer: "A",
+      });
+
+      // Manually set the sentinel the way deserialize() would leave
+      // the round after a recovery from a legacy / future payload.
+      (
+        machine as unknown as {
+          currentRound: { startingPlayers: typeof UNAVAILABLE };
+        }
+      ).currentRound.startingPlayers = UNAVAILABLE;
+
+      const round = machine.getCurrentRound();
+      expect(round).not.toBeNull();
+      expect(
+        (
+          round as unknown as {
+            startingPlayers?: string[] | typeof UNAVAILABLE;
+          }
+        ).startingPlayers,
+      ).toBe(UNAVAILABLE);
+    });
+
     it("serialize() preserves answer submissionIds across deserialize", () => {
       const machine = new MatchStateMachine("m1", "r1", makePlayers());
       machine.transition(MatchStatus.COUNTDOWN);
