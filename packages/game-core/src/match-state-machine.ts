@@ -17,6 +17,16 @@ import {
 import { computeRoundScore } from "./scoring";
 import { resolveTieBreak } from "./tie-break";
 import { serializeMatch, deserializeMatch } from "./match-state.codec";
+import {
+  eliminationsForRound,
+  UNAVAILABLE,
+  type RoundStartingPlayers,
+} from "./round-elimination";
+
+type RoundRuntimeState = RoundState & {
+  correctAnswer?: string;
+  startingPlayers?: RoundStartingPlayers;
+};
 
 // State Transition Handler (Strategy Pattern)
 export interface StateTransitionHandler {
@@ -44,7 +54,7 @@ const VALID_TRANSITIONS: Record<MatchStatus, MatchStatus[]> = {
 // Match State Machine
 export class MatchStateMachine {
   private state: MatchState;
-  private currentRound: RoundState | null = null;
+  private currentRound: RoundRuntimeState | null = null;
   private eventLog: Array<{
     type: string;
     payload?: unknown;
@@ -85,7 +95,7 @@ export class MatchStateMachine {
 
   getCurrentRound(): Readonly<RoundState> | null {
     if (!this.currentRound) return null;
-    return {
+    const round = {
       ...this.currentRound,
       question: {
         ...this.currentRound.question,
@@ -96,7 +106,15 @@ export class MatchStateMachine {
           ([playerId, answer]) => [playerId, { ...answer }],
         ),
       ),
-    };
+    } as RoundRuntimeState;
+
+    if (Array.isArray(this.currentRound.startingPlayers)) {
+      round.startingPlayers = [...this.currentRound.startingPlayers];
+    } else if (this.currentRound.startingPlayers === UNAVAILABLE) {
+      round.startingPlayers = UNAVAILABLE;
+    }
+
+    return round;
   }
 
   // Validate Transition (Guard)
@@ -163,8 +181,9 @@ export class MatchStateMachine {
       endsAt: now + (roundDurationMs ?? GAME_CONFIG.ROUND_DURATION_MS),
       answers: new Map(),
       status: "ACTIVE",
+      startingPlayers: [...this.state.survivingPlayerIds],
       correctAnswer: question.correctAnswer,
-    } as RoundState & { correctAnswer: string };
+    } as RoundRuntimeState;
 
     this.logEvent("ROUND_STARTED", {
       roundNo: this.state.currentRoundNo,
@@ -209,7 +228,7 @@ export class MatchStateMachine {
       throw new RoomError(ErrorCode.PLAYER_NOT_IN_ROOM);
     }
 
-    const roundWithAnswer = this.currentRound as RoundState & {
+    const roundWithAnswer = this.currentRound as RoundRuntimeState & {
       correctAnswer: string;
     };
     const isCorrect = answer === roundWithAnswer.correctAnswer;
@@ -261,33 +280,43 @@ export class MatchStateMachine {
 
     this.currentRound.status = "EVALUATING";
 
-    const roundWithAnswer = this.currentRound as RoundState & {
+    const roundWithAnswer = this.currentRound as RoundRuntimeState & {
       correctAnswer: string;
     };
     const correctAnswer = roundWithAnswer.correctAnswer;
     const survivingIds: string[] = [];
-    const eliminatedIds: string[] = [];
+    const startingPlayers = Array.isArray(roundWithAnswer.startingPlayers)
+      ? roundWithAnswer.startingPlayers
+      : [...this.state.survivingPlayerIds];
+    const eliminatedIds = eliminationsForRound({
+      ...this.currentRound,
+      correctAnswer,
+      startingPlayers,
+    });
+    const eliminatedSet = new Set(eliminatedIds);
 
     // Check each surviving player
-    for (const playerId of this.state.survivingPlayerIds) {
+    for (const playerId of startingPlayers) {
       const answer = this.currentRound.answers.get(playerId);
 
       // No answer or wrong answer = eliminated
-      if (!answer || !answer.isCorrect) {
-        eliminatedIds.push(playerId);
+      if (eliminatedSet.has(playerId)) {
         const player = this.state.players.get(playerId);
         if (player) {
           player.status = PlayerStatus.ELIMINATED;
         }
       } else {
         survivingIds.push(playerId);
+        const correctAnswerState = answer!;
         // Update player stats
         const player = this.state.players.get(playerId);
         if (player) {
           player.correctAnswers++;
-          player.totalResponseTimeMs += answer.responseTimeMs;
+          player.totalResponseTimeMs += correctAnswerState.responseTimeMs;
           // B2: Accumulate score = base + speed bonus (floored to int for DB Int column)
-          const roundScore = computeRoundScore(answer.responseTimeMs);
+          const roundScore = computeRoundScore(
+            correctAnswerState.responseTimeMs,
+          );
           player.score += Math.floor(roundScore.total);
         }
       }

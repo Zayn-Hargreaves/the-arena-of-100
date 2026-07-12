@@ -2,7 +2,7 @@ import { MatchRoundRunner } from "./match-round-runner";
 import { MatchService } from "./match.service";
 import { QuestionService } from "../question/question.service";
 import { RoomService } from "../room/room.service";
-import { MatchStateMachine } from "@arena/game-core";
+import { MatchStateMachine, UNAVAILABLE } from "@arena/game-core";
 import {
   MatchStatus,
   PlayerStatus,
@@ -57,6 +57,13 @@ describe("MatchRoundRunner", () => {
 
     questionService = {
       getRandom: vi.fn().mockResolvedValue({
+        id: "q1",
+        content: "Test question",
+        options: ["A", "B", "C", "D"],
+        correctAnswer: "A",
+        difficulty: "MEDIUM",
+      }),
+      findOne: vi.fn().mockResolvedValue({
         id: "q1",
         content: "Test question",
         options: ["A", "B", "C", "D"],
@@ -1703,6 +1710,375 @@ describe("MatchRoundRunner", () => {
       );
 
       vi.useRealTimers();
+    });
+  });
+
+  // ============================================================
+  // L3 recovery path: endRound with state.status = ROUND_EVALUATING
+  // AND round.status = "COMPLETED". This is the path taken after a
+  // process restart between evaluateRound() (which sets round.status
+  // to COMPLETED and persists to Redis) and the DB write
+  // (saveRoundAndAnswers). The runner must re-derive eliminatedIds
+  // from the persisted snapshot rather than re-running the live
+  // evaluation.
+  // ============================================================
+  describe("endRound recovery path (L3: ROUND_EVALUATING + COMPLETED)", () => {
+    // We omit the getEventLog() entry so the runner falls through
+    // to the `else` block that calls getRecoveryStartingPlayers.
+    // Each test below inlines its own fake state machine because
+    // the field set varies per branch (correctAnswer empty vs
+    // present, startingPlayers UNAVAILABLE vs string[] vs missing).
+
+    it("Test A: getRecoveryStartingPlayers UNAVAILABLE branch — log + eliminatedIds = []", async () => {
+      // The L3 recovery path with `startingPlayers === UNAVAILABLE`
+      // is the case the codec hits when a legacy / future
+      // _stateVersion was loaded. The runner must not crash, must
+      // not infer eliminations from cumulative state, and must log
+      // both warnings (helper + skip-eliminations).
+      const round = {
+        matchId: "match-1",
+        roundNo: 1,
+        question: { id: "q1", content: "Q?", options: ["A", "B"] },
+        startedAt: 100,
+        endsAt: 1000,
+        answers: new Map<
+          string,
+          { answer: string; isCorrect: boolean; responseTimeMs: number }
+        >([["p1", { answer: "A", isCorrect: true, responseTimeMs: 100 }]]),
+        status: "COMPLETED",
+        correctAnswer: "A",
+        startingPlayers: UNAVAILABLE,
+      };
+      const fakeStateMachine = {
+        getState: () => ({
+          status: MatchStatus.ROUND_EVALUATING,
+          currentRoundNo: 1,
+          survivingPlayerIds: ["p1"],
+          players: new Map([
+            ["p1", { id: "p1", name: "Player 1" }],
+            ["p2", { id: "p2", name: "Player 2" }],
+          ]),
+        }),
+        getCurrentRound: () => round,
+        getEventLog: () => [],
+        transition: vi.fn(),
+      } as any;
+      vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(
+        fakeStateMachine,
+      );
+      const warnSpy = vi.spyOn((runner as any).logger, "warn");
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+      await (runner as any).endRound("match-1", "room-1", mockServer);
+
+      // The helper warns (input branch) AND the recovery handler
+      // warns (skip branch). The two messages are distinct so
+      // operators can distinguish "missing snapshot" from "skipped
+      // eliminatedIds".
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Recovery round snapshot unavailable for match match-1 round 1: startingPlayers is UNAVAILABLE",
+        ),
+      );
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Recovery for match match-1 round 1 skipped eliminatedIds: startingPlayers is UNAVAILABLE",
+        ),
+      );
+
+      // Despite no eliminatedIds, the round must still be persisted
+      // (the round row exists from the original evaluateRound) and
+      // the state machine advances to ROUND_RESULT.
+      expect(matchService.saveRoundAndAnswers).toHaveBeenCalledTimes(1);
+      expect(fakeStateMachine.transition).toHaveBeenCalledWith(
+        MatchStatus.ROUND_RESULT,
+      );
+      expect(emitSpy).toHaveBeenCalledWith(
+        ServerEvent.ROUND_ENDED,
+        expect.objectContaining({
+          matchId: "match-1",
+          roundNo: 1,
+          correctAnswer: "A",
+          eliminatedPlayerIds: [],
+        }),
+      );
+      // No PLAYER_ELIMINATED was emitted because eliminatedIds is [].
+      expect(
+        emitSpy.mock.calls.some(
+          (call) => call[0] === ServerEvent.PLAYER_ELIMINATED,
+        ),
+      ).toBe(false);
+    });
+
+    it("Test B: getRecoveryStartingPlayers fallback (missing) branch — log + eliminatedIds = []", async () => {
+      // The `else` arm of the helper: startingPlayers is neither
+      // UNAVAILABLE nor an array (e.g. undefined, or some unexpected
+      // shape). The helper logs the "missing" warning and returns
+      // UNAVAILABLE; the recovery handler then logs the "skipped"
+      // warning and zeros out eliminatedIds.
+      const round = {
+        matchId: "match-1",
+        roundNo: 1,
+        question: { id: "q1", content: "Q?", options: ["A", "B"] },
+        startedAt: 100,
+        endsAt: 1000,
+        answers: new Map<
+          string,
+          { answer: string; isCorrect: boolean; responseTimeMs: number }
+        >([["p1", { answer: "A", isCorrect: true, responseTimeMs: 100 }]]),
+        status: "COMPLETED",
+        correctAnswer: "A",
+        // Intentionally NOT setting startingPlayers — undefined hits
+        // the fallback branch.
+      };
+      const fakeStateMachine = {
+        getState: () => ({
+          status: MatchStatus.ROUND_EVALUATING,
+          currentRoundNo: 1,
+          survivingPlayerIds: ["p1"],
+          players: new Map([
+            ["p1", { id: "p1", name: "Player 1" }],
+            ["p2", { id: "p2", name: "Player 2" }],
+          ]),
+        }),
+        getCurrentRound: () => round,
+        getEventLog: () => [],
+        transition: vi.fn(),
+      } as any;
+      vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(
+        fakeStateMachine,
+      );
+      const warnSpy = vi.spyOn((runner as any).logger, "warn");
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+      await (runner as any).endRound("match-1", "room-1", mockServer);
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Recovery round snapshot unavailable for match match-1 round 1: startingPlayers missing",
+        ),
+      );
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Recovery for match match-1 round 1 skipped eliminatedIds: startingPlayers is UNAVAILABLE",
+        ),
+      );
+      expect(matchService.saveRoundAndAnswers).toHaveBeenCalledTimes(1);
+      expect(emitSpy).toHaveBeenCalledWith(
+        ServerEvent.ROUND_ENDED,
+        expect.objectContaining({ eliminatedPlayerIds: [] }),
+      );
+    });
+
+    it("Test C: Recovery rehydrates correctAnswer from questionService.findOne, then calls eliminationsForRound", async () => {
+      // The most common production recovery case: a process crash
+      // between the original evaluateRound (which persisted the
+      // round WITHOUT correctAnswer due to L3) and the DB write.
+      // The recovery runner:
+      //   1. Sees recoveryRound.correctAnswer === "" (stripped).
+      //   2. Calls questionService.findOne(round.question.id).
+      //   3. Uses the returned correctAnswer with
+      //      eliminationsForRound() to derive the eliminated set.
+      const round = {
+        matchId: "match-1",
+        roundNo: 1,
+        question: { id: "q-rehydrate", content: "Q?", options: ["A", "B"] },
+        startedAt: 100,
+        endsAt: 1000,
+        answers: new Map<
+          string,
+          { answer: string; isCorrect: boolean; responseTimeMs: number }
+        >([
+          ["p1", { answer: "A", isCorrect: true, responseTimeMs: 100 }],
+          ["p2", { answer: "B", isCorrect: false, responseTimeMs: 200 }],
+        ]),
+        status: "COMPLETED",
+        correctAnswer: "",
+        startingPlayers: ["p1", "p2"],
+      };
+      const fakeStateMachine = {
+        getState: () => ({
+          status: MatchStatus.ROUND_EVALUATING,
+          currentRoundNo: 1,
+          survivingPlayerIds: ["p1"],
+          players: new Map([
+            ["p1", { id: "p1", name: "Player 1" }],
+            ["p2", { id: "p2", name: "Player 2" }],
+          ]),
+        }),
+        getCurrentRound: () => round,
+        getEventLog: () => [],
+        transition: vi.fn(),
+      } as any;
+      vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(
+        fakeStateMachine,
+      );
+      // The answer key is rehydrated from the Question DB row.
+      vi.mocked(questionService.findOne).mockResolvedValueOnce({
+        id: "q-rehydrate",
+        content: "Q?",
+        options: ["A", "B"],
+        correctAnswer: "A",
+        difficulty: "MEDIUM",
+      } as any);
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+      await (runner as any).endRound("match-1", "room-1", mockServer);
+
+      // findOne was consulted because the persisted correctAnswer
+      // was empty (L3 invariant — sensitive answer is never stored).
+      expect(questionService.findOne).toHaveBeenCalledWith("q-rehydrate");
+      // The rehydrated answer is what makes the eliminated set
+      // match the original evaluation: p2 answered "B" (wrong)
+      // against correctAnswer "A" → p2 is eliminated.
+      expect(emitSpy).toHaveBeenCalledWith(
+        ServerEvent.ROUND_ENDED,
+        expect.objectContaining({
+          matchId: "match-1",
+          roundNo: 1,
+          correctAnswer: "A",
+          eliminatedPlayerIds: ["p2"],
+        }),
+      );
+      expect(emitSpy).toHaveBeenCalledWith(
+        ServerEvent.PLAYER_ELIMINATED,
+        expect.objectContaining({ playerId: "p2" }),
+      );
+      expect(matchService.saveRoundAndAnswers).toHaveBeenCalledTimes(1);
+    });
+
+    it("Test D: Recovery with missing question in DB derives eliminatedIds from survivingSet", async () => {
+      // The Question row is gone (TTL'd, or deleted). The runner
+      // logs the rehydration failure, then falls into the
+      // `!correctAnswer` branch which derives eliminatedIds from
+      // `state.survivingPlayerIds`. This is a degraded mode that
+      // still gives a usable eliminated set for ROUND_ENDED, even
+      // though we lost the per-answer correctness detail.
+      const round = {
+        matchId: "match-1",
+        roundNo: 1,
+        question: { id: "q-missing", content: "Q?", options: ["A", "B"] },
+        startedAt: 100,
+        endsAt: 1000,
+        answers: new Map<
+          string,
+          { answer: string; isCorrect: boolean; responseTimeMs: number }
+        >([["p1", { answer: "A", isCorrect: true, responseTimeMs: 100 }]]),
+        status: "COMPLETED",
+        correctAnswer: "",
+        startingPlayers: ["p1", "p2"],
+      };
+      const fakeStateMachine = {
+        getState: () => ({
+          status: MatchStatus.ROUND_EVALUATING,
+          currentRoundNo: 1,
+          survivingPlayerIds: ["p1"],
+          players: new Map([
+            ["p1", { id: "p1", name: "Player 1" }],
+            ["p2", { id: "p2", name: "Player 2" }],
+          ]),
+        }),
+        getCurrentRound: () => round,
+        getEventLog: () => [],
+        transition: vi.fn(),
+      } as any;
+      vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(
+        fakeStateMachine,
+      );
+      // findOne returns null → correctAnswer stays "".
+      vi.mocked(questionService.findOne).mockResolvedValueOnce(null as any);
+      const warnSpy = vi.spyOn((runner as any).logger, "warn");
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+      await (runner as any).endRound("match-1", "room-1", mockServer);
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Failed to rehydrate correctAnswer in recovery: question q-missing not found in DB for match match-1 round 1",
+        ),
+      );
+      // p1 is in survivingPlayerIds, p2 is not → p2 derived-eliminated.
+      expect(emitSpy).toHaveBeenCalledWith(
+        ServerEvent.ROUND_ENDED,
+        expect.objectContaining({
+          matchId: "match-1",
+          roundNo: 1,
+          correctAnswer: "",
+          eliminatedPlayerIds: ["p2"],
+        }),
+      );
+      expect(matchService.saveRoundAndAnswers).toHaveBeenCalledTimes(1);
+    });
+
+    it("Test E: Recovery with both correctAnswer and startingPlayers — falls through to eliminationsForRound", async () => {
+      // The `else` arm in the recovery handler: correctAnswer is
+      // already on the in-memory round (e.g. the original process
+      // did not crash, but the runner is being called via a
+      // re-entry of endRound somehow), and startingPlayers is a
+      // string[]. The runner must call eliminationsForRound and
+      // NOT touch questionService.findOne.
+      const round = {
+        matchId: "match-1",
+        roundNo: 1,
+        question: { id: "q-both", content: "Q?", options: ["A", "B"] },
+        startedAt: 100,
+        endsAt: 1000,
+        answers: new Map<
+          string,
+          { answer: string; isCorrect: boolean; responseTimeMs: number }
+        >([
+          ["p1", { answer: "A", isCorrect: true, responseTimeMs: 100 }],
+          ["p2", { answer: "B", isCorrect: false, responseTimeMs: 200 }],
+        ]),
+        status: "COMPLETED",
+        correctAnswer: "A",
+        startingPlayers: ["p1", "p2"],
+      };
+      const fakeStateMachine = {
+        getState: () => ({
+          status: MatchStatus.ROUND_EVALUATING,
+          currentRoundNo: 1,
+          survivingPlayerIds: ["p1"],
+          players: new Map([
+            ["p1", { id: "p1", name: "Player 1" }],
+            ["p2", { id: "p2", name: "Player 2" }],
+          ]),
+        }),
+        getCurrentRound: () => round,
+        getEventLog: () => [],
+        transition: vi.fn(),
+      } as any;
+      vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(
+        fakeStateMachine,
+      );
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+      await (runner as any).endRound("match-1", "room-1", mockServer);
+
+      // findOne is NOT consulted because the correctAnswer was
+      // already present on the in-memory round.
+      expect(questionService.findOne).not.toHaveBeenCalled();
+      // eliminationsForRound ran with the real correctAnswer and
+      // startingPlayers → p2 eliminated.
+      expect(emitSpy).toHaveBeenCalledWith(
+        ServerEvent.ROUND_ENDED,
+        expect.objectContaining({
+          matchId: "match-1",
+          roundNo: 1,
+          correctAnswer: "A",
+          eliminatedPlayerIds: ["p2"],
+        }),
+      );
+      expect(emitSpy).toHaveBeenCalledWith(
+        ServerEvent.PLAYER_ELIMINATED,
+        expect.objectContaining({ playerId: "p2" }),
+      );
+      expect(matchService.saveRoundAndAnswers).toHaveBeenCalledTimes(1);
     });
   });
 });

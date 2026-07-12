@@ -201,16 +201,17 @@ describe("HealthController", () => {
       const deltaCpuMicros = 1_200_000 + 600_000 - (1_000_000 + 500_000);
       const elapsedMs = 1_001_000 - 1_000_000;
       const numCpus = os.cpus().length;
+      // Plan A: cpuUsage is reported as "% of 1 core".
       const expected = Math.min(
-        100,
-        (deltaCpuMicros / 1000 / (elapsedMs * numCpus)) * 100,
+        100 * numCpus,
+        (deltaCpuMicros / 1000 / elapsedMs) * 100,
       );
 
       expect(result.cpuUsage).not.toBeNull();
       expect(result.cpuUsage).toBeCloseTo(expected, 5);
     });
 
-    it("caps delta CPU usage at 100", async () => {
+    it("caps delta CPU usage at 100 * numCpus (fully loaded host)", async () => {
       const { controller, prisma, redis } = createController();
       prisma.room.count.mockResolvedValue(0);
       redis.get.mockResolvedValue(null);
@@ -229,7 +230,28 @@ describe("HealthController", () => {
       });
       const result = await controller.monitoring();
 
-      expect(result.cpuUsage).toBe(100);
+      const numCpus = os.cpus().length;
+      expect(result.cpuUsage).toBe(100 * numCpus);
+    });
+
+    it("exposes raw rssBytes / totalMemBytes alongside legacy MB fields", async () => {
+      const { controller, prisma, redis } = createController();
+      prisma.room.count.mockResolvedValue(0);
+      redis.get.mockResolvedValue(null);
+
+      const result = await controller.monitoring();
+
+      expect(typeof result.rssBytes).toBe("number");
+      expect(result.rssBytes).toBeGreaterThan(0);
+      expect(typeof result.totalMemBytes).toBe("number");
+      expect(result.totalMemBytes).toBeGreaterThan(0);
+      expect(result.memoryUsageMb).toBe(
+        Math.round(result.rssBytes / (1024 * 1024)),
+      );
+      expect(result.totalMemoryMb).toBe(
+        Math.round(result.totalMemBytes / (1024 * 1024)),
+      );
+      expect(result.numCpus).toBe(os.cpus().length);
     });
 
     it("isolates CPU tracking between sampler instances", async () => {

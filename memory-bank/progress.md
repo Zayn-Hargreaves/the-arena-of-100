@@ -73,7 +73,17 @@ Run the relevant package tests before using these numbers in PR text.
 
 ## What Is Not Done Yet
 
-- k6 load evidence for 100 concurrent WebSocket users.
+- k6 load evidence for 100 concurrent WebSocket users. Harness is now
+  end-to-end Plan A compliant: `load-test/` (k6 scenarios +
+  runtime-metadata + readiness barrier via `scripts/coordinator.mjs`),
+  `scripts/sample-monitoring.mjs` for raw CPU/RSS + Redis JSONL with
+  redacted `REDIS_URL`, and `scripts/validate-results.mjs` for the
+  pass/fail report. `HealthController.monitoring` was extended with
+  `rssBytes` / `totalMemBytes` and the CPU convention was switched
+  to `% of 1 core` so the documented thresholds (≤ 80% peak, ≤ 70%
+  p95) are observable on multi-core hosts. Baseline numbers + P2
+  conclusion still pending a real run against a real Redis/Postgres
+  stack (see `load-test/README.md`).
 - Full reconnect/event replay contract behind `lastSeenSeqNo`.
 - Spectator transport split for scale.
 - Full WCAG / Playwright / rematch work.

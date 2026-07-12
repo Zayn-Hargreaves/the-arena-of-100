@@ -34,8 +34,15 @@ interface HealthCheckResponse {
 
 interface MonitoringResponse {
   cpuUsage: number | null;
+  // RSS / total memory in bytes. Raw so the k6 load-test sampler can
+  // compute exact deltas without losing precision to MB rounding.
+  rssBytes: number;
+  totalMemBytes: number;
+  // Legacy fields kept for backwards compatibility with any consumer
+  // that still reads the rounded MB values.
   memoryUsageMb: number;
   totalMemoryMb: number;
+  numCpus: number;
   roomCount: number;
   timestamp: string;
 }
@@ -84,14 +91,21 @@ export class HealthController {
   async monitoring(): Promise<MonitoringResponse> {
     const cpuUsage = this.cpuSampler.sample();
 
-    const memoryUsageMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
-    const totalMemoryMb = Math.round(os.totalmem() / (1024 * 1024));
+    const mem = process.memoryUsage();
+    const rssBytes = mem.rss;
+    const totalMemBytes = os.totalmem();
+    const memoryUsageMb = Math.round(rssBytes / (1024 * 1024));
+    const totalMemoryMb = Math.round(totalMemBytes / (1024 * 1024));
+    const numCpus = os.cpus().length;
     const roomCount = await this.getActiveRoomCount();
 
     return {
       cpuUsage,
+      rssBytes,
+      totalMemBytes,
       memoryUsageMb,
       totalMemoryMb,
+      numCpus,
       roomCount,
       timestamp: new Date().toISOString(),
     };

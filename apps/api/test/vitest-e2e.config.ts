@@ -42,13 +42,15 @@ export default defineConfig({
     environment: "node",
     include: ["test/**/*.e2e-spec.ts"],
     exclude: ["node_modules", "dist", "src/**"],
-    reporters: isCi ? ["default", "junit", "json"] : undefined,
-    outputFile: isCi
+    ...(isCi
       ? {
-          junit: "./test-results/e2e-junit.xml",
-          json: "./test-results/e2e-report.json",
+          reporters: ["default", "junit", "json"],
+          outputFile: {
+            junit: "./test-results/e2e-junit.xml",
+            json: "./test-results/e2e-report.json",
+          },
         }
-      : undefined,
+      : {}),
     pool: "forks",
     testTimeout: 30_000,
     hookTimeout: 30_000,

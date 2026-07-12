@@ -1,0 +1,489 @@
+name: Load Test (k6)
+
+# Manual only — a full 100-VU load run is expensive and not something we
+# want on every push. Trigger from the Actions tab (or `gh workflow run
+# load-test.yml`) when you need fresh baseline numbers for the P2
+# spectator-transport decision.
+permissions:
+  contents: read
+
+concurrency:
+  group: load-test
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Scenario file under load-test/scenarios/"
+        type: choice
+        default: full-match
+        options:
+          - smoke
+          - full-match
+          - spectator-flood
+      players:
+        description: "PLAYERS (player VUs)"
+        default: "69"
+      spectators:
+        description: "SPECTATORS (spectator VUs)"
+        default: "30"
+      hold:
+        description: "HOLD (steady-state duration, e.g. 4m)"
+        default: "4m"
+      ramp_up:
+        description: "RAMP_UP (ramp window added to HOLD for sampler coverage, e.g. 30s)"
+        default: "30s"
+
+env:
+  CI_DB_USER: arena_test
+  CI_DB_PASSWORD: arena_test
+  CI_DB_NAME: arena_test
+  K6_VERSION: v0.54.0
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: arena_test
+          POSTGRES_PASSWORD: arena_test
+          POSTGRES_DB: arena_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://arena_test:arena_test@localhost:5432/arena_test
+      REDIS_URL: redis://localhost:6379/2
+      JWT_SECRET: ci-load-test-secret-key
+      NODE_ENV: test
+      PORT: "3001"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Push schema
+        run: pnpm --filter @arena/api exec prisma db push
+
+      - name: Seed questions (required for the match loop)
+        run: pnpm --filter @arena/api prisma:seed:dev
+
+      - name: Build API
+        run: pnpm --filter @arena/api build
+
+      - name: Start API
+        run: |
+          nohup node apps/api/dist/main > api.log 2>&1 &
+          echo "API_PID=$!" >> "$GITHUB_ENV"
+
+      - name: Wait for API health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf --max-time 1 http://localhost:3001/api/v1/health > /dev/null; then
+              echo "API is up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "API did not become healthy in time"; cat api.log; exit 1
+
+      - name: Install k6
+        run: |
+          echo "c7f03434854f837b6790ee81572e4b0f955241974c79a43cbb9f8d0fef069589  k6.tar.gz" > k6.sha256
+          curl -fsSL "https://github.com/grafana/k6/releases/download/${K6_VERSION}/k6-${K6_VERSION}-linux-amd64.tar.gz" -o k6.tar.gz
+          sha256sum -c k6.sha256
+          tar xzf k6.tar.gz
+          sudo cp k6-*/k6 /usr/local/bin/k6
+          k6 version
+
+      - name: Resolve run metadata
+        id: meta
+        run: |
+          SCENARIO="${{ inputs.scenario }}"
+          TS=$(date -u +%Y%m%dT%H%M%SZ)
+          COMMIT="${GITHUB_SHA::7}"
+          OUT_NAME="${SCENARIO}-${COMMIT}-${TS}"
+          echo "out_name=${OUT_NAME}" >> "$GITHUB_OUTPUT"
+          echo "ts=${TS}" >> "$GITHUB_OUTPUT"
+          echo "commit=${COMMIT}" >> "$GITHUB_OUTPUT"
+          echo "scenario=${SCENARIO}" >> "$GITHUB_OUTPUT"
+
+      - name: Start readiness coordinator
+        env:
+          REDIS_URL: redis://localhost:6379/2
+          COORDINATOR_PORT: "7171"
+        run: |
+          nohup node load-test/scripts/coordinator.mjs > coordinator.log 2>&1 &
+          echo "COORDINATOR_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 20); do
+            if curl -sf http://127.0.0.1:7171/healthz > /dev/null; then
+              echo "Coordinator is up"; exit 0
+            fi
+            sleep 0.5
+          done
+          cat coordinator.log; exit 1
+
+      - name: Start monitoring sampler (background)
+        env:
+          API_URL: http://localhost:3001
+          REDIS_URL: redis://localhost:6379/2
+          JWT_SECRET: ci-load-test-secret-key
+          OUT_DIR: load-test/results
+          OUT_NAME: ${{ steps.meta.outputs.out_name }}
+          SCENARIO: ${{ inputs.scenario }}
+          HOLD: ${{ inputs.hold }}
+          RAMP_UP: ${{ inputs.ramp_up }}
+        run: |
+          mkdir -p load-test/results
+          # Add a generous window on top of HOLD so the sampler
+          # covers ramp + steady-state + cleanup. HOLD and RAMP_UP
+          # are workflow inputs promoted to env above (never
+          # interpolate the inputs object directly inside the shell
+          # script — the runner expands templating expressions
+          # before the shell sees them, and an undefined input can
+          # fail the step).
+          to_sec() { case "$1" in *s) echo "${1%s}";;
+                                     *m) echo "$((${1%m}*60))";;
+                                     *h) echo "$((${1%h}*3600))";;
+                                     *)  echo "$1";; esac; }; \
+          TOTAL=$(($(to_sec "$HOLD") + $(to_sec "$RAMP_UP") + 120)); \
+          echo "Sampler duration=${TOTAL}s (HOLD=${HOLD}, RAMP_UP=${RAMP_UP})"; \
+          nohup node load-test/scripts/sample-monitoring.mjs \
+            --scenario "$SCENARIO" \
+            --duration "${TOTAL}s" \
+            --api-url "$API_URL" \
+            --jwt-secret "$JWT_SECRET" \
+            --admin-username admin \
+            --redis-url "$REDIS_URL" \
+            --out-dir "$OUT_DIR" \
+            --out-name "$OUT_NAME" \
+            --anchor cleanup_window_end \
+            > sampler.log 2>&1 &
+          echo "SAMPLER_PID=$!" >> "$GITHUB_ENV"
+          sleep 2
+          # Quick liveness probe so a dead sampler fails the step
+          # instead of silently skewing CPU/RSS/Redis numbers.
+          if ! kill -0 "$SAMPLER_PID" 2>/dev/null; then
+            echo "Sampler died at start"; cat sampler.log; exit 1
+          fi
+
+      - name: Run k6 (${{ inputs.scenario }})
+        id: k6
+        env:
+          PLAYERS: ${{ inputs.players }}
+          SPECTATORS: ${{ inputs.spectators }}
+          HOLD: ${{ inputs.hold }}
+          COORDINATOR_URL: http://127.0.0.1:7171
+          READINESS_RUN_ID: ${{ steps.meta.outputs.scenario }}-${{ steps.meta.outputs.ts }}
+        run: |
+          # Capture the k6 start instant (seconds since epoch) so the
+          # readiness deadline below is anchored to k6 start, not to
+          # the later "Write manifest" step.
+          K6_START_EPOCH=$(date -u +%s)
+          echo "k6_start_epoch=${K6_START_EPOCH}" >> "$GITHUB_OUTPUT"
+          k6 run \
+            -e API_URL=http://localhost:3001 \
+            -e PLAYERS="$PLAYERS" \
+            -e SPECTATORS="$SPECTATORS" \
+            -e HOLD="$HOLD" \
+            -e COORDINATOR_URL="$COORDINATOR_URL" \
+            -e READINESS_RUN_ID="$READINESS_RUN_ID" \
+            --summary-export=load-test/results/${{ steps.meta.outputs.out_name }}.k6.json \
+            load-test/scenarios/${{ inputs.scenario }}.js
+
+      - name: Stop monitoring sampler
+        if: always()
+        run: |
+          if [ -n "${SAMPLER_PID:-}" ] && kill -0 "$SAMPLER_PID" 2>/dev/null; then
+            kill -TERM "$SAMPLER_PID" 2>/dev/null || true
+            # Give the sampler up to 15s to flush JSONL streams
+            # cleanly. If it does not exit, force-kill but do not
+            # fail the workflow — the artifacts below are uploaded
+            # regardless.
+            for _ in $(seq 1 30); do
+              kill -0 "$SAMPLER_PID" 2>/dev/null || break
+              sleep 0.5
+            done
+            kill -KILL "$SAMPLER_PID" 2>/dev/null || true
+            wait "$SAMPLER_PID" 2>/dev/null || true
+          fi
+          # The sampler may have written a partial final line; make
+          # sure every JSONL row parses so the validator never sees a
+          # broken trailing line.
+          for f in load-test/results/${{ steps.meta.outputs.out_name }}.{cpu,redis}.jsonl; do
+            [ -f "$f" ] || continue
+            node -e "
+              const fs=require('fs');
+              const lines=fs.readFileSync(process.argv[1],'utf8').split('\n');
+              const out=[];
+              for (const l of lines) {
+                if (!l.trim()) continue;
+                try { JSON.parse(l); out.push(l); }
+                catch (_) { /* drop broken trailing line */ }
+              }
+              fs.writeFileSync(process.argv[1], out.join('\n') + (out.length?'\n':''));
+            " "$f" || true
+          done
+
+      - name: Write manifest
+        if: always()
+        env:
+          OUT_NAME: ${{ steps.meta.outputs.out_name }}
+          SCENARIO: ${{ inputs.scenario }}
+          HOLD: ${{ inputs.hold }}
+          PLAYERS: ${{ inputs.players }}
+          SPECTATORS: ${{ inputs.spectators }}
+          READINESS_RUN_ID: ${{ steps.meta.outputs.scenario }}-${{ steps.meta.outputs.ts }}
+          COORDINATOR_URL: http://127.0.0.1:7171
+          K6_START_EPOCH: ${{ steps.k6.outputs.k6_start_epoch }}
+        run: |
+          # Quote the heredoc delimiter ('NODE') so bash performs
+          # NO parameter / arithmetic / command substitution on the
+          # body. With an unquoted delimiter (e.g. `<<NODE`) bash
+          # would expand `${...}` (template literals, JS template
+          # strings, regex repetition like `${1+}`) and `$VAR`
+          # references BEFORE Node ever sees the script, silently
+          # corrupting regex character classes, error messages, and
+          # any path-with-interpolation. Quoting preserves the
+          # script byte-for-byte.
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const http = require('http');
+          const outName = process.env.OUT_NAME;
+          const dir = 'load-test/results';
+          // Parse a duration string in the same shapes k6 accepts:
+          //   240  -> 240 (seconds)
+          //   240s -> 240
+          //   4m   -> 240
+          //   1h   -> 3600
+          // Returns seconds. Default 240s, clamped later to >=30s.
+          function parseDurationSec(raw, fallback) {
+            if (raw == null) return fallback;
+            const s = String(raw).trim();
+            if (!s) return fallback;
+            const m = s.match(/^(\d+)(s|m|h)?$/);
+            if (!m) return fallback;
+            const n = parseInt(m[1], 10);
+            const unit = m[2] || 's';
+            if (unit === 's') return n;
+            if (unit === 'm') return n * 60;
+            if (unit === 'h') return n * 3600;
+            return n;
+          }
+          const holdSec = parseDurationSec(process.env.HOLD, 240);
+          // HOLD_MIN: max(30s, parsed)
+          const holdMin = Math.max(30, holdSec);
+          // Expected match:state:* keys per scenario.
+          const expected =
+            process.env.SCENARIO === 'smoke' ? 0 : 1;
+
+          // Readiness report: query the coordinator for size/missing.
+          // Target = 1 host + PLAYERS + SPECTATORS (matches what the
+          // k6 scenarios seed). The 2*HOLD deadline is the
+          // fail-closed contract the validator (validate-results.mjs)
+          // checks: achievedAt must be inside that window or the
+          // readiness gate fails.
+          //
+          // Normalize and validate PLAYERS / SPECTATORS the same way
+          // load-test/config.js `intEnv` does: parseInt(raw, 10) +
+          // Number.isFinite guard, falling back to the same defaults
+          // (69 / 30). This prevents NaN in the arithmetic when an
+          // operator types a non-numeric value in workflow_dispatch.
+          function parseVUs(raw, fallback) {
+            if (raw === undefined || raw === null || raw === '') return fallback;
+            const n = Number.parseInt(String(raw).trim(), 10);
+            return Number.isFinite(n) ? n : fallback;
+          }
+          const players    = parseVUs(process.env.PLAYERS,    69);
+          const spectators = parseVUs(process.env.SPECTATORS, 30);
+          const target =
+            process.env.SCENARIO === 'smoke'
+              ? 2
+              : 1 + players + spectators;
+          const runId = process.env.READINESS_RUN_ID;
+          const coordinatorUrl = process.env.COORDINATOR_URL;
+          // Anchor the readiness deadline to the k6 start instant
+          // captured by the "Run k6" step, not to manifest-write time.
+          // The validator (validate-results.mjs) requires
+          //   deadlineAt = k6_start + 2 * HOLD
+          // so that a late readiness barrier still falls inside the
+          // window even when the k6 run took longer than expected.
+          // Falls back to manifest-write time only when the k6 step
+          // did not run (skipped/failed and outputs are empty).
+          const k6StartEpoch = Number.parseInt(
+            String(process.env.K6_START_EPOCH || '').trim(), 10,
+          );
+          const deadlineEpoch = Number.isFinite(k6StartEpoch) && k6StartEpoch > 0
+            ? k6StartEpoch + 2 * holdSec
+            : Math.floor(Date.now() / 1000) + 2 * holdSec;
+          const deadlineAt = new Date(deadlineEpoch * 1000).toISOString();
+
+          function fetchJson(urlPath) {
+            return new Promise((resolve) => {
+              const url = new URL(urlPath, coordinatorUrl);
+              const req = http.get(url, (res) => {
+                const chunks = [];
+                res.on('data', (c) => chunks.push(c));
+                res.on('end', () => {
+                  const body = Buffer.concat(chunks).toString('utf8');
+                  let parsed = null;
+                  try { parsed = JSON.parse(body); } catch (_) { /* keep null */ }
+                  resolve({ status: res.statusCode || 0, body: parsed, raw: body });
+                });
+              });
+              req.on('error', (err) => resolve({ status: 0, body: null, raw: '', error: String(err.message || err) }));
+              req.setTimeout(2000, () => { req.destroy(new Error('timeout')); });
+            });
+          }
+
+          (async () => {
+            let countReport = null;
+            let missingReport = null;
+            let fetchError = null;
+            try {
+              // String concatenation (matches the `path.join` style
+              // used below) for the URL path. Template literals
+              // would also work because the heredoc delimiter is
+              // quoted — we use concat for consistency with the
+              // surrounding `outName + '.json'` pattern.
+              const countPath = '/count/' + encodeURIComponent(runId) + '?target=' + target;
+              const missingPath = '/missing/' + encodeURIComponent(runId) + '?target=' + target;
+              [countReport, missingReport] = await Promise.all([
+                fetchJson(countPath),
+                fetchJson(missingPath),
+              ]);
+            } catch (e) {
+              fetchError = String(e.message || e);
+            }
+
+            const size = countReport && countReport.body && typeof countReport.body.size === 'number'
+              ? countReport.body.size
+              : 0;
+            const reportedTarget = countReport && countReport.body && typeof countReport.body.target === 'number'
+              ? countReport.body.target
+              : target;
+            const missing = missingReport && missingReport.body && Array.isArray(missingReport.body.missing)
+              ? missingReport.body.missing
+              : [];
+            const ready = !fetchError
+              && countReport && countReport.status === 200
+              && missingReport && missingReport.status === 200
+              && size === reportedTarget
+              && missing.length === 0;
+            const achievedAt = ready ? new Date().toISOString() : null;
+
+            const manifest = {
+              name: outName,
+              scenario: process.env.SCENARIO,
+              thresholds: {
+                errorRateMax: 0.01,
+                latencyP95Ms: 1000,
+                latencyP99Ms: 2500,
+                disconnectMax: 0.01,
+                cpuPeakMax: 80,
+                cpuP95Max: 70,
+                rssPeakMaxMb: 500,
+                rssDeltaMaxMb: 50,
+                redisMemDeltaMaxPct: 10,
+              },
+              steadyState: {
+                holdMinSeconds: holdMin,
+                startTs: null,
+                endTs: null,
+              },
+              expectedRedisKeys: expected,
+              k6Summary: path.join(dir, outName + '.k6.json'),
+              cpuJsonl: path.join(dir, outName + '.cpu.jsonl'),
+              redisJsonl: path.join(dir, outName + '.redis.jsonl'),
+              anchorJson: path.join(dir, outName + '.anchor.json'),
+              readiness: {
+                ready,
+                size,
+                target: reportedTarget,
+                achievedAt,
+                deadlineAt,
+                // k6-start instant the deadline was anchored to
+                // (Unix seconds). null when the k6 step did not run.
+                k6StartAt: Number.isFinite(k6StartEpoch) && k6StartEpoch > 0
+                  ? new Date(k6StartEpoch * 1000).toISOString()
+                  : null,
+                missing,
+                // Preserve the actual coordinator responses for
+                // debugging and for the validator's "raw" check.
+                report: {
+                  runId,
+                  coordinatorUrl,
+                  count: countReport ? { status: countReport.status, body: countReport.body, error: countReport.error || null } : null,
+                  missing: missingReport ? { status: missingReport.status, body: missingReport.body, error: missingReport.error || null } : null,
+                  error: fetchError,
+                },
+              },
+            };
+            fs.writeFileSync(path.join(dir, outName + '.manifest.json'), JSON.stringify(manifest, null, 2));
+          })();
+          NODE
+
+      - name: Validate results
+        if: always()
+        env:
+          OUT_NAME: ${{ steps.meta.outputs.out_name }}
+        run: |
+          node load-test/scripts/validate-results.mjs \
+            --manifest "load-test/results/${OUT_NAME}.manifest.json" \
+            --out-dir load-test/results
+
+      - name: Upload results + API log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: load-test-${{ inputs.scenario }}-${{ steps.meta.outputs.commit }}
+          path: |
+            load-test/results/
+            api.log
+            coordinator.log
+            sampler.log
+
+      - name: Stop coordinator
+        if: always()
+        run: kill "${COORDINATOR_PID}" 2>/dev/null || true
+
+      - name: Stop API
+        if: always()
+        run: kill "${API_PID}" 2>/dev/null || true

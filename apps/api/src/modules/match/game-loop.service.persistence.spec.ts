@@ -449,7 +449,7 @@ describe("GameLoopService Persistence", () => {
       checkMatchEndSpy.mockRestore();
     });
 
-    it("falls back to manual player extraction when roundEvaluatedEvent payload is malformed or missing", async () => {
+    it("rebuilds eliminatedIds from startingPlayers when roundEvaluatedEvent is missing", async () => {
       // Setup state machine to be in ROUND_EVALUATING status with completed round status
       stateMachine.transition(MatchStatus.COUNTDOWN);
       stateMachine.transition(MatchStatus.ROUND_ACTIVE);
@@ -462,19 +462,18 @@ describe("GameLoopService Persistence", () => {
       });
       stateMachine.submitAnswer("p1", "A", Date.now());
 
-      // Evaluate round but bypass evaluateRound to avoid ROUND_EVALUATED event log
+      // Bypass evaluateRound so there is no ROUND_EVALUATED event to reuse.
       stateMachine.transition(MatchStatus.ROUND_EVALUATING);
       const round = (stateMachine as any).currentRound;
       if (round) {
         round.status = "COMPLETED";
       }
 
-      // Eliminate p2 inside stateMachine
-      const p2 = (stateMachine as any).state.players.get("p2");
-      if (p2) {
-        p2.status = PlayerStatus.ELIMINATED;
-        p2.correctAnswers = 0; // round 1 - 1 = 0
-      }
+      // Simulate the persisted post-evaluation snapshot.
+      (stateMachine as any).state.survivingPlayerIds = ["p1"];
+      (stateMachine as any).state.eliminatedPlayerIds = ["p2"];
+      (stateMachine as any).state.players.get("p2").status =
+        PlayerStatus.ELIMINATED;
 
       // Mock questionService to support rehydration
       vi.mocked(questionService.findOne).mockResolvedValue({
@@ -482,7 +481,8 @@ describe("GameLoopService Persistence", () => {
         correctAnswer: "A",
       } as any);
 
-      // Execute endRound which should enter recovery path and use fallback player extraction
+      // Execute endRound which should enter recovery path and rebuild the
+      // eliminated ids from the persisted round snapshot.
       await (service as any).roundRunner.endRound(
         "match-1",
         "room-1",
@@ -498,7 +498,7 @@ describe("GameLoopService Persistence", () => {
       );
     });
 
-    it("handles recovery when correctAnswer is missing and question is not found in DB", async () => {
+    it("does not clear startingPlayers when correctAnswer is missing during recovery", async () => {
       stateMachine.transition(MatchStatus.COUNTDOWN);
       stateMachine.transition(MatchStatus.ROUND_ACTIVE);
       stateMachine.startRound({
@@ -516,6 +516,10 @@ describe("GameLoopService Persistence", () => {
         round.status = "COMPLETED";
         round.correctAnswer = ""; // Strip correctAnswer
       }
+      (stateMachine as any).state.survivingPlayerIds = ["p1"];
+      (stateMachine as any).state.eliminatedPlayerIds = ["p2"];
+      (stateMachine as any).state.players.get("p2").status =
+        PlayerStatus.ELIMINATED;
 
       // Mock questionService to return null (not found)
       vi.mocked(questionService.findOne).mockResolvedValue(null as any);
@@ -536,11 +540,13 @@ describe("GameLoopService Persistence", () => {
         ),
       );
 
-      // Verify emitRoundEnded was called with empty correctAnswer
+      // Verify the recovery path kept the round-start roster and still
+      // reconstructed the eliminated player without calling the helper.
       expect(mockEmit).toHaveBeenCalledWith(
         "round_ended",
         expect.objectContaining({
           correctAnswer: "",
+          eliminatedPlayerIds: ["p2"],
         }),
       );
     });
