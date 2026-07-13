@@ -12,12 +12,12 @@ import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import { Link, useRouter } from "@/i18n/routing";
 import { useSocketStore } from "@/stores/socket-store";
 import { useAuditEvents } from "@/hooks/use-audit-events";
-import { AuditFiltersBar } from "@/components/admin/audit-filters";
+import { AuditFilters } from "@/components/admin/audit-filters";
 import { AuditTable } from "@/components/admin/audit-table";
 
 const PAGE_SIZE = 25;
 
-export default function AdminAuditPage() {
+export default function AuditPage() {
   const t = useTranslations("admin.audit");
   const router = useRouter();
   const userRole = useSocketStore((state) => state.userRole);
@@ -38,7 +38,13 @@ export default function AdminAuditPage() {
     nextPage,
     prevPage,
     refetch,
-  } = useAuditEvents({ pageSize: PAGE_SIZE });
+  } = useAuditEvents({
+    pageSize: PAGE_SIZE,
+    // Defense in depth alongside the JSX guard below: non-admin
+    // callers must not even fire the GET. The hook also gates on the
+    // access token internally, so both checks must pass.
+    enabled: userRole === "ADMIN",
+  });
 
   // Same client-side clearance gate as the main admin console. The
   // endpoint is also server-guarded (Role.ADMIN), so this is UX, not
@@ -97,7 +103,7 @@ export default function AdminAuditPage() {
         </div>
 
         {/* Filters */}
-        <AuditFiltersBar
+        <AuditFilters
           value={filters}
           onApply={setFilters}
           onReset={resetFilters}

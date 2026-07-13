@@ -70,4 +70,14 @@ describe("AuditTable", () => {
     // No translation key mapping — shows the raw type verbatim.
     expect(screen.getByText("SOME_FUTURE_EVENT")).toBeInTheDocument();
   });
+
+  it("renders the loading skeleton with pageSize rows when isLoading and events is empty", () => {
+    const { container } = render(
+      <AuditTable {...baseProps} events={[]} isLoading pageSize={8} />,
+    );
+    // Empty state must NOT also show.
+    expect(screen.queryByText("empty.title")).not.toBeInTheDocument();
+    // 8 rows × 5 columns = 40 .animate-pulse placeholders.
+    expect(container.querySelectorAll(".animate-pulse")).toHaveLength(40);
+  });
 });

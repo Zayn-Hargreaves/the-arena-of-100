@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
-  fetchAuditEvents,
+  getAuditEvents,
   type AuditEvent,
   type AuditEventsResponse,
 } from "@/lib/api/audit";
@@ -31,6 +31,13 @@ const EMPTY_FILTERS: AuditFilters = {
 interface UseAuditEventsOptions {
   /** Rows per page. Clamped to the backend max (100) by the DTO. */
   pageSize?: number;
+  /**
+   * Caller-controlled gate. Combined with the internal access-token
+   * check, so the query only fires when both this flag is true AND a
+   * token is available. Defaults to true so existing callers that
+   * don't care about role/permission gating get the previous behavior.
+   */
+  enabled?: boolean;
 }
 
 export interface UseAuditEventsResult {
@@ -62,6 +69,7 @@ export interface UseAuditEventsResult {
  */
 export function useAuditEvents({
   pageSize = 50,
+  enabled = true,
 }: UseAuditEventsOptions = {}): UseAuditEventsResult {
   const accessToken = useSocketStore((state) => state.accessToken);
 
@@ -75,7 +83,7 @@ export function useAuditEvents({
     // refetches rather than serving another admin's cached page.
     queryKey: ["admin", "audit-events", accessToken, pageSize, offset, filters],
     queryFn: () =>
-      fetchAuditEvents(
+      getAuditEvents(
         {
           limit: pageSize,
           offset,
@@ -85,7 +93,7 @@ export function useAuditEvents({
         },
         accessToken ?? undefined,
       ),
-    enabled: Boolean(accessToken),
+    enabled: enabled && Boolean(accessToken),
     staleTime: 15_000,
     placeholderData: keepPreviousData,
   });

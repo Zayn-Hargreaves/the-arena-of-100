@@ -30,7 +30,7 @@ const labelClass =
  * (event type, room id, admin user id). No date range: the
  * endpoint does not support one.
  */
-export function AuditFiltersBar({
+export function AuditFilters({
   value,
   onApply,
   onReset,

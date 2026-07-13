@@ -100,7 +100,7 @@ function buildAuditQuery(params: GetAuditEventsParams): string {
  * (e.g. 401/403 for a non-admin, 400 for an invalid filter, 429 for
  * the endpoint throttle) so callers can branch on `error.status`.
  */
-export async function fetchAuditEvents(
+export async function getAuditEvents(
   params: GetAuditEventsParams,
   token?: string,
 ): Promise<AuditEventsResponse> {

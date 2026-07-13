@@ -16,9 +16,9 @@ vi.mock("@/stores/socket-store", () => ({
     selector ? selector(storeState) : storeState,
 }));
 
-const fetchAuditEvents = vi.fn();
+const getAuditEvents = vi.fn();
 vi.mock("@/lib/api/audit", () => ({
-  fetchAuditEvents: (...args: unknown[]) => fetchAuditEvents(...args),
+  getAuditEvents: (...args: unknown[]) => getAuditEvents(...args),
 }));
 
 import { useAuditEvents } from "./use-audit-events";
@@ -37,8 +37,8 @@ function makeWrapper() {
 describe("useAuditEvents", () => {
   beforeEach(() => {
     storeState.accessToken = "tok-123";
-    fetchAuditEvents.mockReset();
-    fetchAuditEvents.mockResolvedValue({ events: [], total: 100 });
+    getAuditEvents.mockReset();
+    getAuditEvents.mockResolvedValue({ events: [], total: 100 });
   });
 
   afterEach(() => {
@@ -50,9 +50,9 @@ describe("useAuditEvents", () => {
       wrapper: makeWrapper(),
     });
 
-    await waitFor(() => expect(fetchAuditEvents).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getAuditEvents).toHaveBeenCalledTimes(1));
 
-    expect(fetchAuditEvents).toHaveBeenCalledWith(
+    expect(getAuditEvents).toHaveBeenCalledWith(
       {
         limit: 25,
         offset: 0,
@@ -77,7 +77,7 @@ describe("useAuditEvents", () => {
     act(() => result.current.nextPage());
 
     await waitFor(() =>
-      expect(fetchAuditEvents).toHaveBeenLastCalledWith(
+      expect(getAuditEvents).toHaveBeenLastCalledWith(
         expect.objectContaining({ limit: 25, offset: 25 }),
         "tok-123",
       ),
@@ -106,7 +106,7 @@ describe("useAuditEvents", () => {
     );
 
     await waitFor(() =>
-      expect(fetchAuditEvents).toHaveBeenLastCalledWith(
+      expect(getAuditEvents).toHaveBeenLastCalledWith(
         expect.objectContaining({
           offset: 0,
           eventType: "ADMIN_RESET_SYSTEM",
@@ -126,6 +126,6 @@ describe("useAuditEvents", () => {
 
     // Give react-query a tick; the disabled query must never run.
     await new Promise((r) => setTimeout(r, 20));
-    expect(fetchAuditEvents).not.toHaveBeenCalled();
+    expect(getAuditEvents).not.toHaveBeenCalled();
   });
 });
