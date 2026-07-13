@@ -57,6 +57,7 @@ export function applyRoomCreatedState(
     lastAnswerResult: null,
     remainingCount: null,
     isEliminated: false,
+    eliminationReason: null,
     room: {
       id: data.roomId,
       code: data.code,
@@ -80,6 +81,7 @@ export function applyRoomJoinedState(
     lastAnswerResult: null,
     remainingCount: null,
     isEliminated: false,
+    eliminationReason: null,
     room: {
       id: data.roomId,
       code: data.code,
@@ -254,6 +256,7 @@ export function applyMatchStartedState(
 ): Partial<SocketState> {
   return {
     isEliminated: false,
+    eliminationReason: null,
     room: state.room
       ? {
           ...state.room,
@@ -448,6 +451,23 @@ export function applySnapshotState(
   state: SocketState,
   data: SnapshotPayload,
 ): Partial<SocketState> {
+  const players = (data.players as Player[]).map((player) => ({
+    ...player,
+    isOnline: player.isOnline ?? true,
+  }));
+
+  // Reconnect-after-elimination: the snapshot roster is the source of
+  // truth for whether the local player is still in the match. If we
+  // were eliminated before dropping, hydrate `isEliminated` from the
+  // roster so the watch-only overlay + answer-panel lock come back
+  // immediately — the store flag is otherwise false after a fresh
+  // page load. The snapshot carries no reason, so leave it null (the
+  // overlay falls back to its generic subtitle).
+  const selfEliminated = state.userId
+    ? players.find((p) => p.id === state.userId)?.status ===
+      PlayerStatus.ELIMINATED
+    : false;
+
   return {
     room: state.room
       ? {
@@ -463,13 +483,12 @@ export function applySnapshotState(
       // the state machine always sends a MatchStatus value.
       status: data.status as MatchStatus,
       currentRoundNo: data.currentRoundNo,
-      players: (data.players as Player[]).map((player) => ({
-        ...player,
-        isOnline: player.isOnline ?? true,
-      })),
+      players,
       currentQuestion: data.currentQuestion,
       roundEndTime: data.roundEndTime,
     },
+    isEliminated: selfEliminated,
+    eliminationReason: null,
     remainingCount: null,
     lastAnswerResult: null,
     pendingAnswer: null,
@@ -501,6 +520,7 @@ export function applyRoomTerminatedState(
     lastAnswerResult: null,
     pendingAnswer: null,
     isEliminated: false,
+    eliminationReason: null,
     roomTerminated: true,
     roomTerminationMessage: data.message ?? null,
   };
@@ -523,6 +543,7 @@ export function applyUnauthorizedErrorState(
     lastAnswerResult: null,
     pendingAnswer: null,
     isEliminated: false,
+    eliminationReason: null,
     heartbeatInterval: null,
     roomTerminated: false,
     roomTerminationMessage: null,

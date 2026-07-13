@@ -2,6 +2,7 @@ import {
   MatchStatus,
   PlayerStatus,
   RoomStatus,
+  type EliminationReason,
   type JoinMode,
   type RoomType,
 } from "@arena/shared";
@@ -85,6 +86,10 @@ export interface SocketState extends ConnectionState {
   error: string | null;
   heartbeatInterval: ReturnType<typeof setInterval> | null;
   isEliminated: boolean;
+  // Why the local player was eliminated, so the overlay can show
+  // "wrong answer" vs "ran out of time". null until eliminated and
+  // reset whenever isEliminated resets to false.
+  eliminationReason: EliminationReason | null;
   roomTerminated: boolean;
   roomTerminationMessage: string | null;
 

@@ -191,7 +191,10 @@
     "antiHackDetails": "Response time is recorded by the server and compared against ping deviation to ensure absolute fairness.",
     "eliminatedOverlay": {
       "title": "YOU HAVE BEEN ELIMINATED!",
-      "subtitle": "Watching the best players..."
+      "subtitle": "Watching the best players...",
+      "reasonWrong": "Wrong answer",
+      "reasonTimeout": "Ran out of time",
+      "reasonAfk": "Away from keyboard"
     },
     "spectatorMode": {
       "title": "SPECTATOR MODE",

@@ -1648,3 +1648,119 @@ describe("MatchStateMachine score accumulation (B2)", () => {
     });
   });
 });
+
+// Plan C — AFK / elimination semantics. Pins the "no answer OR wrong
+// answer before the round deadline ⇒ eliminated in that round" rule
+// (see docs/afk-policy.md) at the state-machine layer. The disconnect
+// case must reach the SAME outcome as a still-connected AFK player,
+// via a different path (status DISCONNECTED, still in survivingPlayerIds).
+describe("MatchStateMachine — AFK/elimination semantics (Plan C)", () => {
+  const startActiveRound = (machine: MatchStateMachine) => {
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    return machine.startRound({
+      id: "q1",
+      content: "Q?",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+  };
+
+  it("eliminates an AFK player (still connected, no answer submitted)", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    const round = startActiveRound(machine);
+    // p1 answers correctly; p2 is AFK — never submits.
+    machine.submitAnswer("p1", "A", round.startedAt + 100);
+
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    const { survivingIds, eliminatedIds } = machine.evaluateRound();
+
+    expect(survivingIds).toEqual(["p1"]);
+    expect(eliminatedIds).toEqual(["p2"]);
+
+    const state = machine.getState();
+    // AFK player still had status ACTIVE going in (never disconnected),
+    // and is now ELIMINATED — not left dangling as a survivor.
+    expect(state.players.get("p2")?.status).toBe(PlayerStatus.ELIMINATED);
+    expect(state.survivingPlayerIds).toEqual(["p1"]);
+    expect(state.eliminatedPlayerIds).toContain("p2");
+  });
+
+  it("eliminates a disconnected player with no answer — same outcome as AFK", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    const round = startActiveRound(machine);
+    // p2 disconnects mid-round (marked DISCONNECTED, not eliminated yet).
+    machine.disconnectPlayer("p2");
+    expect(machine.getState().players.get("p2")?.status).toBe(
+      PlayerStatus.DISCONNECTED,
+    );
+    // Disconnect alone does NOT remove them from survivingPlayerIds.
+    expect(machine.getState().survivingPlayerIds).toContain("p2");
+
+    machine.submitAnswer("p1", "A", round.startedAt + 100);
+
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    const { eliminatedIds } = machine.evaluateRound();
+
+    // Same elimination outcome as the AFK case, reached via the
+    // disconnect path.
+    expect(eliminatedIds).toContain("p2");
+    expect(machine.getState().players.get("p2")?.status).toBe(
+      PlayerStatus.ELIMINATED,
+    );
+  });
+
+  it("survives a player who disconnects then reconnects and answers correctly in-round", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    const round = startActiveRound(machine);
+    machine.disconnectPlayer("p2");
+    // Reconnect restores ACTIVE, so submitAnswer's status gate passes.
+    machine.reconnectPlayer("p2");
+    expect(machine.getState().players.get("p2")?.status).toBe(
+      PlayerStatus.ACTIVE,
+    );
+
+    machine.submitAnswer("p1", "A", round.startedAt + 100);
+    machine.submitAnswer("p2", "A", round.startedAt + 200);
+
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    const { survivingIds, eliminatedIds } = machine.evaluateRound();
+
+    expect(survivingIds.sort()).toEqual(["p1", "p2"]);
+    expect(eliminatedIds).toEqual([]);
+  });
+
+  it("rejects an answer submitted after the round deadline (treated as no answer)", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    const round = startActiveRound(machine);
+
+    // serverTimestamp strictly after endsAt ⇒ ANSWER_SUBMISSION_CLOSED.
+    expectRoomError(
+      () => machine.submitAnswer("p2", "A", round.endsAt + 1),
+      ErrorCode.ANSWER_SUBMISSION_CLOSED,
+    );
+
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    const { eliminatedIds } = machine.evaluateRound();
+    // The late answer never landed, so p2 is eliminated like an AFK.
+    expect(eliminatedIds).toContain("p2");
+  });
+
+  it("keeps an already-eliminated player eliminated across reconnect (spectator)", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    const round = startActiveRound(machine);
+    machine.submitAnswer("p1", "A", round.startedAt + 100);
+    // p2 AFK -> eliminated.
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound();
+    expect(machine.getState().players.get("p2")?.status).toBe(
+      PlayerStatus.ELIMINATED,
+    );
+
+    // A reconnect must NOT revive an eliminated player.
+    machine.reconnectPlayer("p2");
+    expect(machine.getState().players.get("p2")?.status).toBe(
+      PlayerStatus.ELIMINATED,
+    );
+  });
+});

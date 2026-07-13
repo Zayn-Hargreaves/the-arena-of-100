@@ -48,6 +48,7 @@ export default function GamePage({ params }: GamePageProps) {
     remainingCount,
     leaveRoom,
     isEliminated,
+    eliminationReason,
     roomTerminated,
     roomTerminationMessage,
     room,
@@ -430,7 +431,7 @@ export default function GamePage({ params }: GamePageProps) {
 
   return (
     <AppShellLayout>
-      {isEliminated && <EliminatedOverlay />}
+      {isEliminated && <EliminatedOverlay reason={eliminationReason} />}
 
       {/* Drop-in spectator banner: a thin top-of-page strip telling the
           user they joined as a late spectator. Lighter than the

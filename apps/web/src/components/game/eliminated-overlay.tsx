@@ -3,13 +3,33 @@
 import React from "react";
 import { useTranslations } from "next-intl";
 import { Trophy } from "lucide-react";
+import type { EliminationReason } from "@arena/shared";
+
+export interface EliminatedOverlayProps {
+  /**
+   * Why the local player was eliminated. Drives the reason line
+   * ("wrong answer" / "ran out of time" / "AFK"). When null/undefined
+   * the overlay falls back to the generic subtitle — e.g. an eliminated
+   * state hydrated from a reconnect snapshot that carries no reason.
+   */
+  reason?: EliminationReason | null;
+}
 
 /**
  * Fullscreen overlay shown when the local player has been eliminated.
  * Purely presentational — the parent decides when to render it.
  */
-export const EliminatedOverlay: React.FC = () => {
+export const EliminatedOverlay: React.FC<EliminatedOverlayProps> = ({
+  reason = null,
+}) => {
   const t = useTranslations("Game");
+
+  const REASON_TEXT: Record<EliminationReason, string> = {
+    WRONG_ANSWER: t("eliminatedOverlay.reasonWrong"),
+    TIMEOUT: t("eliminatedOverlay.reasonTimeout"),
+    AFK: t("eliminatedOverlay.reasonAfk"),
+  };
+  const reasonText = reason ? REASON_TEXT[reason] : null;
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-none">
@@ -20,6 +40,14 @@ export const EliminatedOverlay: React.FC = () => {
         <h2 className="font-display font-black text-2xl tracking-wide uppercase text-candy-ink">
           {t("eliminatedOverlay.title")}
         </h2>
+        {reasonText && (
+          <p
+            data-testid="elimination-reason"
+            className="font-display font-black text-sm uppercase tracking-wide text-candy-red"
+          >
+            {reasonText}
+          </p>
+        )}
         <p className="font-sans text-sm font-bold text-candy-ink/70">
           {t("eliminatedOverlay.subtitle")}
         </p>
