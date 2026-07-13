@@ -433,6 +433,12 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         heartbeatInterval: null,
         roomTerminated: false,
         roomTerminationMessage: null,
+        // Plan D — reset the delta cursor alongside match/room so a
+        // stale seqNo from the previous session cannot qualify for
+        // delta delivery on the next reconnect. The next
+        // REQUEST_SNAPSHOT will be a full SNAPSHOT, then delta kicks
+        // in from there.
+        lastSeenSeqNo: 0,
       });
     }
   },

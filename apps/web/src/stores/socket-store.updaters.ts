@@ -275,6 +275,14 @@ export function applyMatchStartedState(
       currentQuestion: null,
       roundEndTime: null,
     },
+    // Plan D — reset the delta cursor on match boundary so a stale
+    // seqNo from the previous match cannot qualify for delta delivery
+    // against the new match's event log (the handler's `canDelta`
+    // check would otherwise emit a delta the client then no-ops on,
+    // or — worse — replay stale events against the new match). The
+    // next REQUEST_SNAPSHOT will be a full SNAPSHOT, then delta kicks
+    // in from there.
+    lastSeenSeqNo: 0,
   };
 }
 
@@ -525,7 +533,10 @@ export function applyEventBatchState(
   if (state.match?.id !== data.matchId) return {};
 
   let match = state.match;
+  let room = state.room;
   let remainingCount = state.remainingCount;
+  let lastAnswerResult = state.lastAnswerResult;
+  let pendingAnswer = state.pendingAnswer;
   let cursor = state.lastSeenSeqNo;
 
   for (const rawEvent of data.events) {
@@ -545,6 +556,11 @@ export function applyEventBatchState(
           currentQuestion: event.payload.question,
           roundEndTime: event.payload.endsAt,
         };
+        // Mirror live applyRoundStartedState: a new round opens with a
+        // clean answer panel — the previous round's result and any
+        // pending submission are no longer relevant.
+        lastAnswerResult = null;
+        pendingAnswer = null;
         break;
       case "ROUND_EVALUATED": {
         const eliminated = new Set(event.payload.eliminatedIds);
@@ -559,10 +575,30 @@ export function applyEventBatchState(
           roundEndTime: null,
         };
         remainingCount = event.payload.survivingCount;
+        // Mirror live applyRoundEndedState: clear pendingAnswer only
+        // when it belongs to the round that just resolved. A pending
+        // answer from an earlier round (out-of-order delivery) is
+        // preserved so the client can still resolve it on reconnect.
+        if (
+          pendingAnswer?.matchId === data.matchId &&
+          pendingAnswer.roundNo === event.payload.roundNo
+        ) {
+          pendingAnswer = null;
+        }
         break;
       }
       case "MATCH_FINISHED":
         match = { ...match, status: MatchStatus.FINISHED, roundEndTime: null };
+        // Mirror live applyMatchFinishedState: flip the room channel
+        // status to FINISHED so the lobby / leave-flow observes the
+        // match end even when the finish arrives via delta replay.
+        if (room) {
+          room = {
+            ...room,
+            status: RoomStatus.FINISHED,
+            countdownEndsAt: null,
+          };
+        }
         break;
       // No-op on match state (cursor still advances above):
       //  - ANSWER_SUBMITTED / TIE_BREAK: peers' submissions and the
@@ -588,7 +624,10 @@ export function applyEventBatchState(
 
   return {
     match,
+    room,
     remainingCount,
+    lastAnswerResult,
+    pendingAnswer,
     isEliminated: selfEliminated,
     lastSeenSeqNo: cursor,
   };

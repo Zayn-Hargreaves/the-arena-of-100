@@ -1,5 +1,6 @@
 # Arena of 100 - Project Status and Usecases
 
+> Cập nhật 2026-07-13: dọn root docs (chuyển vào `docs/` + `docs/plans/`); L2 (gateway await + dedup import) và L3 (schema tightening) đã DONE trong branch `feat/replay-lastseen-delta`.
 > Cập nhật 2026-06-18 dựa trên code + GitNexus + test run thực tế.
 > Bản 2026-06-14 từng nói "Lobby lifecycle / heartbeat / graceful exit / admin kill-switch còn thiếu"; thực tế code đã hoàn thành baseline ở PR #38 + PR #47. Ngày 2026-06-14 cũng đóng PR Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`): thêm `JoinMode = "PLAYER" | "SPECTATOR"` payload + `RoomJoinedPayload.joinedAs` + backend join policy 4-way matrix + server-side submit gate + frontend spectator UI. Cùng ngày cũng close PR `fix/match-race-frontend-correctness`: 3 race bug backend (B1-B3) + 8 correctness bug frontend (F1-F8) — bao gồm sửa sidebar mock (F1), bỏ magic number redirect (F2), tách timer ref (F3), dynamic maxPlayers (F4), loading state (F5), bỏ `currentRoundNo || 1` (F6), round-end signal rõ (F7), auto-join guard (F8). Sau merge, post-merge audit phát hiện thêm 7 follow-up bug (B4-B7, L1-L3); 5 trong 7 (B4-B7, L1) đã land trong cùng ngày qua chuỗi commit `fix(bug): fix comment`; 2 còn pending (L2 + L3). Bản này reclassify lại trạng thái theo code thật.
 
@@ -8,7 +9,7 @@
 - Tổng quan: monorepo pnpm + Turborepo, NestJS Fastify + Socket.io backend, Next.js 15 + React 19 + Zustand frontend, Prisma + PostgreSQL + Redis.
 - Nhánh/focus gần nhất: `main` (PR `fix/match-race-frontend-correctness` đã merge 2026-06-14; PR docs update cho post-merge audit ở staged). Test count thực tế 2026-06-18: **772/772 unit api + 70/70 game-core + 31/31 web + 11/11 E2E** (sau rebuild `packages/shared/dist` cho `GAME_CONFIG.SCORE_*`).
 - Trạng thái baseline đã hoàn thành: core gameplay loop, lobby state machine, heartbeat/presence sweep, graceful exit + spectator baseline (eliminated + drop-in), admin kill-switch, profile/rankings real APIs, Design System Phase 5B, **match race fixes (B1-B3) + frontend correctness (F1-F8)**, **post-merge idempotency/recovery hardening (B4-B7) + tie-break determinism (L1)**.
-- Gap còn thật (xem phần `Critical UX Gaps` bên dưới): gateway handleDisconnect + duplicate imports (L2), schema validation tightening (L3), in-match AFK policy, mass-spectator transport scaling, content moderation pipeline, optimistic UI rollback, k6 load test, home page gradient cleanup.
+- Gap còn thật (xem phần `Critical UX Gaps` bên dưới): mass-spectator transport scaling, optimistic UI rollback, home page gradient cleanup. (L2 gateway + L3 schema validation đã DONE trong branch `feat/replay-lastseen-delta`; in-match AFK policy đã DONE Track C; content moderation + k6 load test đã DONE Track A/moderation.)
 
 ### ✅ Đã Có Trong Code (verified 2026-06-18)
 
@@ -60,8 +61,8 @@
 
 - (Đã giải quyết trong PR `fix/match-race-frontend-correctness`) ~~`GamePage` sidebar còn danh sách player mock hardcode (lines 366-443: `Zero_Cool`, `Acid_Burn`, ...). Cần wire với `match.players` từ socket-store~~ → ✅ giờ render `match.players` thật từ `socket-store.ts` (`PLAYER_ELIMINATED` + `ROUND_ENDED` handlers stamp `status = "ELIMINATED"`)
 - `apps/web/src/app/[locale]/page.tsx:193` vẫn có `bg-gradient-to-br from-[#FFF0F5] via-[#E6E6FA] to-[#E0F2FE]` redundant với `body` gradient — PR 6 (home page shell gradient cleanup) defer
-- `apps/api/src/gateways/game.gateway.ts:148-150` `handleDisconnect` không `await` `authHandler.handleDisconnect(client)`; import block trùng (`:13-23` types, `:30-39` schemas) — PR 2B defer
-- `packages/shared/src/schemas.ts:92` `CLIENT_TIMESTAMP_MAX_OFFSET_MS` = 1 năm; `:122` `lastSeenSeqNo.max(Number.MAX_SAFE_INTEGER)` — PR 2B defer
+- ✅ (L2 done, branch `feat/replay-lastseen-delta`) ~~`game.gateway.ts` `handleDisconnect` không `await`; import block trùng~~ → giờ `await authHandler.handleDisconnect(client)` ([game.gateway.ts:155](../apps/api/src/gateways/game.gateway.ts#L155)) + import block đã gộp thành 1 khối `from "@arena/shared"`
+- ✅ (L3 done, branch `feat/replay-lastseen-delta`) ~~`schemas.ts` `CLIENT_TIMESTAMP_MAX_OFFSET_MS` = 1 năm; `lastSeenSeqNo.max(Number.MAX_SAFE_INTEGER)`~~ → giờ `CLIENT_TIMESTAMP_MAX_OFFSET_MS = 5 * 60 * 1000` (5 phút) và `lastSeenSeqNo.max(GAME_CONFIG.MAX_ROUNDS * GAME_CONFIG.MAX_PLAYERS * 2)` ([schemas.ts:97](../packages/shared/src/schemas.ts#L97), [schemas.ts:149](../packages/shared/src/schemas.ts#L149))
 
 ### 🔴 Use Case Còn Thiếu (theo brief, chưa có implementation)
 
@@ -345,19 +346,12 @@ Sau khi PR `fix/match-race-frontend-correctness` merge, post-merge audit phát h
 4. **B7 (buildScoreUpdateOps operator warning)**: `logger.warn` (không silent) khi state machine đã mất
 5. **L1 (tie-break determinism)**: `match-state-machine.ts:384-411` dùng `mulberry32` PRNG seeded bằng `hashStringToSeed(state.id)`; reproducible theo (response time → correctAnswers → deterministic offset → alphabetical)
 
-### PR Kế Tiếp (P0 cleanup): PR 2B — Gateway + Schema Validation Tightening
+### ✅ ĐÃ XONG: PR 2B — Gateway + Schema Validation Tightening (L2 + L3)
 
-> Cập nhật 2026-06-18 (xem `plan.md` post-merge audit): trong số 3 PR defer ban đầu (PR 2A, 2B, 2C), PR 2A và PR 2C đã được xử lý xong ở post-merge audit; chỉ còn PR 2B (L2 + L3) làm follow-up ngay. Scope khu trú 2 file, blast radius thấp, ~1 ngày.
-
-Scope đề xuất:
-
-1. **L2 (gateway)**: `apps/api/src/gateways/game.gateway.ts:148-150` quyết định rõ `await` (chờ presence update xong) hay intentionally fire-and-forget; wrap với try/catch + log. Dedup import block (`:13-23` và `:30-39` gộp thành 1 import `from "@arena/shared"`)
-2. **L3 (schema validation)**:
-   - `packages/shared/src/schemas.ts:92` giảm `CLIENT_TIMESTAMP_MAX_OFFSET_MS` từ 1 năm xuống vài phút (mirror heartbeat tolerance thật)
-   - `packages/shared/src/schemas.ts:122` thay `lastSeenSeqNo.max(Number.MAX_SAFE_INTEGER)` bằng bound dựa trên `GAME_CONFIG.MAX_ROUNDS * answerMax` hoặc equivalent
-3. **Tests**:
-   - `game.gateway.spec.ts` thêm test cho disconnect path (await + log)
-   - `schemas.spec.ts` (nếu chưa có) thêm test cho clientTimestamp + lastSeenSeqNo bound
+> Landed trong branch `feat/replay-lastseen-delta`. Cả L2 và L3 đã được xử lý:
+>
+> 1. **L2 (gateway)** — `game.gateway.ts:155` giờ `await this.authHandler.handleDisconnect(client)` (handler có try/catch nội bộ quanh room/match lookup nên rejection chỉ đến từ programming bug và được để surface). Import block đã gộp thành 1 khối `from "@arena/shared"`.
+> 2. **L3 (schema validation)** — `schemas.ts:97` `CLIENT_TIMESTAMP_MAX_OFFSET_MS = 5 * 60 * 1000` (5 phút, dùng `.refine()` với `Date.now()` runtime). `schemas.ts:149` `lastSeenSeqNo.max(GAME_CONFIG.MAX_ROUNDS * GAME_CONFIG.MAX_PLAYERS * 2)`.
 
 ### PR Kế Tiếp (P1): In-match AFK Policy
 

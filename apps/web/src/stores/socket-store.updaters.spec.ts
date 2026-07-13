@@ -10,12 +10,13 @@ import {
   applyAnswerResultState,
   applyEventBatchState,
   applyMatchFinishedState,
+  applyMatchStartedState,
   applyRoundEndedState,
   applyRoundStartedState,
   applySnapshotState,
   applyUnauthorizedErrorState,
 } from "./socket-store.updaters";
-import type { Match, SocketState } from "./socket-store.types";
+import type { Match, Room, SocketState } from "./socket-store.types";
 import type { EventBatchPayload } from "@arena/shared";
 
 const basePlayers = [
@@ -34,6 +35,46 @@ const basePlayers = [
     isOnline: true,
   },
 ];
+
+function makeMatch(overrides: Partial<Match> = {}): Match {
+  return {
+    id: "m1",
+    status: MatchStatus.ROUND_ACTIVE,
+    currentRoundNo: 1,
+    players: basePlayers,
+    currentQuestion: null,
+    roundEndTime: null,
+    ...overrides,
+  };
+}
+
+function makeRoom(overrides: Partial<Room> = {}): Room {
+  return {
+    id: "r1",
+    code: "ABC",
+    status: RoomStatus.IN_GAME,
+    hostId: "p1",
+    roomType: "PUBLIC" satisfies RoomType,
+    currentMatchId: "m1",
+    countdownEndsAt: null,
+    players: basePlayers,
+    joinMode: "PLAYER" satisfies JoinMode,
+    maxPlayers: 100,
+    ...overrides,
+  };
+}
+
+type BatchEvent = {
+  id: string;
+  type: string;
+  timestamp: number;
+  payload: unknown;
+  seqNo: number;
+};
+
+function makeBatch(events: BatchEvent[], matchId = "m1"): EventBatchPayload {
+  return { matchId, events };
+}
 
 function makeState(overrides: Partial<SocketState> = {}): SocketState {
   return {
@@ -514,30 +555,6 @@ describe("applySnapshotState — reconnect-after-elimination hydrate", () => {
 // advance, the no-touch invariant on score/isOnline, and the
 // self-eliminated recompute.
 describe("applyEventBatchState — Plan D delta replay", () => {
-  function makeMatch(overrides: Partial<Match> = {}): Match {
-    return {
-      id: "m1",
-      status: MatchStatus.ROUND_ACTIVE,
-      currentRoundNo: 1,
-      players: basePlayers,
-      currentQuestion: null,
-      roundEndTime: null,
-      ...overrides,
-    };
-  }
-
-  type BatchEvent = {
-    id: string;
-    type: string;
-    timestamp: number;
-    payload: unknown;
-    seqNo: number;
-  };
-
-  function makeBatch(events: BatchEvent[], matchId = "m1"): EventBatchPayload {
-    return { matchId, events };
-  }
-
   // ----- Group A — Match guard (Plan D1 §6b) -----
 
   it("returns no-op when state has no match and no room (activeMatchId null)", () => {
@@ -994,5 +1011,210 @@ describe("applyEventBatchState — Plan D delta replay", () => {
     );
 
     expect(result.isEliminated).toBe(false);
+  });
+});
+
+// Plan D — match-boundary cursor reset: applyMatchStartedState must
+// zero the delta cursor when a new match begins so a stale seqNo from
+// the previous match (e.g. from a long-running tab that survived
+// multiple matches) cannot qualify for delta delivery against the
+// new match's event log.
+describe("applyMatchStartedState — Plan D cursor reset on match boundary", () => {
+  it("resets lastSeenSeqNo to 0 regardless of the prior cursor", () => {
+    const state = makeState({
+      room: {
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.STARTING,
+        hostId: "p1",
+        roomType: "PUBLIC" satisfies RoomType,
+        currentMatchId: "m-new",
+        countdownEndsAt: null,
+        players: basePlayers,
+        joinMode: "PLAYER" satisfies JoinMode,
+        maxPlayers: 100,
+      },
+      match: {
+        // Prior match — its seqNo namespace must NOT bleed into the
+        // new match's delta window.
+        id: "m-old",
+        status: MatchStatus.FINISHED,
+        currentRoundNo: 5,
+        players: basePlayers,
+        currentQuestion: null,
+        roundEndTime: null,
+      },
+      lastSeenSeqNo: 50,
+    });
+    const result = applyMatchStartedState(state, {
+      matchId: "m-new",
+      roomId: "r1",
+      status: MatchStatus.COUNTDOWN,
+      countdownMs: 3000,
+    });
+
+    expect(result.lastSeenSeqNo).toBe(0);
+    // Sanity: other Plan-C reset invariants are preserved alongside.
+    expect(result.isEliminated).toBe(false);
+    expect(result.eliminationReason).toBeNull();
+    expect(result.match?.id).toBe("m-new");
+  });
+});
+
+describe("applyEventBatchState — Plan D mirror live updaters", () => {
+  // Group H — mirror the live updaters' side effects so a client that
+  // reconnects via delta converges to the same state as a continuously
+  // connected client.
+
+  it("ROUND_STARTED clears lastAnswerResult and pendingAnswer (mirror live)", () => {
+    // Live applyRoundStartedState clears both fields. A delta that
+    // opens a new round must do the same, otherwise the answer panel
+    // would keep the previous round's result + a stale pending
+    // submission while showing the new question.
+    const state = makeState({
+      match: makeMatch({ currentRoundNo: 1, currentQuestion: null }),
+      room: makeRoom(),
+      lastAnswerResult: {
+        matchId: "m1",
+        roundNo: 1,
+        isCorrect: true,
+        responseTimeMs: 500,
+        correctAnswer: "A",
+      },
+      pendingAnswer: {
+        matchId: "m1",
+        roundNo: 1,
+        answer: "B",
+        submissionId: "s-old",
+      },
+      lastSeenSeqNo: 0,
+    });
+    const result = applyEventBatchState(
+      state,
+      makeBatch([
+        {
+          id: "m1:1",
+          type: "ROUND_STARTED",
+          timestamp: 1,
+          payload: {
+            roundNo: 2,
+            questionId: "q2",
+            question: { id: "q2", content: "New Q?", options: ["A", "B"] },
+            endsAt: 5000,
+          },
+          seqNo: 1,
+        },
+      ]),
+    );
+
+    expect(result.match?.currentRoundNo).toBe(2);
+    expect(result.lastAnswerResult).toBeNull();
+    expect(result.pendingAnswer).toBeNull();
+  });
+
+  it("ROUND_EVALUATED clears matching pendingAnswer (mirror live)", () => {
+    // Live applyRoundEndedState clears pendingAnswer only when it
+    // belongs to the round that just resolved. The delta case must
+    // match — otherwise a player who submitted an answer mid-round
+    // would carry a stale pending state into the round-result view.
+    const state = makeState({
+      match: makeMatch({ currentRoundNo: 3 }),
+      room: makeRoom(),
+      pendingAnswer: {
+        matchId: "m1",
+        roundNo: 3,
+        answer: "A",
+        submissionId: "s1",
+      },
+      lastSeenSeqNo: 0,
+    });
+    const result = applyEventBatchState(
+      state,
+      makeBatch([
+        {
+          id: "m1:1",
+          type: "ROUND_EVALUATED",
+          timestamp: 1,
+          payload: {
+            roundNo: 3,
+            survivingCount: 1,
+            eliminatedCount: 1,
+            eliminatedIds: ["p2"],
+          },
+          seqNo: 1,
+        },
+      ]),
+    );
+
+    expect(result.pendingAnswer).toBeNull();
+  });
+
+  it("ROUND_EVALUATED preserves a pendingAnswer from a different round (mirror live)", () => {
+    // Out-of-order delivery: a ROUND_EVALUATED arrives for round 3
+    // while the client still has a pending answer for round 2 (e.g.
+    // a delayed delta after a reconnect). The pending answer for
+    // round 2 must be preserved so the client can resolve it.
+    const pendingForRound2 = {
+      matchId: "m1",
+      roundNo: 2,
+      answer: "A",
+      submissionId: "s2",
+    };
+    const state = makeState({
+      match: makeMatch({ currentRoundNo: 2 }),
+      room: makeRoom(),
+      pendingAnswer: pendingForRound2,
+      lastSeenSeqNo: 0,
+    });
+    const result = applyEventBatchState(
+      state,
+      makeBatch([
+        {
+          id: "m1:1",
+          type: "ROUND_EVALUATED",
+          timestamp: 1,
+          payload: {
+            roundNo: 3,
+            survivingCount: 2,
+            eliminatedCount: 0,
+            eliminatedIds: [],
+          },
+          seqNo: 1,
+        },
+      ]),
+    );
+
+    expect(result.pendingAnswer).toBe(pendingForRound2);
+  });
+
+  it("MATCH_FINISHED updates room.status to FINISHED and countdownEndsAt to null (mirror live)", () => {
+    // Live applyMatchFinishedState flips the room channel so the
+    // lobby / leave-flow observes the match end. A delta-induced
+    // match end must mirror this so a reconnecting client does not
+    // keep an open room with status IN_GAME after the match is over.
+    const state = makeState({
+      match: makeMatch({ currentRoundNo: 5 }),
+      room: makeRoom({
+        status: RoomStatus.IN_GAME,
+        countdownEndsAt: 1000,
+      }),
+      lastSeenSeqNo: 0,
+    });
+    const result = applyEventBatchState(
+      state,
+      makeBatch([
+        {
+          id: "m1:1",
+          type: "MATCH_FINISHED",
+          timestamp: 1,
+          payload: { winnerId: "p1", totalRounds: 5 },
+          seqNo: 1,
+        },
+      ]),
+    );
+
+    expect(result.match?.status).toBe(MatchStatus.FINISHED);
+    expect(result.room?.status).toBe(RoomStatus.FINISHED);
+    expect(result.room?.countdownEndsAt).toBeNull();
   });
 });
