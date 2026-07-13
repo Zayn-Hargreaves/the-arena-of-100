@@ -3,13 +3,14 @@
 import React, { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
-import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { useSocketStore } from "@/stores/socket-store";
 import { API_URL, apiFetch } from "@/lib/api";
 import { ApiError, apiSendJson } from "@/lib/api-client";
+import { Link } from "@/i18n/routing";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
+import { AdminAccessDenied } from "@/components/admin/admin-access-denied";
 import {
   Server,
   Database,
@@ -20,6 +21,7 @@ import {
   ShieldCheck,
   Terminal,
   Skull,
+  ScrollText,
 } from "lucide-react";
 
 // ── Response Types (mirrors API) ───────────────────────────
@@ -43,7 +45,7 @@ type ServiceStatus = "loading" | "connected" | "disconnected" | "error";
 export default function AdminPage() {
   const t = useTranslations("admin");
   const tTerminate = useTranslations("admin.terminateRoom");
-  const router = useRouter();
+  const tAccessDenied = useTranslations("admin.accessDenied");
   const { toast } = useToast();
   const { accessToken, userRole } = useSocketStore();
 
@@ -281,27 +283,11 @@ export default function AdminPage() {
 
   if (userRole !== "ADMIN") {
     return (
-      <AppShellLayout>
-        <div className="max-w-md mx-auto w-full text-center space-y-6 pt-12 select-none">
-          <div className="bg-candy-red border-[3px] border-candy-ink rounded-3xl p-8 shadow-[6px_6px_0_0_#2B2D42] text-white space-y-4">
-            <div className="flex justify-center">
-              <AlertTriangle className="w-16 h-16 text-candy-yellow animate-bounce" />
-            </div>
-            <h1 className="font-display font-black text-2xl tracking-wider uppercase">
-              ACCESS DENIED
-            </h1>
-            <p className="font-mono text-xs font-black uppercase text-white/95 leading-relaxed">
-              You do not have administrative clearance to operate this terminal.
-            </p>
-          </div>
-          <button
-            onClick={() => router.push("/")}
-            className="px-6 py-3 bg-candy-yellow border-[3px] border-candy-ink rounded-2xl font-display font-black text-sm uppercase text-candy-ink shadow-[4px_4px_0_0_#000] hover:bg-yellow-300 active:translate-y-0.5 active:shadow-[2px_2px_0_0_#000] transition-all"
-          >
-            Return to Deck
-          </button>
-        </div>
-      </AppShellLayout>
+      <AdminAccessDenied
+        title={tAccessDenied("title")}
+        description={tAccessDenied("consoleDescription")}
+        returnHomeLabel={tAccessDenied("returnHome")}
+      />
     );
   }
 
@@ -322,9 +308,18 @@ export default function AdminPage() {
             </p>
           </div>
 
-          <span className="shrink-0 relative z-10 px-4 py-2 bg-candy-yellow border-[3px] border-candy-ink rounded-2xl text-candy-ink font-display font-black text-xs shadow-[3px_3px_0_0_#000] uppercase tracking-wider">
-            {t("rootAccess")}
-          </span>
+          <div className="shrink-0 relative z-10 flex flex-col sm:flex-row items-center gap-3">
+            <Link
+              href="/admin/audit"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-white border-[3px] border-candy-ink rounded-2xl text-candy-ink font-display font-black text-xs shadow-[3px_3px_0_0_#000] uppercase tracking-wider hover:bg-candy-cloud active:translate-y-0.5 active:shadow-[1px_1px_0_0_#000] transition-all"
+            >
+              <ScrollText className="w-4 h-4 text-candy-blue" />
+              {t("auditLog")}
+            </Link>
+            <span className="px-4 py-2 bg-candy-yellow border-[3px] border-candy-ink rounded-2xl text-candy-ink font-display font-black text-xs shadow-[3px_3px_0_0_#000] uppercase tracking-wider">
+              {t("rootAccess")}
+            </span>
+          </div>
         </div>
 
         {/* Resources Metrics & Node statuses */}

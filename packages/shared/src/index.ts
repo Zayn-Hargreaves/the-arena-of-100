@@ -21,6 +21,9 @@ export * from "./schemas";
 // Avatar Seeds
 export * from "./avatars";
 
+// Admin Audit API contract (GET /admin/audit-events)
+export * from "./audit";
+
 // Game Constants (defined in its own file so schemas.ts can
 // import GAME_CONFIG.MAX_ROUNDS without creating a circular
 // dependency through the index barrel).
