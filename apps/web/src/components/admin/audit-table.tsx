@@ -67,6 +67,12 @@ const cellClass =
 const headClass =
   "px-4 py-3 text-left font-display font-black text-[11px] uppercase tracking-wider text-candy-ink border-b-[3px] border-candy-ink";
 
+/**
+ * Colored badge for an audit row's action. Falls back to the raw
+ * event-type string when the server returns a value that isn't in
+ * `KNOWN_AUDIT_EVENT_TYPES` (forward-compat: a new admin action
+ * on the backend shouldn't render as a broken i18n key in the UI).
+ */
 function EventTypeBadge({ eventType }: { eventType: AuditEventType }) {
   const t = useTranslations("admin.audit");
   // Fall back to the raw event type if it isn't one we have a
@@ -100,6 +106,12 @@ function PayloadCell({ payload }: { payload: Record<string, unknown> }) {
   );
 }
 
+/**
+ * Renders the scope columns of an audit row. Shows room/match id
+ * when present and a localized "none" placeholder otherwise.
+ * Either or both may be missing — admin actions don't always have
+ * a target (e.g. system-wide reset).
+ */
 function TargetCell({ event }: { event: AuditEvent }) {
   const t = useTranslations("admin.audit");
   if (!event.roomId && !event.matchId) {

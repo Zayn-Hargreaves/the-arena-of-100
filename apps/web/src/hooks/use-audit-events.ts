@@ -37,6 +37,15 @@ interface UseAuditEventsOptions {
   enabled?: boolean;
 }
 
+/**
+ * Public surface of `useAuditEvents`. Everything the page, table,
+ * and filter components consume lives here so the hook can be the
+ * single owner of pagination + filter state.
+ *
+ * `isLoading` is `isPending`-style (stays true while the query is
+ * disabled with no cached data) — see the `AuditTable` prop note
+ * for why we don't expose `query.isLoading` directly.
+ */
 export interface UseAuditEventsResult {
   events: AuditEvent[];
   total: number;
@@ -133,17 +142,17 @@ export function useAuditEvents({
   const prevPage = useCallback(() => setPage(page - 1), [setPage, page]);
 
   // Guarded manual refetch. The initial query is gated on
-  // `enabled && Boolean(accessToken)` (see `useQuery` above), so
-  // TanStack Query already no-ops `refetch()` while the caller is
-  // disabled — the `enabled` half is enforced upstream. We only
-  // need to short-circuit on the `accessToken` half here so a
-  // signed-out operator can never provoke an in-flight URL build
-  // for the admin API.
+  // `enabled && Boolean(accessToken)` (see `useQuery` above), so we
+  // mirror both halves here. Without the `enabled` check, a caller
+  // that flips `enabled` false (e.g. non-admin via `userRole !==
+  // "ADMIN"` from the audit page) could still provoke an in-flight
+  // URL build for the admin API even though the query itself
+  // wouldn't fire.
   const queryRefetch = query.refetch;
   const refetch = useCallback(() => {
-    if (!accessToken) return;
+    if (!enabled || !accessToken) return;
     void queryRefetch();
-  }, [accessToken, queryRefetch]);
+  }, [enabled, accessToken, queryRefetch]);
 
   return useMemo(
     () => ({

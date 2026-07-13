@@ -26,6 +26,12 @@ export type KnownAuditEventType =
   | "ADMIN_RESET_SYSTEM"
   | "ADMIN_SYNC_QUESTIONS";
 
+/**
+ * String-literal union of audit event types accepted by the API.
+ * The trailing `(string & {})` keeps it assignable from arbitrary
+ * server strings while preserving autocompletion on the known values.
+ * Use `KNOWN_AUDIT_EVENT_TYPES` when you need the list of values.
+ */
 export type AuditEventType = KnownAuditEventType | (string & {});
 
 /** The known event types, for building the filter dropdown. */

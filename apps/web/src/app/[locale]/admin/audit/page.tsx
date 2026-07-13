@@ -13,6 +13,13 @@ import { AuditTable } from "@/components/admin/audit-table";
 
 const PAGE_SIZE = 25;
 
+/**
+ * /admin/audit — operator-facing viewer for the
+ * `GET /admin/audit-events` endpoint. Server-guarded by `Role.ADMIN`
+ * (defense in depth on top of the JSX gate below), and uses the
+ * presentational `AuditTable` + `AuditFilters` so all state lives
+ * in `useAuditEvents`.
+ */
 export default function AuditPage() {
   const t = useTranslations("admin.audit");
   const tAccessDenied = useTranslations("admin.accessDenied");
@@ -101,7 +108,7 @@ export default function AuditPage() {
         />
 
         {/* Pagination */}
-        {!isError && (
+        {!isError && total > 0 && (
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-white border-[3px] border-candy-ink rounded-3xl px-5 py-4 shadow-[4px_4px_0_0_#2B2D42]">
             <span className="font-mono text-[11px] font-black uppercase text-candy-ink/70">
               {t("pagination.summary", {
