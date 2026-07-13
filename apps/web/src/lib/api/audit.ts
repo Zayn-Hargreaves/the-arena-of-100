@@ -1,76 +1,13 @@
 // ============================================================
 // Admin Audit API client — consumes GET /admin/audit-events.
 //
-// Types here MUST mirror the backend contract to avoid drift:
-//   - query params  → apps/api/.../dto/get-audit-events.dto.ts
-//   - response shape → apps/api/.../ops/admin-audit.ops.ts
-//                      (getAuditEvents returns `{ events, total }`,
-//                       events being raw Prisma EventLog rows)
-//   - row shape      → apps/api/prisma/schema.prisma model EventLog
-//
-// The endpoint is admin-only (Role.ADMIN) and read-only, so this
-// module only exposes a GET. Do NOT add mutating calls here.
+// Type definitions live in @arena/shared (single source of truth);
+// this module only provides the HTTP wrapper. Do NOT add mutating
+// calls here — the endpoint is admin-only (Role.ADMIN) and read-only.
 // ============================================================
 
 import { apiGetJson } from "@/lib/api-client";
-
-/**
- * Event types the admin kill-switch / maintenance actions emit.
- * Kept in sync with the backend `eventType` string literals
- * (admin.service.ts). Modeled as a union of the known values plus
- * `string` so an unseen event type from the server still renders
- * instead of being dropped by an over-strict type.
- */
-export type KnownAuditEventType =
-  | "ADMIN_TERMINATE_ROOM"
-  | "ADMIN_RESET_SYSTEM"
-  | "ADMIN_SYNC_QUESTIONS";
-
-export type AuditEventType = KnownAuditEventType | (string & {});
-
-/** The known event types, for building the filter dropdown. */
-export const KNOWN_AUDIT_EVENT_TYPES: KnownAuditEventType[] = [
-  "ADMIN_TERMINATE_ROOM",
-  "ADMIN_RESET_SYSTEM",
-  "ADMIN_SYNC_QUESTIONS",
-];
-
-/**
- * One audit row — a raw Prisma `EventLog` serialized over JSON.
- * `matchId` / `roomId` / `adminUserId` are all nullable; admin
- * actions always set `adminUserId` (the server filters on
- * `adminUserId != null`), while scope columns may be null.
- * `createdAt` arrives as an ISO-8601 string, not a Date.
- */
-export interface AuditEvent {
-  id: string;
-  matchId: string | null;
-  roomId: string | null;
-  adminUserId: string | null;
-  eventType: AuditEventType;
-  payload: Record<string, unknown>;
-  createdAt: string;
-}
-
-/**
- * Query params accepted by GET /admin/audit-events. Mirrors
- * `getAuditEventsSchema`. NOTE: the backend DTO supports no
- * time-range filter — only these fields — so the UI must not
- * offer date filtering that the server cannot honor.
- */
-export interface GetAuditEventsParams {
-  limit?: number;
-  offset?: number;
-  roomId?: string;
-  eventType?: string;
-  adminUserId?: string;
-}
-
-/** Response envelope: rows plus the unfiltered-by-page total. */
-export interface AuditEventsResponse {
-  events: AuditEvent[];
-  total: number;
-}
+import type { AuditEventsResponse, GetAuditEventsParams } from "@arena/shared";
 
 /**
  * Build the querystring, omitting empty/undefined values so we

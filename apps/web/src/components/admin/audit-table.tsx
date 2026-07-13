@@ -7,13 +7,20 @@ import {
   KNOWN_AUDIT_EVENT_TYPES,
   type AuditEvent,
   type AuditEventType,
-} from "@/lib/api/audit";
+} from "@arena/shared";
 import type { Locale } from "@/i18n/routing";
 
 const KNOWN_EVENT_TYPE_SET = new Set<string>(KNOWN_AUDIT_EVENT_TYPES);
 
 interface AuditTableProps {
   events: AuditEvent[];
+  /**
+   * True until the first response arrives. Must be `isPending`-style
+   * semantics (stays true while the query is disabled with no cached
+   * data) so the skeleton remains visible during the brief window
+   * before `accessToken` hydrates. Field name stays `isLoading` to
+   * match the hook's public API.
+   */
   isLoading: boolean;
   isFetching: boolean;
   isError: boolean;

@@ -2,14 +2,10 @@
 
 import React from "react";
 import { useTranslations } from "next-intl";
-import {
-  AlertTriangle,
-  ChevronLeft,
-  ChevronRight,
-  ScrollText,
-} from "lucide-react";
+import { ChevronLeft, ChevronRight, ScrollText } from "lucide-react";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
-import { Link, useRouter } from "@/i18n/routing";
+import { AdminAccessDenied } from "@/components/admin/admin-access-denied";
+import { Link } from "@/i18n/routing";
 import { useSocketStore } from "@/stores/socket-store";
 import { useAuditEvents } from "@/hooks/use-audit-events";
 import { AuditFilters } from "@/components/admin/audit-filters";
@@ -19,7 +15,7 @@ const PAGE_SIZE = 25;
 
 export default function AuditPage() {
   const t = useTranslations("admin.audit");
-  const router = useRouter();
+  const tAccessDenied = useTranslations("admin.accessDenied");
   const userRole = useSocketStore((state) => state.userRole);
 
   const {
@@ -51,27 +47,11 @@ export default function AuditPage() {
   // the security boundary.
   if (userRole !== "ADMIN") {
     return (
-      <AppShellLayout>
-        <div className="max-w-md mx-auto w-full text-center space-y-6 pt-12 select-none">
-          <div className="bg-candy-red border-[3px] border-candy-ink rounded-3xl p-8 shadow-[6px_6px_0_0_#2B2D42] text-white space-y-4">
-            <div className="flex justify-center">
-              <AlertTriangle className="w-16 h-16 text-candy-yellow animate-bounce" />
-            </div>
-            <h1 className="font-display font-black text-2xl tracking-wider uppercase">
-              {t("accessDenied.title")}
-            </h1>
-            <p className="font-mono text-xs font-black uppercase text-white/95 leading-relaxed">
-              {t("accessDenied.description")}
-            </p>
-          </div>
-          <button
-            onClick={() => router.push("/")}
-            className="px-6 py-3 bg-candy-yellow border-[3px] border-candy-ink rounded-2xl font-display font-black text-sm uppercase text-candy-ink shadow-[4px_4px_0_0_#000] hover:bg-yellow-300 active:translate-y-0.5 active:shadow-[2px_2px_0_0_#000] transition-all"
-          >
-            {t("accessDenied.returnHome")}
-          </button>
-        </div>
-      </AppShellLayout>
+      <AdminAccessDenied
+        title={tAccessDenied("title")}
+        description={tAccessDenied("auditDescription")}
+        returnHomeLabel={tAccessDenied("returnHome")}
+      />
     );
   }
 

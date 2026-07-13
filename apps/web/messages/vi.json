@@ -56,6 +56,12 @@
     "checkMigrations": "KIỂM TRA MIGRATIONS",
     "resetActiveLobbies": "RESET TOÀN BỘ ACTIVE LOBBIES",
     "warning": "KHUYẾN CÁO: Thao tác reset sẽ ngắt kết nối toàn bộ người chơi đang trong live battle. Chỉ sử dụng trong tình huống khẩn cấp hoặc bảo trì.",
+    "accessDenied": {
+      "title": "TRUY CẬP BỊ TỪ CHỐI",
+      "consoleDescription": "Bạn không có quyền quản trị để vận hành terminal này.",
+      "auditDescription": "Bạn không có quyền quản trị để xem nhật ký kiểm toán.",
+      "returnHome": "Về trang chính"
+    },
     "units": {
       "mb": "MB",
       "rooms": "Phòng"
@@ -97,11 +103,6 @@
       "title": "NHẬT KÝ KIỂM TOÁN",
       "subtitle": "Lịch sử thao tác admin — ai làm gì, khi nào",
       "backToConsole": "VỀ BẢNG ĐIỀU KHIỂN",
-      "accessDenied": {
-        "title": "TRUY CẬP BỊ TỪ CHỐI",
-        "description": "Bạn không có quyền quản trị để xem nhật ký kiểm toán.",
-        "returnHome": "Về trang chính"
-      },
       "filters": {
         "title": "BỘ LỌC",
         "eventType": "LOẠI THAO TÁC",

@@ -6,7 +6,7 @@ import React from "react";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AuditTable } from "./audit-table";
-import type { AuditEvent } from "@/lib/api/audit";
+import type { AuditEvent } from "@arena/shared";
 
 const baseProps = {
   isLoading: false,
@@ -72,6 +72,10 @@ describe("AuditTable", () => {
   });
 
   it("renders the loading skeleton with pageSize rows when isLoading and events is empty", () => {
+    // This is also the regression for the disabled-query race: the
+    // table must stay in the skeleton state and never flash the
+    // empty inbox before `accessToken` hydrates and the first request
+    // is permitted to fire.
     const { container } = render(
       <AuditTable {...baseProps} events={[]} isLoading pageSize={8} />,
     );
@@ -79,5 +83,18 @@ describe("AuditTable", () => {
     expect(screen.queryByText("empty.title")).not.toBeInTheDocument();
     // 8 rows × 5 columns = 40 .animate-pulse placeholders.
     expect(container.querySelectorAll(".animate-pulse")).toHaveLength(40);
+  });
+
+  it("renders the empty state only after the first request has completed", () => {
+    // Empty state must wait for at least one fetch to finish. While
+    // `accessToken` is unavailable (or the query is otherwise
+    // disabled), no skeleton and no inbox — the table must remain
+    // loading so a signed-out operator never sees "no events".
+    const { rerender } = render(
+      <AuditTable {...baseProps} events={[]} isLoading pageSize={8} />,
+    );
+    expect(screen.queryByText("empty.title")).not.toBeInTheDocument();
+    rerender(<AuditTable {...baseProps} events={[]} pageSize={8} />);
+    expect(screen.getByText("empty.title")).toBeInTheDocument();
   });
 });

@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Filter, RotateCcw, Search } from "lucide-react";
-import { KNOWN_AUDIT_EVENT_TYPES } from "@/lib/api/audit";
+import { KNOWN_AUDIT_EVENT_TYPES } from "@arena/shared";
 import type { AuditFilters } from "@/hooks/use-audit-events";
 
 interface AuditFiltersProps {

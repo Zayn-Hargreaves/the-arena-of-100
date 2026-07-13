@@ -2,11 +2,8 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import {
-  getAuditEvents,
-  type AuditEvent,
-  type AuditEventsResponse,
-} from "@/lib/api/audit";
+import { getAuditEvents } from "@/lib/api/audit";
+import type { AuditEvent, AuditEventsResponse } from "@arena/shared";
 import { useSocketStore } from "@/stores/socket-store";
 
 /**
@@ -49,6 +46,14 @@ export interface UseAuditEventsResult {
   hasPrev: boolean;
   hasNext: boolean;
   filters: AuditFilters;
+  /**
+   * True until the first response arrives, even while the query is
+   * disabled (no access token). Backed by TanStack Query v5's
+   * `isPending`, NOT `query.isLoading` — `isLoading` is `isPending &&
+   * isFetching` and would be false while disabled, which would let the
+   * audit table flash the empty state before the first request is
+   * permitted. Field name stays `isLoading` for the public API.
+   */
   isLoading: boolean;
   isFetching: boolean;
   isError: boolean;
@@ -127,6 +132,19 @@ export function useAuditEvents({
   const nextPage = useCallback(() => setPage(page + 1), [setPage, page]);
   const prevPage = useCallback(() => setPage(page - 1), [setPage, page]);
 
+  // Guarded manual refetch. The initial query is gated on
+  // `enabled && Boolean(accessToken)` (see `useQuery` above), so
+  // TanStack Query already no-ops `refetch()` while the caller is
+  // disabled — the `enabled` half is enforced upstream. We only
+  // need to short-circuit on the `accessToken` half here so a
+  // signed-out operator can never provoke an in-flight URL build
+  // for the admin API.
+  const queryRefetch = query.refetch;
+  const refetch = useCallback(() => {
+    if (!accessToken) return;
+    void queryRefetch();
+  }, [accessToken, queryRefetch]);
+
   return useMemo(
     () => ({
       events: query.data?.events ?? [],
@@ -137,7 +155,7 @@ export function useAuditEvents({
       hasPrev: page > 0,
       hasNext: (page + 1) * pageSize < total,
       filters,
-      isLoading: query.isLoading,
+      isLoading: query.isPending,
       isFetching: query.isFetching,
       isError: query.isError,
       error: query.error,
@@ -146,15 +164,15 @@ export function useAuditEvents({
       prevPage,
       setFilters,
       resetFilters,
-      refetch: query.refetch,
+      refetch,
     }),
     [
       query.data,
-      query.isLoading,
+      query.isPending,
       query.isFetching,
       query.isError,
       query.error,
-      query.refetch,
+      refetch,
       total,
       page,
       pageSize,

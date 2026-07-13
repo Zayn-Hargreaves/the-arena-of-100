@@ -56,6 +56,12 @@
     "checkMigrations": "CHECK MIGRATIONS",
     "resetActiveLobbies": "RESET ALL ACTIVE LOBBIES",
     "warning": "WARNING: Resetting will disconnect all players currently in live battle. Use only in emergencies or maintenance.",
+    "accessDenied": {
+      "title": "ACCESS DENIED",
+      "consoleDescription": "You do not have administrative clearance to operate this terminal.",
+      "auditDescription": "You do not have administrative clearance to view the audit log.",
+      "returnHome": "Return to Deck"
+    },
     "units": {
       "mb": "MB",
       "rooms": "Rooms"
@@ -97,11 +103,6 @@
       "title": "AUDIT LOG",
       "subtitle": "Admin action history — who did what, and when",
       "backToConsole": "BACK TO CONSOLE",
-      "accessDenied": {
-        "title": "ACCESS DENIED",
-        "description": "You do not have administrative clearance to view the audit log.",
-        "returnHome": "Return to Deck"
-      },
       "filters": {
         "title": "FILTERS",
         "eventType": "ACTION TYPE",
