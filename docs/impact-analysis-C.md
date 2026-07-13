@@ -196,7 +196,7 @@ packages/shared/src/events.ts                                          |   7 +-
 > re-validate by adding that file to the diff command and re-running
 > `git diff` before merging.
 
-- [x] **All Track C edits are additive.** Verified per file:
+- [x] **All Track C edits are behavior-additive (no wire-format change).** Verified per file:
   - `socket-store.ts` (line 281) — additive `set({ isEliminated: true, eliminationReason: data.reason })`.
   - `socket-store.types.ts` — additive `eliminationReason: EliminationReason | null` field.
   - `socket-store.updaters.ts` — additive `eliminationReason: null` resets in 5 reducers +
@@ -204,8 +204,7 @@ packages/shared/src/events.ts                                          |   7 +-
   - `eliminated-overlay.tsx` — additive `reason?: EliminationReason | null` prop.
   - `game/[matchId]/page.tsx` — destructure `eliminationReason` from store, forward as prop.
   - `messages/{en,vi}.json` — additive i18n keys.
-  - `shared/events.ts` — extract existing inline type to a named export
-    `EliminationReason` (no wire-format change, JSON shape unchanged).
+  - `shared/events.ts` — **source-declaration refactor (only non-additive change in Track C)**: replace inline `reason: "WRONG_ANSWER" | "TIMEOUT"` union with `reason: EliminationReason` reference and add named `export type EliminationReason = ...` declaration. Wire format / JSON shape unchanged.
   - `match-state-machine.spec.ts` — 5 new tests in a new `describe` block.
   - `overlays.spec.tsx` — 4 new tests in the existing `EliminatedOverlay` block.
   - `socket-store.updaters.spec.ts` — 3 new tests in a new `describe` block.
