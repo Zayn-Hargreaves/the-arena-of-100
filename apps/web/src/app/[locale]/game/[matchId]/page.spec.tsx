@@ -58,7 +58,12 @@ vi.mock("@/i18n/routing", () => ({
 // Stub the presentational organisms — surface just the props these
 // tests assert on, plus click hooks for the interactive ones.
 vi.mock("@/components/game", () => ({
-  EliminatedOverlay: () => <div data-testid="eliminated-overlay" />,
+  EliminatedOverlay: (p: { reason?: string | null }) => (
+    <div
+      data-testid="eliminated-overlay"
+      data-reason={p.reason == null ? "" : p.reason}
+    />
+  ),
   SpectatorBanner: () => <div data-testid="spectator-banner" />,
   MatchFinishedOverlay: () => <div data-testid="finished-overlay" />,
   AntiHackNote: () => <div data-testid="anti-hack" />,
@@ -215,6 +220,32 @@ describe("GamePage — derived UI flags", () => {
     h.state = baseState({ match: matchFixture(), isEliminated: true });
     await renderPage("m1");
     expect(screen.getByTestId("eliminated-overlay")).toBeInTheDocument();
+  });
+
+  it("forwards the eliminationReason from the store to EliminatedOverlay", async () => {
+    h.state = baseState({
+      match: matchFixture(),
+      isEliminated: true,
+      eliminationReason: "WRONG_ANSWER",
+    });
+    await renderPage("m1");
+    expect(screen.getByTestId("eliminated-overlay")).toHaveAttribute(
+      "data-reason",
+      "WRONG_ANSWER",
+    );
+  });
+
+  it("passes a null eliminationReason through to EliminatedOverlay (no reason line)", async () => {
+    h.state = baseState({
+      match: matchFixture(),
+      isEliminated: true,
+      eliminationReason: null,
+    });
+    await renderPage("m1");
+    expect(screen.getByTestId("eliminated-overlay")).toHaveAttribute(
+      "data-reason",
+      "",
+    );
   });
 
   it("shows the spectator banner for a non-eliminated spectator", async () => {

@@ -193,7 +193,8 @@
       "title": "YOU HAVE BEEN ELIMINATED!",
       "subtitle": "Watching the best players...",
       "reasonWrong": "Wrong answer",
-      "reasonTimeout": "Ran out of time"
+      "reasonTimeout": "Ran out of time",
+      "reasonAfk": "Away from keyboard"
     },
     "spectatorMode": {
       "title": "SPECTATOR MODE",

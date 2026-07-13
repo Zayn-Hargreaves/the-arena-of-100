@@ -488,6 +488,7 @@ export function applySnapshotState(
       roundEndTime: data.roundEndTime,
     },
     isEliminated: selfEliminated,
+    eliminationReason: null,
     remainingCount: null,
     lastAnswerResult: null,
     pendingAnswer: null,

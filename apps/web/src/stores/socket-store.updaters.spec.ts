@@ -1,4 +1,9 @@
-import { MatchStatus, PlayerStatus, RoomStatus } from "@arena/shared";
+import {
+  MatchStatus,
+  PlayerStatus,
+  RoomStatus,
+  type SnapshotPayload,
+} from "@arena/shared";
 import type { JoinMode, RoomType } from "@arena/shared";
 import { describe, expect, it } from "vitest";
 import {
@@ -425,7 +430,9 @@ describe("applyUnauthorizedErrorState", () => {
 });
 
 describe("applySnapshotState — reconnect-after-elimination hydrate", () => {
-  const snapshot = (players: Array<{ id: string; status: PlayerStatus }>) => ({
+  const snapshot = (
+    players: Array<{ id: string; status: PlayerStatus }>,
+  ): SnapshotPayload => ({
     matchId: "m1",
     status: MatchStatus.ROUND_ACTIVE,
     currentRoundNo: 4,
@@ -449,7 +456,7 @@ describe("applySnapshotState — reconnect-after-elimination hydrate", () => {
       snapshot([
         { id: "p1", status: PlayerStatus.ELIMINATED },
         { id: "p2", status: PlayerStatus.ACTIVE },
-      ]) as never,
+      ]),
     );
 
     expect(result.isEliminated).toBe(true);
@@ -462,7 +469,7 @@ describe("applySnapshotState — reconnect-after-elimination hydrate", () => {
       snapshot([
         { id: "p1", status: PlayerStatus.ACTIVE },
         { id: "p2", status: PlayerStatus.ELIMINATED },
-      ]) as never,
+      ]),
     );
 
     expect(result.isEliminated).toBe(false);
@@ -471,12 +478,18 @@ describe("applySnapshotState — reconnect-after-elimination hydrate", () => {
   it("clears a stale isEliminated=true when the snapshot shows the local player ACTIVE", () => {
     // Defends the reconnect path: a leftover elimination flag from a
     // previous match must not survive a snapshot that says we are alive.
-    const state = makeState({ isEliminated: true });
+    // Same for `eliminationReason`: snapshot hydrate resets to null
+    // (snapshot carries no reason per applySnapshotState contract).
+    const state = makeState({
+      isEliminated: true,
+      eliminationReason: "TIMEOUT",
+    });
     const result = applySnapshotState(
       state,
-      snapshot([{ id: "p1", status: PlayerStatus.ACTIVE }]) as never,
+      snapshot([{ id: "p1", status: PlayerStatus.ACTIVE }]),
     );
 
     expect(result.isEliminated).toBe(false);
+    expect(result.eliminationReason).toBeNull();
   });
 });

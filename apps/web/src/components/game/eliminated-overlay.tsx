@@ -8,8 +8,8 @@ import type { EliminationReason } from "@arena/shared";
 export interface EliminatedOverlayProps {
   /**
    * Why the local player was eliminated. Drives the reason line
-   * ("wrong answer" vs "ran out of time"). When null/undefined the
-   * overlay falls back to the generic subtitle — e.g. an eliminated
+   * ("wrong answer" / "ran out of time" / "AFK"). When null/undefined
+   * the overlay falls back to the generic subtitle — e.g. an eliminated
    * state hydrated from a reconnect snapshot that carries no reason.
    */
   reason?: EliminationReason | null;
@@ -29,7 +29,9 @@ export const EliminatedOverlay: React.FC<EliminatedOverlayProps> = ({
       ? t("eliminatedOverlay.reasonWrong")
       : reason === "TIMEOUT"
         ? t("eliminatedOverlay.reasonTimeout")
-        : null;
+        : reason === "AFK"
+          ? t("eliminatedOverlay.reasonAfk")
+          : null;
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-none">

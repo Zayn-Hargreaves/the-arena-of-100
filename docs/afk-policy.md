@@ -68,4 +68,4 @@ AFK = một **surviving player** không tồn tại answer hợp lệ cho round 
 
 ## 5. Bất biến API (Track C constraint)
 
-`MatchStateMachine` public API **không đổi** trong Track C — chỉ được _thêm_ method nhỏ/pure có unit test riêng nếu thật sự cần. Lý do: blast radius **CRITICAL** (`gitnexus impact` → 29 symbol / 20 execution flow / 2 module, `epistemic: exact`). Mọi thay đổi phải verify bằng full `@arena/game-core` + match suite trước khi PR.
+`MatchStateMachine` public API **không đổi** trong Track C — không được thêm, sửa, hay xoá bất kỳ public method nào. Lý do: blast radius **CRITICAL** (`gitnexus_impact` → 29 impactedCount / 18 processes / 3 modules, xem `docs/impact-analysis-C.md` §1.1). Mọi thay đổi (kể cả thêm method private/protected) phải verify bằng full `@arena/game-core` + match suite trước khi PR.

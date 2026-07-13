@@ -193,7 +193,8 @@
       "title": "BẠN ĐÃ BỊ LOẠI!",
       "subtitle": "Đang theo dõi những người chơi xuất sắc nhất...",
       "reasonWrong": "Trả lời sai",
-      "reasonTimeout": "Hết giờ"
+      "reasonTimeout": "Hết giờ",
+      "reasonAfk": "Vắng mặt"
     },
     "spectatorMode": {
       "title": "CHẾ ĐỘ KHÁN GIẢ",

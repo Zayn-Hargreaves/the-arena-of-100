@@ -35,6 +35,13 @@ describe("EliminatedOverlay", () => {
     );
   });
 
+  it("shows the AFK reason", () => {
+    render(<EliminatedOverlay reason="AFK" />);
+    expect(screen.getByTestId("elimination-reason")).toHaveTextContent(
+      "eliminatedOverlay.reasonAfk",
+    );
+  });
+
   it("falls back to no reason line when reason is null (reconnect snapshot)", () => {
     render(<EliminatedOverlay reason={null} />);
     expect(screen.queryByTestId("elimination-reason")).not.toBeInTheDocument();

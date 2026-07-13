@@ -175,7 +175,7 @@ export interface AnswerSubmittedPayload {
 // Why a player was eliminated in a round. Single source of truth shared
 // by the server emitter (game-loop.events.ts) and the web client so the
 // eliminated overlay can render the correct copy without re-deriving it.
-export type EliminationReason = "WRONG_ANSWER" | "TIMEOUT";
+export type EliminationReason = "WRONG_ANSWER" | "TIMEOUT" | "AFK";
 
 export interface PlayerEliminatedPayload {
   matchId: string;
