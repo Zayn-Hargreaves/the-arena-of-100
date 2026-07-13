@@ -24,14 +24,12 @@ export const EliminatedOverlay: React.FC<EliminatedOverlayProps> = ({
 }) => {
   const t = useTranslations("Game");
 
-  const reasonText =
-    reason === "WRONG_ANSWER"
-      ? t("eliminatedOverlay.reasonWrong")
-      : reason === "TIMEOUT"
-        ? t("eliminatedOverlay.reasonTimeout")
-        : reason === "AFK"
-          ? t("eliminatedOverlay.reasonAfk")
-          : null;
+  const REASON_TEXT: Record<EliminationReason, string> = {
+    WRONG_ANSWER: t("eliminatedOverlay.reasonWrong"),
+    TIMEOUT: t("eliminatedOverlay.reasonTimeout"),
+    AFK: t("eliminatedOverlay.reasonAfk"),
+  };
+  const reasonText = reason ? REASON_TEXT[reason] : null;
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-none">

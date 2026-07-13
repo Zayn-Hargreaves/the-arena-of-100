@@ -158,7 +158,7 @@ acbae97`) and was approved under those prior reviews. ⇒ **risk KNOWN, ACCEPTED
 
 Diff `7935cdc..4832e72 --stat` (verbatim, 14 files, +374/-13):
 
-```
+```text
 apps/web/messages/en.json                                              |   4 +-
 apps/web/messages/vi.json                                              |   4 +-
 apps/web/src/app/[locale]/game/[matchId]/page.spec.tsx                 |   1 +

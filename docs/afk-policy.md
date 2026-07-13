@@ -13,7 +13,7 @@ Ba điều trên là **bất biến**. Mọi code trong phạm vi Track C chỉ 
 
 ## 2. Định nghĩa "AFK"
 
-AFK = một **surviving player** không tồn tại answer hợp lệ cho round đang active tại thời điểm round kết thúc. Có hai đường dẫn tới cùng một kết quả:
+AFK = một **surviving player** không có bất kỳ answer nào được ghi nhận trong round đang active tại thời điểm round kết thúc. Trường hợp có answer nhưng `isCorrect=false` không phải AFK mà là `WRONG_ANSWER` (xem bảng dưới).
 
 | Trường hợp                             | `player.status` khi round kết thúc | Có answer trong `round.answers`? | Kết quả                            |
 | -------------------------------------- | ---------------------------------- | -------------------------------- | ---------------------------------- |
@@ -46,8 +46,8 @@ AFK = một **surviving player** không tồn tại answer hợp lệ cho round 
 
 ### Lớp 3 — Events & UI
 
-- `game-loop.events.ts` `emitPlayerEliminated()`: `reason = answeredThisRound ? "WRONG_ANSWER" : "TIMEOUT"`. Đây là nguồn "lý do bị loại" cho FE.
-- Wire: `PLAYER_ELIMINATED` payload (`packages/shared/src/events.ts`) mang `reason: "WRONG_ANSWER" | "TIMEOUT"`.
+- `game-loop.events.ts` `emitPlayerEliminated()`: `reason = answeredThisRound ? "WRONG_ANSWER" : "TIMEOUT"`. Đây là nguồn "lý do bị loại" cho FE. Shared `EliminationReason` (xem `packages/shared/src/events.ts`) định nghĩa ba variant `WRONG_ANSWER | TIMEOUT | AFK`; emitter hiện tại chỉ phát `WRONG_ANSWER` (có answer, sai) hoặc `TIMEOUT` (không answer), chưa bao giờ emit `AFK` trừ khi implementation được đổi để map trường hợp AFK thuần/giữa-round rõ ràng.
+- Wire: `PLAYER_ELIMINATED` payload (`packages/shared/src/events.ts`) `reason: "WRONG_ANSWER" | "TIMEOUT" | "AFK"` (theo type), nhưng payload thực tế phát ra chỉ chứa `"WRONG_ANSWER"` hoặc `"TIMEOUT"`. FE phải xử lý được cả ba variant để tương thích tương lai, đồng thời không phụ thuộc vào việc emitter sẽ phát `AFK` trong code path hiện tại.
 - FE store (`socket-store.ts`): khi `data.playerId === userId` set `isEliminated=true` + lưu `eliminationReason`; luôn stamp `status=ELIMINATED` cho player trong `match.players` (realtime, không đợi `ROUND_ENDED`).
 - FE UI:
   - `eliminated-overlay.tsx`: overlay watch-only, hiển thị **lý do** (sai / hết giờ).

@@ -60,7 +60,7 @@ Run the relevant package tests before using these numbers in PR text.
 - **Track C — AFK docs + UX hardening.** Verified AFK/elimination semantics across state machine → round runner → UI; wrote `docs/afk-policy.md`.
 - `MatchStateMachine` public API unchanged (CRITICAL blast radius: ~20 flows). BE elimination logic already correct — added regression tests only (AFK, disconnect, reconnect-in-round, late answer, eliminated stays eliminated).
 - FE: elimination reason (`WRONG_ANSWER` / `TIMEOUT`) now shown in `eliminated-overlay`; `eliminationReason` added to socket store; reconnect snapshot hydrates `isEliminated` from roster so watch-only UI restores. New `EliminationReason` type in `@arena/shared`.
-- Pre-edit impact analysis artifact (Plan §C1 §30-51): `docs/impact-analysis-C.md` — 10 symbol `gitnexus_impact` outputs verbatim, scope confirmation (no public API change, blast radius ≤ 11 file), revision binding `7935cdc..4832e72`, `§4`/`§5` left as `<fill>` pending reviewer + ISO timestamp.
+- Pre-edit impact analysis artifact (Plan §C1 §30-51): `docs/impact-analysis-C.md` — 10 symbol `gitnexus_impact` outputs verbatim, scope confirmation (no public API change, blast radius ≤ 11 file), revision binding `7935cdc..4832e72`. `§4` records a POLICY EXCEPTION (no independent reviewer); `§5` author-self-attestation timestamp `2026-07-13T07:55:28Z` — not an approval, no independent approval yet.
 
 ## What Is Done
 
