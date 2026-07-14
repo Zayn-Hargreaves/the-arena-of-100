@@ -223,6 +223,7 @@ export const ReplayEventSchema = z.discriminatedUnion("type", [
     type: z.literal("ROUND_EVALUATED"),
     payload: z.object({
       roundNo: z.number().int().positive(),
+      correctAnswer: z.string(),
       survivingCount: z.number().int().nonnegative(),
       eliminatedCount: z.number().int().nonnegative(),
       eliminatedIds: z.array(z.string()),
@@ -287,12 +288,20 @@ export type ReplayPlayerPresencePayload = ReplayPayload<
   "PLAYER_DISCONNECTED" | "PLAYER_RECONNECTED"
 >;
 
-// Compile-time guard: if a branch was misnamed or the schema
-// diverges from the inferred type, the assertion below flips to
-// `false` and `tsc` reports an error. The `void` operator hides the
+// Compile-time guard: if any replay branch is misnamed or its schema
+// diverges from the inferred `ReplayPayload<T>` type, the assertion
+// below flips to `false` and `tsc` reports an error. The distributive
+// conditional type forces the check to apply to EVERY branch
+// (STATE_TRANSITION, ROUND_STARTED, ANSWER_SUBMITTED, ROUND_EVALUATED,
+// TIE_BREAK, MATCH_FINISHED, PLAYER_DISCONNECTED, PLAYER_RECONNECTED) —
+// not only the head. A misnamed or divergent alias such as TIE_BREAK,
+// MATCH_FINISHED, or PLAYER_DISCONNECTED now resolves to `false`
+// instead of being silently accepted. The `void` operator hides the
 // unused-binding warning at runtime.
-type AssertReplayPayloadShape = ReplayRoundStartedPayload extends never
-  ? false
-  : true;
+type AssertReplayPayloadShape = {
+  [K in ReplayEvent["type"]]: ReplayPayload<K> extends never ? false : true;
+}[ReplayEvent["type"]] extends true
+  ? true
+  : false;
 const _replayPayloadShapeCheck: AssertReplayPayloadShape = true;
 void _replayPayloadShapeCheck;

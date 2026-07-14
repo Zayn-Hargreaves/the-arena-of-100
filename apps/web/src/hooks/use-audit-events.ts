@@ -28,6 +28,14 @@ const EMPTY_FILTERS: AuditFilters = {
   createdBefore: "",
 };
 
+const toIsoBound = (raw: string): string | undefined => {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const d = new Date(trimmed);
+  if (Number.isNaN(d.getTime())) return undefined;
+  return d.toISOString();
+};
+
 interface UseAuditEventsOptions {
   /** Rows per page. Clamped to the backend max (100) by the DTO. */
   pageSize?: number;
@@ -94,14 +102,6 @@ export function useAuditEvents({
   const [filters, setFiltersState] = useState<AuditFilters>(EMPTY_FILTERS);
 
   const offset = page * pageSize;
-
-  const toIsoBound = (raw: string): string | undefined => {
-    const trimmed = raw.trim();
-    if (!trimmed) return undefined;
-    const d = new Date(trimmed);
-    if (Number.isNaN(d.getTime())) return undefined;
-    return d.toISOString();
-  };
 
   const query = useQuery<AuditEventsResponse>({
     // accessToken is part of the key so switching admin identity

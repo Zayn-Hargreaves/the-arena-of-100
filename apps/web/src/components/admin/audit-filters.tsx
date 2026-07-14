@@ -133,6 +133,7 @@ export function AuditFilters({
           <input
             id="audit-filter-created-after"
             type="datetime-local"
+            step="1"
             value={draft.createdAfter}
             disabled={disabled}
             onChange={(e) =>
@@ -150,6 +151,7 @@ export function AuditFilters({
           <input
             id="audit-filter-created-before"
             type="datetime-local"
+            step="1"
             value={draft.createdBefore}
             disabled={disabled}
             onChange={(e) =>

@@ -97,6 +97,16 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       autoConnect: true,
     });
 
+    // Plan D reconnect: capture match/lastSeenSeqNo across the
+    // auth handshake, but defer the REQUEST_SNAPSHOT call until the
+    // server-side `syncReconnection` has joined our channels and
+    // emitted a SNAPSHOT. Firing it inside AUTHENTICATED raced
+    // against that sync and produced UNAUTHORIZED errors.
+    let pendingSnapshotRequest: {
+      matchId: string;
+      lastSeenSeqNo: number;
+    } | null = null;
+
     // Resolve only when the socket is both connected AND the server has
     // acknowledged authentication, so callers' `await connect()` guarantees
     // a ready/authenticated socket before invoking createRoom/joinRoom.
@@ -169,14 +179,20 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       console.log("✅ Authenticated:", data.username);
 
       // Plan D minimal reconnect: after socket re-auth (including auto
-      // reconnect), ask for a cursor-aware snapshot when we still hold
-      // match context. Server may also push a full SNAPSHOT via
-      // syncReconnection; REQUEST_SNAPSHOT with lastSeenSeqNo enables
-      // EVENT_BATCH delta when the store survived the disconnect.
+      // reconnect), remember that we want a cursor-aware snapshot when
+      // we still hold match context. Server may also push a full
+      // SNAPSHOT via syncReconnection; REQUEST_SNAPSHOT with
+      // lastSeenSeqNo enables EVENT_BATCH delta when the store
+      // survived the disconnect. We capture the intent here and fire
+      // it from the SNAPSHOT handler — by then `syncReconnection` has
+      // joined the room and reattached us, so the request won't be
+      // rejected with UNAUTHORIZED.
       const { match, room, lastSeenSeqNo } = get();
       const matchId = match?.id ?? room?.currentMatchId;
       if (matchId) {
-        get().requestSnapshot(matchId, lastSeenSeqNo);
+        pendingSnapshotRequest = { matchId, lastSeenSeqNo };
+      } else {
+        pendingSnapshotRequest = null;
       }
     });
 
@@ -315,6 +331,17 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       if (get().socket !== newSocket) return;
       set((state) => applySnapshotState(state, data));
       console.log("📸 Snapshot received");
+
+      // Plan D reconnect: if AUTHENTICATED armed a cursor-aware
+      // request and the server-pushed SNAPSHOT belongs to the same
+      // match, fire the deferred REQUEST_SNAPSHOT now. This is also
+      // the point where server-side `syncReconnection` has finished
+      // joining channels, so the request is safe.
+      const pending = pendingSnapshotRequest;
+      if (pending && pending.matchId === data.matchId) {
+        pendingSnapshotRequest = null;
+        get().requestSnapshot(pending.matchId, pending.lastSeenSeqNo);
+      }
     });
 
     // Plan D delta replay: the server may answer REQUEST_SNAPSHOT with a

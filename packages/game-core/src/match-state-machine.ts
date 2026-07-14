@@ -346,6 +346,7 @@ export class MatchStateMachine {
 
     this.logEvent("ROUND_EVALUATED", {
       roundNo: this.currentRound.roundNo,
+      correctAnswer,
       survivingCount: survivingIds.length,
       eliminatedCount: eliminatedIds.length,
       eliminatedIds,

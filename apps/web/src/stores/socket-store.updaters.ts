@@ -583,6 +583,15 @@ export function applyEventBatchState(
           roundEndTime: null,
         };
         remainingCount = event.payload.survivingCount;
+        // Mirror live applyRoundEndedState: the per-player
+        // isCorrect/responseTimeMs aren't in the replay payload, but
+        // `correctAnswer` is — populate it so the result panel can
+        // reveal the answer during a delta hydrate.
+        lastAnswerResult = {
+          matchId: data.matchId,
+          roundNo: event.payload.roundNo,
+          correctAnswer: event.payload.correctAnswer,
+        };
         // Mirror live applyRoundEndedState: clear pendingAnswer only
         // when it belongs to the round that just resolved. A pending
         // answer from an earlier round (out-of-order delivery) is

@@ -730,6 +730,7 @@ describe("applyEventBatchState — Plan D delta replay", () => {
           timestamp: 1,
           payload: {
             roundNo: 1,
+            correctAnswer: "B",
             survivingCount: 1,
             eliminatedCount: 1,
             eliminatedIds: ["p2"],
@@ -995,6 +996,7 @@ describe("applyEventBatchState — Plan D delta replay", () => {
           timestamp: 1,
           payload: {
             roundNo: 1,
+            correctAnswer: "B",
             survivingCount: 1,
             eliminatedCount: 1,
             eliminatedIds: ["p2"],
@@ -1028,6 +1030,7 @@ describe("applyEventBatchState — Plan D delta replay", () => {
           timestamp: 1,
           payload: {
             roundNo: 1,
+            correctAnswer: "B",
             survivingCount: 1,
             eliminatedCount: 1,
             eliminatedIds: ["p1"],
@@ -1057,6 +1060,7 @@ describe("applyEventBatchState — Plan D delta replay", () => {
           timestamp: 1,
           payload: {
             roundNo: 1,
+            correctAnswer: "B",
             survivingCount: 2,
             eliminatedCount: 0,
             eliminatedIds: [],
@@ -1193,6 +1197,7 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
           timestamp: 1,
           payload: {
             roundNo: 3,
+            correctAnswer: "B",
             survivingCount: 1,
             eliminatedCount: 1,
             eliminatedIds: ["p2"],
