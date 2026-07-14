@@ -20,7 +20,7 @@ import {
   type RoundStartedPayload,
   type SnapshotPayload,
   type EventBatchPayload,
-  type ReplayEvent,
+  ReplayEventSchema,
 } from "@arena/shared";
 import type {
   LastAnswerResult,
@@ -541,9 +541,17 @@ export function applyEventBatchState(
 
   for (const rawEvent of data.events) {
     if (rawEvent.seqNo <= cursor) continue; // idempotent skip
+    // Advance cursor even when the payload is invalid / unknown so a
+    // corrupt entry cannot pin the client behind the server log head.
     cursor = rawEvent.seqNo;
 
-    const event = rawEvent as unknown as ReplayEvent;
+    const parsed = ReplayEventSchema.safeParse({
+      type: rawEvent.type,
+      payload: rawEvent.payload,
+    });
+    if (!parsed.success) continue;
+
+    const event = parsed.data;
     switch (event.type) {
       case "STATE_TRANSITION":
         match = { ...match, status: event.payload.to };

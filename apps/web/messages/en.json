@@ -111,6 +111,8 @@
         "roomIdPlaceholder": "Filter by room ID (cuid)",
         "adminUserId": "ADMIN USER ID",
         "adminUserIdPlaceholder": "Filter by admin user ID (cuid)",
+        "createdAfter": "FROM",
+        "createdBefore": "TO",
         "apply": "APPLY",
         "reset": "RESET"
       },

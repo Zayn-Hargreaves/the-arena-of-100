@@ -73,17 +73,25 @@ export async function getAuditEvents(
     roomId?: string;
     eventType?: string;
     adminUserId?: string;
+    createdAfter?: Date;
+    createdBefore?: Date;
   },
 ): Promise<{ events: unknown[]; total: number }> {
   const where: {
     roomId?: string;
     eventType?: string;
     adminUserId?: string | { not: null };
+    createdAt?: { gte?: Date; lte?: Date };
   } = {};
   where.adminUserId = { not: null };
   if (params.roomId) where.roomId = params.roomId;
   if (params.eventType) where.eventType = params.eventType;
   if (params.adminUserId) where.adminUserId = params.adminUserId;
+  if (params.createdAfter || params.createdBefore) {
+    where.createdAt = {};
+    if (params.createdAfter) where.createdAt.gte = params.createdAfter;
+    if (params.createdBefore) where.createdAt.lte = params.createdBefore;
+  }
 
   const [events, total] = await Promise.all([
     deps.prisma.eventLog.findMany({

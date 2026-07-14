@@ -413,6 +413,7 @@ export class MatchRoundRunner {
           playerName: player.name,
           answeredThisRound:
             stateMachine.getCurrentRound()?.answers.has(playerId) ?? false,
+          wasOnline: player.isOnline,
         });
       }
 

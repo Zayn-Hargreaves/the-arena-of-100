@@ -111,6 +111,8 @@
         "roomIdPlaceholder": "Lọc theo room ID (cuid)",
         "adminUserId": "ADMIN USER ID",
         "adminUserIdPlaceholder": "Lọc theo admin user ID (cuid)",
+        "createdAfter": "TỪ",
+        "createdBefore": "ĐẾN",
         "apply": "ÁP DỤNG",
         "reset": "ĐẶT LẠI"
       },

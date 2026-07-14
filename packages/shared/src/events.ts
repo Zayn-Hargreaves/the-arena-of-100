@@ -4,6 +4,17 @@
 // ============================================================
 
 import { MatchStatus, RoomStatus, type RoomType } from "./state";
+import type {
+  QuestionSnapshot,
+  ReplayEvent,
+  ReplayStateTransitionPayload,
+  ReplayRoundStartedPayload,
+  ReplayAnswerSubmittedPayload,
+  ReplayRoundEvaluatedPayload,
+  ReplayTieBreakPayload,
+  ReplayMatchFinishedPayload,
+  ReplayPlayerPresencePayload,
+} from "./schemas";
 
 // Room Events
 export enum RoomEventType {
@@ -199,70 +210,29 @@ export interface PlayerReconnectedPayload {
   reconnectedAt: number;
 }
 
-// Question Snapshot (used in events)
-export interface QuestionSnapshot {
-  id: string;
-  content: string;
-  options: string[];
-  // correctAnswer omitted from client-facing events
-  difficulty?: "EASY" | "MEDIUM" | "HARD";
-}
+// Question Snapshot (used in events) — single source of truth is the
+// Zod schema in `schemas.ts` (`QuestionSnapshotSchema`); this re-export
+// keeps the public surface stable for downstream consumers.
+export type { QuestionSnapshot };
 
 // ---------------------------------------------------------------------------
 // Replay events (Plan D — delta replay)
 //
-// These are the shapes carried in `EventBatchPayload.events[].payload`,
-// discriminated by the event `type`. They mirror the state-machine
-// `logEvent` payloads (see match-state-machine.ts) and are applied on
-// the client to reproduce live-play state after a reconnect, event by
-// event, so the resulting match state equals what a continuously
-// connected client would hold. correctAnswer is never included.
+// Compile-time types live in `schemas.ts` (`ReplayEventSchema`,
+// `ReplayEvent`). They are derived from the runtime schema so the
+// server-side log sites and the client-side fold cannot drift apart.
+// correctAnswer is never included.
 // ---------------------------------------------------------------------------
-export interface ReplayStateTransitionPayload {
-  from: MatchStatus;
-  to: MatchStatus;
-}
-export interface ReplayRoundStartedPayload {
-  roundNo: number;
-  questionId: string;
-  question: QuestionSnapshot;
-  endsAt: number;
-}
-export interface ReplayAnswerSubmittedPayload {
-  playerId: string;
-  isCorrect: boolean;
-  responseTimeMs: number;
-}
-export interface ReplayRoundEvaluatedPayload {
-  roundNo: number;
-  survivingCount: number;
-  eliminatedCount: number;
-  eliminatedIds: string[];
-}
-export interface ReplayTieBreakPayload {
-  winnerId: string | null;
-  tiedPlayerIds: string[];
-}
-export interface ReplayMatchFinishedPayload {
-  winnerId: string | null;
-  totalRounds: number;
-}
-export interface ReplayPlayerPresencePayload {
-  playerId: string;
-}
-
-// Discriminated union of every replay event the client can apply. The
-// server may log additional internal event types; the client treats any
-// unknown `type` as a no-op (forward-compatible).
-export type ReplayEvent =
-  | { type: "STATE_TRANSITION"; payload: ReplayStateTransitionPayload }
-  | { type: "ROUND_STARTED"; payload: ReplayRoundStartedPayload }
-  | { type: "ANSWER_SUBMITTED"; payload: ReplayAnswerSubmittedPayload }
-  | { type: "ROUND_EVALUATED"; payload: ReplayRoundEvaluatedPayload }
-  | { type: "TIE_BREAK"; payload: ReplayTieBreakPayload }
-  | { type: "MATCH_FINISHED"; payload: ReplayMatchFinishedPayload }
-  | { type: "PLAYER_DISCONNECTED"; payload: ReplayPlayerPresencePayload }
-  | { type: "PLAYER_RECONNECTED"; payload: ReplayPlayerPresencePayload };
+export type {
+  ReplayEvent,
+  ReplayStateTransitionPayload,
+  ReplayRoundStartedPayload,
+  ReplayAnswerSubmittedPayload,
+  ReplayRoundEvaluatedPayload,
+  ReplayTieBreakPayload,
+  ReplayMatchFinishedPayload,
+  ReplayPlayerPresencePayload,
+};
 
 // Union types for type safety
 export type RoomEvent =

@@ -94,7 +94,7 @@ Run the relevant package tests before using these numbers in PR text.
   p95) are observable on multi-core hosts. Baseline numbers + P2
   conclusion still pending a real run against a real Redis/Postgres
   stack (see `load-test/README.md`).
-- Delta-aware server reconnect push (`auth.handler.syncReconnection`) — needs Track C coordination.
+- Server-side delta push on auth reconnect still full SNAPSHOT (`auth.handler.syncReconnection`). Client-driven delta after re-auth is shipped: socket store calls `REQUEST_SNAPSHOT(matchId, lastSeenSeqNo)` on `AUTHENTICATED` when match context survives disconnect.
 - Spectator transport split for scale.
 - Full WCAG / Playwright / rematch work.
 
@@ -122,7 +122,7 @@ Run the relevant package tests before using these numbers in PR text.
      `audit-table.tsx` + `audit-filters.tsx`; skeleton/empty/error states;
      i18n keys under `admin.audit` (en/vi); vitest specs green.
 4. **Replay Contract** — ✅ done (Track D, 2026-07-11)
-   - `submissionId` idempotency + `lastSeenSeqNo` delta replay both shipped. Follow-up: make the reconnect auto-push (`auth.handler`) delta-aware (Track C coordination).
+   - `submissionId` idempotency + `lastSeenSeqNo` delta replay both shipped. Reconnect: server still full SNAPSHOT; client re-requests with cursor on AUTHENTICATED.
 
 ### P2 — Evidence / Scale
 

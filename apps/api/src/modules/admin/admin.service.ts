@@ -77,6 +77,8 @@ export class AdminService {
     roomId?: string;
     eventType?: string;
     adminUserId?: string;
+    createdAfter?: Date;
+    createdBefore?: Date;
   }): Promise<{ events: unknown[]; total: number }> {
     return getAuditEvents({ prisma: this.prisma, logger: this.logger }, params);
   }

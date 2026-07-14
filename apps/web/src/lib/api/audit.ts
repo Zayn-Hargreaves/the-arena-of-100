@@ -29,6 +29,12 @@ function buildAuditQuery(params: GetAuditEventsParams): string {
   const adminUserId = params.adminUserId?.trim();
   if (adminUserId) search.set("adminUserId", adminUserId);
 
+  const createdAfter = params.createdAfter?.trim();
+  if (createdAfter) search.set("createdAfter", createdAfter);
+
+  const createdBefore = params.createdBefore?.trim();
+  if (createdBefore) search.set("createdBefore", createdBefore);
+
   return search.toString();
 }
 

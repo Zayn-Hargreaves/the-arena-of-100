@@ -26,9 +26,8 @@ const labelClass =
 /**
  * Filter bar for the audit panel. Holds a local draft so the
  * operator can compose several filters before triggering a single
- * refetch on "Apply" — only the fields the backend DTO supports
- * (event type, room id, admin user id). No date range: the
- * endpoint does not support one.
+ * refetch on "Apply" — fields the backend DTO supports (event type,
+ * room id, admin user id, optional createdAt range).
  */
 export function AuditFilters({
   value,
@@ -51,6 +50,8 @@ export function AuditFilters({
       eventType: draft.eventType.trim(),
       roomId: draft.roomId.trim(),
       adminUserId: draft.adminUserId.trim(),
+      createdAfter: draft.createdAfter.trim(),
+      createdBefore: draft.createdBefore.trim(),
     });
   };
 
@@ -119,6 +120,40 @@ export function AuditFilters({
             placeholder={t("filters.adminUserIdPlaceholder")}
             onChange={(e) =>
               setDraft((d) => ({ ...d, adminUserId: e.target.value }))
+            }
+            className={inputClass}
+          />
+        </div>
+
+        {/* createdAfter */}
+        <div>
+          <label htmlFor="audit-filter-created-after" className={labelClass}>
+            {t("filters.createdAfter")}
+          </label>
+          <input
+            id="audit-filter-created-after"
+            type="datetime-local"
+            value={draft.createdAfter}
+            disabled={disabled}
+            onChange={(e) =>
+              setDraft((d) => ({ ...d, createdAfter: e.target.value }))
+            }
+            className={inputClass}
+          />
+        </div>
+
+        {/* createdBefore */}
+        <div>
+          <label htmlFor="audit-filter-created-before" className={labelClass}>
+            {t("filters.createdBefore")}
+          </label>
+          <input
+            id="audit-filter-created-before"
+            type="datetime-local"
+            value={draft.createdBefore}
+            disabled={disabled}
+            onChange={(e) =>
+              setDraft((d) => ({ ...d, createdBefore: e.target.value }))
             }
             className={inputClass}
           />

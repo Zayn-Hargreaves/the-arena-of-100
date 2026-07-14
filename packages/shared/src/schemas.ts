@@ -20,6 +20,7 @@
 
 import { z } from "zod";
 import { GAME_CONFIG } from "./game-config";
+import { MatchStatus } from "./state";
 
 // Helper: roomId / matchId are server-issued CUIDs. The client never
 // generates them, but we still validate the shape so a garbage value
@@ -175,3 +176,123 @@ export const CLIENT_EVENT_SCHEMAS = {
   request_snapshot: RequestSnapshotPayloadSchema,
   heartbeat: HeartbeatPayloadSchema,
 } as const;
+
+// REPLAY EVENTS (server -> client EVENT_BATCH) --------------------------------
+// Runtime validation for delta-replay entries folded by the web client.
+// Unknown `type` values fail parse and are treated as no-ops (forward-
+// compatible); known types must carry a well-shaped payload before fold.
+//
+// Compile-time types (`ReplayEvent`, `QuestionSnapshot`) are derived from
+// these schemas via `z.infer` and re-exported as the single source of
+// truth — see `events.ts` for the re-exports.
+
+export const QuestionSnapshotSchema = z.object({
+  id: z.string().min(1),
+  content: z.string(),
+  options: z.array(z.string()),
+  difficulty: z.enum(["EASY", "MEDIUM", "HARD"]).optional(),
+});
+export type QuestionSnapshot = z.infer<typeof QuestionSnapshotSchema>;
+
+export const ReplayEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("STATE_TRANSITION"),
+    payload: z.object({
+      from: z.nativeEnum(MatchStatus),
+      to: z.nativeEnum(MatchStatus),
+    }),
+  }),
+  z.object({
+    type: z.literal("ROUND_STARTED"),
+    payload: z.object({
+      roundNo: z.number().int().positive(),
+      questionId: z.string().min(1),
+      question: QuestionSnapshotSchema,
+      endsAt: z.number().int().nonnegative(),
+    }),
+  }),
+  z.object({
+    type: z.literal("ANSWER_SUBMITTED"),
+    payload: z.object({
+      playerId: z.string().min(1),
+      isCorrect: z.boolean(),
+      responseTimeMs: z.number().int().nonnegative(),
+    }),
+  }),
+  z.object({
+    type: z.literal("ROUND_EVALUATED"),
+    payload: z.object({
+      roundNo: z.number().int().positive(),
+      survivingCount: z.number().int().nonnegative(),
+      eliminatedCount: z.number().int().nonnegative(),
+      eliminatedIds: z.array(z.string()),
+    }),
+  }),
+  z.object({
+    type: z.literal("TIE_BREAK"),
+    payload: z.object({
+      winnerId: z.string().min(1).nullable(),
+      tiedPlayerIds: z.array(z.string()),
+    }),
+  }),
+  z.object({
+    type: z.literal("MATCH_FINISHED"),
+    payload: z.object({
+      winnerId: z.string().min(1).nullable(),
+      totalRounds: z.number().int().nonnegative(),
+    }),
+  }),
+  z.object({
+    type: z.literal("PLAYER_DISCONNECTED"),
+    payload: z.object({
+      playerId: z.string().min(1),
+    }),
+  }),
+  z.object({
+    type: z.literal("PLAYER_RECONNECTED"),
+    payload: z.object({
+      playerId: z.string().min(1),
+    }),
+  }),
+]);
+// `ReplayEvent` is the compile-time alias for the runtime schema so
+// every consumer (web client fold, server log sites) reads from a
+// single declaration. Adding a new event type means adding a branch
+// to ReplayEventSchema — the type updates automatically.
+export type ReplayEvent = z.infer<typeof ReplayEventSchema>;
+export type ReplayEventParsed = ReplayEvent;
+
+// Per-event-type payload types — exported so consumers (events.ts,
+// web fold) can reference them by name. The schema above is the
+// single source of truth; adding a new branch updates both the
+// runtime validator and the compile-time type automatically.
+//
+// The previous hand-rolled `z.infer<...> extends { type: "..."; payload: infer P }`
+// never resolved correctly: a conditional type over a union only
+// distributes when the checked type is naked. Wrapping the helper
+// in a `ReplayPayload<T>` generic keeps the union naked and lets
+// TypeScript pick the matching branch via `Extract`.
+type ReplayPayload<T extends ReplayEvent["type"]> = Extract<
+  ReplayEvent,
+  { type: T }
+>["payload"];
+
+export type ReplayStateTransitionPayload = ReplayPayload<"STATE_TRANSITION">;
+export type ReplayRoundStartedPayload = ReplayPayload<"ROUND_STARTED">;
+export type ReplayAnswerSubmittedPayload = ReplayPayload<"ANSWER_SUBMITTED">;
+export type ReplayRoundEvaluatedPayload = ReplayPayload<"ROUND_EVALUATED">;
+export type ReplayTieBreakPayload = ReplayPayload<"TIE_BREAK">;
+export type ReplayMatchFinishedPayload = ReplayPayload<"MATCH_FINISHED">;
+export type ReplayPlayerPresencePayload = ReplayPayload<
+  "PLAYER_DISCONNECTED" | "PLAYER_RECONNECTED"
+>;
+
+// Compile-time guard: if a branch was misnamed or the schema
+// diverges from the inferred type, the assertion below flips to
+// `false` and `tsc` reports an error. The `void` operator hides the
+// unused-binding warning at runtime.
+type AssertReplayPayloadShape = ReplayRoundStartedPayload extends never
+  ? false
+  : true;
+const _replayPayloadShapeCheck: AssertReplayPayloadShape = true;
+void _replayPayloadShapeCheck;

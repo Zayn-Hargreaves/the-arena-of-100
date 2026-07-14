@@ -66,9 +66,8 @@ export interface AuditEvent {
 
 /**
  * Query params accepted by GET /admin/audit-events. Mirrors
- * `getAuditEventsSchema`. NOTE: the backend DTO supports no
- * time-range filter — only these fields — so the UI must not
- * offer date filtering that the server cannot honor.
+ * `getAuditEventsSchema`. Optional ISO-8601 timestamps bound
+ * `createdAt` (inclusive); both may be omitted.
  */
 export interface GetAuditEventsParams {
   limit?: number;
@@ -76,6 +75,10 @@ export interface GetAuditEventsParams {
   roomId?: string;
   eventType?: string;
   adminUserId?: string;
+  /** Inclusive lower bound on `createdAt` (ISO-8601). */
+  createdAfter?: string;
+  /** Inclusive upper bound on `createdAt` (ISO-8601). */
+  createdBefore?: string;
 }
 
 /** Response envelope: rows plus the unfiltered-by-page total. */

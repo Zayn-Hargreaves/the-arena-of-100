@@ -59,6 +59,8 @@ describe("useAuditEvents", () => {
         eventType: undefined,
         roomId: undefined,
         adminUserId: undefined,
+        createdAfter: undefined,
+        createdBefore: undefined,
       },
       "tok-123",
     );
@@ -97,11 +99,20 @@ describe("useAuditEvents", () => {
     await waitFor(() => expect(result.current.page).toBe(1));
 
     // ...then apply a filter: page must snap back to 0 and offset to 0.
+    // Use realistic datetime-local strings for createdAfter/createdBefore
+    // so we exercise the toIsoBound / buildAuditQuery path — the hook
+    // must forward them as ISO-8601 to the API. The expected ISO
+    // timestamps are computed from the same Date constructor as the
+    // hook so the assertion stays timezone-independent.
+    const createdAfterIso = new Date("2026-07-01T00:00").toISOString();
+    const createdBeforeIso = new Date("2026-07-14T23:59").toISOString();
     act(() =>
       result.current.setFilters({
         eventType: "ADMIN_RESET_SYSTEM",
         roomId: "",
         adminUserId: "",
+        createdAfter: "2026-07-01T00:00",
+        createdBefore: "2026-07-14T23:59",
       }),
     );
 
@@ -110,6 +121,8 @@ describe("useAuditEvents", () => {
         expect.objectContaining({
           offset: 0,
           eventType: "ADMIN_RESET_SYSTEM",
+          createdAfter: createdAfterIso,
+          createdBefore: createdBeforeIso,
         }),
         "tok-123",
       ),

@@ -63,7 +63,7 @@ Track D (replay)      ┘
   2. **`gitnexus_detect_changes()` (giữ là bước pre-commit riêng biệt)**:
      - Chạy trước khi commit để xác nhận scope diff khớp với kỳ vọng. Ghi output (changed symbols + affected processes) vào PR. Đây là validation cho toàn bộ diff, tách biệt với per-symbol impact ở bước 1.
   3. **Stale-index recovery (giữ nguyên)**: Nếu GitNexus báo index stale (symbol lệch so với `git status` / `git diff`, hoặc thiếu file mới) ⇒ chạy `npx gitnexus analyze` rồi lặp lại bước 1–2 trước khi tiếp tục.
-- `MatchStateMachine` là hub CRITICAL (22 flow) → scope rule (cập nhật):
+- `MatchStateMachine` là hub CRITICAL (19 flow) → scope rule (cập nhật):
   - **Existing public/core method signatures phải giữ nguyên hoàn toàn** — KHÔNG được thay đổi tên, tham số, kiểu trả về của bất kỳ method nào trong danh sách: `constructor`, `submitAnswer`, `startRound`, `evaluateRound`, `finishMatch`, `disconnectPlayer`, `reconnectPlayer`, `getSnapshot`, `logEvent`, `getEventLog`, `serialize`, `deserialize`, `attachCorrectAnswer`. Đây là constraint cứng, áp dụng cho cả Track C và Track D.
   - **Track C**: được phép **harden/sửa nội bộ** logic state-transition elimination (thêm/bỏ guard nội bộ, điều chỉnh nhánh recovery). **TUYỆT ĐỐI KHÔNG** thêm public method mới trên `MatchStateMachine` ở Track C. Cho helper liên quan elimination recovery (`endRound` fallback), **phương án duy nhất được chấp nhận**:
     - **Helper dùng chung dạng pure function** ở một module riêng trong `packages/game-core/src/` (ví dụ `round-elimination.ts`), export và dùng được từ `match-round-runner.ts`. Helper này:

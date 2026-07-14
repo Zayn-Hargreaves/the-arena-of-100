@@ -902,6 +902,62 @@ describe("applyEventBatchState — Plan D delta replay", () => {
     expect(result.lastSeenSeqNo).toBe(30);
   });
 
+  it("skips invalid payload shapes without mutating match, still advances cursor", () => {
+    const match = makeMatch({
+      status: MatchStatus.COUNTDOWN,
+      currentRoundNo: 1,
+      currentQuestion: null,
+    });
+    const state = makeState({ match, lastSeenSeqNo: 0 });
+    const result = applyEventBatchState(
+      state,
+      makeBatch([
+        {
+          id: "m1:1",
+          type: "ROUND_STARTED",
+          timestamp: 1,
+          // Missing question / endsAt — must not fold.
+          payload: { roundNo: 2 },
+          seqNo: 1,
+        },
+      ]),
+    );
+
+    expect(result.match).toBe(match);
+    expect(result.match?.status).toBe(MatchStatus.COUNTDOWN);
+    expect(result.match?.currentRoundNo).toBe(1);
+    expect(result.lastSeenSeqNo).toBe(1);
+  });
+
+  it("applies a valid event after an invalid one in the same batch", () => {
+    const state = makeState({
+      match: makeMatch({ status: MatchStatus.CREATED }),
+      lastSeenSeqNo: 0,
+    });
+    const result = applyEventBatchState(
+      state,
+      makeBatch([
+        {
+          id: "m1:1",
+          type: "STATE_TRANSITION",
+          timestamp: 1,
+          payload: { from: "not-a-status", to: MatchStatus.COUNTDOWN },
+          seqNo: 1,
+        },
+        {
+          id: "m1:2",
+          type: "STATE_TRANSITION",
+          timestamp: 2,
+          payload: { from: MatchStatus.CREATED, to: MatchStatus.COUNTDOWN },
+          seqNo: 2,
+        },
+      ]),
+    );
+
+    expect(result.match?.status).toBe(MatchStatus.COUNTDOWN);
+    expect(result.lastSeenSeqNo).toBe(2);
+  });
+
   // ----- Group F — Ranh giới không-đụng (Plan D1 §6b) -----
 
   it("does not overwrite players[].score or players[].isOnline", () => {

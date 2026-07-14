@@ -29,6 +29,7 @@ describe("MatchHandler", () => {
     matchService = {
       getStateMachine: vi.fn(),
       persistStateMachine: vi.fn(),
+      getRoomIdByMatchId: vi.fn().mockResolvedValue("r1"),
     } as unknown as MatchService;
     gameLoopService = {
       checkEarlyTermination: vi.fn().mockResolvedValue(undefined),
@@ -847,7 +848,7 @@ describe("MatchHandler", () => {
       // channel — even with a valid token and a known matchId.
       // Without this, anyone who knew a matchId could read the
       // full match state (player roster, scores, current
-      // question).
+      // question). Plan D: room auth runs before getStateMachine.
       const snapshot = { matchId: "m1", status: "ROUND_ACTIVE" };
       const mockMachine = {
         getSnapshot: vi.fn().mockReturnValue(snapshot),
@@ -878,13 +879,13 @@ describe("MatchHandler", () => {
         ServerEvent.ERROR,
         expect.objectContaining({ code: ErrorCode.UNAUTHORIZED }),
       );
-      // getSnapshot was NEVER called — the gate fires before
-      // reaching the snapshot read.
+      // getStateMachine was NEVER called — room auth fires first.
+      expect(matchService.getStateMachine).not.toHaveBeenCalled();
       expect(mockMachine.getSnapshot).not.toHaveBeenCalled();
     });
 
     it("emits error when match not found", async () => {
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
+      vi.mocked(matchService.getRoomIdByMatchId).mockResolvedValue(undefined);
 
       await handler.handleRequestSnapshot(client, {
         matchId: "m1",
@@ -895,6 +896,7 @@ describe("MatchHandler", () => {
         code: ErrorCode.MATCH_NOT_FOUND,
         message: ERROR_MESSAGES[ErrorCode.MATCH_NOT_FOUND],
       });
+      expect(matchService.getStateMachine).not.toHaveBeenCalled();
     });
 
     it("emits error when not authenticated", async () => {

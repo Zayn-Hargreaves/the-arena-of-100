@@ -200,25 +200,27 @@ export class MatchHandler extends BaseHandler {
       async () => {
         const userId = this.requireAuth(client);
 
+        // Plan D: room authorization BEFORE any state-machine work.
+        // Resolve roomId via a cache-first lookup on the in-memory
+        // stateMachines map; on cache miss MatchService falls back to a
+        // minimal `select: { roomId }` Prisma read. Either way, no
+        // Redis deserialize / answer rehydrate runs for an unauthorized
+        // client.
+        const roomId = await this.matchService.getRoomIdByMatchId(
+          payload.matchId,
+        );
+        if (!roomId) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
+
+        // H6: socket channel membership. Players and drop-in spectators
+        // both join `room:${roomId}` via JOIN_ROOM; outsiders are rejected.
+        if (!client.rooms.has(`room:${roomId}`)) {
+          throw new RoomError(ErrorCode.UNAUTHORIZED);
+        }
+
         const stateMachine = await this.matchService.getStateMachine(
           payload.matchId,
         );
         if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
-
-        // H6 fix: room-membership gate. Previously this handler was
-        // fully open to any authenticated user that knew the matchId
-        // — a leak risk for the player roster, the in-flight question,
-        // and the per-player score. The previous comment said
-        // "spectators use this exact path" and explicitly opted out
-        // of a player-roster check, but the right check is socket
-        // channel membership: both players AND drop-in spectators
-        // (who entered via JOIN_ROOM → handleJoinRoom) end up in the
-        // `room:${roomId}` channel. Anyone who has not joined the
-        // room — even with a valid token — is rejected.
-        const roomId = stateMachine.getState().roomId;
-        if (!client.rooms.has(`room:${roomId}`)) {
-          throw new RoomError(ErrorCode.UNAUTHORIZED);
-        }
 
         // The snapshot is already client-safe: MatchStateMachine.getSnapshot
         // returns only the question (no correctAnswer), so no answer leak

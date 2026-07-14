@@ -167,6 +167,17 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       if (get().socket !== newSocket) return;
       set(applyAuthenticatedState(data));
       console.log("✅ Authenticated:", data.username);
+
+      // Plan D minimal reconnect: after socket re-auth (including auto
+      // reconnect), ask for a cursor-aware snapshot when we still hold
+      // match context. Server may also push a full SNAPSHOT via
+      // syncReconnection; REQUEST_SNAPSHOT with lastSeenSeqNo enables
+      // EVENT_BATCH delta when the store survived the disconnect.
+      const { match, room, lastSeenSeqNo } = get();
+      const matchId = match?.id ?? room?.currentMatchId;
+      if (matchId) {
+        get().requestSnapshot(matchId, lastSeenSeqNo);
+      }
     });
 
     newSocket.on(ServerEvent.ROOM_CREATED, (data: RoomCreatedPayload) => {
