@@ -7,22 +7,33 @@ import type { AuditEvent, AuditEventsResponse } from "@arena/shared";
 import { useSocketStore } from "@/stores/socket-store";
 
 /**
- * Server-supported filters only. The backend DTO
- * (get-audit-events.dto.ts) exposes exactly these three; there is
- * deliberately NO date-range filter because the endpoint does not
- * support one — offering it would silently filter only the current
- * page and mislead the operator.
+ * Server-supported filters (get-audit-events.dto.ts): event type,
+ * room id, admin user id, optional createdAt bounds (ISO strings).
  */
 export interface AuditFilters {
   eventType: string;
   roomId: string;
   adminUserId: string;
+  /** Inclusive lower bound on createdAt (ISO-8601 or empty). */
+  createdAfter: string;
+  /** Inclusive upper bound on createdAt (ISO-8601 or empty). */
+  createdBefore: string;
 }
 
 const EMPTY_FILTERS: AuditFilters = {
   eventType: "",
   roomId: "",
   adminUserId: "",
+  createdAfter: "",
+  createdBefore: "",
+};
+
+const toIsoBound = (raw: string): string | undefined => {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const d = new Date(trimmed);
+  if (Number.isNaN(d.getTime())) return undefined;
+  return d.toISOString();
 };
 
 interface UseAuditEventsOptions {
@@ -104,6 +115,8 @@ export function useAuditEvents({
           eventType: filters.eventType || undefined,
           roomId: filters.roomId || undefined,
           adminUserId: filters.adminUserId || undefined,
+          createdAfter: toIsoBound(filters.createdAfter),
+          createdBefore: toIsoBound(filters.createdBefore),
         },
         accessToken ?? undefined,
       ),

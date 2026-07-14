@@ -358,7 +358,12 @@ export class AuthHandler extends BaseHandler {
           mostRecentRoom.currentMatchId,
         );
         if (stateMachine) {
-          client.emit(ServerEvent.SNAPSHOT, stateMachine.getSnapshot(0));
+          // Use log head (same as REQUEST_SNAPSHOT full-snapshot path)
+          // so reconnect clients learn a real cursor, not 0.
+          client.emit(
+            ServerEvent.SNAPSHOT,
+            stateMachine.getSnapshot(stateMachine.getHeadSeqNo()),
+          );
         }
       }
 

@@ -1,5 +1,10 @@
 import { Socket } from "socket.io";
-import { ServerEvent, ErrorCode, RoomError } from "@arena/shared";
+import {
+  ServerEvent,
+  ErrorCode,
+  RoomError,
+  type ClientEvent,
+} from "@arena/shared";
 
 export abstract class BaseHandler {
   protected async runSafely(
@@ -14,8 +19,17 @@ export abstract class BaseHandler {
     }
   }
 
-  protected emitError(client: Socket, code: ErrorCode, message: string) {
-    client.emit(ServerEvent.ERROR, { code, message });
+  protected emitError(
+    client: Socket,
+    code: ErrorCode,
+    message: string,
+    failedEvent?: ClientEvent,
+  ) {
+    client.emit(ServerEvent.ERROR, {
+      code,
+      message,
+      ...(failedEvent !== undefined ? { failedEvent } : {}),
+    });
   }
 
   protected getErrorCode(error: unknown): ErrorCode {

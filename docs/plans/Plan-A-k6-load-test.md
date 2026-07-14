@@ -9,7 +9,17 @@
 
 ## Vì sao độc lập
 
-Chỉ thêm thư mục `load-test/` + script CI. Không sửa symbol nào trong `apps/`/`packages/` → blast radius = 0, không xung đột với B/C/D.
+Chỉ thêm thư mục `load-test/` + script CI. **Ngoại lệ duy nhất đã land** (xem "Điểm tích hợp cần đọc"):
+một field tối thiểu trên `apps/api/src/modules/health/health.controller.ts` —
+
+- Bổ sung `rssBytes: number` + `totalMemBytes: number` trên response của `GET /health/monitoring`
+  (xem `health.controller.ts:39-48`, `:103-108`) để sampler ghi raw `*.cpu.jsonl` không mất precision
+  khi round-trip qua MB rounding. Không đổi behavior runtime; chỉ expose thêm field đã có sẵn
+  (`process.memoryUsage().rss`, `os.totalmem()`).
+- Blast của exception: chỉ 1 file controller + thêm field response (legacy `memoryUsageMb` /
+  `totalMemoryMb` vẫn giữ). Không đụng enum, không đổi status code, không đổi auth.
+- Phần còn lại (harness/sampler/validator/CI): trong `load-test/` + `.github/workflows/`.
+  → Blast radius = 1 file controller + thư mục mới; không xung đột với B/C/D.
 
 ## Phase
 
@@ -166,8 +176,14 @@ load-test/
 
 **CPU/Memory — định nghĩa**:
 
-- **Peak CPU** ≤ **80%** (lấy max của tất cả mẫu hợp lệ trong steady-state; bỏ qua mẫu `null` đầu tiên vì chưa có baseline).
-- **P95 CPU** ≤ **70%** (trong steady-state).
+> Quy ước: mọi ngưỡng CPU dưới đây hiểu theo **`100% = 1 core`** (xem "Nguồn dữ liệu & tần suất lấy mẫu"
+> line 121-136). CpuSamplerService (`apps/api/src/modules/health/services/cpu-sampler.service.ts:43-48`)
+> đã clamp về `100 * numCpus` để 1 host 4 cores có thể report tới 400%; `200%` = dùng hết 2 cores,
+> `400%` trên máy 4 cores = fully loaded. Mọi `cpuUsage` từ `/health/monitoring` (`health.controller.ts:103`)
+> theo convention này.
+
+- **Peak CPU** ≤ **80% of 1 core** (lấy max của tất cả mẫu hợp lệ trong steady-state; bỏ qua mẫu `null` đầu tiên vì chưa có baseline).
+- **P95 CPU** ≤ **70% of 1 core** (trong steady-state).
 - **Peak RSS** ≤ **500 MB** (trong steady-state).
 - **RSS delta (leak gate)**: `RSS(cleanup_window_end_anchor) − RSS(cleanup_window_start_anchor)` ≤ **+50 MB**. Vượt ngưỡng ⇒ đánh giá như leak bộ nhớ ⇒ fail.
 - **Anchor sampling (xem "Anchor sampling & tolerance" bên dưới)**: vì sampler chạy 1 lần/giây, các mốc `cleanup_window_start` / `cleanup_window_end` / `pre_run_baseline` có thể rơi giữa hai tick. Sampler PHẢI **chủ động collect thêm một mẫu ngay tại hoặc ngay sau mỗi anchor** (xem "Anchor sampling & tolerance") thay vì dùng mẫu gần nhất một cách tự do.

@@ -37,7 +37,7 @@ export const GameStateRibbon: React.FC<GameStateRibbonProps> = ({
             {t("matchingTitle")}
           </span>
           <span className="font-display font-black text-2xl text-candy-pink drop-shadow-[0_2px_0_rgba(0,0,0,0.02)]">
-            {t("roundLabel")} {roundNo}
+            {t("roundLabel", { number: roundNo })}
           </span>
         </div>
         <div className="h-10 w-[3px] bg-candy-ink/10 hidden sm:block" />

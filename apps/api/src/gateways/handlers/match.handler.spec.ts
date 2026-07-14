@@ -29,6 +29,7 @@ describe("MatchHandler", () => {
     matchService = {
       getStateMachine: vi.fn(),
       persistStateMachine: vi.fn(),
+      getRoomIdByMatchId: vi.fn().mockResolvedValue("r1"),
     } as unknown as MatchService;
     gameLoopService = {
       checkEarlyTermination: vi.fn().mockResolvedValue(undefined),
@@ -771,6 +772,11 @@ describe("MatchHandler", () => {
         // verify socket channel membership. Provide it in the
         // mock so the happy path passes the new gate.
         getState: vi.fn().mockReturnValue({ roomId: "r1" }),
+        // Plan D delta replay: the handler reads the event-log window
+        // to decide delta vs full. head=0 (empty log) keeps this a
+        // full-snapshot path, so getSnapshot(head=0) is still called.
+        getHeadSeqNo: vi.fn().mockReturnValue(0),
+        getFloorSeqNo: vi.fn().mockReturnValue(0),
       };
       vi.mocked(matchService.getStateMachine).mockResolvedValue(
         mockMachine as any,
@@ -806,6 +812,8 @@ describe("MatchHandler", () => {
       const mockMachine = {
         getSnapshot: vi.fn().mockReturnValue(snapshot),
         getState: vi.fn().mockReturnValue({ roomId: "r1" }),
+        getHeadSeqNo: vi.fn().mockReturnValue(0),
+        getFloorSeqNo: vi.fn().mockReturnValue(0),
       };
       vi.mocked(matchService.getStateMachine).mockResolvedValue(
         mockMachine as any,
@@ -840,11 +848,13 @@ describe("MatchHandler", () => {
       // channel — even with a valid token and a known matchId.
       // Without this, anyone who knew a matchId could read the
       // full match state (player roster, scores, current
-      // question).
+      // question). Plan D: room auth runs before getStateMachine.
       const snapshot = { matchId: "m1", status: "ROUND_ACTIVE" };
       const mockMachine = {
         getSnapshot: vi.fn().mockReturnValue(snapshot),
         getState: vi.fn().mockReturnValue({ roomId: "r1" }),
+        getHeadSeqNo: vi.fn().mockReturnValue(0),
+        getFloorSeqNo: vi.fn().mockReturnValue(0),
       };
       vi.mocked(matchService.getStateMachine).mockResolvedValue(
         mockMachine as any,
@@ -869,13 +879,13 @@ describe("MatchHandler", () => {
         ServerEvent.ERROR,
         expect.objectContaining({ code: ErrorCode.UNAUTHORIZED }),
       );
-      // getSnapshot was NEVER called — the gate fires before
-      // reaching the snapshot read.
+      // getStateMachine was NEVER called — room auth fires first.
+      expect(matchService.getStateMachine).not.toHaveBeenCalled();
       expect(mockMachine.getSnapshot).not.toHaveBeenCalled();
     });
 
     it("emits error when match not found", async () => {
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
+      vi.mocked(matchService.getRoomIdByMatchId).mockResolvedValue(undefined);
 
       await handler.handleRequestSnapshot(client, {
         matchId: "m1",
@@ -885,7 +895,9 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.MATCH_NOT_FOUND,
         message: ERROR_MESSAGES[ErrorCode.MATCH_NOT_FOUND],
+        failedEvent: ClientEvent.REQUEST_SNAPSHOT,
       });
+      expect(matchService.getStateMachine).not.toHaveBeenCalled();
     });
 
     it("emits error when not authenticated", async () => {
@@ -896,7 +908,10 @@ describe("MatchHandler", () => {
       });
       expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.ERROR,
-        expect.objectContaining({ code: ErrorCode.UNAUTHORIZED }),
+        expect.objectContaining({
+          code: ErrorCode.UNAUTHORIZED,
+          failedEvent: ClientEvent.REQUEST_SNAPSHOT,
+        }),
       );
     });
 
@@ -908,6 +923,8 @@ describe("MatchHandler", () => {
         // H6 fix: provide state.roomId so the gate doesn't reject
         // before the throw is reached.
         getState: vi.fn().mockReturnValue({ roomId: "r1" }),
+        getHeadSeqNo: vi.fn().mockReturnValue(0),
+        getFloorSeqNo: vi.fn().mockReturnValue(0),
       };
       vi.mocked(matchService.getStateMachine).mockResolvedValue(
         mockMachine as any,
@@ -921,6 +938,7 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
         message: "Internal server error",
+        failedEvent: ClientEvent.REQUEST_SNAPSHOT,
       });
     });
 
@@ -932,6 +950,8 @@ describe("MatchHandler", () => {
         // H6 fix: same as above — keep the gate happy so the
         // handler reaches the throw path.
         getState: vi.fn().mockReturnValue({ roomId: "r1" }),
+        getHeadSeqNo: vi.fn().mockReturnValue(0),
+        getFloorSeqNo: vi.fn().mockReturnValue(0),
       };
       vi.mocked(matchService.getStateMachine).mockResolvedValue(
         mockMachine as any,
@@ -945,7 +965,163 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
         message: "Internal server error",
+        failedEvent: ClientEvent.REQUEST_SNAPSHOT,
       });
+    });
+
+    // Plan D — delta replay mode selection. The handler emits an
+    // EVENT_BATCH (delta) only when the client cursor is in range
+    // [floor, head] and non-zero; otherwise it falls back to a full
+    // SNAPSHOT so the client can rehydrate from scratch.
+    it("emits EVENT_BATCH delta when the cursor is in range", async () => {
+      const delta = [
+        {
+          id: "m1:4",
+          type: "ROUND_STARTED",
+          timestamp: 1,
+          payload: {},
+          seqNo: 4,
+        },
+        {
+          id: "m1:5",
+          type: "ANSWER_RESULT",
+          timestamp: 2,
+          payload: {},
+          seqNo: 5,
+        },
+      ];
+      const mockMachine = {
+        getSnapshot: vi.fn(),
+        getState: vi.fn().mockReturnValue({ roomId: "r1" }),
+        getHeadSeqNo: vi.fn().mockReturnValue(5),
+        getFloorSeqNo: vi.fn().mockReturnValue(1),
+        getDelta: vi.fn().mockReturnValue(delta),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+
+      await handler.handleRequestSnapshot(client, {
+        matchId: "m1",
+        lastSeenSeqNo: 3,
+      });
+
+      expect(mockMachine.getDelta).toHaveBeenCalledWith(3);
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.EVENT_BATCH, {
+        matchId: "m1",
+        events: delta,
+      });
+      // Full snapshot path must NOT run.
+      expect(mockMachine.getSnapshot).not.toHaveBeenCalled();
+      expect(client.emit).not.toHaveBeenCalledWith(
+        ServerEvent.SNAPSHOT,
+        expect.anything(),
+      );
+    });
+
+    it("falls back to full SNAPSHOT when the cursor is older than floor", async () => {
+      const snapshot = { matchId: "m1", status: "ROUND_ACTIVE" };
+      const mockMachine = {
+        getSnapshot: vi.fn().mockReturnValue(snapshot),
+        getState: vi.fn().mockReturnValue({ roomId: "r1" }),
+        getHeadSeqNo: vi.fn().mockReturnValue(20),
+        getFloorSeqNo: vi.fn().mockReturnValue(10),
+        getDelta: vi.fn(),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+
+      await handler.handleRequestSnapshot(client, {
+        matchId: "m1",
+        lastSeenSeqNo: 5, // < floor (10): missed events are gone
+      });
+
+      // Full snapshot, seeded with head so lastEventSeqNo = 20.
+      expect(mockMachine.getSnapshot).toHaveBeenCalledWith(20);
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.SNAPSHOT, snapshot);
+      expect(mockMachine.getDelta).not.toHaveBeenCalled();
+      expect(client.emit).not.toHaveBeenCalledWith(
+        ServerEvent.EVENT_BATCH,
+        expect.anything(),
+      );
+    });
+
+    // Plan D boundary pin: canDelta requires cursor >= floor. floor-1
+    // is rejected even though getDelta(floor-1) would return the full
+    // retained log — preserve runtime (snapshot fallback).
+    it("falls back to full SNAPSHOT when the cursor is exactly floor - 1", async () => {
+      const snapshot = { matchId: "m1", status: "ROUND_ACTIVE" };
+      const mockMachine = {
+        getSnapshot: vi.fn().mockReturnValue(snapshot),
+        getState: vi.fn().mockReturnValue({ roomId: "r1" }),
+        getHeadSeqNo: vi.fn().mockReturnValue(20),
+        getFloorSeqNo: vi.fn().mockReturnValue(10),
+        getDelta: vi.fn(),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+
+      await handler.handleRequestSnapshot(client, {
+        matchId: "m1",
+        lastSeenSeqNo: 9, // floor - 1: gate rejects (cursor < floor)
+      });
+
+      expect(mockMachine.getSnapshot).toHaveBeenCalledWith(20);
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.SNAPSHOT, snapshot);
+      expect(mockMachine.getDelta).not.toHaveBeenCalled();
+      expect(client.emit).not.toHaveBeenCalledWith(
+        ServerEvent.EVENT_BATCH,
+        expect.anything(),
+      );
+    });
+
+    it("falls back to full SNAPSHOT when the cursor is ahead of head", async () => {
+      const snapshot = { matchId: "m1", status: "ROUND_ACTIVE" };
+      const mockMachine = {
+        getSnapshot: vi.fn().mockReturnValue(snapshot),
+        getState: vi.fn().mockReturnValue({ roomId: "r1" }),
+        getHeadSeqNo: vi.fn().mockReturnValue(5),
+        getFloorSeqNo: vi.fn().mockReturnValue(1),
+        getDelta: vi.fn(),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+
+      await handler.handleRequestSnapshot(client, {
+        matchId: "m1",
+        lastSeenSeqNo: 99, // > head (5): corrupt client cursor
+      });
+
+      expect(mockMachine.getSnapshot).toHaveBeenCalledWith(5);
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.SNAPSHOT, snapshot);
+      expect(mockMachine.getDelta).not.toHaveBeenCalled();
+    });
+
+    it("emits an empty EVENT_BATCH when the cursor is exactly at head", async () => {
+      const mockMachine = {
+        getSnapshot: vi.fn(),
+        getState: vi.fn().mockReturnValue({ roomId: "r1" }),
+        getHeadSeqNo: vi.fn().mockReturnValue(5),
+        getFloorSeqNo: vi.fn().mockReturnValue(1),
+        getDelta: vi.fn().mockReturnValue([]),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+
+      await handler.handleRequestSnapshot(client, {
+        matchId: "m1",
+        lastSeenSeqNo: 5, // == head: caught up, cheap empty delta
+      });
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.EVENT_BATCH, {
+        matchId: "m1",
+        events: [],
+      });
+      expect(mockMachine.getSnapshot).not.toHaveBeenCalled();
     });
   });
 });

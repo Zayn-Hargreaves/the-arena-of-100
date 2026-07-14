@@ -1326,7 +1326,7 @@ describe("AdminService", () => {
       expect(result.total).toBe(7);
       expect(prisma.eventLog.findMany).toHaveBeenCalledWith({
         where: {
-          adminUserId: { not: null },
+          adminUserId: undefined,
           roomId: "r-filter",
           eventType: "ADMIN_TERMINATE_ROOM",
         },
@@ -1336,7 +1336,7 @@ describe("AdminService", () => {
       });
       expect(prisma.eventLog.count).toHaveBeenCalledWith({
         where: {
-          adminUserId: { not: null },
+          adminUserId: undefined,
           roomId: "r-filter",
           eventType: "ADMIN_TERMINATE_ROOM",
         },
@@ -1350,11 +1350,144 @@ describe("AdminService", () => {
       await service.getAuditEvents({ limit: 25, offset: 0 });
 
       expect(prisma.eventLog.findMany).toHaveBeenCalledWith({
-        where: { adminUserId: { not: null } },
+        where: {
+          adminUserId: undefined,
+          roomId: undefined,
+          eventType: undefined,
+        },
         orderBy: { createdAt: "desc" },
         skip: 0,
         take: 25,
       });
+    });
+
+    it("getAuditEvents filters by adminUserId when provided", async () => {
+      prisma.eventLog.findMany.mockResolvedValueOnce([]);
+      prisma.eventLog.count.mockResolvedValueOnce(0);
+
+      await service.getAuditEvents({
+        limit: 25,
+        offset: 0,
+        adminUserId: "admin-123",
+      });
+
+      expect(prisma.eventLog.findMany).toHaveBeenCalledWith({
+        where: {
+          adminUserId: "admin-123",
+          roomId: undefined,
+          eventType: undefined,
+        },
+        orderBy: { createdAt: "desc" },
+        skip: 0,
+        take: 25,
+      });
+      expect(prisma.eventLog.count).toHaveBeenCalledWith({
+        where: {
+          adminUserId: "admin-123",
+          roomId: undefined,
+          eventType: undefined,
+        },
+      });
+    });
+
+    it("getAuditEvents forwards createdAt range filters", async () => {
+      prisma.eventLog.findMany.mockResolvedValueOnce([]);
+      prisma.eventLog.count.mockResolvedValueOnce(0);
+      const createdAfter = new Date("2026-07-01T00:00:00.000Z");
+      const createdBefore = new Date("2026-07-14T23:59:59.999Z");
+
+      await service.getAuditEvents({
+        limit: 25,
+        offset: 0,
+        createdAfter,
+        createdBefore,
+      });
+
+      expect(prisma.eventLog.findMany).toHaveBeenCalledWith({
+        where: {
+          adminUserId: undefined,
+          roomId: undefined,
+          eventType: undefined,
+          createdAt: { gte: createdAfter, lte: createdBefore },
+        },
+        orderBy: { createdAt: "desc" },
+        skip: 0,
+        take: 25,
+      });
+      expect(prisma.eventLog.count).toHaveBeenCalledWith({
+        where: {
+          adminUserId: undefined,
+          roomId: undefined,
+          eventType: undefined,
+          createdAt: { gte: createdAfter, lte: createdBefore },
+        },
+      });
+    });
+
+    it("getAuditEvents forwards only createdAfter as gte bound", async () => {
+      prisma.eventLog.findMany.mockResolvedValueOnce([]);
+      prisma.eventLog.count.mockResolvedValueOnce(3);
+      const createdAfter = new Date("2026-07-01T00:00:00.000Z");
+
+      const result = await service.getAuditEvents({
+        limit: 10,
+        offset: 0,
+        createdAfter,
+      });
+
+      expect(prisma.eventLog.findMany).toHaveBeenCalledWith({
+        where: {
+          adminUserId: undefined,
+          roomId: undefined,
+          eventType: undefined,
+          createdAt: { gte: createdAfter },
+        },
+        orderBy: { createdAt: "desc" },
+        skip: 0,
+        take: 10,
+      });
+      expect(prisma.eventLog.count).toHaveBeenCalledWith({
+        where: {
+          adminUserId: undefined,
+          roomId: undefined,
+          eventType: undefined,
+          createdAt: { gte: createdAfter },
+        },
+      });
+      expect(result.total).toBe(3);
+    });
+
+    it("getAuditEvents forwards only createdBefore as lte bound", async () => {
+      prisma.eventLog.findMany.mockResolvedValueOnce([]);
+      prisma.eventLog.count.mockResolvedValueOnce(5);
+      const createdBefore = new Date("2026-07-14T23:59:59.999Z");
+
+      const result = await service.getAuditEvents({
+        limit: 10,
+        offset: 0,
+        createdBefore,
+      });
+
+      expect(prisma.eventLog.findMany).toHaveBeenCalledWith({
+        where: {
+          adminUserId: undefined,
+          roomId: undefined,
+          eventType: undefined,
+          createdAt: { lte: createdBefore },
+        },
+        orderBy: { createdAt: "desc" },
+        skip: 0,
+        take: 10,
+      });
+      expect(prisma.eventLog.count).toHaveBeenCalledWith({
+        where: {
+          adminUserId: undefined,
+          roomId: undefined,
+          eventType: undefined,
+          createdAt: { lte: createdBefore },
+        },
+      });
+      expect(result.total).toBe(5);
     });
   });
 });

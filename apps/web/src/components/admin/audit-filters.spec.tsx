@@ -14,6 +14,8 @@ const emptyFilters: AuditFiltersState = {
   eventType: "",
   roomId: "",
   adminUserId: "",
+  createdAfter: "",
+  createdBefore: "",
 };
 
 describe("AuditFilters", () => {
@@ -28,6 +30,8 @@ describe("AuditFilters", () => {
     expect(screen.getByText("filters.eventType")).toBeInTheDocument();
     expect(screen.getByText("filters.roomId")).toBeInTheDocument();
     expect(screen.getByText("filters.adminUserId")).toBeInTheDocument();
+    expect(screen.getByText("filters.createdAfter")).toBeInTheDocument();
+    expect(screen.getByText("filters.createdBefore")).toBeInTheDocument();
     expect(screen.getByText("filters.apply")).toBeInTheDocument();
     expect(screen.getByText("filters.reset")).toBeInTheDocument();
 
@@ -52,8 +56,12 @@ describe("AuditFilters", () => {
       <AuditFilters value={emptyFilters} onApply={onApply} onReset={vi.fn()} />,
     );
 
-    // The user types into two text inputs and picks an event type.
-    // Whitespace is intentional — Apply must trim it before forwarding.
+    // The user types into two text inputs, picks an event type, and
+    // enters realistic datetime-local values for the createdAt bounds.
+    // Whitespace is intentional on the text fields — Apply must trim
+    // it before forwarding. Datetime values must be preserved verbatim
+    // (browser HTMLInputElement.value shape) so the server can parse
+    // them via the same conversion the hook applies.
     fireEvent.change(screen.getByLabelText("filters.roomId"), {
       target: { value: "  room-42  " },
     });
@@ -63,6 +71,12 @@ describe("AuditFilters", () => {
     fireEvent.change(screen.getByLabelText("filters.eventType"), {
       target: { value: "ADMIN_RESET_SYSTEM" },
     });
+    fireEvent.change(screen.getByLabelText("filters.createdAfter"), {
+      target: { value: "2026-07-01T00:00" },
+    });
+    fireEvent.change(screen.getByLabelText("filters.createdBefore"), {
+      target: { value: "2026-07-14T23:59" },
+    });
 
     fireEvent.click(screen.getByText("filters.apply"));
 
@@ -71,6 +85,8 @@ describe("AuditFilters", () => {
       eventType: "ADMIN_RESET_SYSTEM",
       roomId: "room-42",
       adminUserId: "admin-7",
+      createdAfter: "2026-07-01T00:00",
+      createdBefore: "2026-07-14T23:59",
     });
   });
 
@@ -92,11 +108,14 @@ describe("AuditFilters", () => {
 
     // The hook would push a new applied filter set (e.g. after the
     // operator resets from somewhere else). The draft input must
-    // mirror it without a re-mount.
+    // mirror it without a re-mount, including the datetime-local
+    // createdAt bounds.
     const applied: AuditFiltersState = {
       eventType: "ADMIN_SYNC_QUESTIONS",
       roomId: "room-99",
       adminUserId: "",
+      createdAfter: "2026-07-01T00:00",
+      createdBefore: "2026-07-14T23:59",
     };
     rerender(
       <AuditFilters value={applied} onApply={vi.fn()} onReset={vi.fn()} />,
@@ -111,6 +130,16 @@ describe("AuditFilters", () => {
       "filters.eventType",
     ) as HTMLSelectElement;
     expect(select.value).toBe("ADMIN_SYNC_QUESTIONS");
+
+    const createdAfterInput = screen.getByLabelText(
+      "filters.createdAfter",
+    ) as HTMLInputElement;
+    expect(createdAfterInput.value).toBe("2026-07-01T00:00");
+
+    const createdBeforeInput = screen.getByLabelText(
+      "filters.createdBefore",
+    ) as HTMLInputElement;
+    expect(createdBeforeInput.value).toBe("2026-07-14T23:59");
   });
 
   it("disables every input and both buttons when disabled is true", () => {
@@ -126,6 +155,8 @@ describe("AuditFilters", () => {
     expect(screen.getByLabelText("filters.eventType")).toBeDisabled();
     expect(screen.getByLabelText("filters.roomId")).toBeDisabled();
     expect(screen.getByLabelText("filters.adminUserId")).toBeDisabled();
+    expect(screen.getByLabelText("filters.createdAfter")).toBeDisabled();
+    expect(screen.getByLabelText("filters.createdBefore")).toBeDisabled();
     expect(screen.getByText("filters.apply").closest("button")).toBeDisabled();
     expect(screen.getByText("filters.reset").closest("button")).toBeDisabled();
   });

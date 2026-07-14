@@ -12,7 +12,7 @@ import {
   RoomError,
 } from "@arena/shared";
 import { Server } from "socket.io";
-import { vi, beforeEach, it, expect, describe } from "vitest";
+import { vi, beforeEach, afterEach, it, expect, describe } from "vitest";
 
 describe("MatchRoundRunner", () => {
   let runner: MatchRoundRunner;
@@ -21,6 +21,15 @@ describe("MatchRoundRunner", () => {
   let roomService: RoomService;
   let mockServer: Server;
   let stateMachine: MatchStateMachine;
+
+  afterEach(() => {
+    // Guard against tests that call vi.useFakeTimers() but bail out
+    // via an assertion throw or a rejected promise before the inline
+    // vi.useRealTimers() at the bottom of the test runs. Without this
+    // hook, every later suite in the file would inherit a fake
+    // Date/setTimeout and either hang on flush or skew ordering.
+    vi.useRealTimers();
+  });
 
   beforeEach(() => {
     // Create real state machine with test players
@@ -279,6 +288,72 @@ describe("MatchRoundRunner", () => {
         matchId: "match-1",
         playerId: "p2",
         reason: "WRONG_ANSWER",
+      }),
+    );
+
+    vi.useRealTimers();
+  });
+
+  it("emits AFK when eliminated player had no answer but was still online", async () => {
+    vi.useFakeTimers();
+
+    const emitSpy = vi.fn();
+    (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+    stateMachine.transition(MatchStatus.COUNTDOWN);
+    stateMachine.transition(MatchStatus.ROUND_ACTIVE);
+    stateMachine.startRound({
+      id: "q1",
+      content: "Test question",
+      options: ["A", "B", "C", "D"],
+      correctAnswer: "A",
+      difficulty: "MEDIUM",
+    });
+
+    // Only p1 answers correctly; p2 stays online with no answer (AFK).
+    stateMachine.submitAnswer("p1", "A", Date.now());
+
+    await (runner as any).endRound("match-1", "room-1", mockServer);
+
+    expect(emitSpy).toHaveBeenCalledWith(
+      ServerEvent.PLAYER_ELIMINATED,
+      expect.objectContaining({
+        matchId: "match-1",
+        playerId: "p2",
+        reason: "AFK",
+      }),
+    );
+
+    vi.useRealTimers();
+  });
+
+  it("emits TIMEOUT when eliminated player had no answer and was offline", async () => {
+    vi.useFakeTimers();
+
+    const emitSpy = vi.fn();
+    (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+    stateMachine.transition(MatchStatus.COUNTDOWN);
+    stateMachine.transition(MatchStatus.ROUND_ACTIVE);
+    stateMachine.startRound({
+      id: "q1",
+      content: "Test question",
+      options: ["A", "B", "C", "D"],
+      correctAnswer: "A",
+      difficulty: "MEDIUM",
+    });
+
+    stateMachine.submitAnswer("p1", "A", Date.now());
+    stateMachine.disconnectPlayer("p2");
+
+    await (runner as any).endRound("match-1", "room-1", mockServer);
+
+    expect(emitSpy).toHaveBeenCalledWith(
+      ServerEvent.PLAYER_ELIMINATED,
+      expect.objectContaining({
+        matchId: "match-1",
+        playerId: "p2",
+        reason: "TIMEOUT",
       }),
     );
 

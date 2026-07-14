@@ -59,7 +59,13 @@ export class MatchStateMachine {
     type: string;
     payload?: unknown;
     timestamp: number;
+    seqNo: number;
   }> = [];
+  // Monotonic sequence assigned to each logged event. Starts at 0 so the
+  // first event gets seqNo 1; 0 is reserved for the client "have not seen
+  // anything yet" cursor. Restored from the max persisted seqNo in
+  // `deserialize` so seqNo keeps increasing across Redis rehydrate.
+  private eventSeqCounter = 0;
 
   constructor(matchId: string, roomId: string, players: PlayerInfo[]) {
     this.state = {
@@ -168,26 +174,36 @@ export class MatchStateMachine {
     );
 
     const now = Date.now();
+    const endsAt = now + (roundDurationMs ?? GAME_CONFIG.ROUND_DURATION_MS);
+    const clientQuestion = {
+      id: question.id,
+      content: question.content,
+      options: question.options,
+      difficulty: question.difficulty ?? "MEDIUM", // Default to MEDIUM if not provided
+    };
     this.currentRound = {
       matchId: this.state.id,
       roundNo: this.state.currentRoundNo,
-      question: {
-        id: question.id,
-        content: question.content,
-        options: question.options,
-        difficulty: question.difficulty ?? "MEDIUM", // Default to MEDIUM if not provided
-      },
+      question: clientQuestion,
       startedAt: now,
-      endsAt: now + (roundDurationMs ?? GAME_CONFIG.ROUND_DURATION_MS),
+      endsAt,
       answers: new Map(),
       status: "ACTIVE",
       startingPlayers: [...this.state.survivingPlayerIds],
       correctAnswer: question.correctAnswer,
     } as RoundRuntimeState;
 
+    // Plan D delta replay: carry the full client-safe question + timer
+    // so a reconnecting client can rebuild the in-flight round from the
+    // delta alone (a full SNAPSHOT is otherwise the only source for the
+    // question content/options). `correctAnswer` is deliberately NOT
+    // logged — same L3 guarantee as the wire ROUND_STARTED payload and
+    // the serialized snapshot.
     this.logEvent("ROUND_STARTED", {
       roundNo: this.state.currentRoundNo,
       questionId: question.id,
+      question: clientQuestion,
+      endsAt,
     });
 
     return this.currentRound;
@@ -330,6 +346,7 @@ export class MatchStateMachine {
 
     this.logEvent("ROUND_EVALUATED", {
       roundNo: this.currentRound.roundNo,
+      correctAnswer,
       survivingCount: survivingIds.length,
       eliminatedCount: eliminatedIds.length,
       eliminatedIds,
@@ -523,13 +540,56 @@ export class MatchStateMachine {
       type,
       payload,
       timestamp: Date.now(),
+      seqNo: ++this.eventSeqCounter,
     });
+  }
+
+  // seqNo of the most recent logged event, or 0 when the log is empty.
+  // Used by the reconnect handler as the full-snapshot cursor and to
+  // bound the delta window.
+  getHeadSeqNo(): number {
+    const last = this.eventLog[this.eventLog.length - 1];
+    return last ? last.seqNo : 0;
+  }
+
+  // seqNo of the oldest event still retained in the log, or 0 when
+  // empty. A client cursor older than this cannot be served as a delta
+  // (the events it missed are gone) and must fall back to a full
+  // snapshot. The log is currently never truncated, so this is the
+  // first event's seqNo; it becomes meaningful once/if trimming lands.
+  getFloorSeqNo(): number {
+    const first = this.eventLog[0];
+    return first ? first.seqNo : 0;
+  }
+
+  // Delta replay: the events a client with cursor `lastSeenSeqNo` has
+  // not seen yet (seqNo strictly greater), in ascending seqNo order.
+  // Returns the client-safe wire shape (EventBatchPayload["events"]).
+  // Callers decide delta-vs-full via getFloorSeqNo/getHeadSeqNo; this
+  // method only slices — an out-of-range cursor simply yields [] here.
+  getDelta(lastSeenSeqNo: number): Array<{
+    id: string;
+    type: string;
+    timestamp: number;
+    payload: unknown;
+    seqNo: number;
+  }> {
+    return this.eventLog
+      .filter((e) => e.seqNo > lastSeenSeqNo)
+      .map((e) => ({
+        id: `${this.state.id}:${e.seqNo}`,
+        type: e.type,
+        timestamp: e.timestamp,
+        payload: e.payload ?? null,
+        seqNo: e.seqNo,
+      }));
   }
 
   getEventLog(): ReadonlyArray<{
     type: string;
     payload?: unknown;
     timestamp: number;
+    seqNo: number;
   }> {
     return this.eventLog.map((e) => structuredClone(e));
   }
@@ -580,6 +640,13 @@ export class MatchStateMachine {
     instance.state = state;
     instance.currentRound = currentRound;
     instance.eventLog = eventLog;
+    // Resume the sequence from the highest persisted seqNo so events
+    // logged after rehydrate keep increasing and never collide with an
+    // already-emitted seqNo (which would corrupt a client's delta cursor).
+    instance.eventSeqCounter = eventLog.reduce(
+      (max, e) => (e.seqNo > max ? e.seqNo : max),
+      0,
+    );
 
     return instance;
   }

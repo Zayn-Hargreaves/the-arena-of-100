@@ -7,6 +7,7 @@
 
 import { Logger } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
+import { Prisma } from "@prisma/client";
 
 export interface AdminAuditDeps {
   prisma: PrismaService;
@@ -73,17 +74,23 @@ export async function getAuditEvents(
     roomId?: string;
     eventType?: string;
     adminUserId?: string;
+    createdAfter?: Date;
+    createdBefore?: Date;
   },
 ): Promise<{ events: unknown[]; total: number }> {
-  const where: {
-    roomId?: string;
-    eventType?: string;
-    adminUserId?: string | { not: null };
-  } = {};
-  where.adminUserId = { not: null };
-  if (params.roomId) where.roomId = params.roomId;
-  if (params.eventType) where.eventType = params.eventType;
-  if (params.adminUserId) where.adminUserId = params.adminUserId;
+  const where: Prisma.EventLogWhereInput = {
+    adminUserId: params.adminUserId,
+    roomId: params.roomId,
+    eventType: params.eventType,
+    ...(params.createdAfter || params.createdBefore
+      ? {
+          createdAt: {
+            ...(params.createdAfter ? { gte: params.createdAfter } : {}),
+            ...(params.createdBefore ? { lte: params.createdBefore } : {}),
+          },
+        }
+      : {}),
+  };
 
   const [events, total] = await Promise.all([
     deps.prisma.eventLog.findMany({

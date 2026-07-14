@@ -100,6 +100,21 @@ export class MatchService {
     return match;
   }
 
+  // Lightweight match→room lookup for auth gates that must not load
+  // the full state machine (Redis deserialize + answer rehydrate).
+  // Cache-first: stateMachines stores the roomId alongside the match,
+  // so a hot match avoids a DB round-trip. Falls back to Prisma only
+  // on cache miss (e.g. recovery from Redis before this entry exists).
+  async getRoomIdByMatchId(matchId: string): Promise<string | undefined> {
+    const cached = this.stateMachines.get(matchId);
+    if (cached) return cached.getState().roomId;
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      select: { roomId: true },
+    });
+    return match?.roomId;
+  }
+
   // Get state machine for match (restores from Redis if not in memory)
   async getStateMachine(
     matchId: string,

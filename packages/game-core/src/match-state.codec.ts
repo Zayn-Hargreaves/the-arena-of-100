@@ -34,6 +34,14 @@ export interface EventLogEntry {
   type: string;
   payload?: unknown;
   timestamp: number;
+  // Monotonic per-match sequence number (starts at 1). Assigned in
+  // `MatchStateMachine.logEvent` and persisted so delta replay
+  // (`getDelta`) can select events with `seqNo > lastSeenSeqNo`.
+  // Legacy snapshots written before delta replay lack this field;
+  // `deserializeMatch` backfills it from array position (the log is
+  // append-only and never truncated, so position + 1 == the seqNo the
+  // entry would have been assigned).
+  seqNo: number;
 }
 
 /** Wire shape produced by JSON.parse before reconstruction into Maps. */
@@ -229,7 +237,15 @@ export function deserializeMatch(json: string): DecodedMatchState {
     currentRound = null;
   }
 
-  return { state, currentRound, eventLog: parsed.eventLog };
+  // Backfill `seqNo` on legacy entries (snapshots serialized before
+  // delta replay existed). The log is append-only and never truncated,
+  // so array position + 1 is exactly the seqNo the entry would have
+  // been assigned. Entries that already carry a seqNo are left intact.
+  const eventLog = parsed.eventLog.map((entry, index) =>
+    typeof entry.seqNo === "number" ? entry : { ...entry, seqNo: index + 1 },
+  );
+
+  return { state, currentRound, eventLog };
 }
 
 function deserializeStartingPlayers(

@@ -9,6 +9,7 @@ import {
   ServerEvent,
   type RoomCreatedPayload,
   type SnapshotPayload,
+  type EventBatchPayload,
   type AnswerResultPayload,
   type ErrorPayload,
   type RoomJoinedPayload,
@@ -53,6 +54,7 @@ import {
   applyRoundEndedState,
   applyRoundStartedState,
   applySnapshotState,
+  applyEventBatchState,
   applyUnauthorizedErrorState,
 } from "./socket-store.updaters";
 
@@ -70,6 +72,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   lastAnswerResult: null,
   pendingAnswer: null,
   remainingCount: null,
+  lastSeenSeqNo: 0,
   error: null,
   heartbeatInterval: null,
   isEliminated: false,
@@ -93,6 +96,16 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       transports: ["websocket", "polling"],
       autoConnect: true,
     });
+
+    // Plan D reconnect: capture match/lastSeenSeqNo across the
+    // auth handshake, but defer the REQUEST_SNAPSHOT call until the
+    // server-side `syncReconnection` has joined our channels and
+    // emitted a SNAPSHOT. Firing it inside AUTHENTICATED raced
+    // against that sync and produced UNAUTHORIZED errors.
+    let pendingSnapshotRequest: {
+      matchId: string;
+      lastSeenSeqNo: number;
+    } | null = null;
 
     // Resolve only when the socket is both connected AND the server has
     // acknowledged authentication, so callers' `await connect()` guarantees
@@ -164,6 +177,23 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       if (get().socket !== newSocket) return;
       set(applyAuthenticatedState(data));
       console.log("✅ Authenticated:", data.username);
+
+      // Plan D minimal reconnect: after socket re-auth (including auto
+      // reconnect), remember that we want a cursor-aware snapshot when
+      // we still hold match context. Server may also push a full
+      // SNAPSHOT via syncReconnection; REQUEST_SNAPSHOT with
+      // lastSeenSeqNo enables EVENT_BATCH delta when the store
+      // survived the disconnect. We capture the intent here and fire
+      // it from the SNAPSHOT handler — by then `syncReconnection` has
+      // joined the room and reattached us, so the request won't be
+      // rejected with UNAUTHORIZED.
+      const { match, room, lastSeenSeqNo } = get();
+      const matchId = match?.id ?? room?.currentMatchId;
+      if (matchId) {
+        pendingSnapshotRequest = { matchId, lastSeenSeqNo };
+      } else {
+        pendingSnapshotRequest = null;
+      }
     });
 
     newSocket.on(ServerEvent.ROOM_CREATED, (data: RoomCreatedPayload) => {
@@ -299,8 +329,37 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
     newSocket.on(ServerEvent.SNAPSHOT, (data: SnapshotPayload) => {
       if (get().socket !== newSocket) return;
-      set((state) => applySnapshotState(state, data));
+
+      // Plan D reconnect: if AUTHENTICATED armed a cursor-aware
+      // request and the server-pushed SNAPSHOT belongs to the same
+      // match, optimistically hydrate display fields for UI freshness
+      // but keep the pre-disconnect lastSeenSeqNo so the deferred
+      // REQUEST_SNAPSHOT can still delta-replay. Always clear pending
+      // outside the matchId guard so a mismatched/stale arm cannot
+      // stick around. This is also the point where server-side
+      // `syncReconnection` has finished joining channels, so the
+      // request is safe.
+      const pending = pendingSnapshotRequest;
+      pendingSnapshotRequest = null;
+      if (pending && pending.matchId === data.matchId) {
+        set((state) => {
+          const hydrated = applySnapshotState(state, data);
+          return { ...hydrated, lastSeenSeqNo: state.lastSeenSeqNo };
+        });
+        get().requestSnapshot(pending.matchId, pending.lastSeenSeqNo, data);
+      } else {
+        set((state) => applySnapshotState(state, data));
+      }
       console.log("📸 Snapshot received");
+    });
+
+    // Plan D delta replay: the server may answer REQUEST_SNAPSHOT with a
+    // delta of only the events after our cursor. Apply them onto the
+    // current match (idempotent) instead of re-hydrating the whole roster.
+    newSocket.on(ServerEvent.EVENT_BATCH, (data: EventBatchPayload) => {
+      if (get().socket !== newSocket) return;
+      set((state) => applyEventBatchState(state, data));
+      console.log(`🔁 Event batch received (${data.events.length} events)`);
     });
 
     newSocket.on(ServerEvent.ANSWER_RESULT, (data: AnswerResultPayload) => {
@@ -421,6 +480,12 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         heartbeatInterval: null,
         roomTerminated: false,
         roomTerminationMessage: null,
+        // Plan D — reset the delta cursor alongside match/room so a
+        // stale seqNo from the previous session cannot qualify for
+        // delta delivery on the next reconnect. The next
+        // REQUEST_SNAPSHOT will be a full SNAPSHOT, then delta kicks
+        // in from there.
+        lastSeenSeqNo: 0,
       });
     }
   },
@@ -621,11 +686,92 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   },
 
   // Request Snapshot
-  requestSnapshot: (matchId: string, lastSeenSeqNo: number) => {
-    const { socket } = get();
+  requestSnapshot: (
+    matchId: string,
+    lastSeenSeqNo: number,
+    fallbackSnapshot?: SnapshotPayload,
+  ) => {
+    const socket = get().socket;
+    if (!socket) return;
+
     emitIfConnected(socket, ClientEvent.REQUEST_SNAPSHOT, {
       matchId,
       lastSeenSeqNo,
     });
+
+    if (!fallbackSnapshot) return;
+
+    const TIMEOUT_MS = 5000;
+    let resolved = false;
+
+    const cleanup = () => {
+      resolved = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      socket.off(ServerEvent.EVENT_BATCH, handleEventBatch);
+      socket.off(ServerEvent.SNAPSHOT, handleSnapshot);
+      socket.off(ServerEvent.ERROR, handleError);
+      socket.off("disconnect", handleDisconnect);
+    };
+
+    const applyFallback = () => {
+      if (resolved) return;
+      cleanup();
+
+      // Ignore fallback from a previous socket generation after reconnect churn.
+      if (get().socket !== socket) return;
+
+      const currentMatch = get().match;
+      if (currentMatch && currentMatch.id === matchId) {
+        set((state) => applySnapshotState(state, fallbackSnapshot));
+        console.warn(
+          `⚠️ Delta request failed or timed out. Hydrated fallback snapshot for match: ${matchId}`,
+        );
+      }
+    };
+
+    const handleEventBatch = (data: EventBatchPayload) => {
+      if (get().socket !== socket) return;
+      if (data.matchId === matchId) {
+        cleanup();
+      }
+    };
+
+    const handleSnapshot = (data: SnapshotPayload) => {
+      if (get().socket !== socket) return;
+      if (data.matchId === matchId) {
+        cleanup();
+      }
+    };
+
+    const handleError = (data: ErrorPayload) => {
+      if (get().socket !== socket) return;
+      // Only fall back on errors tied to this snapshot request.
+      // Unrelated ERRORs (e.g. SUBMIT_ANSWER) must not clobber match state.
+      if (data.failedEvent === ClientEvent.REQUEST_SNAPSHOT) {
+        applyFallback();
+      }
+    };
+
+    const handleDisconnect = () => {
+      if (get().socket !== socket) {
+        cleanup();
+        return;
+      }
+      applyFallback();
+    };
+
+    socket.on(ServerEvent.EVENT_BATCH, handleEventBatch);
+    socket.on(ServerEvent.SNAPSHOT, handleSnapshot);
+    socket.on(ServerEvent.ERROR, handleError);
+    socket.on("disconnect", handleDisconnect);
+
+    const timeoutId = setTimeout(() => {
+      if (!resolved) {
+        console.log(
+          `⏱️ Delta request for match ${matchId} timed out after ${TIMEOUT_MS}ms.`,
+        );
+        applyFallback();
+      }
+    }, TIMEOUT_MS);
   },
 }));

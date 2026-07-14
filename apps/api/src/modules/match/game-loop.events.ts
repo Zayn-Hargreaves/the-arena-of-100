@@ -78,6 +78,8 @@ export interface PlayerEliminatedReason {
   playerId: string;
   playerName: string;
   answeredThisRound: boolean;
+  /** True when the player still had an online socket at elimination. */
+  wasOnline: boolean;
 }
 
 export function emitPlayerEliminated(ctx: PlayerEliminatedReason) {
@@ -89,14 +91,23 @@ export function emitPlayerEliminated(ctx: PlayerEliminatedReason) {
     playerId,
     playerName,
     answeredThisRound,
+    wasOnline,
   } = ctx;
   const channel = getRoomChannel(roomId);
+  // WRONG_ANSWER: submitted but incorrect.
+  // AFK: no answer while still connected (idle / didn't press).
+  // TIMEOUT: no answer and already offline (disconnect mid-round).
+  const reason = answeredThisRound
+    ? "WRONG_ANSWER"
+    : wasOnline
+      ? "AFK"
+      : "TIMEOUT";
   server.to(channel).emit(ServerEvent.PLAYER_ELIMINATED, {
     matchId,
     roundNo: state.currentRoundNo,
     playerId,
     playerName,
-    reason: answeredThisRound ? "WRONG_ANSWER" : "TIMEOUT",
+    reason,
   });
 }
 

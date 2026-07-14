@@ -1,11 +1,16 @@
 import { Socket } from "socket.io";
-import { ServerEvent, ErrorCode, RoomError } from "@arena/shared";
+import { ServerEvent, ErrorCode, RoomError, ClientEvent } from "@arena/shared";
 import { BaseHandler } from "./base.handler";
 
 // Concrete subclass to test abstract class
 class TestHandler extends BaseHandler {
-  testEmitError(client: Socket, code: ErrorCode, message: string) {
-    this.emitError(client, code, message);
+  testEmitError(
+    client: Socket,
+    code: ErrorCode,
+    message: string,
+    failedEvent?: ClientEvent,
+  ) {
+    this.emitError(client, code, message, failedEvent);
   }
   testGetUserId(client: Socket) {
     return this.getUserId(client);
@@ -29,6 +34,20 @@ describe("BaseHandler", () => {
     expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
       code: ErrorCode.ROOM_NOT_FOUND,
       message: "not found",
+    });
+  });
+
+  it("emitError includes failedEvent when provided", () => {
+    handler.testEmitError(
+      client,
+      ErrorCode.MATCH_NOT_FOUND,
+      "not found",
+      ClientEvent.REQUEST_SNAPSHOT,
+    );
+    expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+      code: ErrorCode.MATCH_NOT_FOUND,
+      message: "not found",
+      failedEvent: ClientEvent.REQUEST_SNAPSHOT,
     });
   });
 

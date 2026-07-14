@@ -1,16 +1,18 @@
 # Arena of 100 - Project Status and Usecases
 
+> Cập nhật 2026-07-14: full suite re-verify trên `feat/replay-lastseen-delta` xanh ở 4 tier — 974/974 unit api + 103/103 unit game-core + 148/148 unit web + 11/11 api e2e. Track D replay delta + L3 seqNo cap verified (đã mark tại dòng 13).
+> Cập nhật 2026-07-13: dọn root docs (chuyển vào `docs/` + `docs/plans/`); Track D replay delta đã DONE trong branch `feat/replay-lastseen-delta`. L2 (gateway await handleDisconnect + dedup import) đã merge main từ trước; L3 (schema tightening) chia hai phần — `CLIENT_TIMESTAMP_MAX_OFFSET_MS = 5 * 60 * 1000` đã merge main, còn `lastSeenSeqNo.max(MAX_ROUNDS * MAX_PLAYERS * 2)` mới là branch-only (Track D).
 > Cập nhật 2026-06-18 dựa trên code + GitNexus + test run thực tế.
-> Bản 2026-06-14 từng nói "Lobby lifecycle / heartbeat / graceful exit / admin kill-switch còn thiếu"; thực tế code đã hoàn thành baseline ở PR #38 + PR #47. Ngày 2026-06-14 cũng đóng PR Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`): thêm `JoinMode = "PLAYER" | "SPECTATOR"` payload + `RoomJoinedPayload.joinedAs` + backend join policy 4-way matrix + server-side submit gate + frontend spectator UI. Cùng ngày cũng close PR `fix/match-race-frontend-correctness`: 3 race bug backend (B1-B3) + 8 correctness bug frontend (F1-F8) — bao gồm sửa sidebar mock (F1), bỏ magic number redirect (F2), tách timer ref (F3), dynamic maxPlayers (F4), loading state (F5), bỏ `currentRoundNo || 1` (F6), round-end signal rõ (F7), auto-join guard (F8). Sau merge, post-merge audit phát hiện thêm 7 follow-up bug (B4-B7, L1-L3); 5 trong 7 (B4-B7, L1) đã land trong cùng ngày qua chuỗi commit `fix(bug): fix comment`; 2 còn pending (L2 + L3). Bản này reclassify lại trạng thái theo code thật.
+> Bản 2026-06-14 từng nói "Lobby lifecycle / heartbeat / graceful exit / admin kill-switch còn thiếu"; thực tế code đã hoàn thành baseline ở PR #38 + PR #47. Ngày 2026-06-14 cũng đóng PR Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`): thêm `JoinMode = "PLAYER" | "SPECTATOR"` payload + `RoomJoinedPayload.joinedAs` + backend join policy 4-way matrix + server-side submit gate + frontend spectator UI. Cùng ngày cũng close PR `fix/match-race-frontend-correctness`: 3 race bug backend (B1-B3) + 8 correctness bug frontend (F1-F8) — bao gồm sửa sidebar mock (F1), bỏ magic number redirect (F2), tách timer ref (F3), dynamic maxPlayers (F4), loading state (F5), bỏ `currentRoundNo || 1` (F6), round-end signal rõ (F7), auto-join guard (F8). Sau merge, post-merge audit phát hiện thêm 7 follow-up bug (B4-B7, L1-L3); 5 trong 7 (B4-B7, L1) đã land trong cùng ngày qua chuỗi commit `fix(bug): fix comment`; 2 còn pending (L2 + L3) **tại thời điểm 2026-06-14**. Bản 2026-07-13 reclassify: L2 (gateway await) đã merge main từ sau 2026-06-14; L3 schema tightening chia hai phần (xem header trên).
 
 ## Trạng Thái Thật Của Dự Án
 
 - Tổng quan: monorepo pnpm + Turborepo, NestJS Fastify + Socket.io backend, Next.js 15 + React 19 + Zustand frontend, Prisma + PostgreSQL + Redis.
-- Nhánh/focus gần nhất: `main` (PR `fix/match-race-frontend-correctness` đã merge 2026-06-14; PR docs update cho post-merge audit ở staged). Test count thực tế 2026-06-18: **772/772 unit api + 70/70 game-core + 31/31 web + 11/11 E2E** (sau rebuild `packages/shared/dist` cho `GAME_CONFIG.SCORE_*`).
+- Nhánh/focus gần nhất: Baseline là `main` (PR `fix/match-race-frontend-correctness` đã merge 2026-06-14). Nhánh hiện đang under verification (chưa merge main) là `feat/replay-lastseen-delta` (HEAD, 2026-07-14) mang 3 commit Track D (`1dae730` contract, `113a658` impl, `a222340` wiring). Test counts **[verified 2026-07-14]** trên branch: 974/974 unit api + 103/103 game-core + 148/148 web + 11/11 E2E (sau rebuild `packages/shared/dist`). Prior anchor 2026-06-18 = 772/772 + 70/70 + 31/31 + 11/11.
 - Trạng thái baseline đã hoàn thành: core gameplay loop, lobby state machine, heartbeat/presence sweep, graceful exit + spectator baseline (eliminated + drop-in), admin kill-switch, profile/rankings real APIs, Design System Phase 5B, **match race fixes (B1-B3) + frontend correctness (F1-F8)**, **post-merge idempotency/recovery hardening (B4-B7) + tie-break determinism (L1)**.
-- Gap còn thật (xem phần `Critical UX Gaps` bên dưới): gateway handleDisconnect + duplicate imports (L2), schema validation tightening (L3), in-match AFK policy, mass-spectator transport scaling, content moderation pipeline, optimistic UI rollback, k6 load test, home page gradient cleanup.
+- Gap còn thật (xem phần `Critical UX Gaps` bên dưới): mass-spectator transport scaling, optimistic UI rollback, home page gradient cleanup, profanity filter (content moderation). (Track D replay delta + L3 seqNo cap **verified** trên branch `feat/replay-lastseen-delta` ngày 2026-07-14: full suite xanh ở 4 tier — **103/103 game-core** (+33 replay-delta tests), **974/974 api unit** (+202), **148/148 web unit** (+117, bao gồm 5-test `audit-filters.spec.tsx` covering `step="1"` datetime inputs), **11/11 api e2e** — Plan D dọn 11.3k LOC code cũ được an toàn. Track C in-match AFK policy đã merge main; Plan A k6 load test đã merge main qua PR #71.)
 
-### ✅ Đã Có Trong Code (verified 2026-06-18)
+### ✅ Đã Có Trong Code (verified 2026-07-14)
 
 - Monorepo, package boundaries (`shared`, `game-core`, `api`, `web`)
 - Prisma schema + Docker Compose
@@ -33,7 +35,7 @@
 - Zod validation + Zod response serialization (đã bỏ `class-validator` / `class-transformer`)
 - `RoomError` + `ErrorCode` cho type-safe error handling
 - `PresenceService.sweep` (5s interval) — auto-disband private room nếu host stale, batch remove non-host stale, `STALE`/`HOST_STALE` reasons
-- Test footprint rộng: **772/772 unit api + 70/70 unit game-core + 31/31 unit web + 11/11 E2E pass** (test run 2026-06-18). API coverage ~99% statements (`game-loop.service.ts` 100%, `admin.service.ts` 100%, `match.service.ts` 96.22%, `match-state-machine.ts` 100%)
+- Test footprint rộng (verified 2026-07-14 trên `feat/replay-lastseen-delta`): **974/974 unit api + 103/103 unit game-core + 148/148 unit web + 11/11 E2E pass**. Track D replay-delta tests (`packages/game-core/src/match-state-machine.spec.ts` +33, `apps/api/src/gateways/handlers/match.handler.spec.ts` Plan D +202, `apps/web/src/stores/socket-store.updaters.spec.ts` Group H +117) đã cộng dồn vào anchor này. API coverage ~99% statements (`game-loop.service.ts` 100%, `admin.service.ts` 100%, `match.service.ts` 96.22%, `match-state-machine.ts` 100%)
   - `packages/game-core/src/{match-state-machine,scoring}.spec.ts`
   - `apps/api/src/modules/match/{game-loop.service.spec.ts, game-loop.service.persistence.spec.ts, match.module.spec.ts, match.service.spec.ts, presence.service.spec.ts}`
   - `apps/api/src/gateways/handlers/{auth,room,match,base}.handler.spec.ts`
@@ -60,13 +62,13 @@
 
 - (Đã giải quyết trong PR `fix/match-race-frontend-correctness`) ~~`GamePage` sidebar còn danh sách player mock hardcode (lines 366-443: `Zero_Cool`, `Acid_Burn`, ...). Cần wire với `match.players` từ socket-store~~ → ✅ giờ render `match.players` thật từ `socket-store.ts` (`PLAYER_ELIMINATED` + `ROUND_ENDED` handlers stamp `status = "ELIMINATED"`)
 - `apps/web/src/app/[locale]/page.tsx:193` vẫn có `bg-gradient-to-br from-[#FFF0F5] via-[#E6E6FA] to-[#E0F2FE]` redundant với `body` gradient — PR 6 (home page shell gradient cleanup) defer
-- `apps/api/src/gateways/game.gateway.ts:148-150` `handleDisconnect` không `await` `authHandler.handleDisconnect(client)`; import block trùng (`:13-23` types, `:30-39` schemas) — PR 2B defer
-- `packages/shared/src/schemas.ts:92` `CLIENT_TIMESTAMP_MAX_OFFSET_MS` = 1 năm; `:122` `lastSeenSeqNo.max(Number.MAX_SAFE_INTEGER)` — PR 2B defer
+- ✅ (L2 done trên main, merged từ trước khi mở branch `feat/replay-lastseen-delta`) ~~`game.gateway.ts` `handleDisconnect` không `await`; import block trùng~~ → giờ `await authHandler.handleDisconnect(client)` ([game.gateway.ts:155](../apps/api/src/gateways/game.gateway.ts#L155)) + import block đã gộp thành 1 khối `from "@arena/shared"`
+- 🟡 (L3 tách hai phần — `CLIENT_TIMESTAMP_MAX_OFFSET_MS = 5 * 60 * 1000` đã merge main; `lastSeenSeqNo.max(...)` chỉ branch-only) ~~`schemas.ts` `CLIENT_TIMESTAMP_MAX_OFFSET_MS` = 1 năm; `lastSeenSeqNo.max(Number.MAX_SAFE_INTEGER)`~~ → main đã có `CLIENT_TIMESTAMP_MAX_OFFSET_MS = 5 * 60 * 1000` ([schemas.ts:97](../packages/shared/src/schemas.ts#L97)); branch `feat/replay-lastseen-delta` tightening tiếp `lastSeenSeqNo.max(GAME_CONFIG.MAX_ROUNDS * GAME_CONFIG.MAX_PLAYERS * 2)` ([schemas.ts:149](../packages/shared/src/schemas.ts#L149))
 
 ### 🔴 Use Case Còn Thiếu (theo brief, chưa có implementation)
 
 1. ~~**Drop-in Spectating**~~ ✅ Done 2026-06-14 — `RoomService.joinRoom` cho phép late-joiner vào `IN_GAME`/`FINISHED` với `JoinMode = "SPECTATOR"` (no DB write, no playerCount bump). `MatchHandler.handleSubmitAnswer` server gate. Frontend spectator UI ở lobby + game page. Mass-spectator SSE channel vẫn deferred (PR kế tiếp)
-2. **In-match AFK policy** — sweep mới chỉ áp dụng cho lobby (`PresenceService.sweep` gọi `removePlayerBatch` + `handleRoomPlayerLeft`). Trong match, round-miss chưa có detection
+2. ✅ **In-match AFK policy** (Track C, 2026-07-13) — `evaluateRound()` chỉ quyết định _ai_ bị loại (no answer / wrong answer → `eliminatedIds`); **không** gán `EliminationReason`. Reason gán ở emit layer: `match-round-runner.endRound()` → `emitPlayerEliminated({ answeredThisRound, wasOnline })` → `reason = answeredThisRound ? "WRONG_ANSWER" : wasOnline ? "AFK" : "TIMEOUT"`. Distinction: no answer + online → **`AFK`** (player idle / didn't press); no answer + offline/disconnected → **`TIMEOUT`** (disconnect mid-round). Shared type `EliminationReason = "WRONG_ANSWER" | "TIMEOUT" | "AFK"` matches the wire (xem `packages/shared/src/events.ts` + `docs/afk-policy.md` §3). Track C: shared type + overlay + snapshot rehydrate `isEliminated`. Round-miss 2+ detection vẫn deferred (xem §7).
 3. **Mass-spectator isolation infra** — drop-in baseline đã reuse `room:[id]` channel. SSE channel/namespace riêng cho spectator vẫn chưa có
 4. **Host kick player** — `PlayerStatus.KICKED` đã có ở shared types nhưng backend hook (`kickPlayer`) chưa wire vào room handler/admin endpoint
 5. **Frictionless Onboarding + Content Moderation** — nickname qua `authenticate()` chưa qua profanity filter; chưa có device fingerprint
@@ -138,9 +140,9 @@ Mỗi use case dưới đây gồm trạng thái (✅ Có / 🟡 Dở / ❌ Thi�
 #### 7. AFK Sweeping
 
 - ✅ Lobby AFK sweeping: `PresenceService.sweep` 5s interval — auto-disband private room nếu host stale, batch remove non-host stale
-- ❌ In-match AFK detection (2+ round miss): chưa có
-- ❌ In-match auto convert to spectator: chưa có
-- ❌ In-match AFK scheduler: chưa có (sweep hiện gọi `handleRoomPlayerLeft` chỉ chạy ở lobby status)
+- ✅ In-match AFK detection: `MatchStateMachine.evaluateRound()` auto-eliminate ids cho 3 case (AFK thuần / disconnect mid-round / sai) — **không** gán reason. `match-round-runner.endRound()` gọi `emitPlayerEliminated` với `answeredThisRound = answers.has(playerId)` + `wasOnline = player.isOnline`; `game-loop.events.ts` map `WRONG_ANSWER` (có answer) vs **`AFK`** (không answer + còn kết nối) vs **`TIMEOUT`** (không answer + offline). Shared `EliminationReason` (`WRONG_ANSWER | TIMEOUT | AFK`) khớp đúng wire 3 trường hợp. Track C (commits `4832e72`, `eba3d73`, `ba64ef5`, `670a0a6`): shared type + FE overlay/store (xem `docs/afk-policy.md` §1-3).
+- ✅ In-match auto convert to spectator: người bị loại vẫn giữ kết nối + tiếp tục xem như spectator qua `socket-store.isEliminated` + `GamePage` "Chế độ khán giả" UI. Snapshot reconnect hydrates `isEliminated` từ roster.
+- ❌ In-match AFK scheduler riêng (2+ round miss pattern detector): vẫn deferred — sweep hiện gọi `handleRoomPlayerLeft` chỉ chạy ở lobby status. Detection hiện tại dựa trên "không có answer trong round đó" (mỗi round là 1 nhịp), không có nhịp "x round liên tiếp miss".
 
 #### 8. Graceful Exit
 
@@ -184,7 +186,13 @@ Mỗi use case dưới đây gồm trạng thái (✅ Có / 🟡 Dở / ❌ Thi�
 - ✅ AuthHandler sync snapshot: `apps/api/src/gateways/handlers/auth.handler.ts:113`
 - ✅ MatchService restore từ Redis: `apps/api/src/modules/match/match.service.ts:100`
 - ✅ SNAPSHOT event + `requestSnapshot` action: có
-- ❌ Missed event replay (sequence number diff): cần kiểm tra trong `getSnapshot(lastSeenSeqNo)`
+- ✅ Missed event replay (sequence number diff) — **Track D**, branch `feat/replay-lastseen-delta` **(verified 2026-07-14, chưa merge main)**:
+  - State machine `getDelta(seqNo)` filtered by `seqNo > inputSeqNo`: [`packages/game-core/src/match-state-machine.ts:569`](../packages/game-core/src/match-state-machine.ts#L569)
+  - Handler emit `ServerEvent.EVENT_BATCH` với delta events: [`match.handler.ts:245`](../apps/api/src/gateways/handlers/match.handler.ts#L245)
+  - Schema cap `lastSeenSeqNo.max(MAX_ROUNDS * MAX_PLAYERS * 2)` (branch-only): [`schemas.ts:145-149`](../packages/shared/src/schemas.ts#L145)
+  - Client EVENT_BATCH fold (validate contiguous + matchId, cập nhật cursor): [`socket-store.updaters.ts:511`](../apps/web/src/stores/socket-store.updaters.ts#L511)
+  - Client EVENT_BATCH listener + `requestSnapshot(matchId, lastSeenSeqNo)`: [`socket-store.ts:312`](../apps/web/src/stores/socket-store.ts#L312), [`socket-store.ts:642-647`](../apps/web/src/stores/socket-store.ts#L642)
+  - Commits: `1dae730` (contract), `113a658` (impl), `a222340` (final wiring)
 
 #### 14. Accessibility & Web Standards
 
@@ -277,21 +285,22 @@ Mỗi use case dưới đây gồm trạng thái (✅ Có / 🟡 Dở / ❌ Thi�
 
 ## Critical UX Gaps — Mức Ưu Tiên PR
 
-| Priority      | Gap                                  | Use Case Brief | Why Now                                                                                                                                                                                                                           |
-| ------------- | ------------------------------------ | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ✅ 2026-06-14 | Design System Phase 5B closeout      | polish         | Done: shell gradient bỏ ở `app-shell-layout.tsx:34` + `sidebar.tsx:230`; `styles/components.css` audit xác nhận 0 references; visual closeout complete                                                                            |
-| ✅ 2026-06-14 | Drop-in spectating baseline          | #5, #6         | Done: `JoinMode` payload (`RoomJoinedPayload.joinedAs`) + `RoomService.joinRoom` 4-way matrix + `MatchHandler.handleSubmitAnswer` server gate + frontend spectator UI. Reuse `room:[id]` channel. Mass-spectator SSE vẫn deferred |
-| P1            | In-match AFK policy                  | #7             | Cần product decision (loại vs. spectator); sweep chỉ phủ lobby                                                                                                                                                                    |
-| P2            | Mass-spectator SSE scaling           | #5             | Baseline xong; cần batched low-frequency updates + clear transport boundary khi scale lên                                                                                                                                         |
-| P2            | Frictionless onboarding + moderation | #1             | Privacy/legal risk nếu public; share với kill-switch sanitizer pipeline                                                                                                                                                           |
-| P2            | Accessibility audit                  | #14            | Compliance                                                                                                                                                                                                                        |
-| P2            | Optimistic UI rollback đầy đủ        | #16            | Game feel, không block ship MVP                                                                                                                                                                                                   |
-| P2            | Content moderation + sanitizer       | #1, #17        | Unlock custom termination message; cần shared profanity pipeline                                                                                                                                                                  |
-| P3            | Host kick player                     | #2             | API đã có, hook chưa wire vào room handler / admin                                                                                                                                                                                |
-| P3            | Post-match rematch + share           | #12            | Retention                                                                                                                                                                                                                         |
-| P3            | Sudden death + tie-break UI          | #11            | Game feel giai đoạn cuối                                                                                                                                                                                                          |
-| P3            | Asset preloading                     | #9             | Chỉ cần khi có media assets thật                                                                                                                                                                                                  |
-| P3            | Surrender in-match                   | #8             | Optional; cho phép player rời khi đang IN_GAME                                                                                                                                                                                    |
+| Priority      | Gap                                  | Use Case Brief | Why Now                                                                                                                                                                                                                                                                                                                      |
+| ------------- | ------------------------------------ | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ✅ 2026-06-14 | Design System Phase 5B closeout      | polish         | Done: shell gradient bỏ ở `app-shell-layout.tsx:34` + `sidebar.tsx:230`; `styles/components.css` audit xác nhận 0 references; visual closeout complete                                                                                                                                                                       |
+| ✅ 2026-06-14 | Drop-in spectating baseline          | #5, #6         | Done: `JoinMode` payload (`RoomJoinedPayload.joinedAs`) + `RoomService.joinRoom` 4-way matrix + `MatchHandler.handleSubmitAnswer` server gate + frontend spectator UI. Reuse `room:[id]` channel. Mass-spectator SSE vẫn deferred                                                                                            |
+| ✅ 2026-07-13 | In-match AFK policy (Track C)        | #7             | Done trên main (commits `4832e72`, `eba3d73`, `ba64ef5`, `670a0a6`): per-round auto-eliminate; wire reason `WRONG_ANSWER` (có answer sai) / `AFK` (không answer + còn kết nối) / `TIMEOUT` (không answer + offline); shared `EliminationReason` khớp wire; FE overlay + store rehydrate. 2-round-miss scheduler vẫn deferred |
+| ✅ 2026-07-13 | k6 load test (Plan A)                | #5 (gate)      | Done qua PR #71: `load-test/` harness + `apps/api/src/modules/health/health.controller.ts:39-104` bổ sung `rssBytes` + `totalMemBytes` raw; CpuSamplerService dùng convention `100% = 1 core`. Kết quả baseline xem `load-test/README.md`                                                                                    |
+| P2            | Mass-spectator SSE scaling           | #5             | Baseline xong; cần batched low-frequency updates + clear transport boundary khi scale lên                                                                                                                                                                                                                                    |
+| P2            | Frictionless onboarding + moderation | #1             | Onboarding nickname + localStorage done; profanity filter backend vẫn ❌; privacy/legal risk nếu public; share với kill-switch sanitizer pipeline                                                                                                                                                                            |
+| P2            | Accessibility audit                  | #14            | Compliance                                                                                                                                                                                                                                                                                                                   |
+| P2            | Optimistic UI rollback đầy đủ        | #16            | Game feel, không block ship MVP                                                                                                                                                                                                                                                                                              |
+| P2            | Content moderation + sanitizer       | #1, #17        | Rate limiting name changes + Unicode-bypass normalization xong (`fix/moderation-unicode-bypass`); profanity filter backend + custom termination message vẫn ❌ (cần shared pipeline)                                                                                                                                         |
+| P3            | Host kick player                     | #2             | API đã có, hook chưa wire vào room handler / admin                                                                                                                                                                                                                                                                           |
+| P3            | Post-match rematch + share           | #12            | Retention                                                                                                                                                                                                                                                                                                                    |
+| P3            | Sudden death + tie-break UI          | #11            | Game feel giai đoạn cuối                                                                                                                                                                                                                                                                                                     |
+| P3            | Asset preloading                     | #9             | Chỉ cần khi có media assets thật                                                                                                                                                                                                                                                                                             |
+| P3            | Surrender in-match                   | #8             | Optional; cho phép player rời khi đang IN_GAME                                                                                                                                                                                                                                                                               |
 
 ## Strategic Recommendations
 
@@ -333,7 +342,8 @@ PR `fix/match-race-frontend-correctness` — gộp 11 bug trong 1 PR (3 race bac
 9. **Frontend correctness (F6)**: bỏ `currentRoundNo || 1`; `submitAnswer` chỉ emit khi `match.currentRoundNo > 0`
 10. **Frontend correctness (F7)**: round-completed effect drive từ `match.status === "ROUND_RESULT" && match.roundEndTime === null` (server-authoritative)
 11. **Frontend correctness (F8)**: `use-lobby-lifecycle.ts` `joinInFlightRef` chống double-emit JOIN_ROOM
-12. **Verify**: 772/772 api unit + 70/70 game-core + 31/31 web + 11/11 E2E pass; coverage per-file ≥90% cho tất cả file sửa (`game-loop.service.ts` 100%, `admin.service.ts` 100%, `match.service.ts` 96.22%, `match-state-machine.ts` 100%)
+12. **Verify**:
+    - **Pre-Track-D baseline (anchor 2026-06-18)**: 772/772 api unit + 70/70 game-core + 31/31 web + 11/11 E2E pass; coverage per-file ≥90% (`game-loop.service.ts` 100%, `admin.service.ts` 100%, `match.service.ts` 96.22%, `match-state-machine.ts` 100%).
 
 ### ✅ Done 2026-06-14: Post-merge Idempotency + Recovery Hardening
 
@@ -345,32 +355,30 @@ Sau khi PR `fix/match-race-frontend-correctness` merge, post-merge audit phát h
 4. **B7 (buildScoreUpdateOps operator warning)**: `logger.warn` (không silent) khi state machine đã mất
 5. **L1 (tie-break determinism)**: `match-state-machine.ts:384-411` dùng `mulberry32` PRNG seeded bằng `hashStringToSeed(state.id)`; reproducible theo (response time → correctAnswers → deterministic offset → alphabetical)
 
-### PR Kế Tiếp (P0 cleanup): PR 2B — Gateway + Schema Validation Tightening
+### ✅ ĐÃ XONG: PR 2B — Schema cap `lastSeenSeqNo` (branch-only; L2 + L3 timestamp đã có trên main)
 
-> Cập nhật 2026-06-18 (xem `plan.md` post-merge audit): trong số 3 PR defer ban đầu (PR 2A, 2B, 2C), PR 2A và PR 2C đã được xử lý xong ở post-merge audit; chỉ còn PR 2B (L2 + L3) làm follow-up ngay. Scope khu trú 2 file, blast radius thấp, ~1 ngày.
+> Branch `feat/replay-lastseen-delta` **không** ship lại toàn bộ L2/L3. L2 (gateway await + dedup import) và phần L3 timestamp (`CLIENT_TIMESTAMP_MAX_OFFSET_MS`) đã có trên main từ trước; branch chỉ bổ sung `lastSeenSeqNo.max(...)`. Chi tiết giữ nguyên:
+>
+> 1. **L2 (gateway) — already on main** — `game.gateway.ts:155` giờ `await this.authHandler.handleDisconnect(client)` (handler có try/catch nội bộ quanh room/match lookup nên rejection chỉ đến từ programming bug và được để surface). Import block đã gộp thành 1 khối `from "@arena/shared"`.
+> 2. **L3 (schema validation)** — **already on main:** `schemas.ts:97` `CLIENT_TIMESTAMP_MAX_OFFSET_MS = 5 * 60 * 1000` (5 phút, dùng `.refine()` với `Date.now()` runtime). **Branch-only:** `schemas.ts:149` `lastSeenSeqNo.max(GAME_CONFIG.MAX_ROUNDS * GAME_CONFIG.MAX_PLAYERS * 2)`.
 
-Scope đề xuất:
+### ✅ ĐÃ XONG: Track C — In-match AFK Policy (2026-07-13)
 
-1. **L2 (gateway)**: `apps/api/src/gateways/game.gateway.ts:148-150` quyết định rõ `await` (chờ presence update xong) hay intentionally fire-and-forget; wrap với try/catch + log. Dedup import block (`:13-23` và `:30-39` gộp thành 1 import `from "@arena/shared"`)
-2. **L3 (schema validation)**:
-   - `packages/shared/src/schemas.ts:92` giảm `CLIENT_TIMESTAMP_MAX_OFFSET_MS` từ 1 năm xuống vài phút (mirror heartbeat tolerance thật)
-   - `packages/shared/src/schemas.ts:122` thay `lastSeenSeqNo.max(Number.MAX_SAFE_INTEGER)` bằng bound dựa trên `GAME_CONFIG.MAX_ROUNDS * answerMax` hoặc equivalent
-3. **Tests**:
-   - `game.gateway.spec.ts` thêm test cho disconnect path (await + log)
-   - `schemas.spec.ts` (nếu chưa có) thêm test cho clientTimestamp + lastSeenSeqNo bound
+Track C đã land trên main qua các commit `4832e72`, `eba3d73`, `ba64ef5`, `670a0a6`. Scope đã ship:
 
-### PR Kế Tiếp (P1): In-match AFK Policy
+1. **Shared type** `EliminationReason = "WRONG_ANSWER" | "TIMEOUT" | "AFK"` (`packages/shared/src/events.ts`) — khớp wire 3 trường hợp (có answer sai / không answer + còn kết nối / không answer + offline).
+2. **BE (verify only, không thêm code)**: `evaluateRound()` auto-eliminate ids cho 3 case (AFK thuần / disconnect / sai) — **không** gán reason. Reason gán tại `emitPlayerEliminated`: `answeredThisRound ? "WRONG_ANSWER" : wasOnline ? "AFK" : "TIMEOUT"` (xem `docs/afk-policy.md` §3). Track C chỉ regression tests + FE, không đổi state machine (CRITICAL blast radius: 19 execution flows, xem `docs/plans/Plan-C-afk-hardening.md` Phase C1).
+3. **FE**: `eliminationReason` trong `socket-store` + `EliminatedOverlay` hỗ trợ cả 3 reason với copy tương ứng; runtime nhận `AFK` (unanswered + online) hoặc `TIMEOUT` (unanswered + offline) tuỳ `wasOnline` ở emit layer. Snapshot reconnect hydrates `isEliminated` từ roster.
+4. **i18n**: `Game.eliminatedOverlay.reasonWrong` / `reasonTimeout` / `reasonAfk` trong en.json + vi.json.
+5. **Verify**: game-core 80/80, round-runner 44/44, web stores+game 49/49, web typecheck, web+shared lint. `gitnexus detect_changes` confirm scope FE store/overlay/page + shared events only.
 
-Scope đề xuất (sau khi có product decision):
+**Out of scope (deferred sang PR riêng)**:
 
-1. **Backend**:
-   - `GameLoopService` track `lastAnsweredRound` per player trong Redis (TTL = match lifetime)
-   - Sau `endRound`: detect player không trong `survivingPlayerIds` của round hiện tại lẫn round trước → auto-`ELIMINATED` (loss-of-life) hoặc auto-`SPECTATOR` (chill)
-   - Emit `PLAYER_AFK_ELIMINATED` event riêng
-2. **Frontend**:
-   - Toast khi player khác bị loại vì AFK
-3. **Tests**:
-   - 1-round miss, 2-round miss, full match played → all present, mid-match disconnect → AFK
+- In-match AFK scheduler riêng (2-round-miss pattern detector): vẫn ❌.
+
+### ✅ ĐÃ XONG: Track D — Replay Delta (2026-07-14)
+
+- **Track D replay-delta (branch `feat/replay-lastseen-delta`, head `a222340`, **verified 2026-07-14**)**: getDelta coverage ở `packages/game-core/src/match-state-machine.spec.ts` (12 test delta), EVENT_BATCH coverage ở `apps/api/src/gateways/handlers/match.handler.spec.ts` (24 test delta), lastSeenSeqNo/EVENT_BATCH folding ở `apps/web/src/stores/socket-store.updaters.spec.ts` (30 test delta). Full suite sau re-verify: **974/974 api unit** + **103/103 game-core** + **148/148 web** + **11/11 E2E** pass — tổng +352 net mới so với pre-Track-D anchor (đã sửa phần 2 của finding 6 / dòng 12 status).
 
 ### PR Kế Tiếp (P2): Mass-spectator Transport Scaling
 
@@ -386,7 +394,6 @@ Sau khi drop-in spectating baseline xong, cần tách transport riêng cho scale
 - Optimistic UI rollback (idempotency key + rollback path)
 - Post-match rematch + share
 - Accessibility audit (WCAG)
-- k6 load test 100 concurrent WS (pre-launch gate)
 - Playwright browser E2E (deferred tới khi Design System ổn định)
 
 ## Senior Mindset Trade-offs (ghi nhớ khi implement)
@@ -435,9 +442,10 @@ Dự án đã có nền tảng kỹ thuật vững (server-authoritative, event-
 3. ✅ Admin kill-switch end-to-end — done ở PR #47 baseline (chỉ còn deferred message-sanitizer)
 4. ✅ Design System Phase 5B closeout (visual consistency) — done 2026-06-14
 5. ✅ Drop-in spectating baseline — done 2026-06-14
-6. ⏳ In-match AFK policy — proposed P1 (promoted sau drop-in spectating)
-7. ⏳ Mass-spectator transport scaling — proposed P2
-8. ⏳ Bổ sung content moderation (profanity filter, device fingerprint) — P2
-9. ⏳ Accessibility audit (WCAG) — P2
+6. ✅ In-match AFK policy (Track C) — done 2026-07-13 (xem §"ĐÃ XONG: Track C" bên dưới); 2-round-miss scheduler riêng vẫn deferred
+7. ✅ k6 load test (Plan A) — done 2026-07-13 qua PR #71; gate evidence ở `load-test/README.md`
+8. ⏳ Mass-spectator transport scaling — proposed P2
+9. ⏳ Bổ sung content moderation (profanity filter, device fingerprint) — P2
+10. ⏳ Accessibility audit (WCAG) — P2
 
 Sau khi các mục trên xong, Arena of 100 sẽ chứng minh được: complete user journey, production-grade thinking, operational excellence, international standards compliance.

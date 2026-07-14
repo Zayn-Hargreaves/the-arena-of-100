@@ -200,25 +200,27 @@ export class MatchHandler extends BaseHandler {
       async () => {
         const userId = this.requireAuth(client);
 
+        // Plan D: room authorization BEFORE any state-machine work.
+        // Resolve roomId via a cache-first lookup on the in-memory
+        // stateMachines map; on cache miss MatchService falls back to a
+        // minimal `select: { roomId }` Prisma read. Either way, no
+        // Redis deserialize / answer rehydrate runs for an unauthorized
+        // client.
+        const roomId = await this.matchService.getRoomIdByMatchId(
+          payload.matchId,
+        );
+        if (!roomId) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
+
+        // H6: socket channel membership. Players and drop-in spectators
+        // both join `room:${roomId}` via JOIN_ROOM; outsiders are rejected.
+        if (!client.rooms.has(`room:${roomId}`)) {
+          throw new RoomError(ErrorCode.UNAUTHORIZED);
+        }
+
         const stateMachine = await this.matchService.getStateMachine(
           payload.matchId,
         );
         if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
-
-        // H6 fix: room-membership gate. Previously this handler was
-        // fully open to any authenticated user that knew the matchId
-        // — a leak risk for the player roster, the in-flight question,
-        // and the per-player score. The previous comment said
-        // "spectators use this exact path" and explicitly opted out
-        // of a player-roster check, but the right check is socket
-        // channel membership: both players AND drop-in spectators
-        // (who entered via JOIN_ROOM → handleJoinRoom) end up in the
-        // `room:${roomId}` channel. Anyone who has not joined the
-        // room — even with a valid token — is rejected.
-        const roomId = stateMachine.getState().roomId;
-        if (!client.rooms.has(`room:${roomId}`)) {
-          throw new RoomError(ErrorCode.UNAUTHORIZED);
-        }
 
         // The snapshot is already client-safe: MatchStateMachine.getSnapshot
         // returns only the question (no correctAnswer), so no answer leak
@@ -226,12 +228,40 @@ export class MatchHandler extends BaseHandler {
         // whether the requester is in the player roster here, because
         // spectators are exactly the new caller profile that the baseline
         // unlocks.
-        const snapshot = stateMachine.getSnapshot(payload.lastSeenSeqNo);
-        client.emit(ServerEvent.SNAPSHOT, snapshot);
+        // Delta replay contract (Plan D): decide delta vs full from the
+        // client's `lastSeenSeqNo` cursor and the current event-log
+        // window. Emit a delta EVENT_BATCH only when the cursor is
+        // in-range — the client has applied events up to `cursor` and
+        // the log still retains everything after it. Otherwise fall
+        // back to a full SNAPSHOT: fresh hydrate (cursor 0), a cursor
+        // older than the retained log (missed events are gone), a
+        // cursor ahead of head (corrupt client state), or an empty log.
+        const head = stateMachine.getHeadSeqNo();
+        const floor = stateMachine.getFloorSeqNo();
+        const cursor = payload.lastSeenSeqNo;
+        const canDelta =
+          cursor > 0 && head > 0 && cursor >= floor && cursor <= head;
 
-        this.logger.log(
-          `Snapshot sent to ${userId} for match ${payload.matchId}`,
-        );
+        if (canDelta) {
+          const events = stateMachine.getDelta(cursor);
+          client.emit(ServerEvent.EVENT_BATCH, {
+            matchId: payload.matchId,
+            events,
+          });
+          this.logger.log(
+            `Delta sent to ${userId} for match ${payload.matchId} ` +
+              `(${events.length} events, cursor ${cursor}→${head})`,
+          );
+        } else {
+          // Pass `head` (not the client's cursor) so the snapshot's
+          // lastEventSeqNo reflects the real log head — that is how the
+          // client learns which cursor to send on its next reconnect.
+          const snapshot = stateMachine.getSnapshot(head);
+          client.emit(ServerEvent.SNAPSHOT, snapshot);
+          this.logger.log(
+            `Snapshot sent to ${userId} for match ${payload.matchId}`,
+          );
+        }
       },
       (error) => {
         const code = this.getErrorCode(error);
@@ -243,7 +273,7 @@ export class MatchHandler extends BaseHandler {
           this.logger.error("Error sending snapshot:", error);
           msg = "Internal server error";
         }
-        this.emitError(client, code, msg);
+        this.emitError(client, code, msg, ClientEvent.REQUEST_SNAPSHOT);
       },
     );
   }

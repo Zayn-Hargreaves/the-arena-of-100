@@ -1,4 +1,11 @@
-import { ClientEvent, ErrorCode, ServerEvent } from "@arena/shared";
+import {
+  ClientEvent,
+  ErrorCode,
+  ServerEvent,
+  PlayerStatus,
+  MatchStatus,
+  type SnapshotPayload,
+} from "@arena/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const waitForSocketAckMock = vi.hoisted(() => vi.fn());
@@ -25,6 +32,84 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+function buildMockSnapshot(
+  overrides: Partial<{
+    matchId: string;
+    status: MatchStatus;
+    currentRoundNo: number;
+    players: Array<{
+      id: string;
+      name: string;
+      status: PlayerStatus;
+      score: number;
+    }>;
+    currentQuestion: {
+      id: string;
+      content: string;
+      options: string[];
+    } | null;
+    roundEndTime: number | null;
+    lastEventSeqNo: number;
+  }> = {},
+): SnapshotPayload {
+  return {
+    matchId: "m1",
+    status: MatchStatus.ROUND_ACTIVE,
+    currentRoundNo: 1,
+    players: [
+      { id: "p1", name: "Player 1", status: PlayerStatus.ACTIVE, score: 10 },
+    ],
+    currentQuestion: {
+      id: "q1",
+      content: "What is 1+1?",
+      options: ["1", "2", "3"],
+    },
+    roundEndTime: 123456789,
+    lastEventSeqNo: 42,
+    ...overrides,
+  };
+}
+
+type TriggerableSocket = {
+  trigger?: (event: string, data?: unknown) => void;
+  listeners?: (event: string) => Array<(...args: unknown[]) => void>;
+};
+
+function triggerSocketEvent(
+  socket: TriggerableSocket | null | undefined,
+  event: string,
+  data?: unknown,
+) {
+  if (!socket) return;
+  if (typeof socket.trigger === "function") {
+    socket.trigger(event, data);
+    return;
+  }
+  socket.listeners?.(event).forEach((listener) => listener(data));
+}
+
+function createMockSocket() {
+  const listeners: Record<string, Array<(...args: unknown[]) => void>> = {};
+  return {
+    connected: true,
+    emit: vi.fn(),
+    on: vi.fn((event: string, callback: (...args: unknown[]) => void) => {
+      if (!listeners[event]) listeners[event] = [];
+      listeners[event].push(callback);
+    }),
+    off: vi.fn((event: string, callback: (...args: unknown[]) => void) => {
+      if (listeners[event]) {
+        listeners[event] = listeners[event].filter((cb) => cb !== callback);
+      }
+    }),
+    trigger: (event: string, data?: unknown) => {
+      if (listeners[event]) {
+        listeners[event].forEach((cb) => cb(data));
+      }
+    },
+  };
+}
+
 describe("socket-store connect heartbeat ownership", () => {
   beforeEach(async () => {
     vi.resetModules();
@@ -48,6 +133,7 @@ describe("socket-store connect heartbeat ownership", () => {
       isEliminated: false,
       roomTerminated: false,
       roomTerminationMessage: null,
+      lastSeenSeqNo: 0,
     });
   });
 
@@ -322,5 +408,197 @@ describe("socket-store connect heartbeat ownership", () => {
       ClientEvent.SUBMIT_ANSWER,
       expect.objectContaining({ submissionId }),
     );
+  });
+
+  it("optimistically hydrates SNAPSHOT UI while preserving lastSeenSeqNo for pending delta", async () => {
+    waitForSocketAckMock.mockResolvedValueOnce(undefined);
+    let socket: ReturnType<typeof useSocketStore.getState>["socket"] = null;
+    let emitSpy: { mockRestore: () => void } | null = null;
+
+    try {
+      await useSocketStore.getState().connect();
+      socket = useSocketStore.getState().socket;
+      // Unit tests have no live server; force connected so emitIfConnected runs.
+      Object.defineProperty(socket, "connected", {
+        configurable: true,
+        get: () => true,
+      });
+      const emit = vi.spyOn(
+        socket as unknown as { emit: (...args: unknown[]) => unknown },
+        "emit",
+      );
+      emitSpy = emit;
+
+      useSocketStore.setState({
+        match: {
+          id: "m1",
+          status: MatchStatus.COUNTDOWN,
+          currentRoundNo: 0,
+          players: [],
+          currentQuestion: null,
+          roundEndTime: null,
+        },
+        lastSeenSeqNo: 12,
+      });
+
+      // Arm pendingSnapshotRequest the same way AUTHENTICATED does.
+      // Real connect() sockets use listeners(); triggerSocketEvent unifies
+      // that path with mockSocket.trigger used in the fallback suite.
+      triggerSocketEvent(socket, ServerEvent.AUTHENTICATED, {
+        userId: "u1",
+        username: "Alice",
+        role: "PLAYER",
+      });
+
+      const serverSnapshot = buildMockSnapshot({
+        currentRoundNo: 3,
+        currentQuestion: {
+          id: "q3",
+          content: "What is 2+2?",
+          options: ["3", "4", "5"],
+        },
+        roundEndTime: 999,
+        lastEventSeqNo: 99,
+      });
+
+      triggerSocketEvent(socket, ServerEvent.SNAPSHOT, serverSnapshot);
+
+      const state = useSocketStore.getState();
+      expect(state.match?.currentRoundNo).toBe(3);
+      expect(state.match?.currentQuestion?.id).toBe("q3");
+      // Cursor must stay pre-disconnect so REQUEST_SNAPSHOT can delta.
+      expect(state.lastSeenSeqNo).toBe(12);
+      expect(emit).toHaveBeenCalledWith(ClientEvent.REQUEST_SNAPSHOT, {
+        matchId: "m1",
+        lastSeenSeqNo: 12,
+      });
+    } finally {
+      emitSpy?.mockRestore();
+      // Avoid disconnect() after overriding `connected` (socket.io getter only).
+      socket?.removeAllListeners();
+    }
+  });
+
+  describe("requestSnapshot fallback logic", () => {
+    let mockSocket: ReturnType<typeof createMockSocket>;
+    const mockFallbackSnapshot = buildMockSnapshot();
+
+    beforeEach(() => {
+      mockSocket = createMockSocket();
+
+      useSocketStore.setState({
+        socket: mockSocket as unknown as ReturnType<
+          typeof useSocketStore.getState
+        >["socket"],
+        lastSeenSeqNo: 0,
+        match: {
+          id: "m1",
+          status: MatchStatus.COUNTDOWN,
+          currentRoundNo: 0,
+          players: [],
+          currentQuestion: null,
+          roundEndTime: null,
+        },
+      });
+    });
+
+    it("does not apply fallback if EVENT_BATCH is received for matching matchId", () => {
+      useSocketStore.getState().requestSnapshot("m1", 0, mockFallbackSnapshot);
+
+      triggerSocketEvent(mockSocket, ServerEvent.EVENT_BATCH, {
+        matchId: "m1",
+        events: [],
+      });
+
+      // Match state should NOT be fallback snapshot
+      expect(useSocketStore.getState().match?.currentRoundNo).toBe(0);
+      expect(useSocketStore.getState().lastSeenSeqNo).toBe(0);
+    });
+
+    it("does not apply fallback if SNAPSHOT is received for matching matchId", () => {
+      useSocketStore.getState().requestSnapshot("m1", 0, mockFallbackSnapshot);
+
+      triggerSocketEvent(mockSocket, ServerEvent.SNAPSHOT, { matchId: "m1" });
+
+      // Match state should NOT be fallback snapshot
+      expect(useSocketStore.getState().match?.currentRoundNo).toBe(0);
+      expect(useSocketStore.getState().lastSeenSeqNo).toBe(0);
+    });
+
+    it("applies fallback snapshot on REQUEST_SNAPSHOT error", () => {
+      useSocketStore.getState().requestSnapshot("m1", 0, mockFallbackSnapshot);
+
+      triggerSocketEvent(mockSocket, ServerEvent.ERROR, {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: "fail",
+        failedEvent: ClientEvent.REQUEST_SNAPSHOT,
+      });
+
+      expect(useSocketStore.getState().match?.currentRoundNo).toBe(1);
+      expect(useSocketStore.getState().lastSeenSeqNo).toBe(42);
+    });
+
+    it("does not apply fallback on unrelated ERROR", () => {
+      useSocketStore.getState().requestSnapshot("m1", 0, mockFallbackSnapshot);
+
+      triggerSocketEvent(mockSocket, ServerEvent.ERROR, {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: "answer failed",
+        failedEvent: ClientEvent.SUBMIT_ANSWER,
+      });
+
+      expect(useSocketStore.getState().match?.currentRoundNo).toBe(0);
+      expect(useSocketStore.getState().lastSeenSeqNo).toBe(0);
+    });
+
+    it("applies fallback snapshot on socket disconnect", () => {
+      useSocketStore.getState().requestSnapshot("m1", 0, mockFallbackSnapshot);
+
+      triggerSocketEvent(mockSocket, "disconnect");
+
+      // Match state should now be fallback snapshot
+      expect(useSocketStore.getState().match?.currentRoundNo).toBe(1);
+      expect(useSocketStore.getState().lastSeenSeqNo).toBe(42);
+    });
+
+    it("does not apply fallback when disconnect is from a stale socket", () => {
+      useSocketStore.getState().requestSnapshot("m1", 0, mockFallbackSnapshot);
+
+      // Simulate reconnect churn: store now points at a newer socket.
+      useSocketStore.setState({
+        socket: {
+          connected: true,
+          emit: vi.fn(),
+          on: vi.fn(),
+          off: vi.fn(),
+        } as unknown as ReturnType<typeof useSocketStore.getState>["socket"],
+      });
+
+      triggerSocketEvent(mockSocket, "disconnect");
+
+      expect(useSocketStore.getState().match?.currentRoundNo).toBe(0);
+      expect(useSocketStore.getState().lastSeenSeqNo).toBe(0);
+    });
+
+    it("applies fallback snapshot on timeout", () => {
+      vi.useFakeTimers();
+      try {
+        useSocketStore
+          .getState()
+          .requestSnapshot("m1", 0, mockFallbackSnapshot);
+
+        vi.advanceTimersByTime(4999);
+        expect(useSocketStore.getState().match?.currentRoundNo).toBe(0);
+        expect(useSocketStore.getState().lastSeenSeqNo).toBe(0);
+
+        vi.advanceTimersByTime(1);
+
+        // Match state should now be fallback snapshot
+        expect(useSocketStore.getState().match?.currentRoundNo).toBe(1);
+        expect(useSocketStore.getState().lastSeenSeqNo).toBe(42);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

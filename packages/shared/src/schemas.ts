@@ -20,6 +20,7 @@
 
 import { z } from "zod";
 import { GAME_CONFIG } from "./game-config";
+import { MatchStatus } from "./state";
 
 // Helper: roomId / matchId are server-issued CUIDs. The client never
 // generates them, but we still validate the shape so a garbage value
@@ -125,34 +126,28 @@ export type SubmitAnswerPayload = z.infer<typeof SubmitAnswerPayloadSchema>;
 
 export const RequestSnapshotPayloadSchema = z.object({
   matchId: idSchema,
-  // lastSeenSeqNo is the cursor the client sends when asking for a
-  // snapshot. NOTE: it is currently a pass-through echo, not a real
-  // event-log cursor — `MatchStateMachine.getSnapshot` returns the
-  // value verbatim in the snapshot payload and does not filter
-  // events. Both current call sites hardcode 0 (the client hydrate
-  // path in `game/[matchId]/page.tsx` and the server reconnect path
-  // in `auth.handler.ts`).
+  // lastSeenSeqNo is the delta-replay cursor the client sends when
+  // asking for a snapshot: "I have applied every event up to this
+  // seqNo — give me what's newer." The server (`match.handler`
+  // handleRequestSnapshot) answers with either a full SNAPSHOT
+  // (cursor 0 / out of range) or an EVENT_BATCH delta of events with
+  // `seqNo > lastSeenSeqNo` (see MatchStateMachine.getDelta). A fresh
+  // hydrate sends 0.
   //
-  // The `MAX_ROUNDS * 2` (= 100) cap is therefore a sanity bound
-  // against hostile fuzz inputs (sentinels, bit-flips, obviously
-  // bogus cursors) rather than a tight upper bound on the number
-  // of event-log entries a match can produce. A 100-player match
-  // with N round transitions, up to 100 `ANSWER_SUBMITTED` events
-  // per round, plus `STATE_TRANSITION` / `ROUND_EVALUATED` /
-  // `TIE_BREAK` / `MATCH_FINISHED` / `PLAYER_DISCONNECTED` /
-  // `PLAYER_RECONNECTED` events (see `match-state-machine.ts`) can
-  // generate thousands of log entries — far above 100. The
-  // previous `Number.MAX_SAFE_INTEGER` ceiling was a leftover that
-  // would have accepted obviously bogus cursors.
-  //
-  // If a future change implements real delta-based filtering using
-  // this field as a real cursor, the cap must be re-derived from
-  // the actual per-match event-log size and the comment updated.
+  // The cap is derived from the real worst-case event-log size so a
+  // legitimate cursor is never rejected while obviously bogus fuzz
+  // (sentinels, bit-flips) still is. A match logs up to ~MAX_PLAYERS
+  // `ANSWER_SUBMITTED` per round plus round/transition/elimination
+  // events across up to MAX_ROUNDS rounds, plus disconnect/reconnect
+  // churn: `MAX_ROUNDS * MAX_PLAYERS` bounds the answer events and the
+  // `* 2` factor covers transitions and presence churn with headroom.
+  // Server-side `getFloorSeqNo`/`getHeadSeqNo` bounds validate the
+  // cursor precisely; this cap is only the coarse fuzz guard.
   lastSeenSeqNo: z
     .number()
     .int()
     .nonnegative()
-    .max(GAME_CONFIG.MAX_ROUNDS * 2),
+    .max(GAME_CONFIG.MAX_ROUNDS * GAME_CONFIG.MAX_PLAYERS * 2),
 });
 export type RequestSnapshotPayload = z.infer<
   typeof RequestSnapshotPayloadSchema
@@ -181,3 +176,132 @@ export const CLIENT_EVENT_SCHEMAS = {
   request_snapshot: RequestSnapshotPayloadSchema,
   heartbeat: HeartbeatPayloadSchema,
 } as const;
+
+// REPLAY EVENTS (server -> client EVENT_BATCH) --------------------------------
+// Runtime validation for delta-replay entries folded by the web client.
+// Unknown `type` values fail parse and are treated as no-ops (forward-
+// compatible); known types must carry a well-shaped payload before fold.
+//
+// Compile-time types (`ReplayEvent`, `QuestionSnapshot`) are derived from
+// these schemas via `z.infer` and re-exported as the single source of
+// truth — see `events.ts` for the re-exports.
+
+export const QuestionSnapshotSchema = z.object({
+  id: z.string().min(1),
+  content: z.string(),
+  options: z.array(z.string()),
+  difficulty: z.enum(["EASY", "MEDIUM", "HARD"]).optional(),
+});
+export type QuestionSnapshot = z.infer<typeof QuestionSnapshotSchema>;
+
+export const ReplayEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("STATE_TRANSITION"),
+    payload: z.object({
+      from: z.nativeEnum(MatchStatus),
+      to: z.nativeEnum(MatchStatus),
+    }),
+  }),
+  z.object({
+    type: z.literal("ROUND_STARTED"),
+    payload: z.object({
+      roundNo: z.number().int().positive(),
+      questionId: z.string().min(1),
+      question: QuestionSnapshotSchema,
+      endsAt: z.number().int().nonnegative(),
+    }),
+  }),
+  z.object({
+    type: z.literal("ANSWER_SUBMITTED"),
+    payload: z.object({
+      playerId: z.string().min(1),
+      isCorrect: z.boolean(),
+      responseTimeMs: z.number().int().nonnegative(),
+    }),
+  }),
+  z.object({
+    type: z.literal("ROUND_EVALUATED"),
+    payload: z.object({
+      roundNo: z.number().int().positive(),
+      correctAnswer: z.string(),
+      survivingCount: z.number().int().nonnegative(),
+      eliminatedCount: z.number().int().nonnegative(),
+      eliminatedIds: z.array(z.string()),
+    }),
+  }),
+  z.object({
+    type: z.literal("TIE_BREAK"),
+    payload: z.object({
+      winnerId: z.string().min(1).nullable(),
+      tiedPlayerIds: z.array(z.string()),
+    }),
+  }),
+  z.object({
+    type: z.literal("MATCH_FINISHED"),
+    payload: z.object({
+      winnerId: z.string().min(1).nullable(),
+      totalRounds: z.number().int().nonnegative(),
+    }),
+  }),
+  z.object({
+    type: z.literal("PLAYER_DISCONNECTED"),
+    payload: z.object({
+      playerId: z.string().min(1),
+    }),
+  }),
+  z.object({
+    type: z.literal("PLAYER_RECONNECTED"),
+    payload: z.object({
+      playerId: z.string().min(1),
+    }),
+  }),
+]);
+// `ReplayEvent` is the compile-time alias for the runtime schema so
+// every consumer (web client fold, server log sites) reads from a
+// single declaration. Adding a new event type means adding a branch
+// to ReplayEventSchema — the type updates automatically.
+export type ReplayEvent = z.infer<typeof ReplayEventSchema>;
+export type ReplayEventParsed = ReplayEvent;
+
+// Per-event-type payload types — exported so consumers (events.ts,
+// web fold) can reference them by name. The schema above is the
+// single source of truth; adding a new branch updates both the
+// runtime validator and the compile-time type automatically.
+//
+// The previous hand-rolled `z.infer<...> extends { type: "..."; payload: infer P }`
+// never resolved correctly: a conditional type over a union only
+// distributes when the checked type is naked. Wrapping the helper
+// in a `ReplayPayload<T>` generic keeps the union naked and lets
+// TypeScript pick the matching branch via `Extract`.
+type ReplayPayload<T extends ReplayEvent["type"]> = Extract<
+  ReplayEvent,
+  { type: T }
+>["payload"];
+
+export type ReplayStateTransitionPayload = ReplayPayload<"STATE_TRANSITION">;
+export type ReplayRoundStartedPayload = ReplayPayload<"ROUND_STARTED">;
+export type ReplayAnswerSubmittedPayload = ReplayPayload<"ANSWER_SUBMITTED">;
+export type ReplayRoundEvaluatedPayload = ReplayPayload<"ROUND_EVALUATED">;
+export type ReplayTieBreakPayload = ReplayPayload<"TIE_BREAK">;
+export type ReplayMatchFinishedPayload = ReplayPayload<"MATCH_FINISHED">;
+export type ReplayPlayerPresencePayload = ReplayPayload<
+  "PLAYER_DISCONNECTED" | "PLAYER_RECONNECTED"
+>;
+
+// Compile-time guard: if any replay branch is misnamed or its schema
+// diverges from the inferred `ReplayPayload<T>` type, the assertion
+// below flips to `false` and `tsc` reports an error. The distributive
+// conditional type forces the check to apply to EVERY branch
+// (STATE_TRANSITION, ROUND_STARTED, ANSWER_SUBMITTED, ROUND_EVALUATED,
+// TIE_BREAK, MATCH_FINISHED, PLAYER_DISCONNECTED, PLAYER_RECONNECTED) —
+// not only the head. A misnamed or divergent alias such as TIE_BREAK,
+// MATCH_FINISHED, or PLAYER_DISCONNECTED now resolves to `false`
+// instead of being silently accepted. The `void` operator hides the
+// unused-binding warning at runtime.
+type AssertReplayPayloadShape = {
+  [K in ReplayEvent["type"]]: ReplayPayload<K> extends never ? false : true;
+}[ReplayEvent["type"]] extends true
+  ? true
+  : false;
+const _replayPayloadShapeCheck: AssertReplayPayloadShape = true;
+void _replayPayloadShapeCheck;

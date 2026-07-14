@@ -17,7 +17,7 @@ AFK = một **surviving player** không có bất kỳ answer nào được ghi 
 
 | Trường hợp                             | `player.status` khi round kết thúc | Có answer trong `round.answers`? | Kết quả                            |
 | -------------------------------------- | ---------------------------------- | -------------------------------- | ---------------------------------- |
-| **AFK thuần** (còn kết nối, không bấm) | `ACTIVE`                           | Không                            | Eliminated (reason `TIMEOUT`)      |
+| **AFK thuần** (còn kết nối, không bấm) | `ACTIVE`                           | Không                            | Eliminated (reason `AFK`)          |
 | **Disconnect giữa round**              | `DISCONNECTED`                     | Không                            | Eliminated (reason `TIMEOUT`)      |
 | **Trả lời sai**                        | `ACTIVE`                           | Có, `isCorrect=false`            | Eliminated (reason `WRONG_ANSWER`) |
 | **Trả lời đúng**                       | `ACTIVE`                           | Có, `isCorrect=true`             | Sống sót, cộng điểm                |
@@ -38,19 +38,26 @@ AFK = một **surviving player** không có bất kỳ answer nào được ghi 
 - `executeRound()`: đặt timer `ROUND_DURATION_MS` → `endRound`. `setExpectedAnswers` = số surviving trước round.
 - `checkEarlyTermination()`: nếu tất cả surviving đã answer trước hạn → clear timer, gọi `endRound` sớm.
 - `endRound()` (line ~249):
-  - **Normal flow** (`ROUND_ACTIVE` + round `ACTIVE`): transition → `ROUND_EVALUATING`, gọi `evaluateRound()`, persist.
-  - **Recovery flow** (`ROUND_EVALUATING` + round `COMPLETED`): dựng lại `eliminatedIds` từ event log `ROUND_EVALUATED` (fallback heuristic nếu thiếu). Chỉ để **re-broadcast**, không mutate state (state đã loại xong trước khi crash).
+  - **Normal flow** (`ROUND_ACTIVE` + round `ACTIVE`): transition → `ROUND_EVALUATING`, gọi `evaluateRound()` (dùng pure helper `eliminationsForRound` + `startingPlayers` snapshot), persist.
+  - **Recovery flow** (`ROUND_EVALUATING` + round `COMPLETED`): dựng lại `eliminatedIds` theo thứ tự ưu tiên:
+    1. Đúng **một** event `ROUND_EVALUATED` cho `roundNo` hiện tại, validate payload + **cross-check** với `eliminationsForRound(currentRound)` (cần `startingPlayers` hợp lệ + `correctAnswer` đã attach).
+    2. Nếu event set không hợp lệ → gọi `eliminationsForRound` trực tiếp.
+    3. Nếu `startingPlayers === UNAVAILABLE` (legacy blob / version fail-closed) → **không** gọi helper; `eliminatedIds = []` (chỉ re-broadcast an toàn, không suy diễn).
+       Chỉ để **re-broadcast**, không mutate state (state đã loại xong trước khi crash). **Không** còn fallback heuristic `correctAnswers === roundNo - 1`.
   - Guard idempotency `beginEndRound` chống double-run (timer 15s đua với early-termination).
-  - Phát `PLAYER_ELIMINATED` cho từng id với `answeredThisRound = round.answers.has(playerId)`.
+  - Phát `PLAYER_ELIMINATED` cho từng id với `answeredThisRound` + `wasOnline` (xem Lớp 3).
 - `handlePlayerDisconnect()` / `handleMatchPlayerLeft()`: gọi `disconnectPlayer()` + persist + broadcast `PLAYER_LEFT`. Không loại.
 
 ### Lớp 3 — Events & UI
 
-- `game-loop.events.ts` `emitPlayerEliminated()`: `reason = answeredThisRound ? "WRONG_ANSWER" : "TIMEOUT"`. Đây là nguồn "lý do bị loại" cho FE. Shared `EliminationReason` (xem `packages/shared/src/events.ts`) định nghĩa ba variant `WRONG_ANSWER | TIMEOUT | AFK`; emitter hiện tại chỉ phát `WRONG_ANSWER` (có answer, sai) hoặc `TIMEOUT` (không answer), chưa bao giờ emit `AFK` trừ khi implementation được đổi để map trường hợp AFK thuần/giữa-round rõ ràng.
-- Wire: `PLAYER_ELIMINATED` payload (`packages/shared/src/events.ts`) `reason: "WRONG_ANSWER" | "TIMEOUT" | "AFK"` (theo type), nhưng payload thực tế phát ra chỉ chứa `"WRONG_ANSWER"` hoặc `"TIMEOUT"`. FE phải xử lý được cả ba variant để tương thích tương lai, đồng thời không phụ thuộc vào việc emitter sẽ phát `AFK` trong code path hiện tại.
+- `game-loop.events.ts` `emitPlayerEliminated()` gán `reason` từ:
+  - `answeredThisRound` → `"WRONG_ANSWER"`
+  - không answer + `wasOnline` → `"AFK"` (còn kết nối, không bấm)
+  - không answer + offline → `"TIMEOUT"` (disconnect mid-round)
+- Shared `EliminationReason` = `WRONG_ANSWER | TIMEOUT | AFK` (`packages/shared/src/events.ts`). FE overlay hiển thị cả ba.
 - FE store (`socket-store.ts`): khi `data.playerId === userId` set `isEliminated=true` + lưu `eliminationReason`; luôn stamp `status=ELIMINATED` cho player trong `match.players` (realtime, không đợi `ROUND_ENDED`).
 - FE UI:
-  - `eliminated-overlay.tsx`: overlay watch-only, hiển thị **lý do** (sai / hết giờ).
+  - `eliminated-overlay.tsx`: overlay watch-only, hiển thị **lý do** (sai / hết giờ / AFK).
   - `answer-panel.tsx`: khoá input khi `isEliminated || isSpectator`.
   - `player-grid.tsx` / `opponents-sidebar.tsx`: badge ELIMINATED đồng bộ realtime.
 

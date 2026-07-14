@@ -19,6 +19,8 @@ import {
   type RoundEndedPayload,
   type RoundStartedPayload,
   type SnapshotPayload,
+  type EventBatchPayload,
+  ReplayEventSchema,
 } from "@arena/shared";
 import type {
   LastAnswerResult,
@@ -273,6 +275,14 @@ export function applyMatchStartedState(
       currentQuestion: null,
       roundEndTime: null,
     },
+    // Plan D — reset the delta cursor on match boundary so a stale
+    // seqNo from the previous match cannot qualify for delta delivery
+    // against the new match's event log (the handler's `canDelta`
+    // check would otherwise emit a delta the client then no-ops on,
+    // or — worse — replay stale events against the new match). The
+    // next REQUEST_SNAPSHOT will be a full SNAPSHOT, then delta kicks
+    // in from there.
+    lastSeenSeqNo: 0,
   };
 }
 
@@ -492,6 +502,151 @@ export function applySnapshotState(
     remainingCount: null,
     lastAnswerResult: null,
     pendingAnswer: null,
+    // Plan D: a full hydrate resets the delta cursor to the log head,
+    // so subsequent reconnects can ask for only newer events.
+    lastSeenSeqNo: data.lastEventSeqNo,
+  };
+}
+
+// Plan D — delta replay. Fold an EVENT_BATCH onto the current match,
+// event by event in seqNo order, so the resulting state equals what a
+// continuously connected client would hold (each case mirrors the
+// matching live updater above). Applied only on top of an existing
+// match for the same id — a delta has no base to reconstruct a question
+// from scratch, so a client with no match must full-hydrate first.
+//
+// Idempotent: events with seqNo <= the current cursor are skipped, so a
+// duplicated or out-of-order batch is a no-op. The cursor advances to
+// the highest applied seqNo.
+export function applyEventBatchState(
+  state: SocketState,
+  data: EventBatchPayload,
+): Partial<SocketState> {
+  // Match guard (mirrors the live round updaters): ignore a batch for a
+  // stale or different match.
+  const activeMatchId = state.room?.currentMatchId ?? state.match?.id ?? null;
+  if (activeMatchId === null || activeMatchId !== data.matchId) return {};
+
+  // A delta applies onto the live match only. Without a base match for
+  // this id there is nothing to fold onto (the question/timer cannot be
+  // rebuilt from summary events) — the caller must full-hydrate.
+  if (state.match?.id !== data.matchId) return {};
+
+  let match = state.match;
+  let room = state.room;
+  let remainingCount = state.remainingCount;
+  let lastAnswerResult = state.lastAnswerResult;
+  let pendingAnswer = state.pendingAnswer;
+  let cursor = state.lastSeenSeqNo;
+
+  for (const rawEvent of data.events) {
+    if (rawEvent.seqNo <= cursor) continue; // idempotent skip
+    // Advance cursor even when the payload is invalid / unknown so a
+    // corrupt entry cannot pin the client behind the server log head.
+    cursor = rawEvent.seqNo;
+
+    const parsed = ReplayEventSchema.safeParse({
+      type: rawEvent.type,
+      payload: rawEvent.payload,
+    });
+    if (!parsed.success) continue;
+
+    const event = parsed.data;
+    switch (event.type) {
+      case "STATE_TRANSITION":
+        match = { ...match, status: event.payload.to };
+        break;
+      case "ROUND_STARTED":
+        match = {
+          ...match,
+          status: MatchStatus.ROUND_ACTIVE,
+          currentRoundNo: event.payload.roundNo,
+          currentQuestion: event.payload.question,
+          roundEndTime: event.payload.endsAt,
+        };
+        // Mirror live applyRoundStartedState: a new round opens with a
+        // clean answer panel — the previous round's result and any
+        // pending submission are no longer relevant.
+        lastAnswerResult = null;
+        pendingAnswer = null;
+        break;
+      case "ROUND_EVALUATED": {
+        const eliminated = new Set(event.payload.eliminatedIds);
+        match = {
+          ...match,
+          status: MatchStatus.ROUND_RESULT,
+          players: match.players.map((player) =>
+            eliminated.has(player.id)
+              ? { ...player, status: PlayerStatus.ELIMINATED }
+              : player,
+          ),
+          roundEndTime: null,
+        };
+        remainingCount = event.payload.survivingCount;
+        // Mirror live applyRoundEndedState: the per-player
+        // isCorrect/responseTimeMs aren't in the replay payload, but
+        // `correctAnswer` is — populate it so the result panel can
+        // reveal the answer during a delta hydrate.
+        lastAnswerResult = {
+          matchId: data.matchId,
+          roundNo: event.payload.roundNo,
+          correctAnswer: event.payload.correctAnswer,
+        };
+        // Mirror live applyRoundEndedState: clear pendingAnswer only
+        // when it belongs to the round that just resolved. A pending
+        // answer from an earlier round (out-of-order delivery) is
+        // preserved so the client can still resolve it on reconnect.
+        if (
+          pendingAnswer?.matchId === data.matchId &&
+          pendingAnswer.roundNo === event.payload.roundNo
+        ) {
+          pendingAnswer = null;
+        }
+        break;
+      }
+      case "MATCH_FINISHED":
+        match = { ...match, status: MatchStatus.FINISHED, roundEndTime: null };
+        // Mirror live applyMatchFinishedState: flip the room channel
+        // status to FINISHED so the lobby / leave-flow observes the
+        // match end even when the finish arrives via delta replay.
+        if (room) {
+          room = {
+            ...room,
+            status: RoomStatus.FINISHED,
+            countdownEndsAt: null,
+          };
+        }
+        break;
+      // No-op on match state (cursor still advances above):
+      //  - ANSWER_SUBMITTED / TIE_BREAK: peers' submissions and the
+      //    internal tie-break do not change the rendered match (mirrors
+      //    live play).
+      //  - PLAYER_DISCONNECTED / PLAYER_RECONNECTED: presence lives on
+      //    `room.players`, not `match.players` — live play never updates
+      //    match-roster `isOnline` either. A full SNAPSHOT refreshes
+      //    presence; the delta deliberately leaves it untouched so a
+      //    reconnecting client matches a continuously connected one.
+      default:
+        break;
+    }
+  }
+
+  // Recompute self-elimination from the resulting roster (mirrors
+  // applySnapshotState) so the watch-only overlay + answer lock are
+  // correct after the delta.
+  const selfEliminated = state.userId
+    ? match.players.find((p) => p.id === state.userId)?.status ===
+      PlayerStatus.ELIMINATED
+    : state.isEliminated;
+
+  return {
+    match,
+    room,
+    remainingCount,
+    lastAnswerResult,
+    pendingAnswer,
+    isEliminated: selfEliminated,
+    lastSeenSeqNo: cursor,
   };
 }
 

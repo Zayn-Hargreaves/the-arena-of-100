@@ -493,21 +493,23 @@ describe("GameGateway", () => {
         expect(result.success).toBe(false);
       });
 
-      // L3 fix: lastSeenSeqNo used to be capped at Number.MAX_SAFE_INTEGER,
-      // which accepted obviously bogus cursors. Tightened to
-      // GAME_CONFIG.MAX_ROUNDS * 2 — see schemas.ts.
-      it("REQUEST_SNAPSHOT schema rejects lastSeenSeqNo above MAX_ROUNDS * 2", () => {
+      // Plan D: lastSeenSeqNo is now a real delta-replay cursor. The cap
+      // is derived from the worst-case event-log size
+      // (MAX_ROUNDS * MAX_PLAYERS * 2) so a legitimate cursor is never
+      // rejected while obviously bogus fuzz still is — see schemas.ts.
+      it("REQUEST_SNAPSHOT schema rejects lastSeenSeqNo above the event-log cap", () => {
         const result = RequestSnapshotPayloadSchema.safeParse({
           matchId: "m1",
-          lastSeenSeqNo: GAME_CONFIG.MAX_ROUNDS * 2 + 1,
+          lastSeenSeqNo:
+            GAME_CONFIG.MAX_ROUNDS * GAME_CONFIG.MAX_PLAYERS * 2 + 1,
         });
         expect(result.success).toBe(false);
       });
 
-      it("REQUEST_SNAPSHOT schema accepts lastSeenSeqNo at MAX_ROUNDS * 2 (boundary)", () => {
+      it("REQUEST_SNAPSHOT schema accepts lastSeenSeqNo at the event-log cap (boundary)", () => {
         const result = RequestSnapshotPayloadSchema.safeParse({
           matchId: "m1",
-          lastSeenSeqNo: GAME_CONFIG.MAX_ROUNDS * 2,
+          lastSeenSeqNo: GAME_CONFIG.MAX_ROUNDS * GAME_CONFIG.MAX_PLAYERS * 2,
         });
         expect(result.success).toBe(true);
       });

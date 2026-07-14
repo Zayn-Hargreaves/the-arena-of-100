@@ -13,14 +13,14 @@ This document summarizes the changes made to internationalize the game page comp
 Added a new `Game` section with the following translation keys:
 
 - `matchingTitle`: "Trận Đấu Đang Diễn Ra"
-- `roundLabel`: "VÒNG"
+- `roundLabel`: "VÒNG {number}" (placeholder `{number}`; renderer truyền `roundNo` qua `t('roundLabel', { number: roundNo })`)
 - `roundComplexity`: "Độ Phức Tạp Vòng"
 - `roundLevelExtreme`: "Cấp độ: Cực Hạn"
 - `remainingLabel`: "Còn Lại"
 - `rulesHeader`: "QUY TẮC PHÒNG ĐẤU // CÂU HỎI HỆ THỐNG"
 - `lockedAnswer`: "ĐÃ KHÓA ĐÁP ÁN"
 - `waiting`: "ĐANG ĐỢI..."
-- `fallbackQuestion`: "Trong kiến trúc hệ thống monorepo sử dụng pnpm & Turborepo, thư mục nào chứa các code logic thuần túy (pure domain logic state machine) không phụ thuộc vào framework?"
+- `fallbackQuestion`: "Quy tắc tie-break: khi hai người cùng trả lời đúng một câu, ai sống sót qua vòng tiếp theo?" (key hiện chưa được tham chiếu trong component — F5 fix dùng `loadingQuestion` thay; key được giữ lại với nội dung gameplay lành mạnh để nếu sau này wire lại thì không leak chi tiết stack nội bộ)
 - `opponentsTitle`: "ĐỐI THỦ XUNG QUANH"
 - `aliveStatus`: "SỐNG"
 - `eliminatedStatus`: "LOẠI"
@@ -34,14 +34,14 @@ Added a new `Game` section with the following translation keys:
 Added a new `Game` section with the following translation keys:
 
 - `matchingTitle`: "Live Match in Progress"
-- `roundLabel`: "ROUND"
+- `roundLabel`: "ROUND {number}" (placeholder `{number}`; renderer truyền `roundNo` qua `t('roundLabel', { number: roundNo })`)
 - `roundComplexity`: "Round Complexity"
 - `roundLevelExtreme`: "Level: Extreme"
 - `remainingLabel`: "Remaining"
 - `rulesHeader`: "BATTLE RULES // SYSTEM QUESTION"
 - `lockedAnswer`: "ANSWER LOCKED"
 - `waiting`: "WAITING..."
-- `fallbackQuestion`: "In a monorepo system architecture using pnpm & Turborepo, which directory contains pure domain logic state machine code that is framework-independent?"
+- `fallbackQuestion`: "Tie-breaker rule: when two players answer the same question correctly, who survives the next round?" (key hiện chưa được tham chiếu trong component — F5 fix dùng `loadingQuestion` thay; key được giữ lại với nội dung gameplay lành mạnh để nếu sau này wire lại thì không leak chi tiết stack nội bộ)
 - `opponentsTitle`: "OPPONENTS NEARBY"
 - `aliveStatus`: "ALIVE"
 - `eliminatedStatus`: "ELIMINATED"
@@ -58,7 +58,7 @@ Made the following changes:
 2. Initialized the translation hook with `const t = useTranslations("Game");`
 3. Replaced all hardcoded Vietnamese strings with translation keys:
    - Line 199: "Trận Đấu Đang Diễn Ra" → `t('matchingTitle')`
-   - Line 202: "VÒNG" → `t('roundLabel')` (combined with dynamic round number)
+   - Line 202: "VÒNG" + số round → `t('roundLabel', { number: roundNo })` (interpolation `{number}`; gộp 1 câu hoàn chỉnh để translator kiểm soát word order / capitalization)
    - Line 208: "Độ Phức Tạp Vòng" → `t('roundComplexity')`
    - Line 211: "Cấp độ: Cực Hạn" → `t('roundLevelExtreme')`
    - Line 225: "Còn Lại" → `t('remainingLabel')`
@@ -76,8 +76,8 @@ Made the following changes:
 
 The implementation properly handles dynamic content:
 
-- Round numbers: Combined `t('roundLabel')` with the dynamic round number
-- Player counts: Kept the existing `${remainingCount} / 100` format
+- Round numbers: `t('roundLabel', { number: roundNo })` với message `"ROUND {number}"` (next-intl v4 placeholder cú pháp `{name}`; gộp 1 đơn vị dịch cho cả label + số để translator kiểm soát word order / capitalization)
+- Player counts: `{livePlayerCount} / {maxPlayers}` với `maxPlayers = room?.maxPlayers ?? GAME_CONFIG.MAX_PLAYERS` (dynamic; không còn literal 100; fallback trỏ về `GAME_CONFIG.MAX_PLAYERS` khi `room.maxPlayers` chưa được server expose)
 - Status indicators: Used existing logic with translated status labels
 
 ## Testing

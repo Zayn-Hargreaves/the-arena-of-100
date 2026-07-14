@@ -174,6 +174,189 @@ describe("MatchStateMachine.serialize/deserialize", () => {
   });
 });
 
+describe("MatchStateMachine delta replay (Plan D)", () => {
+  // Drive a deterministic sequence of state transitions; each
+  // transition logs exactly one STATE_TRANSITION event, so the log is
+  // a contiguous seqNo run 1..N.
+  const makeMachineWithEvents = () => {
+    const machine = new MatchStateMachine("m-delta", "r-delta", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN); // seqNo 1
+    machine.transition(MatchStatus.ROUND_ACTIVE); // seqNo 2
+    machine.transition(MatchStatus.ROUND_EVALUATING); // seqNo 3
+    return machine;
+  };
+
+  it("assigns contiguous ascending seqNo starting at 1", () => {
+    const machine = makeMachineWithEvents();
+    const log = machine.getEventLog();
+
+    expect(log.length).toBe(3);
+    expect(log.map((e) => e.seqNo)).toEqual([1, 2, 3]);
+  });
+
+  it("getHeadSeqNo / getFloorSeqNo reflect the log window", () => {
+    const machine = makeMachineWithEvents();
+
+    expect(machine.getFloorSeqNo()).toBe(1);
+    expect(machine.getHeadSeqNo()).toBe(3);
+  });
+
+  it("empty log: head/floor are 0 and delta is empty", () => {
+    const machine = new MatchStateMachine("m0", "r0", makePlayers());
+
+    expect(machine.getHeadSeqNo()).toBe(0);
+    expect(machine.getFloorSeqNo()).toBe(0);
+    expect(machine.getDelta(0)).toEqual([]);
+  });
+
+  it("getDelta returns only events with seqNo > cursor, ascending", () => {
+    const machine = makeMachineWithEvents();
+
+    const delta = machine.getDelta(1);
+    expect(delta.map((e) => e.seqNo)).toEqual([2, 3]);
+    // Strictly greater than the cursor — event 1 is excluded.
+    expect(delta.every((e) => e.seqNo > 1)).toBe(true);
+  });
+
+  it("getDelta(0) returns the full log (fresh cursor)", () => {
+    const machine = makeMachineWithEvents();
+
+    expect(machine.getDelta(0).map((e) => e.seqNo)).toEqual([1, 2, 3]);
+  });
+
+  it("getDelta at head is empty (client already caught up)", () => {
+    const machine = makeMachineWithEvents();
+
+    expect(machine.getDelta(machine.getHeadSeqNo())).toEqual([]);
+  });
+
+  it("getDelta beyond head is empty (out-of-range cursor)", () => {
+    const machine = makeMachineWithEvents();
+
+    expect(machine.getDelta(999)).toEqual([]);
+  });
+
+  it("delta entries carry the EventBatch wire shape with id = matchId:seqNo", () => {
+    const machine = makeMachineWithEvents();
+
+    const [first] = machine.getDelta(0);
+    expect(first).toMatchObject({
+      id: "m-delta:1",
+      type: "STATE_TRANSITION",
+      seqNo: 1,
+    });
+    expect(typeof first.timestamp).toBe("number");
+    expect(first).toHaveProperty("payload");
+  });
+
+  it("seqNo survives serialize/deserialize unchanged", () => {
+    const machine = makeMachineWithEvents();
+
+    const restored = MatchStateMachine.deserialize(machine.serialize());
+
+    expect(restored.getEventLog().map((e) => e.seqNo)).toEqual([1, 2, 3]);
+    expect(restored.getHeadSeqNo()).toBe(3);
+    expect(restored.getFloorSeqNo()).toBe(1);
+    expect(restored.getDelta(1).map((e) => e.seqNo)).toEqual([2, 3]);
+  });
+
+  it("resumes the counter after rehydrate — no seqNo collision", () => {
+    const machine = makeMachineWithEvents(); // head = 3
+
+    const restored = MatchStateMachine.deserialize(machine.serialize());
+    // A new event logged after rehydrate must continue from 4, not
+    // reset to 1 (which would collide with an already-emitted seqNo
+    // and corrupt a client's delta cursor).
+    restored.transition(MatchStatus.ROUND_RESULT);
+
+    const log = restored.getEventLog();
+    expect(log[log.length - 1].seqNo).toBe(4);
+    expect(restored.getHeadSeqNo()).toBe(4);
+  });
+
+  it("backfills missing seqNo on legacy snapshots by position", () => {
+    // A snapshot serialized before delta replay existed: event-log
+    // entries have no seqNo. deserialize backfills 1..N by array
+    // position (the log is append-only, so position + 1 is exactly the
+    // seqNo the entry would have carried).
+    const legacy = JSON.stringify({
+      state: {
+        id: "m-legacy",
+        roomId: "r-legacy",
+        status: MatchStatus.COUNTDOWN,
+        currentRoundNo: 0,
+        totalRounds: 0,
+        players: [],
+        survivingPlayerIds: [],
+        eliminatedPlayerIds: [],
+        winnerId: null,
+        startedAt: 1,
+        endedAt: null,
+      },
+      currentRound: null,
+      eventLog: [
+        {
+          type: "STATE_TRANSITION",
+          payload: { to: "COUNTDOWN" },
+          timestamp: 1,
+        },
+        {
+          type: "PLAYER_DISCONNECTED",
+          payload: { playerId: "p1" },
+          timestamp: 2,
+        },
+      ],
+    });
+
+    const restored = MatchStateMachine.deserialize(legacy);
+
+    expect(restored.getEventLog().map((e) => e.seqNo)).toEqual([1, 2]);
+    expect(restored.getHeadSeqNo()).toBe(2);
+    expect(restored.getDelta(1).map((e) => e.type)).toEqual([
+      "PLAYER_DISCONNECTED",
+    ]);
+  });
+
+  it("ROUND_STARTED delta carries the client-safe question + endsAt (no correctAnswer)", () => {
+    const machine = new MatchStateMachine("m-q", "r-q", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    machine.startRound({
+      id: "q1",
+      content: "Capital of France?",
+      options: ["Paris", "Berlin"],
+      correctAnswer: "Paris",
+      difficulty: "EASY",
+    });
+
+    const started = machine
+      .getEventLog()
+      .find((e) => e.type === "ROUND_STARTED");
+    expect(started).toBeDefined();
+    const payload = started!.payload as {
+      roundNo: number;
+      question: {
+        id: string;
+        content: string;
+        options: string[];
+        difficulty: string;
+      };
+      endsAt: number;
+    };
+
+    expect(payload.roundNo).toBe(1);
+    expect(payload.question).toEqual({
+      id: "q1",
+      content: "Capital of France?",
+      options: ["Paris", "Berlin"],
+      difficulty: "EASY",
+    });
+    expect(typeof payload.endsAt).toBe("number");
+    // L3: the answer key must never reach the delta wire.
+    expect(payload.question).not.toHaveProperty("correctAnswer");
+  });
+});
+
 describe("MatchStateMachine immutability and serialization", () => {
   it("should return deep-cloned state that cannot mutate internal state", () => {
     const machine = new MatchStateMachine("match-1", "room-1", makePlayers());

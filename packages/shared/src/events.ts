@@ -4,6 +4,17 @@
 // ============================================================
 
 import { MatchStatus, RoomStatus, type RoomType } from "./state";
+import type {
+  QuestionSnapshot,
+  ReplayEvent,
+  ReplayStateTransitionPayload,
+  ReplayRoundStartedPayload,
+  ReplayAnswerSubmittedPayload,
+  ReplayRoundEvaluatedPayload,
+  ReplayTieBreakPayload,
+  ReplayMatchFinishedPayload,
+  ReplayPlayerPresencePayload,
+} from "./schemas";
 
 // Room Events
 export enum RoomEventType {
@@ -199,13 +210,29 @@ export interface PlayerReconnectedPayload {
   reconnectedAt: number;
 }
 
-// Question Snapshot (used in events)
-export interface QuestionSnapshot {
-  id: string;
-  content: string;
-  options: string[];
-  // correctAnswer omitted from client-facing events
-}
+// Question Snapshot (used in events) — single source of truth is the
+// Zod schema in `schemas.ts` (`QuestionSnapshotSchema`); this re-export
+// keeps the public surface stable for downstream consumers.
+export type { QuestionSnapshot };
+
+// ---------------------------------------------------------------------------
+// Replay events (Plan D — delta replay)
+//
+// Compile-time types live in `schemas.ts` (`ReplayEventSchema`,
+// `ReplayEvent`). They are derived from the runtime schema so the
+// server-side log sites and the client-side fold cannot drift apart.
+// correctAnswer is never included.
+// ---------------------------------------------------------------------------
+export type {
+  ReplayEvent,
+  ReplayStateTransitionPayload,
+  ReplayRoundStartedPayload,
+  ReplayAnswerSubmittedPayload,
+  ReplayRoundEvaluatedPayload,
+  ReplayTieBreakPayload,
+  ReplayMatchFinishedPayload,
+  ReplayPlayerPresencePayload,
+};
 
 // Union types for type safety
 export type RoomEvent =

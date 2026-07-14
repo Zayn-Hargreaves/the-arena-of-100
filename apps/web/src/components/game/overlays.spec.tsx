@@ -41,7 +41,6 @@ describe("EliminatedOverlay", () => {
       "eliminatedOverlay.reasonAfk",
     );
   });
-
   it("falls back to no reason line when reason is null (reconnect snapshot)", () => {
     render(<EliminatedOverlay reason={null} />);
     expect(screen.queryByTestId("elimination-reason")).not.toBeInTheDocument();
