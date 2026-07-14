@@ -895,6 +895,7 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.MATCH_NOT_FOUND,
         message: ERROR_MESSAGES[ErrorCode.MATCH_NOT_FOUND],
+        failedEvent: ClientEvent.REQUEST_SNAPSHOT,
       });
       expect(matchService.getStateMachine).not.toHaveBeenCalled();
     });
@@ -907,7 +908,10 @@ describe("MatchHandler", () => {
       });
       expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.ERROR,
-        expect.objectContaining({ code: ErrorCode.UNAUTHORIZED }),
+        expect.objectContaining({
+          code: ErrorCode.UNAUTHORIZED,
+          failedEvent: ClientEvent.REQUEST_SNAPSHOT,
+        }),
       );
     });
 
@@ -934,6 +938,7 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
         message: "Internal server error",
+        failedEvent: ClientEvent.REQUEST_SNAPSHOT,
       });
     });
 
@@ -960,6 +965,7 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
         message: "Internal server error",
+        failedEvent: ClientEvent.REQUEST_SNAPSHOT,
       });
     });
 

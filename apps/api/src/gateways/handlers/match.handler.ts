@@ -273,7 +273,7 @@ export class MatchHandler extends BaseHandler {
           this.logger.error("Error sending snapshot:", error);
           msg = "Internal server error";
         }
-        this.emitError(client, code, msg);
+        this.emitError(client, code, msg, ClientEvent.REQUEST_SNAPSHOT);
       },
     );
   }

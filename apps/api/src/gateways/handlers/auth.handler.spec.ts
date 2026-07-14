@@ -593,6 +593,7 @@ describe("AuthHandler", () => {
 
       const mockStateMachine = {
         reconnectPlayer: vi.fn(),
+        getHeadSeqNo: vi.fn().mockReturnValue(17),
         getSnapshot: vi.fn().mockReturnValue(snapshot),
       };
       vi.mocked(matchService.getStateMachine).mockResolvedValue(
@@ -604,6 +605,7 @@ describe("AuthHandler", () => {
 
       expect(mockStateMachine.reconnectPlayer).toHaveBeenCalledWith("u1");
       expect(matchService.persistStateMachine).toHaveBeenCalledWith("m1");
+      expect(mockStateMachine.getSnapshot).toHaveBeenCalledWith(17);
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.SNAPSHOT, snapshot);
     });
 
@@ -661,6 +663,7 @@ describe("AuthHandler", () => {
         ] as any);
         const mockSm1 = {
           reconnectPlayer: vi.fn(),
+          getHeadSeqNo: vi.fn().mockReturnValue(0),
           getSnapshot: vi.fn().mockReturnValue({ matchId: "m1" }),
         };
         vi.mocked(matchService.getStateMachine).mockResolvedValue(
@@ -759,6 +762,7 @@ describe("AuthHandler", () => {
         const snapshot = { matchId: "m2", status: "ROUND_ACTIVE" };
         const mockSm = {
           reconnectPlayer: vi.fn(),
+          getHeadSeqNo: vi.fn().mockReturnValue(9),
           getSnapshot: vi.fn().mockReturnValue(snapshot),
         };
         vi.mocked(matchService.getStateMachine).mockResolvedValue(
@@ -781,6 +785,7 @@ describe("AuthHandler", () => {
         );
         expect(snapshotCalls).toHaveLength(1);
         expect(snapshotCalls[0][1]).toEqual(snapshot);
+        expect(mockSm.getSnapshot).toHaveBeenCalledWith(9);
       });
 
       it("still works with a single active room (regression)", async () => {

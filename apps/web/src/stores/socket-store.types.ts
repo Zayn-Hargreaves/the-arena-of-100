@@ -5,6 +5,7 @@ import {
   type EliminationReason,
   type JoinMode,
   type RoomType,
+  type SnapshotPayload,
 } from "@arena/shared";
 import type { Socket } from "socket.io-client";
 
@@ -118,5 +119,9 @@ export interface SocketState extends ConnectionState {
     roundNo: number,
     answer: string,
   ) => string | null;
-  requestSnapshot: (matchId: string, lastSeenSeqNo: number) => void;
+  requestSnapshot: (
+    matchId: string,
+    lastSeenSeqNo: number,
+    fallbackSnapshot?: SnapshotPayload,
+  ) => void;
 }

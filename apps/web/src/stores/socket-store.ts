@@ -329,19 +329,28 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
     newSocket.on(ServerEvent.SNAPSHOT, (data: SnapshotPayload) => {
       if (get().socket !== newSocket) return;
-      set((state) => applySnapshotState(state, data));
-      console.log("📸 Snapshot received");
 
       // Plan D reconnect: if AUTHENTICATED armed a cursor-aware
       // request and the server-pushed SNAPSHOT belongs to the same
-      // match, fire the deferred REQUEST_SNAPSHOT now. This is also
-      // the point where server-side `syncReconnection` has finished
-      // joining channels, so the request is safe.
+      // match, optimistically hydrate display fields for UI freshness
+      // but keep the pre-disconnect lastSeenSeqNo so the deferred
+      // REQUEST_SNAPSHOT can still delta-replay. Always clear pending
+      // outside the matchId guard so a mismatched/stale arm cannot
+      // stick around. This is also the point where server-side
+      // `syncReconnection` has finished joining channels, so the
+      // request is safe.
       const pending = pendingSnapshotRequest;
+      pendingSnapshotRequest = null;
       if (pending && pending.matchId === data.matchId) {
-        pendingSnapshotRequest = null;
-        get().requestSnapshot(pending.matchId, pending.lastSeenSeqNo);
+        set((state) => {
+          const hydrated = applySnapshotState(state, data);
+          return { ...hydrated, lastSeenSeqNo: state.lastSeenSeqNo };
+        });
+        get().requestSnapshot(pending.matchId, pending.lastSeenSeqNo, data);
+      } else {
+        set((state) => applySnapshotState(state, data));
       }
+      console.log("📸 Snapshot received");
     });
 
     // Plan D delta replay: the server may answer REQUEST_SNAPSHOT with a
@@ -677,11 +686,92 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   },
 
   // Request Snapshot
-  requestSnapshot: (matchId: string, lastSeenSeqNo: number) => {
-    const { socket } = get();
+  requestSnapshot: (
+    matchId: string,
+    lastSeenSeqNo: number,
+    fallbackSnapshot?: SnapshotPayload,
+  ) => {
+    const socket = get().socket;
+    if (!socket) return;
+
     emitIfConnected(socket, ClientEvent.REQUEST_SNAPSHOT, {
       matchId,
       lastSeenSeqNo,
     });
+
+    if (!fallbackSnapshot) return;
+
+    const TIMEOUT_MS = 5000;
+    let resolved = false;
+
+    const cleanup = () => {
+      resolved = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      socket.off(ServerEvent.EVENT_BATCH, handleEventBatch);
+      socket.off(ServerEvent.SNAPSHOT, handleSnapshot);
+      socket.off(ServerEvent.ERROR, handleError);
+      socket.off("disconnect", handleDisconnect);
+    };
+
+    const applyFallback = () => {
+      if (resolved) return;
+      cleanup();
+
+      // Ignore fallback from a previous socket generation after reconnect churn.
+      if (get().socket !== socket) return;
+
+      const currentMatch = get().match;
+      if (currentMatch && currentMatch.id === matchId) {
+        set((state) => applySnapshotState(state, fallbackSnapshot));
+        console.warn(
+          `⚠️ Delta request failed or timed out. Hydrated fallback snapshot for match: ${matchId}`,
+        );
+      }
+    };
+
+    const handleEventBatch = (data: EventBatchPayload) => {
+      if (get().socket !== socket) return;
+      if (data.matchId === matchId) {
+        cleanup();
+      }
+    };
+
+    const handleSnapshot = (data: SnapshotPayload) => {
+      if (get().socket !== socket) return;
+      if (data.matchId === matchId) {
+        cleanup();
+      }
+    };
+
+    const handleError = (data: ErrorPayload) => {
+      if (get().socket !== socket) return;
+      // Only fall back on errors tied to this snapshot request.
+      // Unrelated ERRORs (e.g. SUBMIT_ANSWER) must not clobber match state.
+      if (data.failedEvent === ClientEvent.REQUEST_SNAPSHOT) {
+        applyFallback();
+      }
+    };
+
+    const handleDisconnect = () => {
+      if (get().socket !== socket) {
+        cleanup();
+        return;
+      }
+      applyFallback();
+    };
+
+    socket.on(ServerEvent.EVENT_BATCH, handleEventBatch);
+    socket.on(ServerEvent.SNAPSHOT, handleSnapshot);
+    socket.on(ServerEvent.ERROR, handleError);
+    socket.on("disconnect", handleDisconnect);
+
+    const timeoutId = setTimeout(() => {
+      if (!resolved) {
+        console.log(
+          `⏱️ Delta request for match ${matchId} timed out after ${TIMEOUT_MS}ms.`,
+        );
+        applyFallback();
+      }
+    }, TIMEOUT_MS);
   },
 }));

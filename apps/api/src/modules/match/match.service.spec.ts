@@ -576,6 +576,51 @@ describe("MatchService", () => {
     });
   });
 
+  describe("getRoomIdByMatchId", () => {
+    // L3-style: a hot match lives in `stateMachines` (set by createMatch);
+    // the auth-gate caller in match.handler.ts MUST hit the cache to avoid
+    // a Prisma round-trip on every answer snapshot request. Falls back to
+    // Prisma only on cache miss (e.g. before the SM is constructed, or
+    // after eviction on finishMatch).
+    it("returns roomId from the cached state machine without calling Prisma", async () => {
+      const internalMap = (
+        service as unknown as {
+          stateMachines: Map<string, { getState: () => { roomId: string } }>;
+        }
+      ).stateMachines;
+      internalMap.set("m1", { getState: () => ({ roomId: "r1" }) } as never);
+
+      const roomId = await service.getRoomIdByMatchId("m1");
+
+      expect(roomId).toBe("r1");
+      expect(prisma.match.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("falls back to Prisma on cache miss and returns the roomId", async () => {
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
+        roomId: "r-fallback",
+      } as never);
+
+      const roomId = await service.getRoomIdByMatchId("m-cold");
+
+      expect(roomId).toBe("r-fallback");
+      // The fallback MUST use `select: { roomId: true }` to avoid pulling
+      // the full match row on every auth-gate lookup.
+      expect(prisma.match.findUnique).toHaveBeenCalledWith({
+        where: { id: "m-cold" },
+        select: { roomId: true },
+      });
+    });
+
+    it("returns undefined when both cache and Prisma miss", async () => {
+      vi.mocked(prisma.match.findUnique).mockResolvedValue(null);
+
+      const roomId = await service.getRoomIdByMatchId("m-ghost");
+
+      expect(roomId).toBeUndefined();
+    });
+  });
+
   describe("finishMatch", () => {
     it("updates match, room, cleans up state machine and Redis", async () => {
       // Create match first to populate stateMachines map
