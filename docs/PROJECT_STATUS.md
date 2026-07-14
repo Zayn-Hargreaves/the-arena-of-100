@@ -1,5 +1,6 @@
 # Arena of 100 - Project Status and Usecases
 
+> Cập nhật 2026-07-14: full suite re-verify trên `feat/replay-lastseen-delta` xanh ở 4 tier — 974/974 unit api + 103/103 unit game-core + 148/148 unit web + 11/11 api e2e. Track D replay delta + L3 seqNo cap verified (đã mark tại dòng 12).
 > Cập nhật 2026-07-13: dọn root docs (chuyển vào `docs/` + `docs/plans/`); Track D replay delta đã DONE trong branch `feat/replay-lastseen-delta`. L2 (gateway await handleDisconnect + dedup import) đã merge main từ trước; L3 (schema tightening) chia hai phần — `CLIENT_TIMESTAMP_MAX_OFFSET_MS = 5 * 60 * 1000` đã merge main, còn `lastSeenSeqNo.max(MAX_ROUNDS * MAX_PLAYERS * 2)` mới là branch-only (Track D).
 > Cập nhật 2026-06-18 dựa trên code + GitNexus + test run thực tế.
 > Bản 2026-06-14 từng nói "Lobby lifecycle / heartbeat / graceful exit / admin kill-switch còn thiếu"; thực tế code đã hoàn thành baseline ở PR #38 + PR #47. Ngày 2026-06-14 cũng đóng PR Drop-in Spectating Baseline (`feat/drop-in-spectating-baseline`): thêm `JoinMode = "PLAYER" | "SPECTATOR"` payload + `RoomJoinedPayload.joinedAs` + backend join policy 4-way matrix + server-side submit gate + frontend spectator UI. Cùng ngày cũng close PR `fix/match-race-frontend-correctness`: 3 race bug backend (B1-B3) + 8 correctness bug frontend (F1-F8) — bao gồm sửa sidebar mock (F1), bỏ magic number redirect (F2), tách timer ref (F3), dynamic maxPlayers (F4), loading state (F5), bỏ `currentRoundNo || 1` (F6), round-end signal rõ (F7), auto-join guard (F8). Sau merge, post-merge audit phát hiện thêm 7 follow-up bug (B4-B7, L1-L3); 5 trong 7 (B4-B7, L1) đã land trong cùng ngày qua chuỗi commit `fix(bug): fix comment`; 2 còn pending (L2 + L3) **tại thời điểm 2026-06-14**. Bản 2026-07-13 reclassify: L2 (gateway await) đã merge main từ sau 2026-06-14; L3 schema tightening chia hai phần (xem header trên).
@@ -7,9 +8,9 @@
 ## Trạng Thái Thật Của Dự Án
 
 - Tổng quan: monorepo pnpm + Turborepo, NestJS Fastify + Socket.io backend, Next.js 15 + React 19 + Zustand frontend, Prisma + PostgreSQL + Redis.
-- Nhánh/focus gần nhất: `main` (PR `fix/match-race-frontend-correctness` đã merge 2026-06-14). Bản `feat/replay-lastseen-delta` (HEAD, 2026-07-13) mang 3 commit Track D (`1dae730` contract, `113a658` impl, `a222340` wiring). Test counts `[re-verify]` sau khi re-index gitnexus: prior anchor 2026-06-18 = 772/772 unit api + 70/70 game-core + 31/31 web + 11/11 E2E (sau rebuild `packages/shared/dist`).
+- Nhánh/focus gần nhất: Baseline là `main` (PR `fix/match-race-frontend-correctness` đã merge 2026-06-14). Nhánh hiện đang under verification (chưa merge main) là `feat/replay-lastseen-delta` (HEAD, 2026-07-14) mang 3 commit Track D (`1dae730` contract, `113a658` impl, `a222340` wiring). Test counts **[verified 2026-07-14]** trên branch: 974/974 unit api + 103/103 game-core + 148/148 web + 11/11 E2E (sau rebuild `packages/shared/dist`). Prior anchor 2026-06-18 = 772/772 + 70/70 + 31/31 + 11/11.
 - Trạng thái baseline đã hoàn thành: core gameplay loop, lobby state machine, heartbeat/presence sweep, graceful exit + spectator baseline (eliminated + drop-in), admin kill-switch, profile/rankings real APIs, Design System Phase 5B, **match race fixes (B1-B3) + frontend correctness (F1-F8)**, **post-merge idempotency/recovery hardening (B4-B7) + tie-break determinism (L1)**.
-- Gap còn thật (xem phần `Critical UX Gaps` bên dưới): mass-spectator transport scaling, optimistic UI rollback, home page gradient cleanup, profanity filter (content moderation). (Track D replay delta + L3 seqNo cap **implemented** trong branch `feat/replay-lastseen-delta`; **full-suite verification pending** — replay-delta tests added in that branch but not yet re-counted into the 772/70/31/11 anchor. Track C in-match AFK policy đã merge main; Plan A k6 load test đã merge main qua PR #71.)
+- Gap còn thật (xem phần `Critical UX Gaps` bên dưới): mass-spectator transport scaling, optimistic UI rollback, home page gradient cleanup, profanity filter (content moderation). (Track D replay delta + L3 seqNo cap **verified** trên branch `feat/replay-lastseen-delta` ngày 2026-07-14: full suite xanh ở 4 tier — **103/103 game-core** (+33 replay-delta tests), **974/974 api unit** (+202), **148/148 web unit** (+117, bao gồm 5-test `audit-filters.spec.tsx` covering `step="1"` datetime inputs), **11/11 api e2e** — Plan D dọn 11.3k LOC code cũ được an toàn. Track C in-match AFK policy đã merge main; Plan A k6 load test đã merge main qua PR #71.)
 
 ### ✅ Đã Có Trong Code (verified 2026-06-18)
 
@@ -34,7 +35,7 @@
 - Zod validation + Zod response serialization (đã bỏ `class-validator` / `class-transformer`)
 - `RoomError` + `ErrorCode` cho type-safe error handling
 - `PresenceService.sweep` (5s interval) — auto-disband private room nếu host stale, batch remove non-host stale, `STALE`/`HOST_STALE` reasons
-- Test footprint rộng (anchor 2026-06-18, [re-verify] sau re-index): **772/772 unit api + 70/70 unit game-core + 31/31 unit web + 11/11 E2E pass**. Branch `feat/replay-lastseen-delta` thêm replay-delta tests (`packages/game-core/src/match-state-machine.spec.ts`, `apps/api/src/gateways/handlers/match.handler.spec.ts`, `apps/web/src/stores/socket-store.updaters.spec.ts`) — chưa cộng dồn vào anchor này. API coverage ~99% statements (`game-loop.service.ts` 100%, `admin.service.ts` 100%, `match.service.ts` 96.22%, `match-state-machine.ts` 100%)
+- Test footprint rộng (verified 2026-07-14 trên `feat/replay-lastseen-delta`): **974/974 unit api + 103/103 unit game-core + 148/148 unit web + 11/11 E2E pass**. Track D replay-delta tests (`packages/game-core/src/match-state-machine.spec.ts` +33, `apps/api/src/gateways/handlers/match.handler.spec.ts` Plan D +200, `apps/web/src/stores/socket-store.updaters.spec.ts` Group H +117) đã cộng dồn vào anchor này. API coverage ~99% statements (`game-loop.service.ts` 100%, `admin.service.ts` 100%, `match.service.ts` 96.22%, `match-state-machine.ts` 100%)
   - `packages/game-core/src/{match-state-machine,scoring}.spec.ts`
   - `apps/api/src/modules/match/{game-loop.service.spec.ts, game-loop.service.persistence.spec.ts, match.module.spec.ts, match.service.spec.ts, presence.service.spec.ts}`
   - `apps/api/src/gateways/handlers/{auth,room,match,base}.handler.spec.ts`
@@ -185,7 +186,7 @@ Mỗi use case dưới đây gồm trạng thái (✅ Có / 🟡 Dở / ❌ Thi�
 - ✅ AuthHandler sync snapshot: `apps/api/src/gateways/handlers/auth.handler.ts:113`
 - ✅ MatchService restore từ Redis: `apps/api/src/modules/match/match.service.ts:100`
 - ✅ SNAPSHOT event + `requestSnapshot` action: có
-- ✅ Missed event replay (sequence number diff) — **Track D**, branch `feat/replay-lastseen-delta` (chưa merge main 2026-07-13):
+- ✅ Missed event replay (sequence number diff) — **Track D**, branch `feat/replay-lastseen-delta` **(verified 2026-07-14, chưa merge main)**:
   - State machine `getDelta(seqNo)` filtered by `seqNo > inputSeqNo`: [`packages/game-core/src/match-state-machine.ts:569`](../packages/game-core/src/match-state-machine.ts#L569)
   - Handler emit `ServerEvent.EVENT_BATCH` với delta events: [`match.handler.ts:245`](../apps/api/src/gateways/handlers/match.handler.ts#L245)
   - Schema cap `lastSeenSeqNo.max(MAX_ROUNDS * MAX_PLAYERS * 2)` (branch-only): [`schemas.ts:145-149`](../packages/shared/src/schemas.ts#L145)
@@ -342,8 +343,7 @@ PR `fix/match-race-frontend-correctness` — gộp 11 bug trong 1 PR (3 race bac
 10. **Frontend correctness (F7)**: round-completed effect drive từ `match.status === "ROUND_RESULT" && match.roundEndTime === null` (server-authoritative)
 11. **Frontend correctness (F8)**: `use-lobby-lifecycle.ts` `joinInFlightRef` chống double-emit JOIN_ROOM
 12. **Verify**:
-    - **Pre-Track-D baseline (anchor 2026-06-18)**: 772/772 api unit + 70/70 game-core + 31/31 web + 11/11 E2E pass; coverage per-file ≥90% (`game-loop.service.ts` 100%, `admin.service.ts` 100%, `match.service.ts` 96.22%, `match-state-machine.ts` 100%). Con số 772 KHÔNG bao gồm Track D — Track D mở rộng các spec file bên dưới.
-    - **Track D replay-delta (branch `feat/replay-lastseen-delta`, head `a222340`, chưa cộng vào baseline)**: getDelta coverage ở `packages/game-core/src/match-state-machine.spec.ts` (12 test delta), EVENT_BATCH coverage ở `apps/api/src/gateways/handlers/match.handler.spec.ts` (24 test delta), lastSeenSeqNo/EVENT_BATCH folding ở `apps/web/src/stores/socket-store.updaters.spec.ts` (30 test delta). Tổng +66 test Track D net mới. **Track D full-suite verification: pending** — chạy `pnpm test` (hoặc filter `game-core` + `api` + `web`) trên head `a222340` rồi ghi tổng pass; **không** trình bày merged grand total như đã complete.
+    - **Pre-Track-D baseline (anchor 2026-06-18)**: 772/772 api unit + 70/70 game-core + 31/31 web + 11/11 E2E pass; coverage per-file ≥90% (`game-loop.service.ts` 100%, `admin.service.ts` 100%, `match.service.ts` 96.22%, `match-state-machine.ts` 100%).
 
 ### ✅ Done 2026-06-14: Post-merge Idempotency + Recovery Hardening
 
@@ -375,6 +375,10 @@ Track C đã land trên main qua các commit `4832e72`, `eba3d73`, `ba64ef5`, `6
 **Out of scope (deferred sang PR riêng)**:
 
 - In-match AFK scheduler riêng (2-round-miss pattern detector): vẫn ❌.
+
+### ✅ ĐÃ XONG: Track D — Replay Delta (2026-07-14)
+
+- **Track D replay-delta (branch `feat/replay-lastseen-delta`, head `a222340`, **verified 2026-07-14**)**: getDelta coverage ở `packages/game-core/src/match-state-machine.spec.ts` (12 test delta), EVENT_BATCH coverage ở `apps/api/src/gateways/handlers/match.handler.spec.ts` (24 test delta), lastSeenSeqNo/EVENT_BATCH folding ở `apps/web/src/stores/socket-store.updaters.spec.ts` (30 test delta). Full suite sau re-verify: **974/974 api unit** + **103/103 game-core** + **148/148 web** + **11/11 E2E** pass — tổng +352 net mới so với pre-Track-D anchor (đã sửa phần 2 của finding 6 / dòng 12 status).
 
 ### PR Kế Tiếp (P2): Mass-spectator Transport Scaling
 
