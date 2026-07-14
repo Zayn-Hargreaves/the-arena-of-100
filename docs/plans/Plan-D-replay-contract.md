@@ -17,6 +17,80 @@ Khi client reconnect với `lastSeenSeqNo`, server trả **chỉ các event sau 
 
 Cùng đụng `packages/game-core/src/match-state-machine.ts` và `apps/web/src/stores/socket-store.ts`. **Chờ C merge**, rebase D lên main mới, rồi làm — tránh xung đột elimination logic.
 
+## Spec vs Implementation Reconciliation (2026-07-13)
+
+**Authoritative spec tại design time**: [`Plan-D1-contract-design.md`](./Plan-D1-contract-design.md) — đặc tả wire shape trước khi impl.
+
+**Plan-D đã ship theo lựa chọn gọn hơn** (commits `1dae730` `113a658` `a222340` trên `feat/replay-lastseen-delta`).
+Plan-D1 những mục sau đây được **đánh dấu "superseded implementation choice"** — KHÔNG còn là
+authoritative contract cho code đã merge:
+
+- **Envelope discriminated union** `{ mode: "full", snapshot, lastEventSeqNo }` vs
+  `{ mode: "delta", events, lastEventSeqNo }` (xem Phase D1 wire-shape section bên dưới).
+- **`replayCursor` HMAC token** (chuỗi `matchId+seqNo+issuedAt+expiresAt`) thay cho
+  numeric `lastSeenSeqNo` trên wire.
+- **Capability / version negotiation** (`supports: ["delta"]` discriminator) trên request.
+
+**Wire contract đã ship** (xem `schemas.ts:124-153`, `socket.ts:104-138`, `match.handler.ts:223-257`,
+`socket-store.updaters.ts:511-632`):
+
+- **Request**: `RequestSnapshotPayloadSchema = { matchId, lastSeenSeqNo: number }`. KHÔNG capability flag.
+  `lastSeenSeqNo` cap `MAX_ROUNDS * MAX_PLAYERS * 2` ở branch, `MAX_ROUNDS * 2` ở main.
+- **Response**:
+  - **Delta hợp lệ** (cursor in-range): emit `ServerEvent.EVENT_BATCH` với
+    `EventBatchPayload { matchId, events: [...] }` (có sẵn trong `socket.ts:129-138`).
+  - **Fallback full** (cursor out-of-range / first hydrate): emit `ServerEvent.SNAPSHOT` với
+    `SnapshotPayload` cũ (xem `socket.ts:104-121`), không wrap envelope, không có `mode` /
+    `replayCursor` trên wire.
+
+#### Boundary matrix cho replay cursor (single source of truth)
+
+Áp dụng cho cả 3 bên: gateway (`match.handler.ts:240-241`), client
+(`socket-store.updaters.ts:540-632`), test (`match.handler.spec.ts:968-1086`).
+Ký hiệu: `cursor = payload.lastSeenSeqNo`; `head = stateMachine.getHeadSeqNo()`
+(= max seqNo trong `eventLog`, hoặc 0 nếu log rỗng); `floor = stateMachine.getFloorSeqNo()`
+(= `eventLog[0].seqNo`, hoặc 0 nếu log rỗng). Cận `getDelta(inputSeqNo)` ở
+`match-state-machine.ts:569-585` lọc `seqNo > inputSeqNo` (strict greater).
+
+| Tình huống (cursor vs log window)                         | Cursor | Head | Floor | `canDelta` (handler:240)? | Wire emit                                             | `getDelta(cursor)` kết quả                              | Ghi chú                                                                                                                                                                            |
+| --------------------------------------------------------- | ------ | ---- | ----- | ------------------------- | ----------------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Fresh hydrate** (chưa apply event nào)                  | 0      | ≥ 0  | ≥ 0   | ❌ (cursor > 0 fail)      | `ServerEvent.SNAPSHOT` (raw full)                     | (không gọi)                                             | cursor==0 là first hydrate; payload `lastSeenSeqNo` = 0.                                                                                                                           |
+| **Event log rỗng, client đã thấy hết**                    | 0      | 0    | 0     | ❌ (cursor > 0 fail)      | `ServerEvent.SNAPSHOT` (raw full)                     | (không gọi)                                             | Log rỗng, không có event để delta.                                                                                                                                                 |
+| **Event log rỗng, client gửi cursor > 0 (bất thường)**    | > 0    | 0    | 0     | ❌ (head > 0 fail)        | `ServerEvent.SNAPSHOT` (raw full)                     | (không gọi)                                             | Cursor invalid; fall back full, không phát delta rỗng.                                                                                                                             |
+| **Cursor == head, có events trước đó**                    | > 0    | N    | ≤ N   | ✅ (cursor ≤ head)        | `ServerEvent.EVENT_BATCH` (`events: []`)              | `[]` (mảng rỗng)                                        | Client đã apply hết → empty delta HỢP LỆ. Wire **không** có top-level `lastEventSeqNo`; client giữ cursor hiện tại.                                                                |
+| **Cursor == floor** (bằng phần tử đầu của log)            | > 0    | ≥ 1  | = N   | ✅ (cursor ≥ floor)       | `ServerEvent.EVENT_BATCH` (đầy đủ events)             | tất cả events (seqNo > floor ⇒ rỗng nếu floor==N==head) | Nếu floor==N==head ⇒ empty delta. Nếu floor < head ⇒ all events after floor.                                                                                                       |
+| **Cursor == floor - 1** (cursor ngay dưới floor)          | > 0    | N    | > 0   | ❌ (`cursor < floor`)     | `ServerEvent.SNAPSHOT` (raw full)                     | (không gọi)                                             | Runtime gate: `cursor >= floor` — floor-1 **reject** → snapshot fallback. (`getDelta(floor-1)` _would_ return full log if called; handler does not call it.)                       |
+| **Cursor < floor - 1** (log bị truncate; mất event ở đầu) | > 0    | N    | > 0   | ❌ (cursor < floor)       | `ServerEvent.SNAPSHOT` (raw full)                     | (không gọi)                                             | Server warning + fall back full.                                                                                                                                                   |
+| **Cursor > head** (future-cursor / corrupt client state)  | > 0    | N    | ≤ N   | ❌ (cursor > head)        | `ServerEvent.SNAPSHOT` (raw full)                     | (không gọi)                                             | Server warning + fall back full.                                                                                                                                                   |
+| **Cursor hợp lệ, log bị gap (non-contiguous seqNo)**      | > 0    | N    | ≤ N   | ✅ (numeric gate pass)    | `ServerEvent.EVENT_BATCH` (gap nguyên vẹn)            | events theo filter (một số seqNo nhảy cóc)              | Client validate contiguity ở `socket-store.updaters.ts`; nếu gap phát hiện ⇒ reject envelope + request full mới.                                                                   |
+| **Delta rỗng hợp lệ** (cursor == head, log không rỗng)    | > 0    | N>0  | ≤ N   | ✅                        | `ServerEvent.EVENT_BATCH` (`{ matchId, events: [] }`) | `[]` (mảng rỗng)                                        | `EventBatchPayload` = `{ matchId, events }` only — **no** `lastEventSeqNo` on wire. Client **preserves** existing `lastSeenSeqNo` when `events` is empty (`applyEventBatchState`). |
+
+Quy ước cứng:
+
+- Cận `cursor` (handler `canDelta`): **inclusive `[floor, head]`** và `cursor > 0 && head > 0` (`cursor >= floor && cursor <= head`). Cursor = floor hoặc cursor = head đều hợp lệ. **Cursor == floor - 1 không hợp lệ** → SNAPSHOT fallback (preserve runtime).
+- Cận `getDelta`: **strict greater** (`seqNo > inputSeqNo`). Cursor == seqNo đã apply ⇒ không trả event nào; cursor == seqNo chưa apply ⇒ trả event đó trở đi.
+- Empty `EVENT_BATCH`: server does **not** echo `lastEventSeqNo = head`; client keeps its cursor when `events: []`. Full hydrate still learns head via `SNAPSHOT.lastEventSeqNo`.
+- `eventLog.length === 0` (match chưa có event nào): chỉ phát delta rỗng HỢP LỆ nếu `cursor == 0` AND `head == 0` AND `floor == 0` — nhưng runtime gate requires `cursor > 0 && head > 0`, so empty log always SNAPSHOT today. Mọi case log rỗng ⇒ SNAPSHOT.
+- Cursor > 0 mà head == 0 ⇒ invalid, fall back full (không phát delta rỗng cho client cũ đã "có cursor").
+
+Implementation pointer: `match.handler.ts:237-262` (gate), `match-state-machine.ts:569-585` (`getDelta`), `socket-store.updaters.ts:511-632` (client fold), `match.handler.spec.ts:968-1086` (handler test matrix).
+
+- **Cursor chỉ được cập nhật từ** `SNAPSHOT.lastEventSeqNo` và `EVENT_BATCH.events[*].seqNo`
+  (single source of truth ở `socket-store.updaters.ts:540`). Live updaters
+  (`applyRoundEndedState` / `applyPlayerEliminatedState` / `applyAnswerResultState`) KHÔNG tự
+  ghi cursor — phòng cursor bị coupling sai với replay protocol.
+
+Lý do chốt gọn: cursor chỉ tồn tại server-side ↔ client qua 2 event (`SNAPSHOT` echo +
+`EVENT_BATCH` broadcast), không có channel nào khác cần HMAC sign. Numeric `lastSeenSeqNo`
+
+- Zod cap coarse = đủ an toàn cho product 1-server-1-DB hiện tại; nếu sau này fan-out
+  multi-region / audit-trail compliance, kế thừa `Plan-D1` để thêm HMAC token.
+
+**Plan-D1 vẫn là tài liệu tham khảo** cho các nguyên tắc thiết kế (atomicity cursor↔events,
+event-log contiguity invariants, ghost-event detection) mà wire-shape của nó KHÔNG còn là
+authoritative contract. Khi đọc Phase D1 / D2 / D3 / D4 bên dưới, mọi mục đánh dấu
+"superseded" ở trên được thay bằng hành vi "implemented" ở file pointer kia.
+
 ## Phase
 
 ### Phase D1 — Thiết kế contract (không code)

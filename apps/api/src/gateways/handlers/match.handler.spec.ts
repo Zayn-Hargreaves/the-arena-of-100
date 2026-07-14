@@ -1039,6 +1039,36 @@ describe("MatchHandler", () => {
       );
     });
 
+    // Plan D boundary pin: canDelta requires cursor >= floor. floor-1
+    // is rejected even though getDelta(floor-1) would return the full
+    // retained log — preserve runtime (snapshot fallback).
+    it("falls back to full SNAPSHOT when the cursor is exactly floor - 1", async () => {
+      const snapshot = { matchId: "m1", status: "ROUND_ACTIVE" };
+      const mockMachine = {
+        getSnapshot: vi.fn().mockReturnValue(snapshot),
+        getState: vi.fn().mockReturnValue({ roomId: "r1" }),
+        getHeadSeqNo: vi.fn().mockReturnValue(20),
+        getFloorSeqNo: vi.fn().mockReturnValue(10),
+        getDelta: vi.fn(),
+      };
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        mockMachine as any,
+      );
+
+      await handler.handleRequestSnapshot(client, {
+        matchId: "m1",
+        lastSeenSeqNo: 9, // floor - 1: gate rejects (cursor < floor)
+      });
+
+      expect(mockMachine.getSnapshot).toHaveBeenCalledWith(20);
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.SNAPSHOT, snapshot);
+      expect(mockMachine.getDelta).not.toHaveBeenCalled();
+      expect(client.emit).not.toHaveBeenCalledWith(
+        ServerEvent.EVENT_BATCH,
+        expect.anything(),
+      );
+    });
+
     it("falls back to full SNAPSHOT when the cursor is ahead of head", async () => {
       const snapshot = { matchId: "m1", status: "ROUND_ACTIVE" };
       const mockMachine = {

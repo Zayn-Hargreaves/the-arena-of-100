@@ -11,7 +11,7 @@ Xây UI trong khu admin để xem/lọc/phân trang **audit events** của admin
 
 - `apps/api/src/modules/admin/ops/admin-audit.ops.ts` — `appendAudit`, `getAuditEvents` (paginated).
 - `apps/api/src/modules/admin/admin.controller.ts:108` — `@Get("audit-events")`.
-- `apps/api/src/modules/admin/dto/get-audit-events.dto.ts` — query/response DTO (dùng làm nguồn cho type FE).
+- `apps/api/src/modules/admin/dto/get-audit-events.dto.ts` — query/response DTO **chỉ dùng cho controller side** (Zod schema + Swagger decoration); không phải nguồn type cho FE. **FE/BE shared types sống ở `@arena/shared`** (xem `packages/shared/src/audit.ts:24,35,57,73,82` — `KnownAuditEventType`, `AuditEventType`, `AuditEvent`, `GetAuditEventsParams`, `AuditEventsResponse`).
 - Migration `20260618120000_admin_audit_event`.
 
 ## Vì sao độc lập
@@ -22,9 +22,19 @@ Chỉ thêm code trong `apps/web/src/app/[locale]/admin/` + component/hook FE. K
 
 ### Phase B1 — Data layer (FE)
 
-- [ ] Thêm API client gọi `GET /admin/audit-events` (dùng axios/react-query đã có trong dự án).
-- [ ] Định nghĩa type khớp `get-audit-events.dto.ts` (đồng bộ shape, tránh drift).
-- [ ] Hook `use-audit-events.ts`: phân trang (cursor/offset theo DTO), loading/error state.
+- ✅ ĐÃ DONE: Audit-event types sống trong `@arena/shared`, KHÔNG sync từ `get-audit-events.dto.ts`.
+  - `packages/shared/src/audit.ts:24,35,57,73,82` — `KnownAuditEventType`, `AuditEventType`,
+    `AuditEvent`, `GetAuditEventsParams`, `AuditEventsResponse`.
+  - `apps/web/src/lib/api/audit.ts:10` import `{ AuditEventsResponse, GetAuditEventsParams } from "@arena/shared"`
+    — không import symbol nào từ `@arena/api`.
+  - Shared contract: FE/BE consume the same `@arena/shared` symbols. Shape alignment vs controller
+    Zod is **not** assumed zero-drift by construction — require contract tests or documented
+    evidence (see Acceptance).
+  - Open option "generate type from DTO" → đóng: không còn cần; types đã ở shared.
+- [ ] API client gọi `GET /admin/audit-events` (đã có tại `apps/web/src/lib/api/audit.ts:40-46`:
+      `getAuditEvents(params, token?)` qua `apiGetJson`).
+- [ ] Hook `use-audit-events.ts`: phân trang (cursor/offset theo DTO), loading/error state
+      (đã có tại `apps/web/src/hooks/use-audit-events.ts`).
 
 ### Phase B2 — UI panel
 
@@ -57,7 +67,14 @@ apps/web/src/lib/api/
 
 - [ ] Panel liệt kê audit events, phân trang chạy đúng với backend.
 - [ ] Filter theo action + thời gian + room hoạt động.
-- [ ] Test FE pass; type FE khớp DTO backend.
+- [ ] Test FE pass.
+- [ ] **Shared contract (FE)**: FE imports only `@arena/shared` audit symbols —
+      `KnownAuditEventType`, `AuditEventType`, `AuditEvent`, `GetAuditEventsParams`,
+      `AuditEventsResponse` — not backend DTO types from `get-audit-events.dto.ts` / `@arena/api`.
+- [ ] **Contract evidence**: contract tests **or** documented evidence that those shared types
+      remain valid against the controller’s Zod schema in
+      `apps/api/src/modules/admin/dto/get-audit-events.dto.ts`. Do **not** claim zero-drift
+      without that evidence.
 - [ ] **Pre-edit impact analysis (required, every symbol Track B will add or modify)**:
   - Track B touches the FE admin area. Run `gitnexus_impact({direction: "upstream"})` for **every** function, class, or method that will be added or modified — NOT only the existing `AdminPage`. The minimum set (recorded here; expand if a new symbol is added):
     - `apps/web/src/app/[locale]/admin/page.tsx:AdminPage` (existing route guard — pre-existing symbol).
@@ -96,5 +113,8 @@ apps/web/src/lib/api/
 
 ## Rủi ro
 
-- Drift type FE vs DTO backend → sinh type từ DTO hoặc share qua `packages/shared` nếu phù hợp.
+- Drift type FE vs backend DTO: mitigated by shared `@arena/shared/audit.ts` symbols (FE must not
+  import DTO types). `get-audit-events.dto.ts` remains controller-side Zod/Swagger only.
+  Residual drift risk is closed only when Acceptance contract tests/evidence pass — not by
+  shared-location alone.
 - Cần auth/route guard cho khu admin (kiểm tra pattern bảo vệ route admin hiện có trước khi thêm trang).

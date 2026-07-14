@@ -4,20 +4,20 @@
 > theo trách nhiệm, **không đổi hành vi runtime**, giữ nguyên public API + constructor để 1354 dòng
 > test (`admin.service.spec.ts` 51 tests + module/controller specs) xanh **không phải sửa**.
 
-## ✅ Trạng thái: ĐÃ XONG (2026-07-11)
+## ✅ Code: XONG (2026-07-11). ⚠️ Verification cuối: GitNexus re-index của `apps/api/src/modules/admin/ops/*` + `apps/api/src/modules/room/room-cache.store.ts` chưa chạy → các số liệu dưới đây là `[re-verify]` sau khi `npx gitnexus analyze` chạy xong.
 
 | File                          | Trước | Sau    |
 | ----------------------------- | ----- | ------ |
-| `admin.service.ts` (facade)   | 761   | **86** |
+| `admin.service.ts` (facade)   | 761   | **83** |
 | `ops/admin-audit.ops.ts`      | —     | 99     |
 | `ops/question-sync.ops.ts`    | —     | 216    |
 | `ops/system-reset.ops.ts`     | —     | 169    |
 | `ops/room-termination.ops.ts` | —     | 330    |
 
-Verify: `admin` suite **99/99** xanh, full api **912/912** xanh, `tsc --noEmit` sạch, `eslint` sạch,
-`gitnexus check` **0 cycles**, `detect_changes` scope gọn trong admin (0 process ảnh hưởng).
+Verify: `admin` suite `[re-verify: 99/99]`, full api `[re-verify total: 912/912]`, `tsc --noEmit` sạch, `eslint` sạch,
+`gitnexus check` `[re-verify: 0 cycles]`, `detect_changes` scope gọn trong admin (`[re-verify: 0 process ảnh hưởng]`).
 **Spec KHÔNG sửa 1 dòng** (mục tiêu đạt): constructor + public API + logger reference giữ nguyên.
-Còn lại (chưa re-index gitnexus): chạy `npx gitnexus analyze` để graph thấy các file ops/store mới.
+Còn lại (chưa re-index gitnexus): chạy `npx gitnexus analyze` để graph thấy các file ops/store mới, rồi chạy lại `npx gitnexus detect-changes` để verify scope trước khi merge.
 
 ### Bonus — `room.service.ts` (cùng đợt)
 
@@ -33,38 +33,59 @@ concurrency-guard memory bảo cô lập sau method có tên rõ.
 
 `RoomCacheStore(redis, logger)` khởi tạo như field trong constructor `RoomService` (constructor vẫn `(prisma, redis)`
 để spec `new RoomService(prisma, redis)` xanh). 4 private method → `setSnapshot`/`syncPlayerCount`/`syncRoomState`/
-`decrementPlayerCountClamped`. Verify: `room` suite **96/96** xanh, full api **912/912**, tsc + eslint sạch, 0 cycle.
+`decrementPlayerCountClamped`. Verify: `room` suite `[re-verify: 96/96]`, full api `[re-verify total: 912/912]`, tsc + eslint sạch, `[re-verify: 0 cycle]`.
 Lua concurrency script giờ **unit-test được độc lập** (follow-up: thêm `room-cache.store.spec.ts`).
 
 ### Bonus 2 — `game/[matchId]/page.tsx` (atomic-design split, cùng đợt)
 
-God-component **719 dòng** = ~400 logic (hooks/effects/handlers) + ~314 JSX với nhiều organism inline.
-Web theo convention **feature-folder** (`components/game/*` + barrel, giống `lobby/`), KHÔNG phải atoms/molecules/organisms thuần.
-File này **không có test** → tách **verbatim** (giữ nguyên className + `data-testid`), **giữ toàn bộ logic ở page** (phần rủi ro nhất, không đụng), verify bằng typecheck + build.
+Tách thành 2 phase rõ ràng:
 
-Tách 9 organism vào `components/game/*`, mỗi cái tự gọi `useTranslations` (đúng convention `lobby/`):
-`EliminatedOverlay`, `SpectatorBanner`, `GameStateRibbon`, `QuestionCard`, `AnswerPanel`, `OpponentsSidebar`
-(ôm luôn `getPlayerAvatar`), `AntiHackNote`, `LeaveMatchButton`, `MatchFinishedOverlay` + barrel `index.ts`.
+#### Trước refactor
+
+- God-component **`game/[matchId]/page.tsx` 719 dòng** = ~400 dòng logic (hooks/effects/handlers) + ~314 dòng JSX với nhiều organism inline. Không có test (`page.spec.tsx` chưa tồn tại, không có organism test).
+- Web theo convention **feature-folder** (`components/game/*` + barrel, giống `lobby/`), KHÔNG phải atoms/molecules/organisms thuần.
+- Đánh giá: blast cao + 0 test → refactor behavior-preserving không verify được. **Đề xuất ban đầu: tách sau, phải viết test trước** (xem "Bối cảnh" line 76).
+
+#### Sau refactor
+
+- Tách verbatim (giữ nguyên `className` + `data-testid`), giữ toàn bộ logic ở page (phần rủi ro nhất, không đụng).
+- Tách 9 organism vào `components/game/*`, mỗi cái tự gọi `useTranslations` (đúng convention `lobby/`):
+  `EliminatedOverlay`, `SpectatorBanner`, `GameStateRibbon`, `QuestionCard`, `AnswerPanel`, `OpponentsSidebar`
+  (ôm luôn `getPlayerAvatar`), `AntiHackNote`, `LeaveMatchButton`, `MatchFinishedOverlay` + barrel `index.ts`.
 
 | File                                            | Trước | Sau     |
 | ----------------------------------------------- | ----- | ------- |
-| `game/[matchId]/page.tsx` (logic + composition) | 719   | **459** |
+| `game/[matchId]/page.tsx` (logic + composition) | 719   | **511** |
 | 9 organism + barrel trong `components/game/`    | —     | 499     |
 
-Page giờ chỉ còn state/effects/handlers + composition. Verify: web **typecheck** sạch, **eslint** sạch,
-`next build` **thành công** (route `/[locale]/game/[matchId]` compile OK).
+- Page giờ chỉ còn state/effects/handlers + composition. Verify: web **typecheck** sạch, **eslint** sạch,
+  `next build` **thành công** (route `/[locale]/game/[matchId]` compile OK).
 
-**Đã thêm test cho organism** (lấp lỗ hổng "route không có test"): 6 spec file, **21 test**, phủ logic thật —
-`OpponentsSidebar` (empty fallback, sort alive-trước-eliminated, badge, không mock-data), `AnswerPanel`
-(branch spectator/eliminated vs tile tương tác, map option→A/B/C/D, onSelect, disabled), `QuestionCard`
-(skeleton vs question, locked/waiting), `GameStateRibbon`, `LeaveMatchButton`, + smoke cho overlay/banner/note.
-**Đã thêm render-test cho page** (`page.spec.tsx`, **11 test**): mock socket-store (`vi.hoisted` + `getState`/`setState`),
+**Đã thêm test cho organism** (lấp lỗ hổng "route không có test"):
+
+| Spec file                                     | Tests  |
+| --------------------------------------------- | ------ |
+| `components/game/answer-panel.spec.tsx`       | 5      |
+| `components/game/game-state-ribbon.spec.tsx`  | 1      |
+| `components/game/leave-match-button.spec.tsx` | 2      |
+| `components/game/opponents-sidebar.spec.tsx`  | 6      |
+| `components/game/overlays.spec.tsx`           | 9      |
+| `components/game/question-card.spec.tsx`      | 4      |
+| **Organism total**                            | **27** |
+
+Phủ logic thật — `OpponentsSidebar` (empty fallback, sort alive-trước-eliminated, badge, không mock-data),
+`AnswerPanel` (branch spectator/eliminated vs tile tương tác, map option→A/B/C/D, onSelect, disabled),
+`QuestionCard` (skeleton vs question, locked/waiting), `GameStateRibbon`, `LeaveMatchButton`,
+
+- smoke cho overlay/banner/note.
+
+**Đã thêm render-test cho page** (`page.spec.tsx`, **13 test**): mock socket-store (`vi.hoisted` + `getState`/`setState`),
 stub organism + `AppShellLayout`, fake timers + `Suspense` cho `use(params)`. Phủ: snapshot hydration (gọi 1 lần khi
 match=null, không gọi khi đã có match), answer-submit gating (submit khi active; chặn khi spectator; chặn khi round=0),
 eliminated overlay / spectator banner derivation, ribbon remaining/total, **finished→redirect `/result` sau 3s**,
 **admin-termination→toast + redirect `/` sau 1.5s**, leave-flow confirm.
 
-Web test tổng: **50 → 82** xanh (21 organism + 11 page). typecheck + build sạch.
+Web test tổng: **50 → 90** xanh (27 organism + 13 page, delta +40). typecheck + build sạch.
 
 ## Bối cảnh (đo bằng GitNexus, index khớp HEAD)
 
@@ -106,7 +127,7 @@ File mới trong `apps/api/src/modules/admin/ops/`:
 - `system-reset.ops.ts` — `resetSystem(deps, adminUserId)`; deps `{ prisma, redis, logger }`.
 - `room-termination.ops.ts` — `terminateRoom(deps, roomId, adminUserId, message?)` + `TerminateRoomResult` type + helper private module-scope; deps `{ prisma, redis, roomService, matchService, gameLoopService, logger }`.
 
-`AdminService` sau cùng (~120 dòng): giữ interface tương thích, constructor 5 deps, 5 method delegate.
+`AdminService` sau cùng (83 dòng): giữ interface tương thích, constructor 5 deps, **4 method delegate** (`syncQuestions`, `resetSystem`, `terminateRoom`, `getAuditEvents`). Contract kiểm chứng tại `apps/api/src/modules/admin/admin.service.ts:39,47,54,74` (4 public method export surface controller gọi qua).
 
 ## Thứ tự thực thi (an toàn → phụ thuộc)
 
