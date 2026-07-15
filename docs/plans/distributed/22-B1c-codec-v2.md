@@ -14,14 +14,17 @@ a naive bump flips every live v1 match's `startingPlayers` to `UNAVAILABLE`.
 
 1. Bump `SERIALIZED_STATE_VERSION` `1 → 2`.
 2. Replace the strict gate with a supported-set:
+
    ```ts
    const SUPPORTED_STATE_VERSIONS = new Set([1, 2]);
    function hasSupportedStateVersion(parsed): boolean {
      return SUPPORTED_STATE_VERSIONS.has(parsed?._stateVersion);
    }
    ```
+
    Ensure `deserializeStartingPlayers` (and anything else that branched on the strict check)
    now treats both 1 and 2 as supported, so v1 `startingPlayers` semantics are preserved.
+
 3. The dedicated persisted `ROUND_RESULT` anchor is
    `state.roundResultStartedAt: number | null` (epoch milliseconds) — **a nullable field on the
    shared `MatchState` contract in `packages/shared/src/state.ts` (added in B1b, default `null`),

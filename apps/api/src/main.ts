@@ -18,6 +18,8 @@ import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import helmet from "@fastify/helmet";
 import { RedisIoAdapter } from "./adapters/redis-io.adapter";
 
+const APP_CLOSE_TIMEOUT_MS = 10000;
+
 async function bootstrap() {
   const logger = new Logger("Bootstrap");
 
@@ -149,17 +151,44 @@ async function bootstrap() {
     // only after startup has settled, never concurrently with it.
     await startupSettled.catch(() => {});
     let hadError = false;
+    // Close the app (HTTP + Socket.IO server) BEFORE quitting the Redis
+    // clients: the server's per-namespace RedisAdapters publish and
+    // unsubscribe through those clients, so quitting first would leave the
+    // draining server broadcasting into dead connections.
+    //
+    // Bound the wait like the adapter's quitWithTimeout: a close() that hangs
+    // (e.g. a connection that never drains) must not wedge shutdown before
+    // the Redis clients are released. A losing app.close() rejection is
+    // already observed by Promise.race, so it can't become unhandled.
+    try {
+      let closeTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          app.close(),
+          new Promise<never>((_, reject) => {
+            closeTimer = setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    `app.close() timed out after ${APP_CLOSE_TIMEOUT_MS}ms`,
+                  ),
+                ),
+              APP_CLOSE_TIMEOUT_MS,
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(closeTimer);
+      }
+    } catch (err) {
+      hadError = true;
+      logger.error(`App close failed: ${describeError(err)}`);
+    }
     try {
       await redisIoAdapter.disconnect();
     } catch (err) {
       hadError = true;
       logger.error(`Redis adapter disconnect failed: ${describeError(err)}`);
-    }
-    try {
-      await app.close();
-    } catch (err) {
-      hadError = true;
-      logger.error(`App close failed: ${describeError(err)}`);
     }
     if (hadError) process.exitCode = 1;
   };
