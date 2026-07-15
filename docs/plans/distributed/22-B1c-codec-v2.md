@@ -12,236 +12,248 @@ a naive bump flips every live v1 match's `startingPlayers` to `UNAVAILABLE`.
 
 ## Edits — `packages/game-core/src/match-state.codec.ts`
 
-1. Bump `SERIALIZED_STATE_VERSION` `1 → 2`.
-2. Replace the strict gate with a supported-set that **also** rejects values
-   that are not numerically-integer, so a future version (3), a string version
-   (`"2"`), a boolean, an object, or `null` is rejected **before** any state
-   hydration runs:
+1.  Bump `SERIALIZED_STATE_VERSION` `1 → 2`.
+2.  Replace the strict gate with a supported-set that **also** rejects values
+    that are not numerically-integer, so a future version (3), a string version
+    (`"2"`), a boolean, an object, or `null` is rejected **before** any state
+    hydration runs:
 
-   ```ts
-   const SUPPORTED_STATE_VERSIONS = new Set([1, 2]);
-   function hasSupportedStateVersion(parsed: unknown): boolean {
-     const version = (parsed as { _stateVersion?: unknown })?._stateVersion;
-     return Number.isInteger(version) && SUPPORTED_STATE_VERSIONS.has(version);
-   }
-   ```
+    ```ts
+    const SUPPORTED_STATE_VERSIONS = new Set([1, 2]);
+    function hasSupportedStateVersion(parsed: unknown): boolean {
+      const version = (parsed as { _stateVersion?: unknown })?._stateVersion;
+      return Number.isInteger(version) && SUPPORTED_STATE_VERSIONS.has(version);
+    }
+    ```
 
-   **On numerical equivalence of integer values.** `JSON.parse` and
-   `Number.isInteger` cannot distinguish `2` from `2.0` (or `2.0000`, `2e0`,
-   etc.) — they are the same IEEE 754 number, and the JSON spec does not
-   preserve lexical form. `_stateVersion: 2.0` is therefore _accepted_ by
-   `hasSupportedStateVersion` and treated identically to `_stateVersion: 2`.
-   This is the intended behavior: a v2 blob is a v2 blob regardless of how
-   the integer was written on the wire. If a stricter contract is later
-   required (e.g. to reject hand-edited blobs that round-trip a 1.5 to 2
-   through NaN), the gate would have to inspect the raw JSON representation
-   _before_ parsing — for example by walking the string for the
-   `"_stateVersion"` key and checking the literal token — because the
-   numeric value is already lossy by the time `JSON.parse` returns. That is
-   out of scope for B1c. The supported set semantics are still in force:
-   `Number.isInteger(3) === true` AND `SUPPORTED_STATE_VERSIONS.has(3) === false`,
-   so any integer _not_ in the supported set — including all future
-   versions — is rejected on a single, well-defined error path. Values that
-   `Number.isInteger` rejects (strings, booleans, objects, `null`, `NaN`,
-   `Infinity`, floats) are rejected at the same gate.
+    **On numerical equivalence of integer values.** `JSON.parse` and
+    `Number.isInteger` cannot distinguish `2` from `2.0` (or `2.0000`, `2e0`,
+    etc.) — they are the same IEEE 754 number, and the JSON spec does not
+    preserve lexical form. `_stateVersion: 2.0` is therefore _accepted_ by
+    `hasSupportedStateVersion` and treated identically to `_stateVersion: 2`.
+    This is the intended behavior: a v2 blob is a v2 blob regardless of how
+    the integer was written on the wire. If a stricter contract is later
+    required (e.g. to reject hand-edited blobs that round-trip a 1.5 to 2
+    through NaN), the gate would have to inspect the raw JSON representation
+    _before_ parsing — for example by walking the string for the
+    `"_stateVersion"` key and checking the literal token — because the
+    numeric value is already lossy by the time `JSON.parse` returns. That is
+    out of scope for B1c. The supported set semantics are still in force:
+    `Number.isInteger(3) === true` AND `SUPPORTED_STATE_VERSIONS.has(3) === false`,
+    so any integer _not_ in the supported set — including all future
+    versions — is rejected on a single, well-defined error path. Values that
+    `Number.isInteger` rejects (strings, booleans, objects, `null`, `NaN`,
+    `Infinity`, floats) are rejected at the same gate.
 
-   `deserializeStartingPlayers` (and anything else that branched on the strict
-   check) now treats both 1 and 2 as supported, so v1 `startingPlayers` semantics
-   are preserved. **Order of operations:** `hasSupportedStateVersion` is the
-   first gate after JSON parse. Only after it returns `true` does the
-   deserializer touch `state`, `currentRound`, or `eventLog`. Any unsupported
-   version throws _before_ any field is read or copied.
+    `deserializeStartingPlayers` (and anything else that branched on the strict
+    check) now treats both 1 and 2 as supported, so v1 `startingPlayers` semantics
+    are preserved. **Order of operations:** `hasSupportedStateVersion` is the
+    first gate after JSON parse. Only after it returns `true` does the
+    deserializer touch `state`, `currentRound`, or `eventLog`. Any unsupported
+    version throws _before_ any field is read or copied.
 
-3. The dedicated persisted `ROUND_RESULT` anchor is
-   `state.roundResultStartedAt: number | null` (epoch milliseconds) — **a nullable field on the
-   shared `MatchState` contract in `packages/shared/src/state.ts` (added in B1b, default `null`),
-   not a codec-only field. That contract change must exist before this phase's codec logic lands.**
-   The state machine (B1b) sets it to the server-authoritative moment the result-display
-   phase begins when entering `ROUND_RESULT` and resets it to `null` in every other phase;
-   the codec here only serializes/validates it. Backward-compatible v1 blobs may
-   be missing this field, in which case the result phase has no stable anchor and
-   `deserializeMatch` leaves `phaseEndsAt` as `null`. If a v1/v2 blob does contain
-   `roundResultStartedAt`, `deserializeMatch` validates that it is a finite number and
-   reuses it as the sole result-display anchor by computing
-   `roundResultStartedAt + GAME_CONFIG.RESULT_DISPLAY_MS`. Do not infer this anchor
-   from `currentRound.endsAt`, and do not synthesize it from `Date.now()` in ordinary
-   game-core hydration; `@arena/game-core` stays deterministic and pure.
+3.  The dedicated persisted `ROUND_RESULT` anchor is
+    `state.roundResultStartedAt: number | null` (epoch milliseconds) — **a nullable field on the
+    shared `MatchState` contract in `packages/shared/src/state.ts` (added in B1b, default `null`),
+    not a codec-only field. That contract change must exist before this phase's codec logic lands.**
+    The state machine (B1b) sets it to the server-authoritative moment the result-display
+    phase begins when entering `ROUND_RESULT` and resets it to `null` in every other phase;
+    the codec here only serializes/validates it. Backward-compatible v1 blobs may
+    be missing this field, in which case the result phase has no stable anchor and
+    `deserializeMatch` leaves `phaseEndsAt` as `null`. If a v1/v2 blob does contain
+    `roundResultStartedAt`, `deserializeMatch` validates that it is a finite number and
+    reuses it as the sole result-display anchor by computing
+    `roundResultStartedAt + GAME_CONFIG.RESULT_DISPLAY_MS`. Do not infer this anchor
+    from `currentRound.endsAt`, and do not synthesize it from `Date.now()` in ordinary
+    game-core hydration; `@arena/game-core` stays deterministic and pure.
 
-4. **Wire schema for the timing fields.** Extend `DeserializedMatch.state` and the
-   inline `DeserializedMatch` shape in `match-state.codec.ts` so the JSON wire
-   format explicitly declares every timing field the deserializer will read.
-   The unified rule is: **every timing field accepts `finite number` OR the
-   value(s) explicitly permitted by its semantic role; only `undefined` means
-   "missing" and triggers v1 backfill; any other type is rejected.** `null`
-   is preserved unchanged for every field where it is semantically valid —
-   it is the canonical "deadline unknown" / "no anchor yet" sentinel and is
-   never thrown away by validation:
-   - `state.phaseEndsAt`: `number | null | undefined`. `null` is the
-     canonical "deadline unknown" value (returned by the fail-closed backfill
-     and produced by the B3b owner before it materializes a fresh grace
-     deadline). `undefined` is "missing on a v1 blob" and triggers the
-     status-aware backfill in edit 5. A finite number passes through.
-   - `state.roundResultStartedAt`: `number | null | undefined`. `null` is
-     the documented default (the B1b state machine sets it to `null` in
-     every non-`ROUND_RESULT` phase). `undefined` is "missing on a v1 blob"
-     — there is no backfill for this field, since the result-phase anchor is
-     only meaningful when `status === ROUND_RESULT`. A finite number passes
-     through.
-   - `state.startedAt`: `number | null | undefined`. `null` and `undefined`
-     are both legal — a v2 blob whose COUNTDOWN phase has not yet been armed
-     may have either, since the state machine only sets `startedAt` on the
-     COUNTDOWN transition. A finite number passes through.
+4.  **Wire schema for the timing fields.** Extend `DeserializedMatch.state` and the
+    inline `DeserializedMatch` shape in `match-state.codec.ts` so the JSON wire
+    format explicitly declares every timing field the deserializer will read.
+    The unified rule is: **every timing field accepts `finite number` OR the
+    value(s) explicitly permitted by its semantic role; only `undefined` means
+    "missing" and triggers v1 backfill; any other type is rejected.** `null`
+    is preserved unchanged for every field where it is semantically valid —
+    it is the canonical "deadline unknown" / "no anchor yet" sentinel and is
+    never thrown away by validation: - `state.phaseEndsAt`: `number | null` (on returned `MatchState`). On the JSON
+    wire format, a v1 blob may omit it (`undefined` / missing), which triggers
+    the status-aware backfill in edit 5. A v2 blob MUST include `phaseEndsAt`
+    (either as a finite number or `null`); if `phaseEndsAt` is `undefined` on
+    a v2 blob, the deserializer rejects it immediately in Phase 1 validation.
+    `null` is the canonical "deadline unknown" value (returned by the fail-closed
+    backfill and produced by the B3b owner before it materializes a fresh grace
+    deadline). A finite number passes through. - `state.roundResultStartedAt`: `number | null` (on returned `MatchState`). On
+    the JSON wire format (v1 or v2), it may be missing (`undefined`). To ensure
+    robustness and prevent silent failure-masking, Phase 1 validation must run
+    _before_ any status-based normalization: any invalid types (strings, objects,
+    booleans, arrays) or non-finite numbers (NaN, Infinity) MUST be rejected and
+    throw immediately, even if the match status is not `ROUND_RESULT`. Only
+    `undefined`, `null`, or valid finite numeric values may proceed to Phase 2.
+    In Phase 2, the value is normalized to `null` unless the match status is
+    strictly `ROUND_RESULT` (where valid finite numbers are preserved). - `state.startedAt`: `number | null` (on returned `MatchState`). On the JSON
+    wire format (v1 or v2), it may be missing (`undefined`) or `null`. If it
+    is missing (`undefined`) on the wire, it is normalized to `null` on the
+    returned `MatchState`. A finite numeric value passes through unchanged.
 
-     **Validation during `deserializeMatch`.** All raw timing fields are
-     validated **before any backfill or arithmetic runs**, in a fixed two-phase
-     order so a malformed field can never feed into a `NaN` deadline that
-     reaches `getRemainingMs`:
+         **Validation during `deserializeMatch`.** All raw timing fields are
+         validated **before any backfill or arithmetic runs**, in a fixed two-phase
+         order so a malformed field can never feed into a `NaN` deadline that
+         reaches `getRemainingMs`:
 
-   - **Phase 1 — validate every timing field on the raw wire object.** For
-     each of `state.phaseEndsAt`, `state.roundResultStartedAt`,
-     `state.startedAt`, `currentRound.endsAt`, and
-     `currentRound.startedAt`, the deserializer checks, in order: (1) is
-     the value `undefined`? → mark the field "missing on a v1 blob"; (2) is
-     the value `null`? → permitted for `state.phaseEndsAt`,
-     `state.roundResultStartedAt`, and `state.startedAt` (per the per-field
-     type union above), preserved unchanged; for the nested
-     `currentRound.endsAt` / `currentRound.startedAt`, `null` is also
-     permitted (it means "this anchor is not present", which is a legal
-     v1-blob shape), preserved unchanged; (3) is the value a finite number
-     (i.e. `Number.isFinite(value)`)? → permitted, preserved unchanged;
-     (4) anything else (string, object, boolean, array, `NaN`,
-     `Infinity`) → throw an invalid-data error **immediately**, before any
-     other field is read, before any backfill, before any arithmetic. The
-     error message MUST NOT echo the offending payload (payloads can leak
-     question/answer content).
-   - **Phase 2 — v1 backfill of `phaseEndsAt` only.** This phase runs only
-     after Phase 1 has accepted every timing field on the raw object.
-     Only `state.phaseEndsAt` is backfilled. `state.roundResultStartedAt`
-     and `state.startedAt` are **not** backfilled — if a v1 blob omits
-     them, they remain `undefined` on the returned `MatchState` (or `null`
-     for `roundResultStartedAt`, which the state machine's B1b contract
-     declares as the default for any non-`ROUND_RESULT` phase). The
-     backfill uses the already-validated, already-known-finite
-     `currentRound.endsAt` / `currentRound.startedAt` from Phase 1 — the
-     backfill itself does not re-validate the nested fields; Phase 1
-     guarantees they are either `undefined`, `null`, or a finite number
-     by the time backfill runs.
-   - **Reusing the validator.** Extract the Phase 1 check into a single
-     helper that **returns the validated value** (not a type predicate —
-     a `value is …` predicate returns a boolean and cannot express the
-     "return the value or throw" behavior below, and `undefined` would
-     fall outside the predicate type anyway):
-     `validateTimingField(value: unknown, opts: { allowNull: boolean }):
+    - **Phase 1 — validate every timing field on the raw wire object.** For
+      each of `state.phaseEndsAt`, `state.roundResultStartedAt`,
+      `state.startedAt`, `currentRound.endsAt`, and
+      `currentRound.startedAt`, the deserializer checks, in order: (1) is
+      the value `undefined`? → mark the field "missing on a v1 blob"; (2) is
+      the value `null`? → permitted for `state.phaseEndsAt`,
+      `state.roundResultStartedAt`, and `state.startedAt` (per the per-field
+      type union above), preserved unchanged; for the nested
+      `currentRound.endsAt` / `currentRound.startedAt`, `null` is also
+      permitted (it means "this anchor is not present", which is a legal
+      v1-blob shape), preserved unchanged; (3) is the value a finite number
+      (i.e. `Number.isFinite(value)`)? → permitted, preserved unchanged;
+      (4) anything else (string, object, boolean, array, `NaN`,
+      `Infinity`) → throw an invalid-data error **immediately**, before any
+      other field is read, before any backfill, before any arithmetic. The
+      error message MUST NOT echo the offending payload (payloads can leak
+      question/answer content).
+    - **Phase 2 — Timing Field Normalization and v1 Backfill.** This phase runs for all blobs (v1 and v2) after Phase 1 validation has succeeded. While the reconstruction (backfill) of `phaseEndsAt` from nested round parameters is executed only for v1 blobs, the normalization of timing fields and the `roundResultStartedAt` phase status invariant are applied globally to both v1 and v2 blobs:
+      1. **Backfill `state.phaseEndsAt` (v1-only):** For v1 blobs, uses the already-validated,
+         already-known-finite `currentRound.endsAt` / `currentRound.startedAt`
+         from Phase 1. If the backfill cannot reconstruct a deadline, it resolves
+         `state.phaseEndsAt` to `null`.
+      2. **Strict normalization to `null` (v1 & v2):** On the returned `MatchState`, all
+         omitted legacy timing fields are normalized to `null` rather than
+         passing `undefined` values through. Specifically:
+         - If `state.phaseEndsAt` is `undefined` on a v1 blob and cannot be
+           reconstructed by backfill, it is set to `null`.
+         - If `state.roundResultStartedAt` is `undefined` (common on v1 blobs),
+           it is normalized to `null`.
+         - **Invariant enforcement for `roundResultStartedAt`:** If the match
+           status is NOT `ROUND_RESULT`, `state.roundResultStartedAt` MUST be
+           strictly normalized/overwritten to `null` on the returned `MatchState`
+           even if a non-null value was present on the wire. This ensures that a
+           stale result-display anchor cannot survive outside its phase.
+         - **Normalization for `startedAt`:** If `state.startedAt` is omitted
+           on the wire (`undefined`), it is normalized to `null` on the returned
+           `MatchState`.
+    - **Reusing the validator.** Extract the Phase 1 check into a single
+      helper that **returns the validated value** (not a type predicate —
+      a `value is …` predicate returns a boolean and cannot express the
+      "return the value or throw" behavior below, and `undefined` would
+      fall outside the predicate type anyway):
+      `validateTimingField(value: unknown, opts: { allowNull: boolean }):
 number | null | undefined`. Call it from every timing-field site
-     (state top-level, `currentRound` nested, and any future wire field),
-     and have each call site use the **returned** value rather than the
-     raw wire value. The helper's contract is the unified rule above:
-     `undefined` is returned (treated as "missing"), `null` is returned
-     only when `allowNull` is `true` (otherwise throw), a finite number
-     is returned, anything else throws with no payload in the message.
-     Every backfill and arithmetic site that reads a timing field MUST go
-     through this helper. **There is no other way** a timing field reaches
-     a `+` operator, a comparison, or `getRemainingMs` without being
-     declared finite by the helper.
+      (state top-level, `currentRound` nested, and any future wire field),
+      and have each call site use the **returned** value rather than the
+      raw wire value. The helper's contract is the unified rule above:
+      `undefined` is returned (treated as "missing"), `null` is returned
+      only when `allowNull` is `true` (otherwise throw), a finite number
+      is returned, anything else throws with no payload in the message.
+      Every backfill and arithmetic site that reads a timing field MUST go
+      through this helper. **There is no other way** a timing field reaches
+      a `+` operator, a comparison, or `getRemainingMs` without being
+      declared finite by the helper.
 
-   This makes the hydration path **fail-closed** for malformed temporal
-   data — `getRemainingMs` can never observe a NaN, a string, or a value
-   derived from a corrupted anchor, and a payload that explicitly carries
-   `null` is never upgraded to a fabricated deadline by the deserializer.
+    This makes the hydration path **fail-closed** for malformed temporal
+    data — `getRemainingMs` can never observe a NaN, a string, or a value
+    derived from a corrupted anchor, and a payload that explicitly carries
+    `null` is never upgraded to a fabricated deadline by the deserializer.
 
-5. In `deserializeMatch`, backfill `phaseEndsAt` when absent (v1 blob). **Date.now() is
-   PROHIBITED inside ordinary `deserializeMatch` hydration for every existing phase** —
-   calling `Date.now()` there would let repeated `getStateMachine()` hydrations mint a new
-   deadline on every read. Reconstruct deterministically where a stable persisted anchor
-   exists, and otherwise leave the deadline unresolved until the B3b recovery/takeover
-   owner acquires the lease and materializes the one-time grace window.
-   The backfill runs **only after Phase 1 has accepted every timing field**
-   (per the wire-schema rule above); in particular, the nested
-   `currentRound?.endsAt` and `currentRound?.startedAt` are guaranteed
-   `undefined`, `null`, or a finite number by the time backfill touches
-   them. The backfill branches are:
-   - `status === ROUND_ACTIVE` → use `currentRound?.endsAt` when present
-     and **finite** (Phase 1 has already confirmed it is finite or `null`,
-     so a non-finite value is unreachable here). When `endsAt` is missing
-     (`undefined`) or `null`, anchor to
-     `currentRound?.startedAt + GAME_CONFIG.ROUND_DURATION_MS` only when
-     `startedAt` is present and **finite** (the same Phase 1 guarantee);
-     otherwise fail closed. **Never default to `Date.now()`.**
-   - `status === COUNTDOWN` → **guard on `state.startedAt`**: use the
-     anchored deadline `state.startedAt + GAME_CONFIG.COUNTDOWN_DURATION_MS`
-     **only when `state.startedAt` is a finite number**. (Phase 1 has
-     already rejected non-finite `startedAt`, so a `NaN` cannot reach this
-     arithmetic.) When `state.startedAt` is `null` or `undefined`, **fail
-     closed** — this deserialize path only ever sees a resumed/legacy blob,
-     never a freshly armed phase, so it must NOT be granted a fresh full
-     `COUNTDOWN_DURATION_MS` window (that would let a takeover restart the
-     countdown, non-authoritatively extending timing across failover).
-     (Never add `COUNTDOWN_DURATION_MS` to a null/undefined `startedAt` —
-     that would both yield `NaN` and re-grant a full window.) A fresh
-     `Date.now() + duration` window is reserved strictly for genuinely new,
-     never-armed COUNTDOWN state — which is armed by `transition`, not
-     reconstructed here. **Never default to `Date.now()`.**
-   - `status === ROUND_RESULT` → ordinary `deserializeMatch` MUST NOT mint
-     a fresh `Date.now() + GAME_CONFIG.RESULT_DISPLAY_MS` deadline. Reuse
-     only the dedicated persisted `state.roundResultStartedAt` anchor
-     (validated as a finite number or `null` in Phase 1): when the
-     validated anchor is a finite number, set
-     `phaseEndsAt = roundResultStartedAt + GAME_CONFIG.RESULT_DISPLAY_MS`;
-     when the anchor is `null` or missing (`undefined`), leave
-     `phaseEndsAt` unresolved (`null`) during normal hydration. Do **not**
-     reuse `currentRound.endsAt`, which belongs to the completed gameplay
-     round rather than the result-display phase. The **single server-authoritative owner that just acquired
-     the lease in B3b** is the only layer allowed to materialize the fresh
-     grace deadline, and it must fenced-persist that hydrated v2 blob back
-     to Redis exactly once **before** `resumeMatchLoop` continues. Existing
-     v2 blobs with a `phaseEndsAt` already set continue to pass through
-     unchanged. **The B3b owner materialization path is the only place
-     where `Date.now()` is allowed.**
-   - else → `null`.
-     Do this only if `parsed._stateVersion === 1 &&
+5.  In `deserializeMatch`, backfill `phaseEndsAt` when absent (v1 blob). **Date.now() is
+    PROHIBITED inside ordinary `deserializeMatch` hydration for every existing phase** —
+    calling `Date.now()` there would let repeated `getStateMachine()` hydrations mint a new
+    deadline on every read. Reconstruct deterministically where a stable persisted anchor
+    exists, and otherwise leave the deadline unresolved until the B3b recovery/takeover
+    owner acquires the lease and materializes the one-time grace window.
+    The backfill runs **only after Phase 1 has accepted every timing field**
+    (per the wire-schema rule above); in particular, the nested
+    `currentRound?.endsAt` and `currentRound?.startedAt` are guaranteed
+    `undefined`, `null`, or a finite number by the time backfill touches
+    them. The backfill branches are:
+    - `status === ROUND_ACTIVE` → use `currentRound?.endsAt` when present
+      and **finite** (Phase 1 has already confirmed it is finite or `null`,
+      so a non-finite value is unreachable here). When `endsAt` is missing
+      (`undefined`) or `null`, anchor to
+      `currentRound?.startedAt + GAME_CONFIG.ROUND_DURATION_MS` only when
+      `startedAt` is present and **finite** (the same Phase 1 guarantee);
+      otherwise fail closed. **Never default to `Date.now()`.**
+    - `status === COUNTDOWN` → **guard on `state.startedAt`**: use the
+      anchored deadline `state.startedAt + GAME_CONFIG.COUNTDOWN_DURATION_MS`
+      **only when `state.startedAt` is a finite number**. (Phase 1 has
+      already rejected non-finite `startedAt`, so a `NaN` cannot reach this
+      arithmetic.) When `state.startedAt` is `null` or `undefined`, **fail
+      closed** — this deserialize path only ever sees a resumed/legacy blob,
+      never a freshly armed phase, so it must NOT be granted a fresh full
+      `COUNTDOWN_DURATION_MS` window (that would let a takeover restart the
+      countdown, non-authoritatively extending timing across failover).
+      (Never add `COUNTDOWN_DURATION_MS` to a null/undefined `startedAt` —
+      that would both yield `NaN` and re-grant a full window.) A fresh
+      `Date.now() + duration` window is reserved strictly for genuinely new,
+      never-armed COUNTDOWN state — which is armed by `transition`, not
+      reconstructed here. **Never default to `Date.now()`.**
+    - `status === ROUND_RESULT` → ordinary `deserializeMatch` MUST NOT mint
+      a fresh `Date.now() + GAME_CONFIG.RESULT_DISPLAY_MS` deadline. Reuse
+      only the dedicated persisted `state.roundResultStartedAt` anchor
+      (validated as a finite number or `null` in Phase 1): when the
+      validated anchor is a finite number, set
+      `phaseEndsAt = roundResultStartedAt + GAME_CONFIG.RESULT_DISPLAY_MS`;
+      when the anchor is `null` or missing (`undefined`), leave
+      `phaseEndsAt` unresolved (`null`) during normal hydration. Do **not**
+      reuse `currentRound.endsAt`, which belongs to the completed gameplay
+      round rather than the result-display phase. The **single server-authoritative owner that just acquired
+      the lease in B3b** is the only layer allowed to materialize the fresh
+      grace deadline, and it must fenced-persist that hydrated v2 blob back
+      to Redis exactly once **before** `resumeMatchLoop` continues. Existing
+      v2 blobs with a `phaseEndsAt` already set continue to pass through
+      unchanged. **The B3b owner materialization path is the only place
+      where `Date.now()` is allowed.**
+    - else → `null`.
+      Do this only if `parsed._stateVersion === 1 &&
 parsed.state.phaseEndsAt === undefined`, so only genuine v1 blobs are
-     backfilled and **v2 blobs pass through untouched — including a v2 blob
-     whose `phaseEndsAt` is somehow missing** (a v2 writer always spreads
-     `{...state}`, so that shape is anomalous and must not be silently
-     repaired by the v1 backfill). A v1 blob that contains a malformed
-     `currentRound` (e.g. `endsAt: "soon"`, `startedAt: { value: 12345 }`,
-     or a non-finite number) MUST have been rejected in Phase 1 and MUST NOT
-     reach this backfill path.
+      backfilled. If `parsed._stateVersion === 2` and `parsed.state.phaseEndsAt`
+      is `undefined`, Phase 1 validation MUST reject the blob immediately as
+      malformed. Under no circumstances is a v2 blob missing `phaseEndsAt`
+      permitted to pass through with an `undefined` value or be silently
+      repaired by v1 backfill. A v1 blob that contains a malformed
+      `currentRound` (e.g. `endsAt: "soon"`, `startedAt: { value: 12345 }`,
+      or a non-finite number) MUST have been rejected in Phase 1 and MUST NOT
+      reach this backfill path.
 
-   **Fail-closed contract for `ROUND_ACTIVE` and `COUNTDOWN`.** When the deadline
-   cannot be reconstructed (e.g. `currentRound` is null, or both anchors are missing,
-   or `startedAt` is null), the backfill returns `phaseEndsAt = null`. The
-   server-authoritative semantics around that null are fixed and tested:
-   - `getRemainingMs()` MUST return `null` (NOT 0 and NOT a negative number). The
-     caller distinguishes "deadline unknown" from "deadline passed" by checking
-     `null` vs a non-null value.
-   - The match round/resume machinery MUST treat `null` as "no automatic timeout";
-     the round advances only via an explicit `endRound` call (driven by the owner
-     under the H1/B1 in-memory guards + B2c fenced CAS), NOT by a
-     `Date.now() - phaseEndsAt > 0` comparison.
-   - **Finite recovery path:** distinguish a persistent **missing legacy anchor** from a
-     transient hydrate/reconcile failure. `phaseEndsAt === null` by itself is not a retry /
-     dead-letter condition for `ROUND_ACTIVE` or `COUNTDOWN`; the owner retains an
-     authoritative repair/control path and may resolve the phase via the canonical
-     `endRound` flow. Only genuinely recoverable failures in hydration, lease/fence
-     validation, fenced persistence, or reconciliation go through B3b's bounded retry /
-     dead-letter wrapper. A match is not retried or dead-lettered solely because the
-     codec backfill returned `null`.
-   - `endRound` MUST NOT use `phaseEndsAt === null` as a signal to eliminate players
-     immediately. The fail-closed path defers the elimination to the owner's
-     authoritative `endRound`, which (a) re-validates the lease/fence, (b) reads
-     canonical state, and (c) emits the result event after the fenced persist —
-     never on the basis of a missing deadline. This is the single consistent
-     semantics: **`null` phaseEndsAt means "no auto-timeout"; player elimination
-     is owned by `endRound`, not by a backfill-driven timeout.**
+    **Fail-closed contract for `ROUND_ACTIVE` and `COUNTDOWN`.** When the deadline
+    cannot be reconstructed (e.g. `currentRound` is null, or both anchors are missing,
+    or `startedAt` is null), the backfill returns `phaseEndsAt = null`. The
+    server-authoritative semantics around that null are fixed and tested:
+    - `getRemainingMs()` MUST return `null` (NOT 0 and NOT a negative number). The
+      caller distinguishes "deadline unknown" from "deadline passed" by checking
+      `null` vs a non-null value.
+    - The match round/resume machinery MUST treat `null` as "no automatic timeout";
+      the round advances only via an explicit `endRound` call (driven by the owner
+      under the H1/B1 in-memory guards + B2c fenced CAS), NOT by a
+      `Date.now() - phaseEndsAt > 0` comparison.
+    - **Finite recovery path:** distinguish a persistent **missing legacy anchor** from a
+      transient hydrate/reconcile failure. `phaseEndsAt === null` by itself is not a retry /
+      dead-letter condition for `ROUND_ACTIVE` or `COUNTDOWN`; the owner retains an
+      authoritative repair/control path and may resolve the phase via the canonical
+      `endRound` flow. Only genuinely recoverable failures in hydration, lease/fence
+      validation, fenced persistence, or reconciliation go through B3b's bounded retry /
+      dead-letter wrapper. A match is not retried or dead-lettered solely because the
+      codec backfill returned `null`.
+    - `endRound` MUST NOT use `phaseEndsAt === null` as a signal to eliminate players
+      immediately. The fail-closed path defers the elimination to the owner's
+      authoritative `endRound`, which (a) re-validates the lease/fence, (b) reads
+      canonical state, and (c) emits the result event after the fenced persist —
+      never on the basis of a missing deadline. This is the single consistent
+      semantics: **`null` phaseEndsAt means "no auto-timeout"; player elimination
+      is owned by `endRound`, not by a backfill-driven timeout.**
 
-   > **Mixed-version window is short-lived.** `match:state` blobs have a 24h TTL and matches last
-   > minutes, so v1 blobs drain quickly after B1c ships. If even a bounded grace is unacceptable,
-   > the stricter option is to **gate B3 failover-takeover rollout** until no v1 blobs remain
-   > (e.g. after a full TTL cycle) — call this out in the B3b rollout notes.
+    > **Mixed-version window is short-lived.** `match:state` blobs have a 24h TTL and matches last
+    > minutes, so v1 blobs drain quickly after B1c ships. If even a bounded grace is unacceptable,
+    > the stricter option is to **gate B3 failover-takeover rollout** until no v1 blobs remain
+    > (e.g. after a full TTL cycle) — call this out in the B3b rollout notes.
 
-6. `serializeMatch` already spreads `{...state}`, so `phaseEndsAt` and
-   `roundResultStartedAt` are written automatically at v2.
+6.  `serializeMatch` already spreads `{...state}`, so `phaseEndsAt` and
+    `roundResultStartedAt` are written automatically at v2.
 
 ## Tests — `match-state.codec.spec.ts`
 
@@ -285,9 +297,9 @@ GAME_CONFIG.RESULT_DISPLAY_MS`, proving the stable-anchor path is independently 
     Each rejection MUST occur before any backfill or `currentRound` read, so
     `getRemainingMs` can never observe a corrupted deadline. `null` is **not**
     in this matrix — it is the canonical "deadline unknown" value and must
-    be preserved unchanged. `undefined` is **not** in this matrix either —
-    it is treated as "missing on a v1 blob" and triggers the status-aware
-    backfill in edit 5.
+    be preserved unchanged. For v1 blobs, `undefined` is treated as "missing" and
+    triggers the status-aware backfill/normalization in Phase 2. For v2 blobs,
+    `undefined` for `state.phaseEndsAt` is rejected immediately in Phase 1 validation.
 - **Non-finite `phaseEndsAt` values rejected (parsed-object / direct-validation
   path):** `JSON.stringify(NaN)` returns `"null"` and `JSON.stringify(Infinity)`
   returns `"null"`, so a JSON-roundtrip fixture cannot actually carry a
@@ -311,11 +323,10 @@ GAME_CONFIG.RESULT_DISPLAY_MS`, proving the stable-anchor path is independently 
 - **Invalid `roundResultStartedAt` types rejected (JSON-representable bad
   values):** same matrix as `phaseEndsAt` (string, object, boolean, array).
   `null` is **not** in this matrix — it is the documented default value and
-  must be preserved unchanged. `undefined` is **not** in this matrix
-  either — it is "missing on a v1 blob" and is left as `undefined` on
-  `DeserializedMatch.state` (no backfill for this field; the result-phase
-  anchor is only meaningful when `status === ROUND_RESULT`). Each invalid
-  type MUST throw.
+  must be preserved unchanged. A missing `roundResultStartedAt` field (i.e. `undefined`)
+  is always normalized to `null` for both v1 and v2 blobs, while only invalid types
+  (string, object, boolean, array) and non-finite values (NaN, Infinity) are rejected.
+  Each invalid type or non-finite value MUST throw.
 - **Non-finite `roundResultStartedAt` values rejected (parsed-object /
   direct-validation path):** same two-path coverage as
   `phaseEndsAt` — parsed-object fixture (`parsed.state.roundResultStartedAt = NaN`)
@@ -330,8 +341,9 @@ GAME_CONFIG.RESULT_DISPLAY_MS`, proving the stable-anchor path is independently 
 - **Invalid `state.startedAt` types rejected (JSON-representable bad
   values):** hand-craft a v2 blob in `COUNTDOWN` with `state.startedAt`
   set to a string, an object, a boolean, or an array. Each MUST throw.
-  `state.startedAt: null` and `state.startedAt: undefined` MUST both
-  pass through (null is the COUNTDOWN-before-armed default).
+  When `state.startedAt` is `null` or `undefined` (omitted) on the wire, the
+  deserialized `MatchState` MUST normalize the field to `null` (`startedAt === null`),
+  while valid finite numeric values are preserved.
 - **Non-finite `state.startedAt` values rejected (parsed-object / direct-
   validation path):** same two-path coverage — parsed-object fixture
   (`parsed.state.startedAt = NaN`) and direct `validateTimingField(NaN, …)` /

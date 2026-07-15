@@ -12,7 +12,7 @@
 # ============================================================
 
 # ---- base: pnpm + prisma runtime libs ----
-FROM node:20-bookworm-slim AS base
+FROM node@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS base
 # Keep pnpm 9 pinned: `pnpm deploy` on pnpm v10+ requires
 # `inject-workspace-packages=true` (or injected workspace deps) unless `--legacy`
 # is used. Preserve the existing pnpm 9 + deploy flow unchanged here.
@@ -20,6 +20,24 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends openssl ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && corepack enable && corepack prepare pnpm@9.15.4 --activate
+WORKDIR /app
+
+# ---- runtime-base: minimal runtime environment without build tools ----
+FROM node@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS runtime-base
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && corepack disable \
+ && rm -rf /usr/local/lib/node_modules/npm \
+ && rm -rf /usr/local/lib/node_modules/corepack \
+ && rm -rf /usr/local/bin/npm \
+ && rm -rf /usr/local/bin/npx \
+ && rm -rf /usr/local/bin/corepack \
+ && rm -rf /usr/local/bin/pnpm \
+ && rm -rf /usr/local/bin/pnpx \
+ && rm -rf /opt/yarn* \
+ && rm -rf /usr/local/bin/yarn \
+ && rm -rf /usr/local/bin/yarnpkg
 WORKDIR /app
 
 # ---- pruner: isolate @arena/api + workspace deps ----
@@ -58,7 +76,7 @@ RUN pnpm dlx turbo@2.3.3 run build --filter=@arena/api
 # uses so a merely resolvable-but-broken generated client still fails before
 # release.
 FROM build AS prod-deps
-RUN pnpm --filter @arena/api deploy /app/prod --prod \
+RUN pnpm --filter @arena/api deploy /app/prod --prod --no-optional \
  && node -e ' \
     const fs = require("node:fs"); \
     const path = require("node:path"); \
@@ -79,7 +97,7 @@ RUN pnpm --filter @arena/api deploy /app/prod --prod \
   '
 
 # ---- runtime: production process ----
-FROM base AS runtime
+FROM runtime-base AS runtime
 ENV NODE_ENV=production
 # main.ts reads all config from process.env (injected by compose), so no .env file is
 # baked into the image. `pnpm deploy /app/prod --prod` FLATTENS the deployed package
