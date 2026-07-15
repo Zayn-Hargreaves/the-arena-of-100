@@ -26,7 +26,7 @@ import type { ServerOptions, Server } from "socket.io";
 import Redis from "ioredis";
 import { INestApplicationContext, Logger } from "@nestjs/common";
 
-const REDIS_QUIT_TIMEOUT_MS = 5000;
+export const REDIS_QUIT_TIMEOUT_MS = 5000;
 export const REDIS_READY_TIMEOUT_MS = 15000;
 
 export class RedisIoAdapter extends IoAdapter {

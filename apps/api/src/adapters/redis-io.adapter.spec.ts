@@ -1,7 +1,11 @@
 import { EventEmitter } from "node:events";
 import { IoAdapter } from "@nestjs/platform-socket.io";
 import type Redis from "ioredis";
-import { RedisIoAdapter, REDIS_READY_TIMEOUT_MS } from "./redis-io.adapter";
+import {
+  RedisIoAdapter,
+  REDIS_READY_TIMEOUT_MS,
+  REDIS_QUIT_TIMEOUT_MS,
+} from "./redis-io.adapter";
 
 const { redisConstructorMock } = vi.hoisted(() => ({
   redisConstructorMock: vi.fn(),
@@ -41,15 +45,15 @@ const expectNoListeners = (client: FakeRedisClient) => {
   expect(client.listenerCount("end")).toBe(0);
 };
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("RedisIoAdapter.waitForReady", () => {
   let adapter: RedisIoAdapter;
 
   beforeEach(() => {
     adapter = new RedisIoAdapter({} as never);
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
   });
 
   it("resolves immediately for an already-ready client", async () => {
@@ -247,6 +251,38 @@ describe("RedisIoAdapter.disconnect", () => {
     expect(pub.disconnect).toHaveBeenCalledTimes(1);
     // The clean quit path never needs a force-close.
     expect(sub.disconnect).not.toHaveBeenCalled();
+    // All refs are cleared so the adapter is inert until reconnected.
+    expect(privateClients(adapter).pubClient).toBeUndefined();
+    expect(privateClients(adapter).subClient).toBeUndefined();
+    expect(privateClients(adapter).adapterConstructor).toBeUndefined();
+  });
+
+  it("force-disconnects a client whose quit() never settles, before the timeout logs and resolves", async () => {
+    vi.useFakeTimers();
+    const pub = new FakeConnectClient();
+    pub.quit.mockReturnValue(new Promise(() => {})); // never resolves
+    const sub = new FakeConnectClient();
+    sub.quit.mockReturnValue(new Promise(() => {})); // never resolves
+
+    const adapter = new RedisIoAdapter({} as never);
+    privateClients(adapter).pubClient = pub as unknown as Redis;
+    privateClients(adapter).subClient = sub as unknown as Redis;
+    // Seed a sentinel adapterConstructor so the trailing assertion proves
+    // disconnect() cleared it, rather than passing because it was never set.
+    privateClients(adapter).adapterConstructor = vi.fn();
+
+    const pending = adapter.disconnect();
+
+    // Advance just past the 5s quit timeout so both force-disconnects fire.
+    await vi.advanceTimersByTimeAsync(REDIS_QUIT_TIMEOUT_MS + 1);
+
+    // disconnect() uses Promise.allSettled and only logs the rejection —
+    // it resolves regardless. Callers observe the failure through the log
+    // and the force-disconnected clients.
+    await expect(pending).resolves.toBeUndefined();
+    // Both clients were force-disconnected on timeout.
+    expect(pub.disconnect).toHaveBeenCalledTimes(1);
+    expect(sub.disconnect).toHaveBeenCalledTimes(1);
     // All refs are cleared so the adapter is inert until reconnected.
     expect(privateClients(adapter).pubClient).toBeUndefined();
     expect(privateClients(adapter).subClient).toBeUndefined();

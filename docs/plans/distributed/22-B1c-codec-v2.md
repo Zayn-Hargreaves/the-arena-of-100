@@ -46,8 +46,8 @@ a naive bump flips every live v1 match's `startingPlayers` to `UNAVAILABLE`.
    deadline on every read. Reconstruct deterministically where a stable persisted anchor
    exists, and otherwise leave the deadline unresolved until the B3b recovery/takeover
    owner acquires the lease and materializes the one-time grace window:
-   - `status === ROUND_ACTIVE` → use `state.currentRound?.endsAt` when present; else
-     anchor to `state.currentRound?.startedAt + GAME_CONFIG.ROUND_DURATION_MS` only when
+   - `status === ROUND_ACTIVE` → use `currentRound?.endsAt` when present; else
+     anchor to `currentRound?.startedAt + GAME_CONFIG.ROUND_DURATION_MS` only when
      both `endsAt` is missing and `startedAt` is present (a deterministic
      reconstruction from the round's own clock). **Never default to `Date.now()`.**
    - `status === COUNTDOWN` → **guard on `state.startedAt`**: use the anchored deadline

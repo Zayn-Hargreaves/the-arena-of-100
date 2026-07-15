@@ -419,6 +419,17 @@ jobs:
           cache-from: type=gha,scope=arena-api-ci
           cache-to: type=gha,scope=arena-api-ci,mode=max
 
+      - name: Scan API image for vulnerabilities
+        uses: aquasecurity/trivy-action@c07df6fec6fa692e6fd1200d50aaa1fdd66f03c8
+        with:
+          image-ref: arena-api-ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          trivyignores: .trivyignore
+
       - name: Verify deployed API runtime layout
         run: >-
           docker run --rm --entrypoint node arena-api-ci -e

@@ -1,0 +1,6 @@
+# Trivy ignore list
+# Format: CVE-ID or Trivy ID, optionally followed by exp:YYYY-MM-DD.
+# Use the Trivy CLI / web UI to look up the affected package and the
+# reason for suppression. Each entry MUST have a justification comment.
+# Example:
+#   CVE-2024-12345 exp:2026-12-31  # upstream fix not yet released for the pinned alpine base image
