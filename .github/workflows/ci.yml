@@ -395,3 +395,32 @@ jobs:
             apps/api/dist
             apps/web/.next
             !apps/web/.next/cache
+
+  docker-api-image:
+    needs: install
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
+
+      - name: Build API Docker image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          tags: arena-api-ci
+          load: true
+          cache-from: type=gha,scope=arena-api-ci
+          cache-to: type=gha,scope=arena-api-ci,mode=max
+
+      - name: Verify deployed API runtime layout
+        run: >-
+          docker run --rm --entrypoint node arena-api-ci -e
+          'const { PrismaClient } = require("@prisma/client"); const { PrismaPg } = require("@prisma/adapter-pg"); const { Pool } = require("pg"); require.resolve("@nestjs/common"); require.resolve("@arena/shared"); require.resolve("@arena/game-core"); require.resolve("./dist/main.js"); (async () => { const pool = new Pool({ connectionString: "postgresql://prisma:prisma@127.0.0.1:5432/arena" }); const prisma = new PrismaClient({ adapter: new PrismaPg(pool) }); try { await prisma.$disconnect(); console.log("OK"); } finally { await pool.end(); } })().catch((error) => { console.error(error); process.exit(1); });'
+
+      - name: Smoke test Node entrypoint
+        run: docker run --rm --entrypoint "" arena-api-ci node -h

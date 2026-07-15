@@ -2,7 +2,7 @@
 // Health Controller - System Health Check
 // ============================================================
 
-import { Controller, Get } from "@nestjs/common";
+import { Controller, Get, NotFoundException } from "@nestjs/common";
 import { ApiBearerAuth } from "@nestjs/swagger";
 import { Role } from "@prisma/client";
 import { RoomStatus } from "@arena/shared";
@@ -11,7 +11,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { Public } from "../../common/decorators/public.decorator";
 import { CpuSamplerService } from "./services/cpu-sampler.service";
-import os from "os";
+import { ClusterService } from "../cluster/cluster.service";
+import os from "node:os";
 
 // ── DTO Types ──────────────────────────────────────────────
 
@@ -30,6 +31,22 @@ interface HealthCheckResponse {
     database: ServiceHealth;
     redis: ServiceHealth;
   };
+}
+
+interface ClusterHealthResponse {
+  // Stable per-instance identity (INSTANCE_ID env or hostname). Also the
+  // value written into the Redis owner-lease from Stage B on.
+  nodeId: string;
+  uptime: number;
+  // Matches this node currently owns (drives the round loop for). Empty
+  // until the Stage B owner-lease lands. The chaos-failover script reads
+  // this per node to pick which container to kill and to confirm the
+  // lease moved after the kill.
+  ownedMatches: string[];
+  // Sockets on THIS node's /game namespace — used to assert the load
+  // actually spread across nodes (distribution check).
+  socketCount: number;
+  timestamp: string;
 }
 
 interface MonitoringResponse {
@@ -60,6 +77,7 @@ export class HealthController {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly cpuSampler: CpuSamplerService,
+    private readonly cluster: ClusterService,
   ) {}
 
   @Get()
@@ -82,6 +100,26 @@ export class HealthController {
         database: databaseHealth,
         redis: redisHealth,
       },
+    };
+  }
+
+  // Only expose the per-node topology view on the explicit multi-node
+  // deployment (`INSTANCE_ID` set per replica). Single-node production keeps
+  // this endpoint hidden so nodeId / ownedMatches / socketCount stay private.
+  @Get("cluster")
+  @ApiBearerAuth()
+  @Roles(Role.ADMIN)
+  async clusterHealth(): Promise<ClusterHealthResponse> {
+    if (process.env.NODE_ENV === "production" && !process.env.INSTANCE_ID) {
+      throw new NotFoundException();
+    }
+
+    return {
+      nodeId: this.cluster.nodeId,
+      uptime: process.uptime(),
+      ownedMatches: await this.cluster.getOwnedMatchIds(),
+      socketCount: this.cluster.getLocalSocketCount(),
+      timestamp: new Date().toISOString(),
     };
   }
 
