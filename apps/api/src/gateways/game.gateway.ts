@@ -35,6 +35,7 @@ import { AuthHandler, RoomHandler, MatchHandler } from "./handlers";
 import { AuthService } from "../modules/auth/auth.service";
 import { PresenceService } from "../modules/match/presence.service";
 import { GameLoopService } from "../modules/match/game-loop.service";
+import { ClusterService } from "../modules/cluster/cluster.service";
 import { WsValidationPipe } from "../common/pipes/ws-validation.pipe";
 import { WsExceptionFilter } from "../common/filters/ws-exception.filter";
 
@@ -103,11 +104,13 @@ export class GameGateway
     private readonly authService: AuthService,
     private readonly presenceService: PresenceService,
     private readonly gameLoopService: GameLoopService,
+    private readonly clusterService: ClusterService,
   ) {}
 
   afterInit(server: Server) {
     this.presenceService.setServer(server);
     this.gameLoopService.setServer(server);
+    this.clusterService.setServer(server);
     server.use((socket: Socket, next: (err?: Error) => void) => {
       let token = socket.handshake.auth?.token;
 

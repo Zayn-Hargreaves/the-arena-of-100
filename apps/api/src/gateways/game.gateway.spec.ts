@@ -18,6 +18,7 @@ import { AuthHandler, RoomHandler, MatchHandler } from "./handlers";
 import { AuthService } from "../modules/auth/auth.service";
 import { PresenceService } from "../modules/match/presence.service";
 import { GameLoopService } from "../modules/match/game-loop.service";
+import { ClusterService } from "../modules/cluster/cluster.service";
 import { io as ioClient, Socket as ClientSocket } from "socket.io-client";
 import { Test, TestingModule } from "@nestjs/testing";
 import { INestApplication } from "@nestjs/common";
@@ -34,6 +35,7 @@ describe("GameGateway", () => {
   let authService: AuthService;
   let presenceService: PresenceService;
   let gameLoopService: GameLoopService;
+  let clusterService: ClusterService;
   let client: Socket;
 
   beforeEach(() => {
@@ -61,6 +63,9 @@ describe("GameGateway", () => {
     gameLoopService = {
       setServer: vi.fn(),
     } as unknown as GameLoopService;
+    clusterService = {
+      setServer: vi.fn(),
+    } as unknown as ClusterService;
 
     gateway = new GameGateway(
       authHandler,
@@ -69,6 +74,7 @@ describe("GameGateway", () => {
       authService,
       presenceService,
       gameLoopService,
+      clusterService,
     );
     // Set the private _server field
     (gateway as any)._server = {
@@ -627,6 +633,9 @@ describe("GameGateway", () => {
     const mockGameLoopService = {
       setServer: vi.fn(),
     };
+    const mockClusterService = {
+      setServer: vi.fn(),
+    };
 
     beforeAll(async () => {
       const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -638,6 +647,7 @@ describe("GameGateway", () => {
           { provide: AuthService, useValue: mockAuthService },
           { provide: PresenceService, useValue: mockPresenceService },
           { provide: GameLoopService, useValue: mockGameLoopService },
+          { provide: ClusterService, useValue: mockClusterService },
         ],
       }).compile();
 

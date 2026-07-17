@@ -1,0 +1,14 @@
+# Keep the Docker build context small and reproducible. `turbo prune`
+# re-derives exactly what @arena/api needs, so node_modules / build
+# outputs from the host are never wanted in the context.
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/coverage
+**/*.tsbuildinfo
+.git
+**/.env
+**/.env.*
+load-test/results
+*.log

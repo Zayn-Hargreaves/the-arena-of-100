@@ -1,0 +1,157 @@
+# ============================================================
+# Arena of 100 — MULTI-INSTANCE topology (distributed refactor).
+#
+# 3 API instances behind an nginx sticky LB, sharing one Postgres + one
+# Redis. Redis doubles as the Socket.IO adapter bus (cross-node
+# broadcast) and, from Stage B on, the owner-lease store.
+#
+#   pnpm docker:multi:build     # build the API image
+#   pnpm docker:multi:up        # bring the cluster up
+#   pnpm docker:multi:down      # tear it down
+#
+# LB origin: http://localhost:8080  (point k6 / web here)
+# Per-node probes: :3011 (api1), :3012 (api2), :3013 (api3)
+#   — used by the chaos-failover script to find + kill the match owner.
+#
+# JWT_SECRET must be identical across nodes so a guest token minted on
+# any node verifies on every node. Override via infrastructure/.env or
+# the shell; the default is a local-only dev secret.
+# ============================================================
+
+x-api-common: &api-common
+  build:
+    context: ..
+    dockerfile: apps/api/Dockerfile
+    target: runtime
+  image: arena-api:multi
+  restart: "no" # chaos test kills a node on purpose — don't auto-resurrect it
+  environment: &api-env
+    NODE_ENV: production
+    PORT: "3001"
+    DATABASE_URL: postgresql://arena:arena123@postgres:5432/arena_of_100
+    REDIS_URL: redis://redis:6379
+    JWT_SECRET: ${JWT_SECRET:-arena-100-secret-key}
+    # JWT_EXPIRES_IN accepts a duration string ("24h"); REFRESH_EXPIRES_IN
+    # must be an INTEGER number of seconds (used directly as a Redis TTL).
+    JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-24h}
+    REFRESH_EXPIRES_IN: ${REFRESH_EXPIRES_IN:-604800}
+    CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+    migrate: { condition: service_completed_successfully }
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "node",
+        "-e",
+        "require('http').get('http://localhost:3001/api/v1/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+      ]
+    interval: 5s
+    timeout: 5s
+    retries: 10
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: arena-multi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: arena
+      POSTGRES_PASSWORD: arena123
+      POSTGRES_DB: arena_of_100
+    ports:
+      - "5442:5432" # distinct host port so it can coexist with the dev stack (:5432)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arena -d arena_of_100"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: arena-multi-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6389:6379" # distinct host port vs the dev stack (:6379)
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # One-shot: apply migrations + seed questions, then exit. The API
+  # replicas wait for this to complete successfully (barrier below).
+  # Uses the `build` stage (retains prisma CLI + tsx for the seed).
+  migrate:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+      target: build
+    image: arena-api:multi-build
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://arena:arena123@postgres:5432/arena_of_100
+    depends_on:
+      postgres: { condition: service_healthy }
+    command:
+      - sh
+      - -c
+      - "pnpm --filter @arena/api exec prisma migrate deploy && pnpm --filter @arena/api run prisma:seed:dev"
+
+  api1:
+    <<: *api-common
+    container_name: arena-api-1
+    environment:
+      <<: *api-env
+      INSTANCE_ID: api-1
+    ports:
+      - "3011:3001"
+
+  api2:
+    <<: *api-common
+    container_name: arena-api-2
+    environment:
+      <<: *api-env
+      INSTANCE_ID: api-2
+    ports:
+      - "3012:3001"
+
+  api3:
+    <<: *api-common
+    container_name: arena-api-3
+    environment:
+      <<: *api-env
+      INSTANCE_ID: api-3
+    ports:
+      - "3013:3001"
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: arena-multi-nginx
+    restart: unless-stopped
+    # LB_METHOD selects the upstream balancing directive (default least_conn
+    # for the k6 load test; ip_hash for browser/polling affinity). envsubst
+    # (bundled in the nginx image) fills only $LB_METHOD in the template.
+    environment:
+      LB_METHOD: ${LB_METHOD:-least_conn}
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf.template:ro
+    # Validate LB_METHOD against the supported allowlist BEFORE rendering the
+    # template — an unsupported value would otherwise produce an nginx.conf with
+    # an invalid upstream directive. Reject with a clear message and a non-zero
+    # exit (busybox `sh`/`case` in the nginx:alpine image) so the container fails
+    # fast instead of starting mis-configured; valid values fall through to the
+    # existing envsubst + exec flow.
+    command:
+      - /bin/sh
+      - -c
+      - "case \"$$LB_METHOD\" in least_conn|ip_hash) ;; *) echo \"FATAL: unsupported LB_METHOD='$$LB_METHOD' (allowed: least_conn, ip_hash)\" >&2; exit 1 ;; esac && envsubst '$$LB_METHOD' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'"
+    ports:
+      - "8080:8080"
+    depends_on:
+      api1: { condition: service_healthy }
+      api2: { condition: service_healthy }
+      api3: { condition: service_healthy }

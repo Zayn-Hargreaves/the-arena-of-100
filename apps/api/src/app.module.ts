@@ -10,6 +10,7 @@ import { ThrottlerModule } from "@nestjs/throttler";
 import { HealthModule } from "./modules/health/health.module";
 import { PrismaModule } from "./modules/prisma/prisma.module";
 import { RedisModule } from "./modules/redis/redis.module";
+import { ClusterModule } from "./modules/cluster/cluster.module";
 import { AuthModule } from "./modules/auth/auth.module";
 import { RoomModule } from "./modules/room/room.module";
 import { MatchModule } from "./modules/match/match.module";
@@ -42,6 +43,7 @@ import { ThrottlerGuard } from "@nestjs/throttler";
     // Infrastructure
     PrismaModule,
     RedisModule,
+    ClusterModule,
 
     // Feature Modules
     HealthModule,
