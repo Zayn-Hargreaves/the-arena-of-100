@@ -2156,4 +2156,40 @@ describe("MatchRoundRunner", () => {
       expect(matchService.saveRoundAndAnswers).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("B1.1 public finish-guard facade", () => {
+    it("isMatchFinishing returns false when no finish is in flight", () => {
+      expect(runner.isMatchFinishing("match-99")).toBe(false);
+    });
+
+    it("isMatchFinishing returns true once finishMatchLoop acquires the guard", async () => {
+      let resolveFinish: () => void = () => {};
+      const finishPromise = new Promise<void>((resolve) => {
+        resolveFinish = resolve;
+      });
+      // Keep finishMatchLoopInner hanging until we are ready.
+      vi.spyOn(runner as any, "finishMatchLoopInner").mockReturnValue(
+        finishPromise,
+      );
+
+      // Kick off finishMatchLoop but don't await — it is still running.
+      const p = (runner as any).finishMatchLoop(
+        "match-1",
+        "room-1",
+        mockServer,
+      );
+      // Flush microtasks so beginFinish() is called inside the async body.
+      await Promise.resolve();
+
+      expect(runner.isMatchFinishing("match-1")).toBe(true);
+
+      // Resolve the promise to clean up.
+      resolveFinish();
+      await p;
+    });
+
+    it("awaitFinish resolves immediately when no finish is in flight", async () => {
+      await expect(runner.awaitFinish("match-99")).resolves.toBeUndefined();
+    });
+  });
 });

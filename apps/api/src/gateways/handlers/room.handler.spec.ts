@@ -134,6 +134,38 @@ describe("RoomHandler", () => {
       );
     });
 
+    it("warns with String(error) when post-create presence update rejects with a non-Error value", async () => {
+      vi.mocked(roomService.createRoom).mockResolvedValue({
+        id: "r1",
+        code: "ABC123",
+        type: "PUBLIC",
+        hostId: "u1",
+        maxPlayers: 100,
+      } as any);
+      vi.mocked(presenceService.updatePresence).mockRejectedValueOnce(
+        "non-error-redis-failure" as unknown as Error,
+      );
+      const logger = (
+        handler as unknown as { logger: { warn: ReturnType<typeof vi.fn> } }
+      ).logger;
+      const warnSpy = vi.spyOn(logger, "warn");
+
+      await handler.handleCreateRoom(client, {
+        roomType: "PUBLIC",
+        maxPlayers: 100,
+      });
+
+      // Room is still created successfully despite the Redis blip.
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ROOM_CREATED,
+        expect.objectContaining({ roomId: "r1" }),
+      );
+      // The warn must contain the stringified non-Error value.
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("non-error-redis-failure"),
+      );
+    });
+
     it("emits error when not authenticated", async () => {
       client.data = {};
       await handler.handleCreateRoom(client, {

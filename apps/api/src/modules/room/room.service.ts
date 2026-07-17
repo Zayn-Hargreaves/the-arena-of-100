@@ -592,14 +592,18 @@ export class RoomService {
     ]);
     for (const result of cleanupResults) {
       if (result.status === "rejected") {
-        this.logger.error(
-          `disbandRoom Redis cleanup failed for room ${roomId}: ${
-            result.reason instanceof Error
-              ? result.reason.message
-              : String(result.reason)
-          }`,
-          result.reason instanceof Error ? result.reason.stack : undefined,
-        );
+        if (result.reason instanceof Error) {
+          this.logger.error(
+            `disbandRoom Redis cleanup failed for room ${roomId}: ${result.reason.message}`,
+            result.reason.stack,
+          );
+        } else {
+          this.logger.warn(
+            `disbandRoom Redis cleanup failed for room ${roomId}: ${String(
+              result.reason,
+            )}`,
+          );
+        }
       }
     }
 

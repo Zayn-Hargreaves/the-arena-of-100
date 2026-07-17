@@ -702,6 +702,189 @@ describe("GameLoopService", () => {
           true,
         );
       });
+
+      it("awaits the in-flight natural finish and returns null when isMatchFinishing is true (B1.1 race guard)", async () => {
+        // Regression test: forceFinishMatchForDisband must await the
+        // in-flight finishMatchLoop and return null so the caller does
+        // NOT emit a duplicate MATCH_FINISHED. Without the B1.1 guard
+        // both callers would persist + broadcast, producing two events.
+        const { svc } = buildService();
+        matchService.finishMatch = vi.fn();
+        matchService.getStateMachine = vi.fn();
+
+        // Simulate "a natural finish is already running"
+        let resolveFinish!: () => void;
+        const finishPromise = new Promise<void>((r) => {
+          resolveFinish = r;
+        });
+        const runner = (svc as any).roundRunner;
+        runner.timers.beginFinish("m-race");
+        runner.timers.registerFinishPromise("m-race", finishPromise);
+
+        // Call forceFinishMatchForDisband — must wait, then return null
+        const result = svc.forceFinishMatchForDisband("m-race", "r-race");
+
+        // Let one microtask tick pass; the in-flight promise is still pending
+        await Promise.resolve();
+        // Resolve the in-flight finish
+        resolveFinish();
+        expect(await result).toBeNull();
+
+        // finishMatch must NOT have been called (the natural finish owns the emission)
+        expect(matchService.finishMatch).not.toHaveBeenCalled();
+        expect(matchService.getStateMachine).not.toHaveBeenCalled();
+      });
+
+      it("skips canTransition + transition when state machine is already FINISHED", async () => {
+        // The SM reached FINISHED before this method ran (e.g. rapid
+        // double-disband). We must not call transition() again (it would
+        // throw), but we still read totalRounds and call finishMatch.
+        const { svc } = buildService();
+        const transition = vi.fn();
+        const canTransition = vi.fn().mockReturnValue(true);
+        const finishMatchSm = vi.fn();
+        const getState = vi
+          .fn()
+          .mockReturnValue({ status: "FINISHED", currentRoundNo: 3 });
+        const persistStateMachine = vi.fn().mockResolvedValue(undefined);
+        matchService.getStateMachine = vi.fn().mockResolvedValue({
+          canTransition,
+          transition,
+          finishMatch: finishMatchSm,
+          getState,
+        });
+        matchService.persistStateMachine = persistStateMachine;
+        matchService.finishMatch = vi
+          .fn()
+          .mockResolvedValue({ winnerId: null, endedAt: new Date() });
+
+        const result = await svc.forceFinishMatchForDisband(
+          "m-already-done",
+          "r-already-done",
+        );
+
+        // State machine is already FINISHED — transition must NOT be called
+        expect(transition).not.toHaveBeenCalled();
+        expect(finishMatchSm).not.toHaveBeenCalled();
+        expect(persistStateMachine).not.toHaveBeenCalled();
+        // finishMatch IS called (ensures DB row is marked finished)
+        expect(matchService.finishMatch).toHaveBeenCalledWith(
+          "m-already-done",
+          null,
+          "r-already-done",
+          true,
+        );
+        // totalRounds comes from state machine
+        expect(result?.totalRounds).toBe(3);
+      });
+
+      it("returns null and logs when finishMatch is an idempotent no-op (returns null/undefined)", async () => {
+        // finishMatch returns null when another caller already finished
+        // the match (update count: 0 path). We must return null so the
+        // caller knows NOT to re-emit MATCH_FINISHED.
+        const { svc } = buildService();
+        const finishMatchSm = vi.fn();
+        const getState = vi
+          .fn()
+          .mockReturnValue({ status: "ROUND_ACTIVE", currentRoundNo: 1 });
+        matchService.getStateMachine = vi.fn().mockResolvedValue({
+          canTransition: vi.fn().mockReturnValue(true),
+          transition: vi.fn(),
+          finishMatch: finishMatchSm,
+          getState,
+        });
+        matchService.persistStateMachine = vi.fn().mockResolvedValue(undefined);
+        // Simulate the idempotent no-op: finishMatch returns null
+        matchService.finishMatch = vi.fn().mockResolvedValue(null);
+        const warnSpy = vi.spyOn((svc as any).logger, "warn");
+
+        const result = await svc.forceFinishMatchForDisband(
+          "m-idempotent",
+          "r-idempotent",
+        );
+
+        expect(result).toBeNull();
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "forceFinishMatchForDisband: match m-idempotent finishMatch returned null",
+          ),
+        );
+      });
+
+      it("logs a warn and re-throws when persistStateMachine throws inside the SM try block", async () => {
+        // Regression: a transient Redis failure in persistStateMachine
+        // must log at warn level and re-throw so the caller knows the
+        // match was NOT cleanly persisted. The state machine itself is
+        // not corrupted — only the Redis snapshot write failed.
+        const { svc } = buildService();
+        const persistError = new Error("Redis unavailable");
+        matchService.getStateMachine = vi.fn().mockResolvedValue({
+          canTransition: vi.fn().mockReturnValue(true),
+          transition: vi.fn(),
+          finishMatch: vi.fn(),
+          getState: vi
+            .fn()
+            .mockReturnValue({ status: "ROUND_ACTIVE", currentRoundNo: 1 }),
+        });
+        matchService.persistStateMachine = vi
+          .fn()
+          .mockRejectedValueOnce(persistError);
+        matchService.finishMatch = vi.fn();
+        const warnSpy = vi.spyOn((svc as any).logger, "warn");
+
+        await expect(
+          svc.forceFinishMatchForDisband("m-persist-fail", "r-persist-fail"),
+        ).rejects.toThrow("Redis unavailable");
+
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "forceFinishMatchForDisband: state-machine terminalization failed for match m-persist-fail",
+          ),
+        );
+        // finishMatch must NOT be called after the SM try-block throws
+        expect(matchService.finishMatch).not.toHaveBeenCalled();
+      });
+
+      it("logs a warn and re-throws when finishMatch itself throws", async () => {
+        const { svc } = buildService();
+        const dbError = new Error("DB write failed");
+        matchService.getStateMachine = vi.fn().mockResolvedValue({
+          canTransition: vi.fn().mockReturnValue(true),
+          transition: vi.fn(),
+          finishMatch: vi.fn(),
+          getState: vi
+            .fn()
+            .mockReturnValue({ status: "ROUND_ACTIVE", currentRoundNo: 2 }),
+        });
+        matchService.persistStateMachine = vi.fn().mockResolvedValue(undefined);
+        matchService.finishMatch = vi.fn().mockRejectedValueOnce(dbError);
+        const warnSpy = vi.spyOn((svc as any).logger, "warn");
+
+        await expect(
+          svc.forceFinishMatchForDisband("m-db-fail", "r-db-fail"),
+        ).rejects.toThrow("DB write failed");
+
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "forceFinishMatchForDisband: finishMatch failed for match m-db-fail",
+          ),
+        );
+      });
+    });
+
+    describe("setServer", () => {
+      it("wires server to lobbyCountdown so boot recovery can drain buffered events", () => {
+        const { svc } = buildService();
+        const mockSrv = {
+          to: vi.fn().mockReturnValue({ emit: vi.fn() }),
+        } as unknown as Server;
+        const setServerSpy = vi.spyOn((svc as any).lobbyCountdown, "setServer");
+
+        (svc as any).setServer(mockSrv);
+
+        expect((svc as any).server).toBe(mockSrv);
+        expect(setServerSpy).toHaveBeenCalledWith(mockSrv);
+      });
     });
 
     describe("stopRoomRuntime", () => {

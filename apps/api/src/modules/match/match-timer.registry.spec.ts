@@ -83,6 +83,51 @@ describe("MatchTimerRegistry", () => {
     });
   });
 
+  describe("B1.1 finish-promise tracking", () => {
+    it("awaitFinish resolves immediately when no promise is registered", async () => {
+      await expect(reg.awaitFinish("m1")).resolves.toBeUndefined();
+    });
+
+    it("awaitFinish awaits the registered promise when one is registered", async () => {
+      let resolve!: () => void;
+      const p = new Promise<void>((r) => {
+        resolve = r;
+      });
+      reg.beginFinish("m1");
+      reg.registerFinishPromise("m1", p);
+
+      let settled = false;
+      const awaiter = reg.awaitFinish("m1").then(() => {
+        settled = true;
+      });
+
+      // Not yet resolved
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      // Resolve the tracked promise
+      resolve();
+      await awaiter;
+      expect(settled).toBe(true);
+    });
+
+    it("endFinish removes the registered promise so awaitFinish is a no-op after cleanup", async () => {
+      let resolve!: () => void;
+      const p = new Promise<void>((r) => {
+        resolve = r;
+      });
+      reg.beginFinish("m1");
+      reg.registerFinishPromise("m1", p);
+      reg.endFinish("m1");
+
+      // After endFinish, awaitFinish should return an already-resolved promise
+      // (the map entry was deleted by endFinish).
+      await expect(reg.awaitFinish("m1")).resolves.toBeUndefined();
+      // Clean up the dangling promise so vitest doesn't warn about unhandled rejections.
+      resolve();
+    });
+  });
+
   describe("disposeMatch", () => {
     it("clears timers + used questions + expected answers, leaving guards untouched", () => {
       const spy = vi.fn();
