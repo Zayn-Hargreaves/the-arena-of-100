@@ -12,8 +12,9 @@ import {
   RoomStatus,
   type RoomPlayerLeftPayload,
 } from "@arena/shared";
-import { GameLoopService } from "./game-loop.service";
+import { GameLoopService, type FinishResult } from "./game-loop.service";
 import { emitMatchPlayerLeft } from "./game-loop.events";
+import { emitRoomStatusUpdated } from "./game-loop.helpers";
 
 // A room this young hasn't had a fair chance to establish presence yet:
 // under a burst of concurrent connections, a just-created room's host can
@@ -163,21 +164,81 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
           // state-machine + finishMatch path before membership teardown;
           // disbandRoom alone only clears currentMatchId and would leave
           // an orphan non-FINISHED Match row without audit events.
+          let finishResult: FinishResult | null = null;
           if (room.currentMatchId) {
-            await this.gameLoopService.forceFinishMatchForDisband(
-              room.currentMatchId,
-              room.id,
-            );
+            try {
+              finishResult =
+                await this.gameLoopService.forceFinishMatchForDisband(
+                  room.currentMatchId,
+                  room.id,
+                );
+            } catch (error) {
+              this.logger.error(
+                `forceFinishMatchForDisband failed for match ${room.currentMatchId} during host-stale disband of room ${room.code}: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+              );
+            }
           }
-          await this.roomService.disbandRoom(room.id);
-          this.server
-            .to(`room:${room.id}`)
-            .emit(ServerEvent.ROOM_COUNTDOWN_CANCELLED, {
-              roomId: room.id,
-              roomStatus: "WAITING",
-              reason: "HOST_STALE",
-              cancelledAt: Date.now(),
+          // Always disband after force-finish attempts (including failures):
+          // disbandRoom's safety-net still terminalizes any non-FINISHED match.
+          const { safetyNetMatchIds } = await this.roomService.disbandRoom(
+            room.id,
+          );
+
+          if (finishResult) {
+            // Authoritative path: forceFinishMatchForDisband succeeded.
+            this.server.to(`room:${room.id}`).emit(ServerEvent.MATCH_FINISHED, {
+              matchId: finishResult.matchId,
+              winnerId: finishResult.winnerId,
+              totalRounds: finishResult.totalRounds,
+              finishedAt: finishResult.finishedAt.getTime(),
             });
+          } else if (safetyNetMatchIds.length > 0) {
+            // forceFinish was either skipped (null) or threw, but the
+            // disbandRoom safety-net terminalized these matches — emit one
+            // event per terminalized match so clients leave the match UI.
+            // We use the real matchId from the DB transaction; other fields
+            // are unknown at this point so we use null / 0 / now.
+            for (const matchId of safetyNetMatchIds) {
+              this.server
+                .to(`room:${room.id}`)
+                .emit(ServerEvent.MATCH_FINISHED, {
+                  matchId,
+                  winnerId: null,
+                  totalRounds: 0,
+                  finishedAt: Date.now(),
+                });
+            }
+          }
+          // When finishResult is null AND safetyNetMatchIds is empty, no
+          // match was terminalized by this sweep (e.g. no currentMatchId,
+          // or the in-flight natural finish already broadcast its own
+          // MATCH_FINISHED). We must NOT emit a second event.
+
+          const isLobby =
+            room.status === RoomStatus.WAITING ||
+            room.status === RoomStatus.COUNTDOWN ||
+            room.status === RoomStatus.STARTING;
+          if (isLobby) {
+            this.server
+              .to(`room:${room.id}`)
+              .emit(ServerEvent.ROOM_COUNTDOWN_CANCELLED, {
+                roomId: room.id,
+                roomStatus: RoomStatus.WAITING,
+                reason: "HOST_STALE",
+                cancelledAt: Date.now(),
+              });
+          } else {
+            // Mid-match / finished-shell teardown: report the real post-
+            // disband status (FINISHED) instead of a synthetic WAITING lobby.
+            emitRoomStatusUpdated(this.server, {
+              roomId: room.id,
+              roomStatus: RoomStatus.FINISHED,
+              currentMatchId: null,
+              updatedAt: Date.now(),
+            });
+          }
           this.server.to(`room:${room.id}`).emit(ServerEvent.PLAYER_LEFT, {
             roomId: room.id,
             playerId: room.hostId,

@@ -493,7 +493,7 @@ export class RoomService {
     });
   }
 
-  async disbandRoom(roomId: string) {
+  async disbandRoom(roomId: string): Promise<{ safetyNetMatchIds: string[] }> {
     // Snapshot the player set before it's deleted below so the presence
     // keys for each player can be cleared too — otherwise they only
     // expire on their own 20s TTL, leaving a stale presence read window.
@@ -509,8 +509,9 @@ export class RoomService {
     // matchCount + delete-vs-finish run under a single Room FOR UPDATE
     // lock so a concurrent match create cannot race past a no-history
     // delete (or leave an IN_GAME shell after membership wipe).
+    const safetyNetMatchIds: string[] = [];
     await this.prisma.$transaction(async (tx) => {
-      const lockedRoom = await tx.$queryRaw<Array<{ id: string }>>`
+      const lockedRoom = await tx.$queryRaw<Array<{ id: string }>>` 
         SELECT id
         FROM "rooms"
         WHERE id = ${roomId}
@@ -527,21 +528,39 @@ export class RoomService {
         // FINISHED here. Callers that own the live loop (presence host-stale
         // / admin kill-switch) should terminate via the state machine first;
         // this update is idempotent when they already did.
-        await tx.eventLog.create({
-          data: {
-            roomId,
-            adminUserId: null,
-            eventType: "ROOM_DISBAND_SAFETY_NET",
-            payload: { reason: "SAFETY_NET", matchCount },
-          },
+        //
+        // Capture the IDs of non-FINISHED matches under the row lock BEFORE
+        // the bulk update — updateMany does not return modified rows, and
+        // a subsequent read after commit would be a different snapshot.
+        const nonFinishedMatches = await tx.match.findMany({
+          where: { roomId, status: { not: MatchStatus.FINISHED } },
+          select: { id: true },
         });
-        await tx.match.updateMany({
+        const terminatedIds = nonFinishedMatches.map((m) => m.id);
+
+        const terminated = await tx.match.updateMany({
           where: { roomId, status: { not: MatchStatus.FINISHED } },
           data: {
             status: MatchStatus.FINISHED,
             endedAt: new Date(),
           },
         });
+        // Immutable audit trail for the safety-net path only when a row
+        // actually transitioned (already-FINISHED matches stay a no-op).
+        if (terminated.count > 0) {
+          safetyNetMatchIds.push(...terminatedIds);
+          await tx.eventLog.create({
+            data: {
+              roomId,
+              eventType: "MATCH_FORCE_FINISHED",
+              payload: {
+                source: "DISBAND_SAFETY_NET",
+                terminatedCount: terminated.count,
+                matchIds: terminatedIds,
+              },
+            },
+          });
+        }
         await tx.room.update({
           where: { id: roomId },
           data: {
@@ -566,6 +585,8 @@ export class RoomService {
       // membership behind.
       clearPersistedCountdown(this.redis.getClient(), roomId),
     ]);
+
+    return { safetyNetMatchIds };
   }
 
   async removePlayer(roomId: string, userId: string) {

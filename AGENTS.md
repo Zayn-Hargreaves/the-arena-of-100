@@ -119,66 +119,6 @@ pnpm db:studio
 - Port conflicts: API runs on 3001, Web on 3000
 - Redis required for session and game state management
 
-## OpenCode Kit (soft routing)
-
-Ported from Antigravity `.agent/` → `.opencode/`. Soft routing only (LLM follows these rules; not a hard OS router).
-
-### Paths
-
-- Agents: `.opencode/agents/`
-- Skills: `.opencode/skills/`
-- Commands: `.opencode/commands/`
-- Antigravity kit (parallel, untouched): `.agent/`
-
-### Request classifier (before acting)
-
-| Type         | Signals                             | Action                                 |
-| ------------ | ----------------------------------- | -------------------------------------- |
-| Question     | what/how/explain                    | Answer; no agent file required         |
-| Survey       | analyze/overview/list               | Prefer `explorer-agent` or gitnexus    |
-| Simple code  | fix/add/change single file          | Inline with matching specialist skills |
-| Complex code | build/implement/refactor multi-file | Specialist or omo plan first           |
-| Design/UI    | design/UI/page/dashboard            | `frontend-specialist`                  |
-| Slash        | `/plan`, `/test`, …                 | Follow command agent                   |
-
-### Auto agent selection
-
-| Intent                       | Keywords                              | Agent(s)                                  |
-| ---------------------------- | ------------------------------------- | ----------------------------------------- |
-| Auth                         | login, auth, jwt, password            | `security-auditor` + `backend-specialist` |
-| API                          | endpoint, route, API, NestJS, gateway | `backend-specialist`                      |
-| Database                     | schema, prisma, migration, SQL        | `database-architect`                      |
-| UI                           | component, react, tailwind, page      | `frontend-specialist`                     |
-| Bug                          | error, bug, broken, crash             | `debugger`                                |
-| Test                         | test, coverage, e2e                   | `test-engineer`                           |
-| Deploy                       | docker, CI, deploy                    | `devops-engineer`                         |
-| Multi-domain / large feature | 2+ domains                            | omo (Prometheus→Atlas) or `orchestrator`  |
-
-### Mandatory protocol (code/design work)
-
-1. Select agent from matrix (or honor user `@agent` / slash command).
-2. Announce before specialized work:
-   ```
-   🤖 Applying knowledge of `@[agent-name]`...
-   ```
-3. Load required skills via OpenCode `skill` tool (see agent file "Required Skills").
-4. Prefer gitnexus + CodeGraphContext MCP before raw grep/read.
-5. Complex multi-step: prefer omo (`ulw`, `@prometheus`, `/start-work`) over ad-hoc coding.
-
-### Priority
-
-Arena project rules (this file) > agent `.md` > skill `SKILL.md`.  
-GitNexus impact rules below still apply to every edit.
-
-### Commands
-
-`/plan` `/create` `/debug` `/test` `/enhance` `/deploy-check` `/orchestrate` `/brainstorm` `/preview` `/status` `/ui-ux`
-
-### omo (oh-my-openagent)
-
-When enabled: Sisyphus orchestrates; Prometheus plans; Atlas executes.  
-`ultrawork` / `ulw` for max mode. Do not use Atlas without a Prometheus plan.
-
 ## Documentation
 
 ### Core Memory-Bank Files (read these first, in order)
@@ -241,3 +181,7 @@ This project is indexed by GitNexus as **the-arena-of-100** (5482 symbols, 12358
 | Index, status, clean, wiki CLI commands      | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md`             |
 
 <!-- gitnexus:end -->
+
+## OpenCode Kit Routing
+
+This project also uses the OpenCode Kit (migrated from Antigravity). For agent routing protocol, automatic agent selection, and the "Applying knowledge of @..." workflow, see `.opencode/rules/GEMINI.md` and `.opencode/skills/intelligent-routing/SKILL.md`.

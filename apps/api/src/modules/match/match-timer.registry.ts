@@ -29,6 +29,12 @@ export class MatchTimerRegistry {
   private readonly endingRounds = new Set<string>();
   /** B1: matchIds whose finishMatchLoop is currently in flight. */
   private readonly finishingMatches = new Set<string>();
+  /**
+   * B1.1: matchId -> in-flight finishMatchLoop promise. Lets concurrent
+   * callers (e.g. `forceFinishMatchForDisband`) await the natural finish
+   * instead of returning early and racing the in-flight persist.
+   */
+  private readonly finishingPromises = new Map<string, Promise<void>>();
 
   // ---- Timers -------------------------------------------------
 
@@ -130,10 +136,30 @@ export class MatchTimerRegistry {
 
   endFinish(matchId: string): void {
     this.finishingMatches.delete(matchId);
+    this.finishingPromises.delete(matchId);
   }
 
   isFinishing(matchId: string): boolean {
     return this.finishingMatches.has(matchId);
+  }
+
+  /**
+   * Store the in-flight `finishMatchLoop` promise so concurrent callers
+   * can `awaitFinish(matchId)` instead of returning early and racing the
+   * persist. Must be called AFTER `beginFinish` succeeds.
+   */
+  registerFinishPromise(matchId: string, promise: Promise<void>): void {
+    this.finishingPromises.set(matchId, promise);
+  }
+
+  /**
+   * Resolve when the in-flight `finishMatchLoop` for `matchId` settles.
+   * Returns `Promise.resolve()` when no finish is in flight — caller-
+   * friendly: never throws, never hangs. Awaits the same promise that
+   * the runner created, so rejections propagate to the awaiter.
+   */
+  awaitFinish(matchId: string): Promise<void> {
+    return this.finishingPromises.get(matchId) ?? Promise.resolve();
   }
 
   // ---- Lifecycle ----------------------------------------------
@@ -148,5 +174,6 @@ export class MatchTimerRegistry {
     this.clearTimers(matchId);
     this.usedQuestionIds.delete(matchId);
     this.expectedAnswers.delete(matchId);
+    this.finishingPromises.delete(matchId);
   }
 }

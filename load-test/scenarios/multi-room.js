@@ -115,17 +115,7 @@ function roleSlot() {
 }
 
 const TOTAL_PLAYERS = ROOMS * PLAYERS_PER_ROOM;
-if (!Number.isSafeInteger(TOTAL_PLAYERS) || TOTAL_PLAYERS <= 0) {
-  throw new Error(
-    `multi-room: TOTAL_PLAYERS=${String(TOTAL_PLAYERS)} must be a positive integer`,
-  );
-}
 const TOTAL_SPECTATORS = ROOMS * SPECTATORS_PER_ROOM;
-if (!Number.isSafeInteger(TOTAL_SPECTATORS) || TOTAL_SPECTATORS <= 0) {
-  throw new Error(
-    `multi-room: TOTAL_SPECTATORS=${String(TOTAL_SPECTATORS)} must be a positive integer`,
-  );
-}
 
 // Spectators poll until the room is actually IN_GAME (host START_MATCH
 // succeeded). Budget: host warmup + START_MATCH wait + buffer.

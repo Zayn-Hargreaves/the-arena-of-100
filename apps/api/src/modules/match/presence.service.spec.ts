@@ -105,7 +105,7 @@ describe("PresenceService", () => {
     gameLoopService = {
       handleMatchPlayerLeft: vi.fn().mockResolvedValue(undefined),
       handlePlayerDisconnect: vi.fn().mockResolvedValue(undefined),
-      forceFinishMatchForDisband: vi.fn().mockResolvedValue(undefined),
+      forceFinishMatchForDisband: vi.fn().mockResolvedValue(null),
     };
 
     mockServer = makeMockServer();
@@ -347,7 +347,81 @@ describe("PresenceService", () => {
       expect(forceOrder).toBeLessThan(disbandOrder);
     });
 
-    it("skips disbandRoom and preserves the room when forceFinishMatchForDisband throws", async () => {
+    it("does not call disbandRoom until the deferred forceFinishMatchForDisband promise resolves", async () => {
+      // Regression: B1.1 race. `forceFinishMatchForDisband` must await any
+      // in-flight natural finish before returning, so the sweep loop does
+      // not disband the room while a finish transaction is still running.
+      // We simulate "in-flight natural finish" by returning a manually
+      // controlled deferred promise from the mock; while the deferred is
+      // pending, disbandRoom MUST NOT have been called.
+      service.setServer(mockServer as unknown as Server);
+      (service as any).hostStaleStrikes.set("rPrivMatch", 1);
+      vi.mocked(roomService.getActiveRooms).mockResolvedValueOnce([
+        makeActiveRoom({
+          id: "rPrivMatch",
+          code: "PRIV2",
+          type: "PRIVATE",
+          hostId: "host1",
+          status: RoomStatus.IN_GAME,
+          currentMatchId: "m-live",
+          createdAt: new Date(Date.now() - 60_000),
+          players: [{ userId: "host1" }, { userId: "p2" }],
+        }),
+      ]);
+      vi.mocked(roomService.checkPresence).mockImplementation(
+        async (_room, userId) => userId !== "host1",
+      );
+
+      // `entered` is set the instant the mock is called by sweep, and the
+      // deferred stays pending until the test resolves it. This gives us
+      // a deterministic, race-free handle on "sweep is now blocked inside
+      // forceFinishMatchForDisband awaiting the natural finish".
+      let entered = false;
+      let resolveFinish!: () => void;
+      const deferred = new Promise<void>((resolve) => {
+        resolveFinish = resolve;
+      });
+      vi.mocked(gameLoopService.forceFinishMatchForDisband).mockImplementation(
+        async () => {
+          entered = true;
+          await deferred;
+        },
+      );
+
+      // Kick off the sweep without awaiting it so it suspends on the
+      // unresolved deferred, mirroring the real natural-finish-in-flight
+      // race that B1.1 closes.
+      const sweepPromise = (service as any).sweep();
+
+      // Wait until the sweep has actually reached forceFinishMatchForDisband
+      // and is now suspended on the deferred.
+      while (!entered) {
+        await Promise.resolve();
+      }
+      // Drain any microtasks queued by the mock invocation itself before
+      // we assert the negative case.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(gameLoopService.forceFinishMatchForDisband).toHaveBeenCalledWith(
+        "m-live",
+        "rPrivMatch",
+      );
+      // The race surface: disbandRoom must NOT have been called yet
+      // because the deferred finish is still pending.
+      expect(roomService.disbandRoom).not.toHaveBeenCalled();
+
+      // Release the in-flight finish and let the sweep resume.
+      resolveFinish();
+      await sweepPromise;
+
+      // After the awaited finish resolves, the sweep must proceed to
+      // disband the room.
+      expect(roomService.disbandRoom).toHaveBeenCalledWith("rPrivMatch");
+      expect(roomService.disbandRoom).toHaveBeenCalledTimes(1);
+    });
+
+    it("still disbands and emits MATCH_FINISHED when forceFinishMatchForDisband throws", async () => {
       service.setServer(mockServer as unknown as Server);
       (service as any).hostStaleStrikes.set("rPrivMatch", 1);
       vi.mocked(gameLoopService.forceFinishMatchForDisband).mockRejectedValue(
@@ -369,13 +443,21 @@ describe("PresenceService", () => {
         async (_room, userId) => userId !== "host1",
       );
 
-      await expect((service as any).sweep()).rejects.toThrow("boom");
+      await (service as any).sweep();
 
       expect(gameLoopService.forceFinishMatchForDisband).toHaveBeenCalledWith(
         "m-live",
         "rPrivMatch",
       );
-      expect(roomService.disbandRoom).not.toHaveBeenCalled();
+      // Disband is preserved after force-finish failure so the safety-net
+      // can still terminalize the match and clear membership.
+      expect(roomService.disbandRoom).toHaveBeenCalledWith("rPrivMatch");
+      const matchFinished = mockServer.emissions.find(
+        (e) =>
+          e.event === ServerEvent.MATCH_FINISHED &&
+          (e.payload as { matchId?: string }).matchId === "m-live",
+      );
+      expect(matchFinished).toBeDefined();
       expect(
         mockServer.emissions.find(
           (e) =>

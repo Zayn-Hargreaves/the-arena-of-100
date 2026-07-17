@@ -131,7 +131,15 @@ export class RoomHandler extends BaseHandler {
         // seconds after joining. We already accept their socket as online
         // below (isOnline: true for the joiner), so make that true in
         // Redis too instead of leaving it to the first heartbeat.
-        await this.presenceService.updatePresence(room.id, userId);
+        await this.presenceService
+          .updatePresence(room.id, userId)
+          .catch((error) => {
+            this.logger.warn(
+              `Presence update failed for user ${userId} in room ${room.id}: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          });
 
         if (room.joined && !isSpectator) {
           client.to(`room:${room.id}`).emit(ServerEvent.PLAYER_JOINED, {

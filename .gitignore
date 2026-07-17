@@ -53,14 +53,9 @@ load-test/results/*.redis.jsonl
 # Misc
 *.tsbuildinfo
 
-# Antigravity kit (local IDE; keep out of git if desired — currently ignored)
 .agent
-
-# OpenCode: commit kit source; ignore runtime junk
-/.opencode/
-.sisyphus/
-.omo/
-/opencode.json
+opencode.json
+.opencode/
 
 # Turborepo
 .turbo

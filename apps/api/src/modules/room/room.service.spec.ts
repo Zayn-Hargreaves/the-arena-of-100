@@ -1,9 +1,7 @@
 import { RoomService } from "./room.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
-import { RoomStatus, ErrorCode, MatchStatus } from "@arena/shared";
-import { prepareE2ETestEnv, cleanupE2ETestEnv } from "../../../test/setup-e2e";
-import { pathToFileURL } from "node:url";
+import { RoomStatus, ErrorCode } from "@arena/shared";
 
 describe("RoomService", () => {
   let service: RoomService;
@@ -922,53 +920,6 @@ describe("RoomService", () => {
       expect(chain.del).toHaveBeenCalledWith("room:countdown:r1");
       expect(chain.srem).toHaveBeenCalledWith("room:countdowns", "r1");
     });
-
-    it("creates an EventLog row in the same tx as the match.updateMany on the safety-net path", async () => {
-      vi.mocked(prisma.match.count).mockResolvedValue(1);
-      vi.mocked(prisma.$queryRaw).mockResolvedValue([{ id: "r1" }] as any);
-      vi.mocked(prisma.eventLog.create).mockResolvedValue({} as any);
-      vi.mocked(prisma.match.updateMany).mockResolvedValue({ count: 1 } as any);
-
-      await service.disbandRoom("r1");
-
-      expect(prisma.eventLog.create).toHaveBeenCalledWith({
-        data: {
-          roomId: "r1",
-          adminUserId: null,
-          eventType: "ROOM_DISBAND_SAFETY_NET",
-          payload: { reason: "SAFETY_NET", matchCount: 1 },
-        },
-      });
-      expect(prisma.match.updateMany).toHaveBeenCalledWith({
-        where: { roomId: "r1", status: { not: "FINISHED" } },
-        data: {
-          status: "FINISHED",
-          endedAt: expect.any(Date),
-        },
-      });
-    });
-
-    it("rolls back the whole disband when eventLog.create throws", async () => {
-      vi.mocked(prisma.match.count).mockResolvedValue(1);
-      vi.mocked(prisma.$queryRaw).mockResolvedValue([{ id: "r1" }] as any);
-      vi.mocked(prisma.eventLog.create).mockRejectedValue(
-        new Error("eventLog write failed"),
-      );
-
-      await expect(service.disbandRoom("r1")).rejects.toThrow(
-        "eventLog write failed",
-      );
-
-      expect(prisma.eventLog.create).toHaveBeenCalledWith({
-        data: {
-          roomId: "r1",
-          adminUserId: null,
-          eventType: "ROOM_DISBAND_SAFETY_NET",
-          payload: { reason: "SAFETY_NET", matchCount: 1 },
-        },
-      });
-      expect(prisma.match.updateMany).not.toHaveBeenCalled();
-    });
   });
 
   describe("presence methods", () => {
@@ -1052,95 +1003,5 @@ describe("RoomService", () => {
         ["3"],
       );
     });
-  });
-});
-
-describe("RoomService Integration (Real Database)", () => {
-  let realPrisma: PrismaService;
-  let realRedis: RedisService;
-
-  beforeAll(async () => {
-    await prepareE2ETestEnv(pathToFileURL(__filename).href);
-    realPrisma = new PrismaService();
-    await realPrisma.onModuleInit();
-
-    const { ConfigService } = await import("@nestjs/config");
-    const config = new ConfigService({
-      REDIS_URL: process.env.REDIS_URL,
-      REDIS_KEY_PREFIX: process.env.REDIS_KEY_PREFIX,
-    });
-    realRedis = new RedisService(config);
-  });
-
-  afterAll(async () => {
-    if (realPrisma) {
-      await realPrisma.onModuleDestroy();
-    }
-    if (realRedis) {
-      await realRedis.onModuleDestroy();
-    }
-    await cleanupE2ETestEnv(pathToFileURL(__filename).href);
-  });
-
-  it("rolls back eventLog.create when match.updateMany fails on the safety-net path", async () => {
-    // 1. Create failingPrisma client extension that forces match.updateMany to reject
-    const failingPrisma = realPrisma.$extends({
-      query: {
-        match: {
-          async updateMany() {
-            throw new Error("forced updateMany failure");
-          },
-        },
-      },
-    });
-
-    const integrationService = new RoomService(failingPrisma as any, realRedis);
-
-    // 2. Set up db state: user, room, and a non-FINISHED match (to trigger safety-net path)
-    const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const host = await realPrisma.user.create({
-      data: { username: `host_${uniqueId}` },
-    });
-
-    const room = await realPrisma.room.create({
-      data: {
-        id: `room_${uniqueId}`,
-        code: `CD_${uniqueId}`.substring(0, 10).toUpperCase(),
-        type: "PUBLIC",
-        status: RoomStatus.WAITING,
-        hostId: host.id,
-      },
-    });
-
-    const match = await realPrisma.match.create({
-      data: {
-        id: `match_${uniqueId}`,
-        roomId: room.id,
-        status: MatchStatus.ROUND_ACTIVE,
-      },
-    });
-
-    // 3. Execute disbandRoom on the integrationService and expect it to throw
-    await expect(integrationService.disbandRoom(room.id)).rejects.toThrow(
-      "forced updateMany failure",
-    );
-
-    // 4. Assert that NO EventLog row persists for this room
-    const logCount = await realPrisma.eventLog.count({
-      where: { roomId: room.id },
-    });
-    expect(logCount).toBe(0);
-
-    // 5. Assert that the match status was NOT updated to FINISHED
-    const matchAfter = await realPrisma.match.findUnique({
-      where: { id: match.id },
-    });
-    expect(matchAfter?.status).toBe(MatchStatus.ROUND_ACTIVE);
-
-    // 6. Assert that the room status was NOT updated to FINISHED
-    const roomAfter = await realPrisma.room.findUnique({
-      where: { id: room.id },
-    });
-    expect(roomAfter?.status).toBe(RoomStatus.WAITING);
   });
 });

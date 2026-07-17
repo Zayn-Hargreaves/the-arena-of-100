@@ -687,6 +687,22 @@ export class MatchRoundRunner {
       return;
     }
 
+    // B1.1: track the in-flight promise so concurrent callers (e.g.
+    // `forceFinishMatchForDisband`) can `awaitFinish(matchId)` instead
+    // of returning early and racing the in-flight persist. The wrapper
+    // is registered AFTER `beginFinish` succeeds; resolved/rejected
+    // inside the existing try/finally so the map entry is released
+    // alongside the boolean guard.
+    const finishPromise = this.runFinishTracked(matchId, roomId, server);
+    this.timers.registerFinishPromise(matchId, finishPromise);
+    await finishPromise;
+  }
+
+  private async runFinishTracked(
+    matchId: string,
+    roomId: string,
+    server: Server,
+  ): Promise<void> {
     try {
       await this.finishMatchLoopInner(matchId, roomId, server);
     } finally {
@@ -701,6 +717,16 @@ export class MatchRoundRunner {
    */
   isMatchFinishing(matchId: string): boolean {
     return this.timers.isFinishing(matchId);
+  }
+
+  /**
+   * Resolves when the in-flight `finishMatchLoop` for `matchId`
+   * completes. Returns `Promise.resolve()` when no finish is in flight,
+   * so callers can `await` unconditionally. Rejections from the natural
+   * finish propagate to the awaiter.
+   */
+  awaitFinish(matchId: string): Promise<void> {
+    return this.timers.awaitFinish(matchId);
   }
 
   private async finishMatchLoopInner(
