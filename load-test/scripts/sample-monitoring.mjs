@@ -236,6 +236,9 @@ async function sampleOnce() {
   let cpuSample = {
     ts,
     cpu: null,
+    eventLoopLagMaxMs: null,
+    eventLoopLagMeanMs: null,
+    eventLoopLagP99Ms: null,
     rssBytes: null,
     totalMemBytes: null,
     roomCount: null,
@@ -247,8 +250,14 @@ async function sampleOnce() {
       timeoutMs: 4000,
     });
     if (res.status === 200) {
-      const body = JSON.parse(res.body);
+      // The API wraps every response in { success, message, data } via
+      // its global TransformInterceptor — the payload fields live under
+      // `.data`, not at the top level.
+      const body = JSON.parse(res.body).data;
       cpuSample.cpu = body.cpuUsage;
+      cpuSample.eventLoopLagMaxMs = body.eventLoopLagMaxMs;
+      cpuSample.eventLoopLagMeanMs = body.eventLoopLagMeanMs;
+      cpuSample.eventLoopLagP99Ms = body.eventLoopLagP99Ms;
       cpuSample.rssBytes = body.rssBytes;
       cpuSample.totalMemBytes = body.totalMemBytes;
       cpuSample.roomCount = body.roomCount;

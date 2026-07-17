@@ -1,6 +1,12 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Server } from "socket.io";
-import { GAME_CONFIG, RoomStatus, RoomError, ErrorCode } from "@arena/shared";
+import {
+  GAME_CONFIG,
+  MatchStatus,
+  RoomStatus,
+  RoomError,
+  ErrorCode,
+} from "@arena/shared";
 import { MatchService } from "./match.service";
 import { QuestionService } from "../question/question.service";
 import { RoomService } from "../room/room.service";
@@ -17,6 +23,26 @@ import { LOBBY_COUNTDOWN_INDEX_KEY } from "./game-loop.countdown-store";
 
 // Re-export for backwards compatibility with existing spec imports.
 export const COUNTDOWN_INDEX_KEY = LOBBY_COUNTDOWN_INDEX_KEY;
+
+/**
+ * Authoritative finish result for `forceFinishMatchForDisband`. Returned to
+ * the caller (e.g. `PresenceService.sweep`) so it can broadcast
+ * `ServerEvent.MATCH_FINISHED` with the canonical `winnerId` / `totalRounds`
+ * / `finishedAt` from the state machine + `matchService.finishMatch` DB row
+ * — never synthetic zeros.
+ *
+ * `null` means "this call did not produce a result to emit": either the
+ * match was already finishing (the in-flight natural finish owns the
+ * emission) or the finish was a no-op (idempotent guard hit). The caller
+ * MUST skip its own `MATCH_FINISHED` emission in that case so we get
+ * exactly one event per match end.
+ */
+export type FinishResult = {
+  matchId: string;
+  winnerId: string | null;
+  totalRounds: number;
+  finishedAt: Date;
+};
 
 @Injectable()
 export class GameLoopService {
@@ -321,6 +347,105 @@ export class GameLoopService {
     await this.lobbyCountdown.clearCountdown(roomId);
     if (matchId) {
       this.roundRunner.cancelMatchLoop(matchId);
+    }
+  }
+
+  /**
+   * Terminates an active match through the server-authoritative path before
+   * room membership teardown (e.g. private host-stale disband mid-match).
+   * Cancels timers, appends MATCH_FINISHED on the in-memory state machine
+   * when present (audit/replay), then persists Match+Room FINISHED via
+   * matchService.finishMatch. Safe if the match is already finishing or gone.
+   *
+   * Returns the authoritative `FinishResult` (winnerId / totalRounds /
+   * finishedAt from the state machine + `matchService.finishMatch` DB row)
+   * for the caller to broadcast `ServerEvent.MATCH_FINISHED`. Returns
+   * `null` when this call did NOT produce a result to emit — either an
+   * in-flight natural finish already owns the emission (already-finishing
+   * branch) or `matchService.finishMatch` was a no-op (idempotent guard).
+   * The caller MUST skip its own emission in that case to guarantee
+   * exactly one `MATCH_FINISHED` per match end.
+   */
+  async forceFinishMatchForDisband(
+    matchId: string,
+    roomId: string,
+  ): Promise<FinishResult | null> {
+    this.roundRunner.cancelMatchLoop(matchId);
+
+    if (this.roundRunner.isMatchFinishing(matchId)) {
+      this.logger.warn(
+        `forceFinishMatchForDisband: match ${matchId} already finishing; skipping SM/DB finish`,
+      );
+      // B1.1: wait for the in-flight natural finish to complete before
+      // returning, so the caller (e.g. PresenceService.sweep) does not
+      // race ahead and disband the room while the finish transaction is
+      // still persisting. Return null: the in-flight natural finish
+      // already broadcast its own MATCH_FINISHED, so the caller MUST NOT
+      // re-emit.
+      await this.roundRunner.awaitFinish(matchId);
+      this.logger.log(
+        `forceFinishMatchForDisband: match ${matchId} awaited in-flight finish`,
+      );
+      return null;
+    }
+
+    // Capture the state machine's totalRounds BEFORE finishMatch() so we
+    // can return the canonical value to the caller. Mirror the natural
+    // path (see `match-round-runner.ts` `finishMatchLoopInner`): the wire
+    // uses `state.currentRoundNo` for the MATCH_FINISHED payload.
+    let totalRounds = 0;
+    try {
+      const stateMachine = await this.matchService.getStateMachine(matchId);
+      if (stateMachine) {
+        const status = stateMachine.getState().status;
+        if (status !== MatchStatus.FINISHED) {
+          if (stateMachine.canTransition(MatchStatus.FINISHED)) {
+            stateMachine.transition(MatchStatus.FINISHED);
+          }
+          stateMachine.finishMatch();
+          await this.matchService.persistStateMachine(matchId);
+        }
+        totalRounds = stateMachine.getState().currentRoundNo;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `forceFinishMatchForDisband: state-machine terminalization failed for match ${matchId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      throw error;
+    }
+
+    try {
+      // Admin-termination flag: no score recompute; winnerId null.
+      const match = await this.matchService.finishMatch(
+        matchId,
+        null,
+        roomId,
+        true,
+      );
+      // Idempotent no-op (count: 0 in finishMatch): a prior finish
+      // already won the race. Return null so the caller skips its
+      // emission — the prior caller already broadcast MATCH_FINISHED.
+      if (!match) {
+        this.logger.warn(
+          `forceFinishMatchForDisband: match ${matchId} finishMatch returned null (idempotent no-op); caller will skip MATCH_FINISHED emission`,
+        );
+        return null;
+      }
+      return {
+        matchId,
+        winnerId: match.winnerId ?? null,
+        totalRounds,
+        finishedAt: match.endedAt ?? new Date(),
+      };
+    } catch (error) {
+      this.logger.warn(
+        `forceFinishMatchForDisband: finishMatch failed for match ${matchId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      throw error;
     }
   }
 

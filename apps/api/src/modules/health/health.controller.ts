@@ -11,6 +11,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { Public } from "../../common/decorators/public.decorator";
 import { CpuSamplerService } from "./services/cpu-sampler.service";
+import { EventLoopLagService } from "./services/event-loop-lag.service";
 import { ClusterService } from "../cluster/cluster.service";
 import os from "node:os";
 
@@ -51,6 +52,12 @@ interface ClusterHealthResponse {
 
 interface MonitoringResponse {
   cpuUsage: number | null;
+  // Real event-loop stall, not just CPU busy-ness — sampled continuously
+  // via perf_hooks.monitorEventLoopDelay and reset on each read (same
+  // delta-per-call convention as cpuUsage).
+  eventLoopLagMaxMs: number | null;
+  eventLoopLagMeanMs: number | null;
+  eventLoopLagP99Ms: number | null;
   // RSS / total memory in bytes. Raw so the k6 load-test sampler can
   // compute exact deltas without losing precision to MB rounding.
   rssBytes: number;
@@ -77,6 +84,7 @@ export class HealthController {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly cpuSampler: CpuSamplerService,
+    private readonly eventLoopLag: EventLoopLagService,
     private readonly cluster: ClusterService,
   ) {}
 
@@ -128,6 +136,7 @@ export class HealthController {
   @Roles(Role.ADMIN)
   async monitoring(): Promise<MonitoringResponse> {
     const cpuUsage = this.cpuSampler.sample();
+    const lag = this.eventLoopLag.sample();
 
     const mem = process.memoryUsage();
     const rssBytes = mem.rss;
@@ -139,6 +148,9 @@ export class HealthController {
 
     return {
       cpuUsage,
+      eventLoopLagMaxMs: lag?.maxMs ?? null,
+      eventLoopLagMeanMs: lag?.meanMs ?? null,
+      eventLoopLagP99Ms: lag?.p99Ms ?? null,
       rssBytes,
       totalMemBytes,
       memoryUsageMb,

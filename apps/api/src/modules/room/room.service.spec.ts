@@ -31,6 +31,16 @@ describe("RoomService", () => {
         // exercise the double-join no-op-rejoin path.
         findFirst: vi.fn().mockResolvedValue(null),
       },
+      match: {
+        count: vi.fn().mockResolvedValue(0),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+        // Used by disbandRoom to capture non-FINISHED match IDs before the
+        // bulk updateMany (updateMany does not return modified rows).
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      eventLog: {
+        create: vi.fn().mockResolvedValue({}),
+      },
       // $transaction supports two forms:
       //   1. Array form (legacy) — used by some tests for disbandRoom.
       //   2. Function form (interactive) — used by joinRoom for atomic
@@ -93,10 +103,35 @@ describe("RoomService", () => {
       expect(prisma.roomPlayer.create).toHaveBeenCalledWith({
         data: { roomId: "r1", userId: "u1" },
       });
-      expect(redis.setJSON).toHaveBeenCalled();
       expect(redis.sadd).toHaveBeenCalledWith("room:r1:players", "u1");
       expect(result).toEqual(mockRoom);
     });
+
+    it.each([NaN, undefined])(
+      "falls back to default maxPlayers when maxPlayers is %s",
+      async (val) => {
+        const mockRoom = {
+          id: "r1",
+          code: "ABC",
+          status: RoomStatus.WAITING,
+          maxPlayers: 100,
+          players: [],
+        };
+        vi.mocked(prisma.room.create).mockResolvedValue(mockRoom as any);
+        vi.spyOn(service, "getRoom").mockResolvedValue(mockRoom as any);
+
+        const result = await service.createRoom("u1", "PUBLIC", val);
+
+        expect(prisma.room.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              maxPlayers: 100,
+            }),
+          }),
+        );
+        expect(result.maxPlayers).toBe(100);
+      },
+    );
   });
 
   describe("joinRoom", () => {
@@ -488,6 +523,60 @@ describe("RoomService", () => {
       );
       expect(result).toEqual({ id: "r1" });
     });
+
+    it("swallows Error instance thrown by clearPresence and logs it as a warning", async () => {
+      vi.mocked(prisma.roomPlayer.deleteMany).mockResolvedValue({
+        count: 1,
+      } as any);
+      vi.mocked(redis.eval).mockResolvedValue(1);
+      vi.spyOn(service, "getRoom").mockResolvedValue({ id: "r1" } as any);
+
+      // Force clearPresence to throw an Error
+      vi.spyOn(service, "clearPresence").mockRejectedValue(
+        new Error("Redis down"),
+      );
+
+      const warnSpy = vi
+        .spyOn((service as any).logger, "warn")
+        .mockImplementation(() => {});
+
+      const result = await service.leaveRoom("r1", "u2");
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Failed to clear presence for user u2 in room r1: Redis down",
+        ),
+      );
+      expect(result).toEqual({ id: "r1" });
+      warnSpy.mockRestore();
+    });
+
+    it("swallows non-Error rejection thrown by clearPresence and logs it as a warning", async () => {
+      vi.mocked(prisma.roomPlayer.deleteMany).mockResolvedValue({
+        count: 1,
+      } as any);
+      vi.mocked(redis.eval).mockResolvedValue(1);
+      vi.spyOn(service, "getRoom").mockResolvedValue({ id: "r1" } as any);
+
+      // Force clearPresence to throw a string
+      vi.spyOn(service, "clearPresence").mockRejectedValue(
+        "Connection refused",
+      );
+
+      const warnSpy = vi
+        .spyOn((service as any).logger, "warn")
+        .mockImplementation(() => {});
+
+      const result = await service.leaveRoom("r1", "u2");
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Failed to clear presence for user u2 in room r1: Connection refused",
+        ),
+      );
+      expect(result).toEqual({ id: "r1" });
+      warnSpy.mockRestore();
+    });
   });
 
   describe("getRoom", () => {
@@ -769,6 +858,34 @@ describe("RoomService", () => {
         expect.anything(),
       );
     });
+
+    it("supports expectedCurrentMatchId without expectedStatus in options", async () => {
+      const room = {
+        id: "r1",
+        code: "ABC",
+        status: RoomStatus.IN_GAME,
+        hostId: "u1",
+        players: [{ userId: "u1" }],
+      };
+      vi.mocked(prisma.$transaction).mockImplementation(async (cb) =>
+        cb(prisma),
+      );
+      vi.mocked(prisma.room.updateMany).mockResolvedValue({ count: 1 });
+      vi.mocked(prisma.room.update).mockResolvedValue(room as any);
+
+      await service.updateRoomStatus("r1", RoomStatus.FINISHED, null, {
+        expectedCurrentMatchId: "m1",
+      });
+
+      expect(prisma.room.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: "r1",
+            currentMatchId: "m1",
+          }),
+        }),
+      );
+    });
   });
 
   describe("getRoomPlayerIds", () => {
@@ -780,7 +897,7 @@ describe("RoomService", () => {
   });
 
   describe("getActiveRooms", () => {
-    it("returns rooms in WAITING, COUNTDOWN, or STARTING status with their players", async () => {
+    it("returns rooms in WAITING, COUNTDOWN, STARTING or IN_GAME status (excludes FINISHED)", async () => {
       const mockRooms = [
         { id: "r1", status: "WAITING", players: [{ userId: "u1" }] },
         { id: "r2", status: "COUNTDOWN", players: [{ userId: "u2" }] },
@@ -797,7 +914,6 @@ describe("RoomService", () => {
               RoomStatus.COUNTDOWN,
               RoomStatus.STARTING,
               RoomStatus.IN_GAME,
-              RoomStatus.FINISHED,
             ],
           },
         },
@@ -816,16 +932,131 @@ describe("RoomService", () => {
   });
 
   describe("disbandRoom", () => {
-    it("deletes room and players in db transaction, and deletes cache", async () => {
+    it("deletes room and players in db transaction when there is no match history", async () => {
+      vi.mocked(prisma.match.count).mockResolvedValue(0);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([{ id: "r1" }] as any);
+
       await service.disbandRoom("r1");
       expect(prisma.$transaction).toHaveBeenCalled();
+      expect(prisma.$queryRaw).toHaveBeenCalled();
+      expect(prisma.room.delete).toHaveBeenCalledWith({ where: { id: "r1" } });
       expect(redis.del).toHaveBeenCalledWith("room:r1:players");
       expect(redis.del).toHaveBeenCalledWith("room:r1");
       expect(redis.del).toHaveBeenCalledWith("room:r1:playerCount");
     });
 
+    it("transitions room to FINISHED and clears currentMatchId when match history exists", async () => {
+      vi.mocked(prisma.match.count).mockResolvedValue(1);
+      vi.mocked(prisma.$queryRaw).mockImplementation((async (query: any) => {
+        const sql =
+          query.text || (Array.isArray(query) ? query[0] : String(query));
+        if (sql.includes('"rooms"')) {
+          return [{ id: "r1" }];
+        }
+        if (sql.includes('"matches"')) {
+          return [];
+        }
+        return [];
+      }) as any);
+      vi.mocked(prisma.room.update).mockResolvedValue({} as any);
+      vi.mocked(prisma.roomPlayer.deleteMany).mockResolvedValue({
+        count: 2,
+      } as any);
+
+      await service.disbandRoom("r1");
+
+      expect(prisma.room.delete).not.toHaveBeenCalled();
+      expect(prisma.$transaction).toHaveBeenCalled();
+      const txArg = vi.mocked(prisma.$transaction).mock.calls[0][0];
+      expect(typeof txArg).toBe("function");
+      expect(prisma.room.update).toHaveBeenCalledWith({
+        where: { id: "r1" },
+        data: {
+          status: RoomStatus.FINISHED,
+          currentMatchId: null,
+        },
+      });
+      expect(prisma.roomPlayer.deleteMany).toHaveBeenCalledWith({
+        where: { roomId: "r1" },
+      });
+    });
+
+    it("forces non-FINISHED matches for the room to FINISHED when match history exists", async () => {
+      vi.mocked(prisma.match.count).mockResolvedValue(1);
+      vi.mocked(prisma.$queryRaw).mockImplementation((async (query: any) => {
+        const sql =
+          query.text || (Array.isArray(query) ? query[0] : String(query));
+        if (sql.includes('"rooms"')) {
+          return [{ id: "r1" }];
+        }
+        if (sql.includes('"matches"')) {
+          return [{ id: "m-active" }];
+        }
+        return [];
+      }) as any);
+      vi.mocked(prisma.room.update).mockResolvedValue({} as any);
+      vi.mocked(prisma.match.updateMany).mockResolvedValue({ count: 1 } as any);
+      vi.mocked(prisma.roomPlayer.deleteMany).mockResolvedValue({
+        count: 1,
+      } as any);
+
+      const result = await service.disbandRoom("r1");
+
+      expect(prisma.match.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ["m-active"] } },
+        data: {
+          status: "FINISHED",
+          endedAt: expect.any(Date),
+        },
+      });
+      // The audit log must record the terminalized match IDs.
+      expect(prisma.eventLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            eventType: "MATCH_FORCE_FINISHED",
+            payload: expect.objectContaining({ matchIds: ["m-active"] }),
+          }),
+        }),
+      );
+      // safetyNetMatchIds is returned to PresenceService for socket emissions.
+      expect(result.safetyNetMatchIds).toEqual(["m-active"]);
+    });
+
+    it("handles Redis smembers failure gracefully and proceeds with DB transaction", async () => {
+      vi.mocked(redis.smembers).mockRejectedValue(
+        new Error("Redis connection lost"),
+      );
+      vi.mocked(prisma.match.count).mockResolvedValue(0);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([{ id: "r1" }] as any);
+
+      const warnSpy = vi
+        .spyOn((service as any).logger, "warn")
+        .mockImplementation(() => {});
+
+      await service.disbandRoom("r1");
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Failed to fetch userIds from Redis for disbanding room r1: Redis connection lost",
+        ),
+      );
+      expect(prisma.room.delete).toHaveBeenCalledWith({ where: { id: "r1" } });
+      warnSpy.mockRestore();
+    });
+
+    it("skips DB teardown when the room row is already gone under the lock", async () => {
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([] as any);
+
+      await service.disbandRoom("r1");
+
+      expect(prisma.match.count).not.toHaveBeenCalled();
+      expect(prisma.room.delete).not.toHaveBeenCalled();
+      expect(prisma.room.update).not.toHaveBeenCalled();
+    });
+
     it("clears presence keys for every player that was in the room", async () => {
       vi.mocked(redis.smembers).mockResolvedValue(["u1", "u2"]);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([{ id: "r1" }] as any);
 
       await service.disbandRoom("r1");
 
@@ -843,12 +1074,64 @@ describe("RoomService", () => {
       ]);
       const client = { multi: vi.fn(() => chain) };
       vi.mocked(redis.getClient).mockReturnValue(client as any);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([{ id: "r1" }] as any);
 
       await service.disbandRoom("r1");
 
       expect(client.multi).toHaveBeenCalled();
       expect(chain.del).toHaveBeenCalledWith("room:countdown:r1");
       expect(chain.srem).toHaveBeenCalledWith("room:countdowns", "r1");
+    });
+
+    it("logs an error when any of the Redis cleanup operations reject (allSettled catch path)", async () => {
+      vi.mocked(redis.smembers).mockResolvedValue(["u1"]);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([{ id: "r1" }] as any);
+
+      // Force one of the Redis operations to reject
+      vi.mocked(redis.del).mockImplementation(async (key: string) => {
+        if (key === "room:r1:players") {
+          throw new Error("Simulated Redis deletion failure");
+        }
+      });
+
+      const errorSpy = vi
+        .spyOn((service as any).logger, "error")
+        .mockImplementation(() => {});
+
+      await service.disbandRoom("r1");
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "disbandRoom Redis cleanup failed for room r1: Simulated Redis deletion failure",
+        ),
+        expect.any(String),
+      );
+      errorSpy.mockRestore();
+    });
+
+    it("logs a warning when any of the Redis cleanup operations reject with a non-Error object", async () => {
+      vi.mocked(redis.smembers).mockResolvedValue(["u1"]);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([{ id: "r1" }] as any);
+
+      // Force one of the Redis operations to reject with a string
+      vi.mocked(redis.del).mockImplementation(async (key: string) => {
+        if (key === "room:r1:players") {
+          throw "Redis connection timed out";
+        }
+      });
+
+      const warnSpy = vi
+        .spyOn((service as any).logger, "warn")
+        .mockImplementation(() => {});
+
+      await service.disbandRoom("r1");
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "disbandRoom Redis cleanup failed for room r1: Redis connection timed out",
+        ),
+      );
+      warnSpy.mockRestore();
     });
   });
 
@@ -898,6 +1181,21 @@ describe("RoomService", () => {
         ["1"],
       );
     });
+
+    it("skips cached playerCount sync if decrementPlayerCountClamped returns NaN", async () => {
+      vi.mocked(prisma.roomPlayer.deleteMany).mockResolvedValue({
+        count: 1,
+      } as any);
+      vi.spyOn(
+        (service as any).cache,
+        "decrementPlayerCountClamped",
+      ).mockResolvedValue(NaN);
+      const syncSpy = vi.spyOn((service as any).cache, "syncPlayerCount");
+
+      await service.removePlayer("r1", "u2");
+
+      expect(syncSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe("removePlayerBatch", () => {
@@ -932,6 +1230,21 @@ describe("RoomService", () => {
         ["room:r1"],
         ["3"],
       );
+    });
+
+    it("skips cached playerCount sync if decrementPlayerCountClamped returns NaN", async () => {
+      vi.mocked(prisma.roomPlayer.deleteMany).mockResolvedValue({
+        count: 2,
+      } as any);
+      vi.spyOn(
+        (service as any).cache,
+        "decrementPlayerCountClamped",
+      ).mockResolvedValue(NaN);
+      const syncSpy = vi.spyOn((service as any).cache, "syncPlayerCount");
+
+      await service.removePlayerBatch("r1", ["u2", "u3"]);
+
+      expect(syncSpy).not.toHaveBeenCalled();
     });
   });
 });

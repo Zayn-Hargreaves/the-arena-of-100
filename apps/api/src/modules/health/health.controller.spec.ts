@@ -16,6 +16,7 @@ import { IS_PUBLIC_KEY } from "../../common/decorators/public.decorator";
 import { ROLES_KEY } from "../../common/decorators/roles.decorator";
 import { HealthController } from "./health.controller";
 import { CpuSamplerService } from "./services/cpu-sampler.service";
+import { EventLoopLagService } from "./services/event-loop-lag.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { AuthService } from "../auth/auth.service";
@@ -43,6 +44,10 @@ describe("HealthController", () => {
 
     const cpuSampler = new CpuSamplerService();
 
+    const eventLoopLag = {
+      sample: vi.fn().mockReturnValue(null),
+    };
+
     const cluster = {
       nodeId: "test-node",
       getOwnedMatchIds: vi.fn().mockResolvedValue([]),
@@ -54,11 +59,13 @@ describe("HealthController", () => {
         prisma as never,
         redis as never,
         cpuSampler,
+        eventLoopLag as never,
         cluster as never,
       ),
       prisma,
       redis,
       cpuSampler,
+      eventLoopLag,
       cluster,
     };
   };
@@ -380,6 +387,10 @@ describe("HealthController", () => {
         sample: vi.fn().mockReturnValue(12.5),
       };
 
+      const mockEventLoopLag = {
+        sample: vi.fn().mockReturnValue(null),
+      };
+
       const mockCluster = {
         nodeId: "test-node",
         getOwnedMatchIds: vi.fn().mockResolvedValue([]),
@@ -409,6 +420,7 @@ describe("HealthController", () => {
             { provide: PrismaService, useValue: mockPrismaService },
             { provide: RedisService, useValue: mockRedisService },
             { provide: CpuSamplerService, useValue: mockCpuSampler },
+            { provide: EventLoopLagService, useValue: mockEventLoopLag },
             { provide: ClusterService, useValue: mockCluster },
             { provide: AuthService, useValue: mockAuthService },
             {

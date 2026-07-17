@@ -141,7 +141,7 @@ pnpm db:studio
 
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **the-arena-of-100** (5480 symbols, 12351 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **the-arena-of-100** (5482 symbols, 12358 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -181,3 +181,36 @@ This project is indexed by GitNexus as **the-arena-of-100** (5480 symbols, 12351
 | Index, status, clean, wiki CLI commands      | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md`             |
 
 <!-- gitnexus:end -->
+
+## OpenCode Kit Routing
+
+This project also uses the OpenCode Kit (migrated from Antigravity). For agent routing protocol, automatic agent selection, and the "Applying knowledge of @..." workflow, see `.opencode/rules/GEMINI.md` and `.opencode/skills/intelligent-routing/SKILL.md`.
+
+> **Note — clean checkout**: `.opencode/` and `opencode.json` are listed in `.gitignore` and will **not** be present after a fresh `git clone`. To provision the OpenCode Kit before using the routing docs:
+>
+> ```bash
+> # 1. Install the OpenCode CLI (one-time, global)
+> npm install -g opencode-ai
+>
+> # 2. Verify the installation and available commands
+> opencode --version
+> opencode --help   # confirm "plugin" subcommand is listed
+>
+> # 3. Install the official OpenCode Kit package/bootstrap command locally to generate .opencode/ and opencode.json
+> opencode plugin @opencode-ai/plugin
+>
+> # 4. From the repo root, launch the TUI and run the /init slash command to create/update AGENTS.md
+> opencode
+> # Inside the TUI, type:  /init
+> ```
+>
+> **Post-Provisioning Verification**:
+> You must verify that the following files have been successfully generated in your workspace:
+>
+> - `.opencode/rules/GEMINI.md`
+> - `.opencode/skills/intelligent-routing/SKILL.md`
+>   Setup is incomplete if either file is missing.
+>
+> The TUI slash command `/init` only creates or updates the `AGENTS.md` file; it does not generate the `.opencode/` directory or `opencode.json` configuration file. The `opencode plugin @opencode-ai/plugin` command is required to bootstrap those files. If your version of `opencode-ai` does not show `/init` in the TUI help, upgrade: `npm install -g opencode-ai@latest`.
+>
+> Until the kit is provisioned the `.opencode/rules/GEMINI.md` and `.opencode/skills/intelligent-routing/SKILL.md` references above will not resolve. The rest of the agent instructions in this file are always available without this step.

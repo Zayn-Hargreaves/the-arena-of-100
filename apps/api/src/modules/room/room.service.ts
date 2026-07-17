@@ -7,6 +7,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import {
   RoomStatus,
+  MatchStatus,
   generateRoomCode,
   GAME_CONFIG,
   ErrorCode,
@@ -474,6 +475,9 @@ export class RoomService {
   }
 
   async getActiveRooms() {
+    // FINISHED rooms are excluded: once a room has finished it will never
+    // have stale players that need sweeping, and including it would cause
+    // the sweep to track FINISHED rooms in hostStaleStrikes indefinitely.
     return this.prisma.room.findMany({
       where: {
         status: {
@@ -482,7 +486,6 @@ export class RoomService {
             RoomStatus.COUNTDOWN,
             RoomStatus.STARTING,
             RoomStatus.IN_GAME,
-            RoomStatus.FINISHED,
           ],
         },
       },
@@ -492,18 +495,104 @@ export class RoomService {
     });
   }
 
-  async disbandRoom(roomId: string) {
+  async disbandRoom(roomId: string): Promise<{ safetyNetMatchIds: string[] }> {
     // Snapshot the player set before it's deleted below so the presence
     // keys for each player can be cleared too — otherwise they only
     // expire on their own 20s TTL, leaving a stale presence read window.
-    const userIds = await this.redis.smembers(roomPlayersKey(roomId));
+    let userIds: string[] = [];
+    try {
+      userIds = await this.redis.smembers(roomPlayersKey(roomId));
+    } catch (error) {
+      this.logger.warn(
+        `Failed to fetch userIds from Redis for disbanding room ${roomId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
 
-    await this.prisma.$transaction([
-      this.prisma.roomPlayer.deleteMany({ where: { roomId } }),
-      this.prisma.room.delete({ where: { id: roomId } }),
-    ]);
+    // Match (and its cascading MatchPlayer/MatchRound/Answer/EventLog rows)
+    // has no cascade-delete relation to Room, and deleting them here would
+    // erase a played match's history and ranking data. A room that has
+    // already hosted a match is kept around (its RoomPlayer rows are still
+    // cleared so it stops showing up as occupied) instead of being
+    // hard-deleted; only a room with no match history is fully removed.
+    //
+    // matchCount + delete-vs-finish run under a single Room FOR UPDATE
+    // lock so a concurrent match create cannot race past a no-history
+    // delete (or leave an IN_GAME shell after membership wipe).
+    const safetyNetMatchIds: string[] = [];
+    await this.prisma.$transaction(async (tx) => {
+      const lockedRoom = await tx.$queryRaw<Array<{ id: string }>>` 
+        SELECT id
+        FROM "rooms"
+        WHERE id = ${roomId}
+        FOR UPDATE
+      `;
+      if (lockedRoom.length === 0) {
+        return;
+      }
 
-    await Promise.all([
+      const matchCount = await tx.match.count({ where: { roomId } });
+
+      if (matchCount > 0) {
+        // Safety net: any non-terminal Match for this room is forced to
+        // FINISHED here. Callers that own the live loop (presence host-stale
+        // / admin kill-switch) should terminate via the state machine first;
+        // this update is idempotent when they already did.
+        //
+        // Select and lock the Match rows to prevent concurrent updates from
+        // racing and to ensure only transitioned match IDs are captured.
+        const nonFinishedMatches = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id
+          FROM "matches"
+          WHERE "roomId" = ${roomId} AND status != ${MatchStatus.FINISHED}
+          FOR UPDATE
+        `;
+        const terminatedIds = nonFinishedMatches.map((m) => m.id);
+
+        if (terminatedIds.length > 0) {
+          const terminated = await tx.match.updateMany({
+            where: { id: { in: terminatedIds } },
+            data: {
+              status: MatchStatus.FINISHED,
+              endedAt: new Date(),
+            },
+          });
+          // Immutable audit trail for the safety-net path only when a row
+          // actually transitioned (already-FINISHED matches stay a no-op).
+          if (terminated.count > 0) {
+            safetyNetMatchIds.push(...terminatedIds);
+            await tx.eventLog.create({
+              data: {
+                roomId,
+                eventType: "MATCH_FORCE_FINISHED",
+                payload: {
+                  source: "DISBAND_SAFETY_NET",
+                  terminatedCount: terminated.count,
+                  matchIds: terminatedIds,
+                },
+              },
+            });
+          }
+        }
+        await tx.room.update({
+          where: { id: roomId },
+          data: {
+            status: RoomStatus.FINISHED,
+            currentMatchId: null,
+          },
+        });
+        await tx.roomPlayer.deleteMany({ where: { roomId } });
+      } else {
+        await tx.roomPlayer.deleteMany({ where: { roomId } });
+        await tx.room.delete({ where: { id: roomId } });
+      }
+    });
+
+    // Best-effort Redis cleanup: use allSettled so that a Redis failure
+    // cannot reject this function after the DB transaction has already
+    // committed. Any rejected cleanup operations are logged individually.
+    const cleanupResults = await Promise.allSettled([
       this.redis.del(roomPlayersKey(roomId)),
       this.redis.del(roomSnapshotKey(roomId)),
       this.redis.del(roomPlayerCountKey(roomId)),
@@ -513,6 +602,24 @@ export class RoomService {
       // membership behind.
       clearPersistedCountdown(this.redis.getClient(), roomId),
     ]);
+    for (const result of cleanupResults) {
+      if (result.status === "rejected") {
+        if (result.reason instanceof Error) {
+          this.logger.error(
+            `disbandRoom Redis cleanup failed for room ${roomId}: ${result.reason.message}`,
+            result.reason.stack,
+          );
+        } else {
+          this.logger.warn(
+            `disbandRoom Redis cleanup failed for room ${roomId}: ${String(
+              result.reason,
+            )}`,
+          );
+        }
+      }
+    }
+
+    return { safetyNetMatchIds };
   }
 
   async removePlayer(roomId: string, userId: string) {

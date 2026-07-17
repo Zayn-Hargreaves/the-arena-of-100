@@ -12,8 +12,35 @@ import {
   RoomStatus,
   type RoomPlayerLeftPayload,
 } from "@arena/shared";
-import { GameLoopService } from "./game-loop.service";
+import { GameLoopService, type FinishResult } from "./game-loop.service";
 import { emitMatchPlayerLeft } from "./game-loop.events";
+import { emitRoomStatusUpdated } from "./game-loop.helpers";
+
+// A room this young hasn't had a fair chance to establish presence yet:
+// under a burst of concurrent connections, a just-created room's host can
+// still be queued behind hundreds of other AUTHENTICATE/JOIN_ROOM calls
+// when the first sweep tick after room creation fires. Without this grace
+// window the sweep judges the host "stale" (no presence key set yet) and
+// disbands the room before it ever had a socket connected — observed at
+// 400 concurrent connections across 4 rooms, where a host's own
+// AUTHENTICATE hadn't reached the server 3s after room creation.
+const ROOM_SWEEP_GRACE_PERIOD_MS = 30_000;
+
+// A private room's host being "stale" on ONE sweep tick doesn't mean the
+// host is gone: a real client's Socket.IO connection retries indefinitely
+// (default reconnection: true, 1-5s backoff) and covers exactly this kind
+// of transient blip — a dropped connection, a failed initial handshake
+// under a burst of concurrent connections, a brief network hiccup. Load
+// testing at 8 concurrent 100-seat rooms (800 sockets) showed this isn't
+// rare enough to ignore at scale: individual connections occasionally
+// never reach the server on the first attempt, and disbanding on a single
+// missed tick evicts every other player in the room over what a real
+// client would have self-healed from within the next 5-10s. Requiring two
+// CONSECUTIVE stale ticks (~10s total, still well inside the 20s presence
+// TTL a genuinely-gone host would need to clear anyway) keeps the
+// original protection against an actually-abandoned room while giving a
+// reconnecting host one more cycle to prove it's still there.
+const HOST_STALE_CONSECUTIVE_SWEEPS = 2;
 
 @Injectable()
 export class PresenceService implements OnModuleInit, OnModuleDestroy {
@@ -21,6 +48,9 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
   private sweepInterval?: NodeJS.Timeout;
   private server?: Server;
   private isSweeping = false;
+  // roomId -> consecutive sweep ticks where the host has been stale.
+  // Reset to absent whenever the host is seen present again.
+  private readonly hostStaleStrikes = new Map<string, number>();
 
   constructor(
     private readonly roomService: RoomService,
@@ -71,7 +101,22 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
     if (!this.server) return;
 
     const activeRooms = await this.roomService.getActiveRooms();
+    const now = Date.now();
+
+    // Drop strike counters for rooms that are no longer active (finished,
+    // already disbanded, etc.) so this map can't grow unbounded.
+    const activeRoomIds = new Set(activeRooms.map((room) => room.id));
+    for (const roomId of this.hostStaleStrikes.keys()) {
+      if (!activeRoomIds.has(roomId)) {
+        this.hostStaleStrikes.delete(roomId);
+      }
+    }
+
     for (const room of activeRooms) {
+      if (now - room.createdAt.getTime() < ROOM_SWEEP_GRACE_PERIOD_MS) {
+        continue;
+      }
+
       // Check all players' presence in parallel (single round-trip per player
       // to Redis, but no longer N+1 sequential awaits per room). The N+1
       // pattern was making the 5s sweep scale linearly with room size.
@@ -94,20 +139,106 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
+      // The host is confirmed present this tick — any strikes from a prior
+      // transient blip no longer apply.
+      if (!isHostStale) {
+        this.hostStaleStrikes.delete(room.id);
+      }
+
       if (stalePlayerIds.length > 0) {
         if (room.type === "PRIVATE" && isHostStale) {
+          const strikes = (this.hostStaleStrikes.get(room.id) ?? 0) + 1;
+          if (strikes < HOST_STALE_CONSECUTIVE_SWEEPS) {
+            this.hostStaleStrikes.set(room.id, strikes);
+            this.logger.log(
+              `Host stale in private room ${room.code} (${strikes}/${HOST_STALE_CONSECUTIVE_SWEEPS} consecutive sweeps); giving the host one more cycle to reconnect before disbanding`,
+            );
+            continue;
+          }
+
+          this.hostStaleStrikes.delete(room.id);
           this.logger.log(
-            `Host stale in private room ${room.code}, disbanding...`,
+            `Host stale in private room ${room.code} for ${HOST_STALE_CONSECUTIVE_SWEEPS} consecutive sweeps, disbanding...`,
           );
-          await this.roomService.disbandRoom(room.id);
-          this.server
-            .to(`room:${room.id}`)
-            .emit(ServerEvent.ROOM_COUNTDOWN_CANCELLED, {
-              roomId: room.id,
-              roomStatus: "WAITING",
-              reason: "HOST_STALE",
-              cancelledAt: Date.now(),
+          // Mid-match disband must terminate the live match through the
+          // state-machine + finishMatch path before membership teardown;
+          // disbandRoom alone only clears currentMatchId and would leave
+          // an orphan non-FINISHED Match row without audit events.
+          let finishResult: FinishResult | null = null;
+          if (room.currentMatchId) {
+            try {
+              finishResult =
+                await this.gameLoopService.forceFinishMatchForDisband(
+                  room.currentMatchId,
+                  room.id,
+                );
+            } catch (error) {
+              this.logger.error(
+                `forceFinishMatchForDisband failed for match ${room.currentMatchId} during host-stale disband of room ${room.code}: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+              );
+            }
+          }
+          // Always disband after force-finish attempts (including failures):
+          // disbandRoom's safety-net still terminalizes any non-FINISHED match.
+          const { safetyNetMatchIds } = await this.roomService.disbandRoom(
+            room.id,
+          );
+
+          if (finishResult) {
+            // Authoritative path: forceFinishMatchForDisband succeeded.
+            this.server.to(`room:${room.id}`).emit(ServerEvent.MATCH_FINISHED, {
+              matchId: finishResult.matchId,
+              winnerId: finishResult.winnerId,
+              totalRounds: finishResult.totalRounds,
+              finishedAt: finishResult.finishedAt.getTime(),
             });
+          } else if (safetyNetMatchIds.length > 0) {
+            // forceFinish was either skipped (null) or threw, but the
+            // disbandRoom safety-net terminalized these matches — emit one
+            // event per terminalized match so clients leave the match UI.
+            // We use the real matchId from the DB transaction; other fields
+            // are unknown at this point so we use null / 0 / now.
+            for (const matchId of safetyNetMatchIds) {
+              this.server
+                .to(`room:${room.id}`)
+                .emit(ServerEvent.MATCH_FINISHED, {
+                  matchId,
+                  winnerId: null,
+                  totalRounds: 0,
+                  finishedAt: Date.now(),
+                });
+            }
+          }
+          // When finishResult is null AND safetyNetMatchIds is empty, no
+          // match was terminalized by this sweep (e.g. no currentMatchId,
+          // or the in-flight natural finish already broadcast its own
+          // MATCH_FINISHED). We must NOT emit a second event.
+
+          const isLobby =
+            room.status === RoomStatus.WAITING ||
+            room.status === RoomStatus.COUNTDOWN ||
+            room.status === RoomStatus.STARTING;
+          if (isLobby) {
+            this.server
+              .to(`room:${room.id}`)
+              .emit(ServerEvent.ROOM_COUNTDOWN_CANCELLED, {
+                roomId: room.id,
+                roomStatus: RoomStatus.WAITING,
+                reason: "HOST_STALE",
+                cancelledAt: Date.now(),
+              });
+          } else {
+            // Mid-match / finished-shell teardown: report the real post-
+            // disband status (FINISHED) instead of a synthetic WAITING lobby.
+            emitRoomStatusUpdated(this.server, {
+              roomId: room.id,
+              roomStatus: RoomStatus.FINISHED,
+              currentMatchId: null,
+              updatedAt: Date.now(),
+            });
+          }
           this.server.to(`room:${room.id}`).emit(ServerEvent.PLAYER_LEFT, {
             roomId: room.id,
             playerId: room.hostId,
