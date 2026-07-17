@@ -499,7 +499,16 @@ export class RoomService {
     // Snapshot the player set before it's deleted below so the presence
     // keys for each player can be cleared too — otherwise they only
     // expire on their own 20s TTL, leaving a stale presence read window.
-    const userIds = await this.redis.smembers(roomPlayersKey(roomId));
+    let userIds: string[] = [];
+    try {
+      userIds = await this.redis.smembers(roomPlayersKey(roomId));
+    } catch (error) {
+      this.logger.warn(
+        `Failed to fetch userIds from Redis for disbanding room ${roomId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
 
     // Match (and its cascading MatchPlayer/MatchRound/Answer/EventLog rows)
     // has no cascade-delete relation to Room, and deleting them here would
@@ -531,37 +540,40 @@ export class RoomService {
         // / admin kill-switch) should terminate via the state machine first;
         // this update is idempotent when they already did.
         //
-        // Capture the IDs of non-FINISHED matches under the row lock BEFORE
-        // the bulk update — updateMany does not return modified rows, and
-        // a subsequent read after commit would be a different snapshot.
-        const nonFinishedMatches = await tx.match.findMany({
-          where: { roomId, status: { not: MatchStatus.FINISHED } },
-          select: { id: true },
-        });
+        // Select and lock the Match rows to prevent concurrent updates from
+        // racing and to ensure only transitioned match IDs are captured.
+        const nonFinishedMatches = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id
+          FROM "matches"
+          WHERE "roomId" = ${roomId} AND status != ${MatchStatus.FINISHED}
+          FOR UPDATE
+        `;
         const terminatedIds = nonFinishedMatches.map((m) => m.id);
 
-        const terminated = await tx.match.updateMany({
-          where: { roomId, status: { not: MatchStatus.FINISHED } },
-          data: {
-            status: MatchStatus.FINISHED,
-            endedAt: new Date(),
-          },
-        });
-        // Immutable audit trail for the safety-net path only when a row
-        // actually transitioned (already-FINISHED matches stay a no-op).
-        if (terminated.count > 0) {
-          safetyNetMatchIds.push(...terminatedIds);
-          await tx.eventLog.create({
+        if (terminatedIds.length > 0) {
+          const terminated = await tx.match.updateMany({
+            where: { id: { in: terminatedIds } },
             data: {
-              roomId,
-              eventType: "MATCH_FORCE_FINISHED",
-              payload: {
-                source: "DISBAND_SAFETY_NET",
-                terminatedCount: terminated.count,
-                matchIds: terminatedIds,
-              },
+              status: MatchStatus.FINISHED,
+              endedAt: new Date(),
             },
           });
+          // Immutable audit trail for the safety-net path only when a row
+          // actually transitioned (already-FINISHED matches stay a no-op).
+          if (terminated.count > 0) {
+            safetyNetMatchIds.push(...terminatedIds);
+            await tx.eventLog.create({
+              data: {
+                roomId,
+                eventType: "MATCH_FORCE_FINISHED",
+                payload: {
+                  source: "DISBAND_SAFETY_NET",
+                  terminatedCount: terminated.count,
+                  matchIds: terminatedIds,
+                },
+              },
+            });
+          }
         }
         await tx.room.update({
           where: { id: roomId },

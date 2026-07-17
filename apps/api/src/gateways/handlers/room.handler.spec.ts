@@ -308,6 +308,90 @@ describe("RoomHandler", () => {
       ).toHaveBeenCalledWith("r1", client.nsp.server);
     });
 
+    it("still emits ROOM_JOINED when post-join presence update fails (Redis blip) with Error", async () => {
+      vi.mocked(roomService.joinRoom).mockResolvedValue({
+        id: "r1",
+        code: "ABC123",
+        hostId: "u9",
+        type: "PUBLIC",
+        status: RoomStatus.WAITING,
+        maxPlayers: 100,
+        currentMatchId: null,
+        joined: true,
+        joinedAs: "PLAYER",
+        players: [
+          {
+            userId: "u1",
+            user: { username: "Alice" },
+          },
+        ],
+      } as any);
+      vi.mocked(presenceService.updatePresence).mockRejectedValueOnce(
+        new Error("Redis connection lost"),
+      );
+
+      const logger = (
+        handler as unknown as { logger: { warn: ReturnType<typeof vi.fn> } }
+      ).logger;
+      const warnSpy = vi.spyOn(logger, "warn");
+
+      await handler.handleJoinRoom(client, { roomCode: "ABC123" });
+
+      expect(client.join).toHaveBeenCalledWith("room:r1");
+      expect(presenceService.updatePresence).toHaveBeenCalledWith("r1", "u1");
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ROOM_JOINED,
+        expect.objectContaining({ roomId: "r1" }),
+      );
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Presence update failed for user u1 in room r1: Redis connection lost",
+        ),
+      );
+    });
+
+    it("warns with String(error) when post-join presence update rejects with a non-Error value", async () => {
+      vi.mocked(roomService.joinRoom).mockResolvedValue({
+        id: "r1",
+        code: "ABC123",
+        hostId: "u9",
+        type: "PUBLIC",
+        status: RoomStatus.WAITING,
+        maxPlayers: 100,
+        currentMatchId: null,
+        joined: true,
+        joinedAs: "PLAYER",
+        players: [
+          {
+            userId: "u1",
+            user: { username: "Alice" },
+          },
+        ],
+      } as any);
+      vi.mocked(presenceService.updatePresence).mockRejectedValueOnce(
+        "non-error-redis-failure" as unknown as Error,
+      );
+
+      const logger = (
+        handler as unknown as { logger: { warn: ReturnType<typeof vi.fn> } }
+      ).logger;
+      const warnSpy = vi.spyOn(logger, "warn");
+
+      await handler.handleJoinRoom(client, { roomCode: "ABC123" });
+
+      expect(client.join).toHaveBeenCalledWith("room:r1");
+      expect(presenceService.updatePresence).toHaveBeenCalledWith("r1", "u1");
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ROOM_JOINED,
+        expect.objectContaining({ roomId: "r1" }),
+      );
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Presence update failed for user u1 in room r1: non-error-redis-failure",
+        ),
+      );
+    });
+
     it("joins IN_GAME room as SPECTATOR without broadcasting PLAYER_JOINED or triggering countdown", async () => {
       // Drop-in spectating baseline: a late-joiner must not look like a
       // new participant to the existing players, and must not start the
@@ -735,6 +819,19 @@ describe("RoomHandler", () => {
         expect.objectContaining({
           code: ErrorCode.INTERNAL_ERROR,
           message: "Internal server error",
+        }),
+      );
+    });
+
+    it("emits specific error on RoomError during leaveRoom", async () => {
+      vi.mocked(roomService.leaveRoom).mockRejectedValue(
+        new RoomError(ErrorCode.ROOM_NOT_FOUND),
+      );
+      await handler.handleLeaveRoom(client, server, { roomId: "r1" });
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.ROOM_NOT_FOUND,
         }),
       );
     });

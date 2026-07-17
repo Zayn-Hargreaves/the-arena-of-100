@@ -196,12 +196,21 @@ This project also uses the OpenCode Kit (migrated from Antigravity). For agent r
 > opencode --version
 > opencode --help   # confirm "plugin" subcommand is listed
 >
-> # 3. From the repo root, launch the TUI and run the /init slash command inside it
-> #    This generates .opencode/ and opencode.json for the current project
+> # 3. Install the official OpenCode Kit package/bootstrap command locally to generate .opencode/ and opencode.json
+> opencode plugin @opencode-ai/plugin
+>
+> # 4. From the repo root, launch the TUI and run the /init slash command to create/update AGENTS.md
 > opencode
 > # Inside the TUI, type:  /init
 > ```
 >
-> `opencode init` is **not** a valid CLI subcommand — `/init` is a TUI slash command that must be run inside the interactive session. If your version of `opencode-ai` does not show `/init` in the TUI help, upgrade: `npm install -g opencode-ai@latest`.
+> **Post-Provisioning Verification**:
+> You must verify that the following files have been successfully generated in your workspace:
+>
+> - `.opencode/rules/GEMINI.md`
+> - `.opencode/skills/intelligent-routing/SKILL.md`
+>   Setup is incomplete if either file is missing.
+>
+> The TUI slash command `/init` only creates or updates the `AGENTS.md` file; it does not generate the `.opencode/` directory or `opencode.json` configuration file. The `opencode plugin @opencode-ai/plugin` command is required to bootstrap those files. If your version of `opencode-ai` does not show `/init` in the TUI help, upgrade: `npm install -g opencode-ai@latest`.
 >
 > Until the kit is provisioned the `.opencode/rules/GEMINI.md` and `.opencode/skills/intelligent-routing/SKILL.md` references above will not resolve. The rest of the agent instructions in this file are always available without this step.
