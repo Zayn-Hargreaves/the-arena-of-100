@@ -50,6 +50,24 @@ export class RoomHandler extends BaseHandler {
         );
 
         client.join(`room:${room.id}`);
+
+        // Same as handleJoinRoom: the presence sweep only sees the host
+        // as online once this key exists. Without it, a host who creates
+        // a room and is still waiting for their first heartbeat can be
+        // swept as "stale" and the room disbanded under them.
+        // Best-effort: room + socket channel already exist; a Redis blip
+        // must not turn a successful create into ERROR after the fact.
+        // Heartbeat + ROOM_SWEEP_GRACE_PERIOD cover a missing key.
+        try {
+          await this.presenceService.updatePresence(room.id, userId);
+        } catch (error) {
+          this.logger.warn(
+            `Presence update failed after room create ${room.id} for host ${userId}; host will rely on heartbeat/sweep grace: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+
         client.emit(ServerEvent.ROOM_CREATED, {
           roomId: room.id,
           code: room.code,
@@ -106,6 +124,14 @@ export class RoomHandler extends BaseHandler {
         const isSpectator = room.joinedAs === "SPECTATOR";
 
         client.join(`room:${room.id}`);
+
+        // The presence sweep (every 5s) only sees a player as online once
+        // this key exists — otherwise a player who joins and is still
+        // waiting for their first heartbeat can be swept as "stale"
+        // seconds after joining. We already accept their socket as online
+        // below (isOnline: true for the joiner), so make that true in
+        // Redis too instead of leaving it to the first heartbeat.
+        await this.presenceService.updatePresence(room.id, userId);
 
         if (room.joined && !isSpectator) {
           client.to(`room:${room.id}`).emit(ServerEvent.PLAYER_JOINED, {

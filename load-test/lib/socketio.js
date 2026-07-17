@@ -226,15 +226,25 @@ export function createSocketIOClient(wsBase, opts = {}) {
       dispatch(arr[0], arr[1]);
       return;
     }
-    // DISCONNECT / ACK: nothing to do for the load client.
+    if (pkt.sioType === SIO.DISCONNECT) {
+      // The server sends this Socket.IO packet (e.g. socket.disconnect())
+      // before the raw WebSocket close frame — it's the only place the
+      // application-level reason (as opposed to the transport-level close
+      // code) is available, so stash it for the onClose hook below.
+      lastServerDisconnectReason = pkt.data || "server_disconnect";
+      return;
+    }
+    // ACK: nothing to do for the load client.
   }
+
+  let lastServerDisconnectReason = null;
 
   ws.onmessage = (e) => handleRaw(e.data);
   ws.onerror = (e) => {
     rejectReady(new Error("websocket error"));
     if (opts.onError) opts.onError(e);
   };
-  ws.onclose = () => {
+  ws.onclose = (e) => {
     closed = true;
     // Always reject on close so callers awaiting client.ready never hang,
     // even if the socket closes before the namespace CONNECT ack fires.
@@ -244,7 +254,13 @@ export function createSocketIOClient(wsBase, opts = {}) {
     rejectReady(
       new Error("socket closed before namespace connection acknowledgement"),
     );
-    if (opts.onClose) opts.onClose(intentionalClose);
+    if (opts.onClose) {
+      opts.onClose(intentionalClose, {
+        code: e && e.code,
+        reason: e && e.reason,
+        sioReason: lastServerDisconnectReason,
+      });
+    }
   };
 
   return client;

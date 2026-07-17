@@ -66,7 +66,9 @@ function makeActiveRoom(
     timeLimit: 15,
     category: "ALL",
     currentMatchId: null,
-    createdAt: new Date(),
+    // Outside ROOM_SWEEP_GRACE_PERIOD_MS (30s) so sweep tests exercise
+    // presence logic rather than the new-room grace skip.
+    createdAt: new Date(Date.now() - 60_000),
     updatedAt: new Date(),
     ...overrides,
     players,
@@ -82,6 +84,7 @@ describe("PresenceService", () => {
   let gameLoopService: {
     handleMatchPlayerLeft: ReturnType<typeof vi.fn>;
     handlePlayerDisconnect: ReturnType<typeof vi.fn>;
+    forceFinishMatchForDisband: ReturnType<typeof vi.fn>;
   };
   let mockServer: ReturnType<typeof makeMockServer>;
 
@@ -102,6 +105,7 @@ describe("PresenceService", () => {
     gameLoopService = {
       handleMatchPlayerLeft: vi.fn().mockResolvedValue(undefined),
       handlePlayerDisconnect: vi.fn().mockResolvedValue(undefined),
+      forceFinishMatchForDisband: vi.fn().mockResolvedValue(undefined),
     };
 
     mockServer = makeMockServer();
@@ -260,12 +264,15 @@ describe("PresenceService", () => {
 
     it("disbands a PRIVATE room whose host is stale, emitting HOST_STALE events", async () => {
       service.setServer(mockServer as unknown as Server);
+      // Outside grace window; one prior strike so this tick disbands.
+      (service as any).hostStaleStrikes.set("rPriv", 1);
       vi.mocked(roomService.getActiveRooms).mockResolvedValueOnce([
         makeActiveRoom({
           id: "rPriv",
           code: "PRIV1",
           type: "PRIVATE",
           hostId: "host1",
+          createdAt: new Date(Date.now() - 60_000),
           players: [{ userId: "host1" }, { userId: "p2" }],
         }),
       ]);
@@ -276,6 +283,7 @@ describe("PresenceService", () => {
       await (service as any).sweep();
 
       expect(roomService.disbandRoom).toHaveBeenCalledWith("rPriv");
+      expect(gameLoopService.forceFinishMatchForDisband).not.toHaveBeenCalled();
       // Batch removal MUST NOT be called in the host-stale path
       expect(roomService.removePlayerBatch).not.toHaveBeenCalled();
 
@@ -304,6 +312,77 @@ describe("PresenceService", () => {
 
       // No handleRoomPlayerLeft call (the room is being disbanded)
       expect(lobbyCountdownService.handleRoomPlayerLeft).not.toHaveBeenCalled();
+    });
+
+    it("force-finishes the active match before disbanding a host-stale IN_GAME private room", async () => {
+      service.setServer(mockServer as unknown as Server);
+      (service as any).hostStaleStrikes.set("rPrivMatch", 1);
+      vi.mocked(roomService.getActiveRooms).mockResolvedValueOnce([
+        makeActiveRoom({
+          id: "rPrivMatch",
+          code: "PRIV2",
+          type: "PRIVATE",
+          hostId: "host1",
+          status: RoomStatus.IN_GAME,
+          currentMatchId: "m-live",
+          createdAt: new Date(Date.now() - 60_000),
+          players: [{ userId: "host1" }, { userId: "p2" }],
+        }),
+      ]);
+      vi.mocked(roomService.checkPresence).mockImplementation(
+        async (_room, userId) => userId !== "host1",
+      );
+
+      await (service as any).sweep();
+
+      expect(gameLoopService.forceFinishMatchForDisband).toHaveBeenCalledWith(
+        "m-live",
+        "rPrivMatch",
+      );
+      expect(roomService.disbandRoom).toHaveBeenCalledWith("rPrivMatch");
+      const forceOrder = vi.mocked(gameLoopService.forceFinishMatchForDisband)
+        .mock.invocationCallOrder[0];
+      const disbandOrder = vi.mocked(roomService.disbandRoom).mock
+        .invocationCallOrder[0];
+      expect(forceOrder).toBeLessThan(disbandOrder);
+    });
+
+    it("skips disbandRoom and preserves the room when forceFinishMatchForDisband throws", async () => {
+      service.setServer(mockServer as unknown as Server);
+      (service as any).hostStaleStrikes.set("rPrivMatch", 1);
+      vi.mocked(gameLoopService.forceFinishMatchForDisband).mockRejectedValue(
+        new Error("boom"),
+      );
+      vi.mocked(roomService.getActiveRooms).mockResolvedValueOnce([
+        makeActiveRoom({
+          id: "rPrivMatch",
+          code: "PRIV2",
+          type: "PRIVATE",
+          hostId: "host1",
+          status: RoomStatus.IN_GAME,
+          currentMatchId: "m-live",
+          createdAt: new Date(Date.now() - 60_000),
+          players: [{ userId: "host1" }, { userId: "p2" }],
+        }),
+      ]);
+      vi.mocked(roomService.checkPresence).mockImplementation(
+        async (_room, userId) => userId !== "host1",
+      );
+
+      await expect((service as any).sweep()).rejects.toThrow("boom");
+
+      expect(gameLoopService.forceFinishMatchForDisband).toHaveBeenCalledWith(
+        "m-live",
+        "rPrivMatch",
+      );
+      expect(roomService.disbandRoom).not.toHaveBeenCalled();
+      expect(
+        mockServer.emissions.find(
+          (e) =>
+            e.event === ServerEvent.ROOM_COUNTDOWN_CANCELLED &&
+            (e.payload as any).roomId === "rPrivMatch",
+        ),
+      ).toBeUndefined();
     });
 
     it("treats a stale host in a PUBLIC room as a regular batch removal (not disband)", async () => {

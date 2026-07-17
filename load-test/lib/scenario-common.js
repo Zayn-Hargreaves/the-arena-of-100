@@ -7,7 +7,12 @@
 
 import exec from "k6/execution";
 import { config } from "../config.js";
-import { guestLogin, createRoom, verifyRoomExists } from "./auth.js";
+import {
+  guestLogin,
+  createRoom,
+  verifyRoomExists,
+  waitForRoomInGame,
+} from "./auth.js";
 import { hostFlow, playerFlow, spectatorFlow } from "./flows.js";
 import * as M from "./metrics.js";
 
@@ -53,6 +58,7 @@ export function player(data) {
   }
   return playerFlow({
     token: acct.token,
+    userId: acct.userId,
     roomCode: data.roomCode,
     vu: uid,
     lifetimeMs: config.lifetimeMs,
@@ -61,6 +67,17 @@ export function player(data) {
 
 export function spectator(data) {
   if (!verifyRoomExists(config.httpBase, data.roomCode)) {
+    M.setupErrors.add(1);
+    M.appErrorRate.add(true);
+    return;
+  }
+  // Gate join on host START_MATCH so joiners land as drop-in SPECTATOR
+  // (IN_GAME), not as late lobby players racing a fixed startTime.
+  if (
+    !waitForRoomInGame(config.httpBase, data.roomCode, {
+      timeoutMs: config.warmupMs + 20000,
+    })
+  ) {
     M.setupErrors.add(1);
     M.appErrorRate.add(true);
     return;

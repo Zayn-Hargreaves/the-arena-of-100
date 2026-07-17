@@ -7,6 +7,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import {
   RoomStatus,
+  MatchStatus,
   generateRoomCode,
   GAME_CONFIG,
   ErrorCode,
@@ -498,10 +499,62 @@ export class RoomService {
     // expire on their own 20s TTL, leaving a stale presence read window.
     const userIds = await this.redis.smembers(roomPlayersKey(roomId));
 
-    await this.prisma.$transaction([
-      this.prisma.roomPlayer.deleteMany({ where: { roomId } }),
-      this.prisma.room.delete({ where: { id: roomId } }),
-    ]);
+    // Match (and its cascading MatchPlayer/MatchRound/Answer/EventLog rows)
+    // has no cascade-delete relation to Room, and deleting them here would
+    // erase a played match's history and ranking data. A room that has
+    // already hosted a match is kept around (its RoomPlayer rows are still
+    // cleared so it stops showing up as occupied) instead of being
+    // hard-deleted; only a room with no match history is fully removed.
+    //
+    // matchCount + delete-vs-finish run under a single Room FOR UPDATE
+    // lock so a concurrent match create cannot race past a no-history
+    // delete (or leave an IN_GAME shell after membership wipe).
+    await this.prisma.$transaction(async (tx) => {
+      const lockedRoom = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id
+        FROM "rooms"
+        WHERE id = ${roomId}
+        FOR UPDATE
+      `;
+      if (lockedRoom.length === 0) {
+        return;
+      }
+
+      const matchCount = await tx.match.count({ where: { roomId } });
+
+      if (matchCount > 0) {
+        // Safety net: any non-terminal Match for this room is forced to
+        // FINISHED here. Callers that own the live loop (presence host-stale
+        // / admin kill-switch) should terminate via the state machine first;
+        // this update is idempotent when they already did.
+        await tx.eventLog.create({
+          data: {
+            roomId,
+            adminUserId: null,
+            eventType: "ROOM_DISBAND_SAFETY_NET",
+            payload: { reason: "SAFETY_NET", matchCount },
+          },
+        });
+        await tx.match.updateMany({
+          where: { roomId, status: { not: MatchStatus.FINISHED } },
+          data: {
+            status: MatchStatus.FINISHED,
+            endedAt: new Date(),
+          },
+        });
+        await tx.room.update({
+          where: { id: roomId },
+          data: {
+            status: RoomStatus.FINISHED,
+            currentMatchId: null,
+          },
+        });
+        await tx.roomPlayer.deleteMany({ where: { roomId } });
+      } else {
+        await tx.roomPlayer.deleteMany({ where: { roomId } });
+        await tx.room.delete({ where: { id: roomId } });
+      }
+    });
 
     await Promise.all([
       this.redis.del(roomPlayersKey(roomId)),

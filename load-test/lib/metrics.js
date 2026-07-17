@@ -27,6 +27,10 @@ export const wsConnectErrors = new Counter("ws_connect_errors");
 export const wsDisconnectErrors = new Counter("ws_disconnect_errors");
 export const wsConnectSuccess = new Counter("ws_connect_success");
 export const wsUnexpectedDisconnect = new Counter("ws_unexpected_disconnect");
+// Handshake attempts that failed but were retried (browser-style
+// self-healing in connectWithRetry). High values mean the server is
+// struggling under connect burst even if the run ends green.
+export const handshakeRetries = new Counter("ws_handshake_retries");
 
 // App-level error rate: false on each successful handshake step, true on
 // each failure. Threshold target is config.errorRateMax (Plan A: < 1%).

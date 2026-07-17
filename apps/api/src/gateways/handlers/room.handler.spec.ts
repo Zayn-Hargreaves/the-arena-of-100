@@ -29,6 +29,7 @@ describe("RoomHandler", () => {
     } as unknown as RoomService;
     presenceService = {
       isPresent: vi.fn().mockResolvedValue(false),
+      updatePresence: vi.fn().mockResolvedValue(undefined),
     } as unknown as PresenceService;
     gameLoopService = {
       handleMatchPlayerLeft: vi.fn().mockResolvedValue(undefined),
@@ -80,6 +81,7 @@ describe("RoomHandler", () => {
         undefined,
       );
       expect(client.join).toHaveBeenCalledWith("room:r1");
+      expect(presenceService.updatePresence).toHaveBeenCalledWith("r1", "u1");
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ROOM_CREATED, {
         roomId: "r1",
         code: "ABC123",
@@ -97,6 +99,39 @@ describe("RoomHandler", () => {
         ],
         joinedAs: "PLAYER",
       });
+    });
+
+    it("still emits ROOM_CREATED when post-create presence update fails (Redis blip)", async () => {
+      vi.mocked(roomService.createRoom).mockResolvedValue({
+        id: "r1",
+        code: "ABC123",
+        type: "PUBLIC",
+        hostId: "u1",
+        maxPlayers: 100,
+      } as any);
+      vi.mocked(presenceService.updatePresence).mockRejectedValueOnce(
+        new Error("Redis connection lost"),
+      );
+
+      await handler.handleCreateRoom(client, {
+        roomType: "PUBLIC",
+        maxPlayers: 100,
+      });
+
+      expect(client.join).toHaveBeenCalledWith("room:r1");
+      expect(presenceService.updatePresence).toHaveBeenCalledWith("r1", "u1");
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ROOM_CREATED,
+        expect.objectContaining({
+          roomId: "r1",
+          code: "ABC123",
+          joinedAs: "PLAYER",
+        }),
+      );
+      expect(client.emit).not.toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.anything(),
+      );
     });
 
     it("emits error when not authenticated", async () => {

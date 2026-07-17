@@ -1,6 +1,12 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Server } from "socket.io";
-import { GAME_CONFIG, RoomStatus, RoomError, ErrorCode } from "@arena/shared";
+import {
+  GAME_CONFIG,
+  MatchStatus,
+  RoomStatus,
+  RoomError,
+  ErrorCode,
+} from "@arena/shared";
 import { MatchService } from "./match.service";
 import { QuestionService } from "../question/question.service";
 import { RoomService } from "../room/room.service";
@@ -321,6 +327,60 @@ export class GameLoopService {
     await this.lobbyCountdown.clearCountdown(roomId);
     if (matchId) {
       this.roundRunner.cancelMatchLoop(matchId);
+    }
+  }
+
+  /**
+   * Terminates an active match through the server-authoritative path before
+   * room membership teardown (e.g. private host-stale disband mid-match).
+   * Cancels timers, appends MATCH_FINISHED on the in-memory state machine
+   * when present (audit/replay), then persists Match+Room FINISHED via
+   * matchService.finishMatch. Safe if the match is already finishing or gone.
+   */
+  async forceFinishMatchForDisband(
+    matchId: string,
+    roomId: string,
+  ): Promise<void> {
+    this.roundRunner.cancelMatchLoop(matchId);
+
+    if (this.roundRunner.isMatchFinishing(matchId)) {
+      this.logger.warn(
+        `forceFinishMatchForDisband: match ${matchId} already finishing; skipping SM/DB finish`,
+      );
+      return;
+    }
+
+    try {
+      const stateMachine = await this.matchService.getStateMachine(matchId);
+      if (stateMachine) {
+        const status = stateMachine.getState().status;
+        if (status !== MatchStatus.FINISHED) {
+          if (stateMachine.canTransition(MatchStatus.FINISHED)) {
+            stateMachine.transition(MatchStatus.FINISHED);
+          }
+          stateMachine.finishMatch();
+          await this.matchService.persistStateMachine(matchId);
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `forceFinishMatchForDisband: state-machine terminalization failed for match ${matchId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      throw error;
+    }
+
+    try {
+      // Admin-termination flag: no score recompute; winnerId null.
+      await this.matchService.finishMatch(matchId, null, roomId, true);
+    } catch (error) {
+      this.logger.warn(
+        `forceFinishMatchForDisband: finishMatch failed for match ${matchId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      throw error;
     }
   }
 

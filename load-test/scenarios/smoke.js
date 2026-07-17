@@ -80,6 +80,7 @@ export function player(data) {
   }
   return playerFlow({
     token: acct.token,
+    userId: acct.userId,
     roomCode: data.roomCode,
     vu: exec.vu.idInTest,
     lifetimeMs: SMOKE_LIFETIME_MS,

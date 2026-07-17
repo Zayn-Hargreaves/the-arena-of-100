@@ -646,6 +646,64 @@ describe("GameLoopService", () => {
 
   describe("Admin kill-switch helpers (PR #47)", () => {
     // ---- stopRoomRuntime ----
+    describe("forceFinishMatchForDisband", () => {
+      it("cancels timers, transitions SM to FINISHED with event log, and finishMatch with admin flag", async () => {
+        const { svc } = buildService();
+        const finishMatch = vi.fn().mockResolvedValue({});
+        const persistStateMachine = vi.fn().mockResolvedValue(undefined);
+        const canTransition = vi.fn().mockReturnValue(true);
+        const transition = vi.fn();
+        const finishMatchSm = vi.fn();
+        const getState = vi.fn().mockReturnValue({ status: "ROUND_ACTIVE" });
+        matchService.finishMatch = finishMatch;
+        matchService.persistStateMachine = persistStateMachine;
+        matchService.getStateMachine = vi.fn().mockResolvedValue({
+          canTransition,
+          transition,
+          finishMatch: finishMatchSm,
+          getState,
+        });
+
+        (svc as any).roundRunner.timers.initUsedQuestions("m-disband");
+        (svc as any).roundRunner.timers.addTimer(
+          "m-disband",
+          setTimeout(() => undefined, 100),
+        );
+
+        await svc.forceFinishMatchForDisband("m-disband", "r-disband");
+
+        expect((svc as any).roundRunner.timers.hasTimers("m-disband")).toBe(
+          false,
+        );
+        expect(canTransition).toHaveBeenCalledWith("FINISHED");
+        expect(transition).toHaveBeenCalledWith("FINISHED");
+        expect(finishMatchSm).toHaveBeenCalled();
+        expect(persistStateMachine).toHaveBeenCalledWith("m-disband");
+        expect(finishMatch).toHaveBeenCalledWith(
+          "m-disband",
+          null,
+          "r-disband",
+          true,
+        );
+      });
+
+      it("still calls finishMatch when no state machine is present", async () => {
+        const { svc } = buildService();
+        const finishMatch = vi.fn().mockResolvedValue({});
+        matchService.finishMatch = finishMatch;
+        matchService.getStateMachine = vi.fn().mockResolvedValue(null);
+
+        await svc.forceFinishMatchForDisband("m-gone", "r-gone");
+
+        expect(finishMatch).toHaveBeenCalledWith(
+          "m-gone",
+          null,
+          "r-gone",
+          true,
+        );
+      });
+    });
+
     describe("stopRoomRuntime", () => {
       it("clears the lobby countdown timer, removes the in-memory slot, and runs clearPersistedCountdown", async () => {
         const { svc, multiSpy } = buildService();

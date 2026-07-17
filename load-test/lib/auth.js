@@ -133,3 +133,33 @@ export function verifyRoomExists(httpBase, roomCode) {
   }
   return false;
 }
+
+// Poll until the room is IN_GAME (host finished START_MATCH) so drop-in
+// spectators join as SPECTATOR rather than racing into a WAITING lobby.
+// Default budget covers host warmup + START_MATCH + a small buffer.
+export function waitForRoomInGame(
+  httpBase,
+  roomCode,
+  { timeoutMs = 60000, intervalMs = 500 } = {},
+) {
+  const maxAttempts = Math.max(1, Math.ceil(timeoutMs / intervalMs));
+  for (let i = 0; i < maxAttempts; i++) {
+    const res = http.get(`${httpBase}/rooms/code/${roomCode}`, {
+      tags: { name: "rooms/check-in-game" },
+    });
+    if (res.status === 200) {
+      try {
+        const body = res.json();
+        const status =
+          (body && body.data && body.data.status) ||
+          (body && body.status) ||
+          null;
+        if (status === "IN_GAME") return true;
+      } catch (_e) {
+        /* retry */
+      }
+    }
+    sleep(intervalMs / 1000);
+  }
+  return false;
+}

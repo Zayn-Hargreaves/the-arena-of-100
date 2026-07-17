@@ -15,12 +15,41 @@ import {
 import { GameLoopService } from "./game-loop.service";
 import { emitMatchPlayerLeft } from "./game-loop.events";
 
+// A room this young hasn't had a fair chance to establish presence yet:
+// under a burst of concurrent connections, a just-created room's host can
+// still be queued behind hundreds of other AUTHENTICATE/JOIN_ROOM calls
+// when the first sweep tick after room creation fires. Without this grace
+// window the sweep judges the host "stale" (no presence key set yet) and
+// disbands the room before it ever had a socket connected — observed at
+// 400 concurrent connections across 4 rooms, where a host's own
+// AUTHENTICATE hadn't reached the server 3s after room creation.
+const ROOM_SWEEP_GRACE_PERIOD_MS = 30_000;
+
+// A private room's host being "stale" on ONE sweep tick doesn't mean the
+// host is gone: a real client's Socket.IO connection retries indefinitely
+// (default reconnection: true, 1-5s backoff) and covers exactly this kind
+// of transient blip — a dropped connection, a failed initial handshake
+// under a burst of concurrent connections, a brief network hiccup. Load
+// testing at 8 concurrent 100-seat rooms (800 sockets) showed this isn't
+// rare enough to ignore at scale: individual connections occasionally
+// never reach the server on the first attempt, and disbanding on a single
+// missed tick evicts every other player in the room over what a real
+// client would have self-healed from within the next 5-10s. Requiring two
+// CONSECUTIVE stale ticks (~10s total, still well inside the 20s presence
+// TTL a genuinely-gone host would need to clear anyway) keeps the
+// original protection against an actually-abandoned room while giving a
+// reconnecting host one more cycle to prove it's still there.
+const HOST_STALE_CONSECUTIVE_SWEEPS = 2;
+
 @Injectable()
 export class PresenceService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PresenceService.name);
   private sweepInterval?: NodeJS.Timeout;
   private server?: Server;
   private isSweeping = false;
+  // roomId -> consecutive sweep ticks where the host has been stale.
+  // Reset to absent whenever the host is seen present again.
+  private readonly hostStaleStrikes = new Map<string, number>();
 
   constructor(
     private readonly roomService: RoomService,
@@ -71,7 +100,22 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
     if (!this.server) return;
 
     const activeRooms = await this.roomService.getActiveRooms();
+    const now = Date.now();
+
+    // Drop strike counters for rooms that are no longer active (finished,
+    // already disbanded, etc.) so this map can't grow unbounded.
+    const activeRoomIds = new Set(activeRooms.map((room) => room.id));
+    for (const roomId of this.hostStaleStrikes.keys()) {
+      if (!activeRoomIds.has(roomId)) {
+        this.hostStaleStrikes.delete(roomId);
+      }
+    }
+
     for (const room of activeRooms) {
+      if (now - room.createdAt.getTime() < ROOM_SWEEP_GRACE_PERIOD_MS) {
+        continue;
+      }
+
       // Check all players' presence in parallel (single round-trip per player
       // to Redis, but no longer N+1 sequential awaits per room). The N+1
       // pattern was making the 5s sweep scale linearly with room size.
@@ -94,11 +138,37 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
+      // The host is confirmed present this tick — any strikes from a prior
+      // transient blip no longer apply.
+      if (!isHostStale) {
+        this.hostStaleStrikes.delete(room.id);
+      }
+
       if (stalePlayerIds.length > 0) {
         if (room.type === "PRIVATE" && isHostStale) {
+          const strikes = (this.hostStaleStrikes.get(room.id) ?? 0) + 1;
+          if (strikes < HOST_STALE_CONSECUTIVE_SWEEPS) {
+            this.hostStaleStrikes.set(room.id, strikes);
+            this.logger.log(
+              `Host stale in private room ${room.code} (${strikes}/${HOST_STALE_CONSECUTIVE_SWEEPS} consecutive sweeps); giving the host one more cycle to reconnect before disbanding`,
+            );
+            continue;
+          }
+
+          this.hostStaleStrikes.delete(room.id);
           this.logger.log(
-            `Host stale in private room ${room.code}, disbanding...`,
+            `Host stale in private room ${room.code} for ${HOST_STALE_CONSECUTIVE_SWEEPS} consecutive sweeps, disbanding...`,
           );
+          // Mid-match disband must terminate the live match through the
+          // state-machine + finishMatch path before membership teardown;
+          // disbandRoom alone only clears currentMatchId and would leave
+          // an orphan non-FINISHED Match row without audit events.
+          if (room.currentMatchId) {
+            await this.gameLoopService.forceFinishMatchForDisband(
+              room.currentMatchId,
+              room.id,
+            );
+          }
           await this.roomService.disbandRoom(room.id);
           this.server
             .to(`room:${room.id}`)

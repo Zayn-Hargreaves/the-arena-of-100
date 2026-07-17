@@ -23,6 +23,7 @@
  */
 export type KnownAuditEventType =
   | "ADMIN_TERMINATE_ROOM"
+  | "ROOM_DISBAND_SAFETY_NET"
   | "ADMIN_RESET_SYSTEM"
   | "ADMIN_SYNC_QUESTIONS";
 
@@ -37,6 +38,7 @@ export type AuditEventType = KnownAuditEventType | (string & {});
 /** The known event types, for building the filter dropdown. */
 export const KNOWN_AUDIT_EVENT_TYPES: KnownAuditEventType[] = [
   "ADMIN_TERMINATE_ROOM",
+  "ROOM_DISBAND_SAFETY_NET",
   "ADMIN_RESET_SYSTEM",
   "ADMIN_SYNC_QUESTIONS",
 ];
