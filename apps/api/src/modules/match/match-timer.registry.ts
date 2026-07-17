@@ -174,6 +174,9 @@ export class MatchTimerRegistry {
     this.clearTimers(matchId);
     this.usedQuestionIds.delete(matchId);
     this.expectedAnswers.delete(matchId);
-    this.finishingPromises.delete(matchId);
+    // NOTE: finishingPromises is intentionally NOT deleted here.
+    // endFinish() is the sole method responsible for removing that entry so
+    // that concurrent callers (e.g. forceFinishMatchForDisband) can still
+    // awaitFinish() after disposeMatch is called during teardown.
   }
 }

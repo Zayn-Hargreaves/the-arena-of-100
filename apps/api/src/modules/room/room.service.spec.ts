@@ -34,6 +34,9 @@ describe("RoomService", () => {
       match: {
         count: vi.fn().mockResolvedValue(0),
         updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+        // Used by disbandRoom to capture non-FINISHED match IDs before the
+        // bulk updateMany (updateMany does not return modified rows).
+        findMany: vi.fn().mockResolvedValue([]),
       },
       eventLog: {
         create: vi.fn().mockResolvedValue({}),
@@ -787,7 +790,7 @@ describe("RoomService", () => {
   });
 
   describe("getActiveRooms", () => {
-    it("returns rooms in WAITING, COUNTDOWN, or STARTING status with their players", async () => {
+    it("returns rooms in WAITING, COUNTDOWN, STARTING or IN_GAME status (excludes FINISHED)", async () => {
       const mockRooms = [
         { id: "r1", status: "WAITING", players: [{ userId: "u1" }] },
         { id: "r2", status: "COUNTDOWN", players: [{ userId: "u2" }] },
@@ -804,7 +807,6 @@ describe("RoomService", () => {
               RoomStatus.COUNTDOWN,
               RoomStatus.STARTING,
               RoomStatus.IN_GAME,
-              RoomStatus.FINISHED,
             ],
           },
         },
@@ -843,6 +845,8 @@ describe("RoomService", () => {
       vi.mocked(prisma.roomPlayer.deleteMany).mockResolvedValue({
         count: 2,
       } as any);
+      // findMany returns empty — no non-FINISHED matches, so no safety-net IDs.
+      vi.mocked(prisma.match.findMany).mockResolvedValue([] as any);
 
       await service.disbandRoom("r1");
 
@@ -867,12 +871,20 @@ describe("RoomService", () => {
       vi.mocked(prisma.$queryRaw).mockResolvedValue([{ id: "r1" }] as any);
       vi.mocked(prisma.room.update).mockResolvedValue({} as any);
       vi.mocked(prisma.match.updateMany).mockResolvedValue({ count: 1 } as any);
+      // Simulate one non-FINISHED match that will be terminalized.
+      vi.mocked(prisma.match.findMany).mockResolvedValue([
+        { id: "m-active" },
+      ] as any);
       vi.mocked(prisma.roomPlayer.deleteMany).mockResolvedValue({
         count: 1,
       } as any);
 
-      await service.disbandRoom("r1");
+      const result = await service.disbandRoom("r1");
 
+      expect(prisma.match.findMany).toHaveBeenCalledWith({
+        where: { roomId: "r1", status: { not: "FINISHED" } },
+        select: { id: true },
+      });
       expect(prisma.match.updateMany).toHaveBeenCalledWith({
         where: { roomId: "r1", status: { not: "FINISHED" } },
         data: {
@@ -880,6 +892,17 @@ describe("RoomService", () => {
           endedAt: expect.any(Date),
         },
       });
+      // The audit log must record the terminalized match IDs.
+      expect(prisma.eventLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            eventType: "MATCH_FORCE_FINISHED",
+            payload: expect.objectContaining({ matchIds: ["m-active"] }),
+          }),
+        }),
+      );
+      // safetyNetMatchIds is returned to PresenceService for socket emissions.
+      expect(result.safetyNetMatchIds).toEqual(["m-active"]);
     });
 
     it("skips DB teardown when the room row is already gone under the lock", async () => {

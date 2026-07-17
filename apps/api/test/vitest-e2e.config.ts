@@ -40,8 +40,8 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
-    include: ["test/**/*.e2e-spec.ts"],
-    exclude: ["node_modules", "dist", "src/**"],
+    include: ["test/**/*.e2e-spec.ts", "src/**/*.integration.spec.ts"],
+    exclude: ["node_modules", "dist"],
     ...(isCi
       ? {
           reporters: ["default", "junit", "json"],

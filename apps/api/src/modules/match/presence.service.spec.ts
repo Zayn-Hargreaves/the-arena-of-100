@@ -95,7 +95,7 @@ describe("PresenceService", () => {
       checkPresence: vi.fn().mockResolvedValue(true),
       getActiveRooms: vi.fn().mockResolvedValue([]),
       removePlayerBatch: vi.fn().mockResolvedValue(undefined),
-      disbandRoom: vi.fn().mockResolvedValue(undefined),
+      disbandRoom: vi.fn().mockResolvedValue({ safetyNetMatchIds: [] }),
     } as unknown as RoomService;
 
     lobbyCountdownService = {
@@ -372,19 +372,21 @@ describe("PresenceService", () => {
         async (_room, userId) => userId !== "host1",
       );
 
-      // `entered` is set the instant the mock is called by sweep, and the
-      // deferred stays pending until the test resolves it. This gives us
-      // a deterministic, race-free handle on "sweep is now blocked inside
-      // forceFinishMatchForDisband awaiting the natural finish".
-      let entered = false;
+      // `entered` deferred: resolves the instant the mock is called by sweep,
+      // giving a deterministic handle on "sweep is now inside
+      // forceFinishMatchForDisband" without a busy-poll.
+      let resolveEntered!: () => void;
+      const enteredPromise = new Promise<void>((resolve) => {
+        resolveEntered = resolve;
+      });
       let resolveFinish!: () => void;
       const deferred = new Promise<void>((resolve) => {
         resolveFinish = resolve;
       });
       vi.mocked(gameLoopService.forceFinishMatchForDisband).mockImplementation(
         async () => {
-          entered = true;
-          await deferred;
+          resolveEntered(); // signal "we are now inside the mock"
+          await deferred; // suspend until the test releases us
         },
       );
 
@@ -395,9 +397,7 @@ describe("PresenceService", () => {
 
       // Wait until the sweep has actually reached forceFinishMatchForDisband
       // and is now suspended on the deferred.
-      while (!entered) {
-        await Promise.resolve();
-      }
+      await enteredPromise;
       // Drain any microtasks queued by the mock invocation itself before
       // we assert the negative case.
       await Promise.resolve();
@@ -442,6 +442,11 @@ describe("PresenceService", () => {
       vi.mocked(roomService.checkPresence).mockImplementation(
         async (_room, userId) => userId !== "host1",
       );
+      // disbandRoom safety-net terminalized the in-flight match; override
+      // the default { safetyNetMatchIds: [] } so the sweep emits MATCH_FINISHED.
+      vi.mocked(roomService.disbandRoom).mockResolvedValueOnce({
+        safetyNetMatchIds: ["m-live"],
+      });
 
       await (service as any).sweep();
 

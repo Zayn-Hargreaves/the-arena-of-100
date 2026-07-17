@@ -185,3 +185,23 @@ This project is indexed by GitNexus as **the-arena-of-100** (5482 symbols, 12358
 ## OpenCode Kit Routing
 
 This project also uses the OpenCode Kit (migrated from Antigravity). For agent routing protocol, automatic agent selection, and the "Applying knowledge of @..." workflow, see `.opencode/rules/GEMINI.md` and `.opencode/skills/intelligent-routing/SKILL.md`.
+
+> **Note — clean checkout**: `.opencode/` and `opencode.json` are listed in `.gitignore` and will **not** be present after a fresh `git clone`. To provision the OpenCode Kit before using the routing docs:
+>
+> ```bash
+> # 1. Install the OpenCode CLI (one-time, global)
+> npm install -g opencode-ai
+>
+> # 2. Verify the installation and available commands
+> opencode --version
+> opencode --help   # confirm "plugin" subcommand is listed
+>
+> # 3. From the repo root, launch the TUI and run the /init slash command inside it
+> #    This generates .opencode/ and opencode.json for the current project
+> opencode
+> # Inside the TUI, type:  /init
+> ```
+>
+> `opencode init` is **not** a valid CLI subcommand — `/init` is a TUI slash command that must be run inside the interactive session. If your version of `opencode-ai` does not show `/init` in the TUI help, upgrade: `npm install -g opencode-ai@latest`.
+>
+> Until the kit is provisioned the `.opencode/rules/GEMINI.md` and `.opencode/skills/intelligent-routing/SKILL.md` references above will not resolve. The rest of the agent instructions in this file are always available without this step.

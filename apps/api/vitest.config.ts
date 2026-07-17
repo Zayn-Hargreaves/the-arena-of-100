@@ -25,6 +25,12 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    // Exclude integration specs: they require a real test database (via
+    // setup-e2e helpers) and belong to the E2E runner (vitest-e2e.config.ts),
+    // which is invoked separately in CI with the provisioned arena_test DB.
+    // Including them here causes the standard test:coverage job to fail
+    // when DATABASE_URL points at the main DB (port 5432, not 5434).
+    exclude: ["node_modules/**", "dist/**", "**/*.integration.spec.ts"],
     typecheck: {
       tsconfig: "./tsconfig.spec.json",
     },
@@ -38,6 +44,7 @@ export default defineConfig({
         "**/*.d.ts",
         "**/*.spec.ts",
         "**/*.test.ts",
+        "**/*.integration.spec.ts",
         "prisma/**",
         "src/main.ts",
         // Type-only declaration files (no runtime code, v8 reports 0%).

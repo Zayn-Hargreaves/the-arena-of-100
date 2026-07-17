@@ -475,6 +475,9 @@ export class RoomService {
   }
 
   async getActiveRooms() {
+    // FINISHED rooms are excluded: once a room has finished it will never
+    // have stale players that need sweeping, and including it would cause
+    // the sweep to track FINISHED rooms in hostStaleStrikes indefinitely.
     return this.prisma.room.findMany({
       where: {
         status: {
@@ -483,7 +486,6 @@ export class RoomService {
             RoomStatus.COUNTDOWN,
             RoomStatus.STARTING,
             RoomStatus.IN_GAME,
-            RoomStatus.FINISHED,
           ],
         },
       },
@@ -575,7 +577,10 @@ export class RoomService {
       }
     });
 
-    await Promise.all([
+    // Best-effort Redis cleanup: use allSettled so that a Redis failure
+    // cannot reject this function after the DB transaction has already
+    // committed. Any rejected cleanup operations are logged individually.
+    const cleanupResults = await Promise.allSettled([
       this.redis.del(roomPlayersKey(roomId)),
       this.redis.del(roomSnapshotKey(roomId)),
       this.redis.del(roomPlayerCountKey(roomId)),
@@ -585,6 +590,18 @@ export class RoomService {
       // membership behind.
       clearPersistedCountdown(this.redis.getClient(), roomId),
     ]);
+    for (const result of cleanupResults) {
+      if (result.status === "rejected") {
+        this.logger.error(
+          `disbandRoom Redis cleanup failed for room ${roomId}: ${
+            result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason)
+          }`,
+          result.reason instanceof Error ? result.reason.stack : undefined,
+        );
+      }
+    }
 
     return { safetyNetMatchIds };
   }
