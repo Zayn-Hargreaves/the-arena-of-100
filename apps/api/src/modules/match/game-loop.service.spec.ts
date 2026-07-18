@@ -94,6 +94,7 @@ describe("GameLoopService", () => {
       roomService,
       createMockPrismaService() as any,
       lobbyCountdown,
+      createMockMatchOwnership() as any,
     );
   });
 
@@ -119,8 +120,26 @@ describe("GameLoopService", () => {
       roomService,
       createMockPrismaService() as any,
       new LobbyCountdownService(roomService, redis),
+      createMockMatchOwnership() as any,
     );
     return { svc, redis, multiSpy };
+  }
+
+  // B2b: minimal MatchOwnershipService stub. acquireOnLaunch defaults to
+  // success so launches proceed; release is a no-op resolve.
+  function createMockMatchOwnership() {
+    return {
+      acquireOnLaunch: vi.fn().mockResolvedValue(true),
+      release: vi.fn().mockResolvedValue(undefined),
+      getOwnedMatchIds: vi.fn().mockReturnValue([]),
+      isOwner: vi.fn().mockReturnValue(true),
+      getLeaseValue: vi.fn().mockReturnValue(undefined),
+      // B2c additions.
+      setRoundRunner: vi.fn(),
+      assertOwnership: vi.fn().mockResolvedValue(true),
+      getOwnershipSnapshot: vi.fn().mockReturnValue(undefined),
+      computeMaxSkew: vi.fn().mockResolvedValue(0),
+    };
   }
 
   describe("forceStartRoomMatch", () => {

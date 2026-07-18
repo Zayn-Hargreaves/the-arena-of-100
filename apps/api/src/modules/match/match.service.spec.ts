@@ -1,14 +1,17 @@
 import { MatchService } from "./match.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
+import { MatchOwnershipService } from "./match-ownership.service";
 import { NotFoundException } from "@nestjs/common";
 import { MatchStatus, PlayerStatus, ErrorCode } from "@arena/shared";
+import { MatchStateMachine } from "@arena/game-core";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 describe("MatchService", () => {
   let service: MatchService;
   let prisma: PrismaService;
   let redis: RedisService;
+  let matchOwnership: MatchOwnershipService;
 
   beforeEach(() => {
     prisma = {
@@ -38,8 +41,15 @@ describe("MatchService", () => {
       set: vi.fn(),
       get: vi.fn(),
       del: vi.fn(),
+      fencedStateSet: vi.fn().mockResolvedValue("APPLIED"),
     } as unknown as RedisService;
-    service = new MatchService(prisma, redis);
+    // B2c: default to "not owned by this node" so persistStateMachine takes the
+    // BLIND (pre-B2c blind redis.set) path — matching the existing assertions.
+    // Individual tests override getOwnershipSnapshot to exercise the fenced CAS.
+    matchOwnership = {
+      getOwnershipSnapshot: vi.fn().mockReturnValue(undefined),
+    } as unknown as MatchOwnershipService;
+    service = new MatchService(prisma, redis, matchOwnership);
   });
 
   describe("createMatch", () => {
@@ -143,6 +153,7 @@ describe("MatchService", () => {
     it("restores from Redis when not in memory", async () => {
       // Manually craft a valid serialized state machine JSON
       const serialized = JSON.stringify({
+        _stateVersion: 1,
         state: {
           id: "m2",
           roomId: "r2",
@@ -212,6 +223,7 @@ describe("MatchService", () => {
       // Build a serialized state with currentRound in ACTIVE status
       // so rehydrateCorrectAnswer actually runs the prisma lookup.
       const serialized = JSON.stringify({
+        _stateVersion: 1,
         state: {
           id: "m-rehydrate",
           roomId: "r-rehydrate",
@@ -297,6 +309,7 @@ describe("MatchService", () => {
       // status. rehydrateCorrectAnswer must short-circuit and
       // not run the prisma lookup.
       const serialized = JSON.stringify({
+        _stateVersion: 1,
         state: {
           id: "m-skip",
           roomId: "r-skip",
@@ -355,6 +368,7 @@ describe("MatchService", () => {
       // guard (`if (!round) return;`) short-circuits before any
       // prisma lookup. This covers line 145.
       const serialized = JSON.stringify({
+        _stateVersion: 1,
         state: {
           id: "m-noround",
           roomId: "r-noround",
@@ -417,6 +431,7 @@ describe("MatchService", () => {
       // state machine with no attached correct answer; the round will
       // grade everyone as wrong and the match still completes.
       const serialized = JSON.stringify({
+        _stateVersion: 1,
         state: {
           id: "m-orphan-q",
           roomId: "r-orphan-q",
@@ -489,6 +504,7 @@ describe("MatchService", () => {
       // MUST NOT throw — it logs and degrades so the match stays
       // recoverable; a later getStateMachine call may succeed.
       const serialized = JSON.stringify({
+        _stateVersion: 1,
         state: {
           id: "m-db-boom",
           roomId: "r-db-boom",
@@ -1300,6 +1316,125 @@ describe("MatchService", () => {
       expect(u1Call![0].data.score).toBe(298);
       // u2: only round 1 correct = 130
       expect(u2Call![0].data.score).toBe(130);
+    });
+  });
+
+  describe("persistStateMachine fenced CAS (B2c)", () => {
+    // Load a machine into the in-memory cache via getStateMachine, then persist.
+    const loadMachine = async (matchId: string) => {
+      const sm = new MatchStateMachine(matchId, "r1", [
+        {
+          id: "p1",
+          name: "A",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+      ]);
+      vi.mocked(redis.get).mockResolvedValueOnce(sm.serialize());
+      await service.getStateMachine(matchId);
+    };
+
+    it("routes an owned match through fencedStateSet and returns APPLIED", async () => {
+      await loadMachine("m1");
+      vi.mocked(matchOwnership.getOwnershipSnapshot).mockReturnValue({
+        fence: 4,
+        leaseValue: "node-a:4",
+      });
+      vi.mocked(redis.fencedStateSet).mockResolvedValue("APPLIED");
+
+      await expect(service.persistStateMachine("m1")).resolves.toBe("APPLIED");
+
+      expect(redis.fencedStateSet).toHaveBeenCalledWith(
+        "match:owner:m1",
+        "match:fence:m1",
+        "match:state:m1",
+        "match:state-revision:m1",
+        expect.objectContaining({
+          leaseValue: "node-a:4",
+          expectedFence: 4,
+          expectedRevision: 0, // bootstrap
+          nextRevision: 1,
+        }),
+      );
+      // Blind write must NOT be used on the owned path.
+      expect(redis.set).not.toHaveBeenCalledWith(
+        "match:state:m1",
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it("returns RETRY and does not advance the revision when the CAS rejects", async () => {
+      await loadMachine("m1");
+      vi.mocked(matchOwnership.getOwnershipSnapshot).mockReturnValue({
+        fence: 4,
+        leaseValue: "node-a:4",
+      });
+      vi.mocked(redis.fencedStateSet).mockResolvedValue("RETRY");
+
+      await expect(service.persistStateMachine("m1")).resolves.toBe("RETRY");
+
+      // Next persist still uses expectedRevision 0 (not advanced past RETRY).
+      vi.mocked(redis.fencedStateSet).mockResolvedValue("APPLIED");
+      await service.persistStateMachine("m1");
+      const lastCall = vi.mocked(redis.fencedStateSet).mock.calls.at(-1)!;
+      expect(lastCall[4]).toMatchObject({
+        expectedRevision: 0,
+        nextRevision: 1,
+      });
+    });
+
+    it("hydrates expectedRevision from Redis for a recovered owner with no local revision", async () => {
+      await loadMachine("m1");
+      vi.mocked(matchOwnership.getOwnershipSnapshot).mockReturnValue({
+        fence: 7,
+        leaseValue: "node-a:7",
+      });
+      // A restored owner's local revisions map is empty, but the persisted
+      // revision is well past INITIAL. It must be read so the fenced CAS lines
+      // up with the live revision instead of RETRYing forever against 0.
+      vi.mocked(redis.get).mockResolvedValueOnce("5");
+      vi.mocked(redis.fencedStateSet).mockResolvedValue("APPLIED");
+
+      await service.persistStateMachine("m1");
+
+      const lastCall = vi.mocked(redis.fencedStateSet).mock.calls.at(-1)!;
+      expect(lastCall[4]).toMatchObject({
+        expectedRevision: 5,
+        nextRevision: 6,
+      });
+    });
+
+    it("refuses to blind-write canonical state when this node does not own the match (fail closed to RETRY)", async () => {
+      await loadMachine("m1");
+      vi.mocked(matchOwnership.getOwnershipSnapshot).mockReturnValue(undefined);
+
+      // F7: a non-owner must NOT clobber match:state with an unfenced write.
+      await expect(service.persistStateMachine("m1")).resolves.toBe("RETRY");
+      expect(redis.fencedStateSet).not.toHaveBeenCalled();
+      expect(redis.set).not.toHaveBeenCalledWith(
+        "match:state:m1",
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it("permits a blind bootstrap write only when explicitly requested", async () => {
+      await loadMachine("m1");
+      vi.mocked(matchOwnership.getOwnershipSnapshot).mockReturnValue(undefined);
+
+      await expect(
+        service.persistStateMachine("m1", { allowBlindBootstrap: true }),
+      ).resolves.toBe("BLIND");
+      expect(redis.fencedStateSet).not.toHaveBeenCalled();
+      expect(redis.set).toHaveBeenCalledWith(
+        "match:state:m1",
+        expect.any(String),
+        86400,
+      );
     });
   });
 });

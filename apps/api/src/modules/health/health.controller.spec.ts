@@ -23,6 +23,7 @@ import { AuthService } from "../auth/auth.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { ClusterService } from "../cluster/cluster.service";
+import { MatchOwnershipService } from "../match/match-ownership.service";
 
 describe("HealthController", () => {
   const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
@@ -50,8 +51,13 @@ describe("HealthController", () => {
 
     const cluster = {
       nodeId: "test-node",
-      getOwnedMatchIds: vi.fn().mockResolvedValue([]),
       getLocalSocketCount: vi.fn().mockReturnValue(0),
+    };
+
+    // B2b: ownedMatches now comes from MatchOwnershipService (sync).
+    const matchOwnership = {
+      getOwnedMatchIds: vi.fn().mockReturnValue([]),
+      computeMaxSkew: vi.fn().mockResolvedValue(0),
     };
 
     return {
@@ -61,12 +67,14 @@ describe("HealthController", () => {
         cpuSampler,
         eventLoopLag as never,
         cluster as never,
+        matchOwnership as never,
       ),
       prisma,
       redis,
       cpuSampler,
       eventLoopLag,
       cluster,
+      matchOwnership,
     };
   };
 
@@ -339,8 +347,8 @@ describe("HealthController", () => {
       process.env.NODE_ENV = "production";
       process.env.INSTANCE_ID = "api-1";
 
-      const { controller, cluster } = createController();
-      cluster.getOwnedMatchIds.mockResolvedValue(["match-a", "match-b"]);
+      const { controller, cluster, matchOwnership } = createController();
+      matchOwnership.getOwnedMatchIds.mockReturnValue(["match-a", "match-b"]);
       cluster.getLocalSocketCount.mockReturnValue(42);
 
       const result = await controller.clusterHealth();
@@ -393,8 +401,12 @@ describe("HealthController", () => {
 
       const mockCluster = {
         nodeId: "test-node",
-        getOwnedMatchIds: vi.fn().mockResolvedValue([]),
         getLocalSocketCount: vi.fn().mockReturnValue(0),
+      };
+
+      const mockMatchOwnership = {
+        getOwnedMatchIds: vi.fn().mockReturnValue([]),
+        computeMaxSkew: vi.fn().mockResolvedValue(0),
       };
 
       const mockAuthService = {
@@ -422,6 +434,7 @@ describe("HealthController", () => {
             { provide: CpuSamplerService, useValue: mockCpuSampler },
             { provide: EventLoopLagService, useValue: mockEventLoopLag },
             { provide: ClusterService, useValue: mockCluster },
+            { provide: MatchOwnershipService, useValue: mockMatchOwnership },
             { provide: AuthService, useValue: mockAuthService },
             {
               provide: APP_GUARD,
@@ -481,7 +494,7 @@ describe("HealthController", () => {
       });
 
       it("returns 200 OK for admin requests", async () => {
-        mockCluster.getOwnedMatchIds.mockResolvedValue(["match-x"]);
+        mockMatchOwnership.getOwnedMatchIds.mockReturnValue(["match-x"]);
         mockCluster.getLocalSocketCount.mockReturnValue(5);
 
         const res = await app.inject({

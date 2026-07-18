@@ -57,7 +57,7 @@ describe("MatchRoundRunner", () => {
 
     matchService = {
       getStateMachine: vi.fn().mockResolvedValue(stateMachine),
-      persistStateMachine: vi.fn().mockResolvedValue(undefined),
+      persistStateMachine: vi.fn().mockResolvedValue("APPLIED"),
       finishMatch: vi.fn().mockResolvedValue({}),
       // H2-style endRound fix: round + answers are persisted
       // atomically in a single $transaction call.
@@ -101,7 +101,15 @@ describe("MatchRoundRunner", () => {
     // LobbyCountdownService involved. Those only existed in this
     // harness historically because these tests reached the runner
     // through `(gameLoopService as any).roundRunner`.
-    runner = new MatchRoundRunner(matchService, questionService, roomService);
+    runner = new MatchRoundRunner(
+      matchService,
+      questionService,
+      roomService,
+      // B2c: owner by default so the three fenced boundaries proceed.
+      {
+        assertOwnership: vi.fn().mockResolvedValue(true),
+      } as unknown as import("./match-ownership.service").MatchOwnershipService,
+    );
   });
 
   it("should transition to COUNTDOWN and broadcast MATCH_STARTED", async () => {

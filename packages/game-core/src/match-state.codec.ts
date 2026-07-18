@@ -12,11 +12,13 @@
 // from the Question DB row via `attachCorrectAnswer`.
 // ============================================================
 
-import type {
-  MatchState,
-  RoundState,
-  AnswerState,
-  PlayerInfo,
+import {
+  GAME_CONFIG,
+  MatchStatus,
+  type MatchState,
+  type RoundState,
+  type AnswerState,
+  type PlayerInfo,
 } from "@arena/shared";
 import { UNAVAILABLE, type RoundStartingPlayers } from "./round-elimination";
 
@@ -26,8 +28,52 @@ type RoundWithAnswer = RoundState & {
   startingPlayers?: RoundStartingPlayers;
 };
 
-const SERIALIZED_STATE_VERSION = 1;
+// B1c: bumped 1 -> 2 when phaseEndsAt / roundResultStartedAt joined the wire
+// format. Both 1 and 2 are readable; v1 blobs are backfilled on deserialize.
+const SERIALIZED_STATE_VERSION = 2;
+const SUPPORTED_STATE_VERSIONS = new Set([1, 2]);
 const UNAVAILABLE_SENTINEL = "__UNAVAILABLE__";
+
+/**
+ * The version gate. A blob is readable iff `_stateVersion` is an integer in the
+ * supported set. `Number.isInteger` rejects strings ("2"), booleans, objects,
+ * null, NaN, Infinity, and floats (1.5) up front; the set rejects any integer
+ * outside {1, 2} (e.g. a future 3). Note `2` and `2.0` are the same IEEE-754
+ * number — JSON does not preserve lexical form — so both read as v2 (intended).
+ */
+function hasSupportedStateVersion(parsed: unknown): boolean {
+  const version = (parsed as { _stateVersion?: unknown })?._stateVersion;
+  return (
+    Number.isInteger(version) && SUPPORTED_STATE_VERSIONS.has(version as number)
+  );
+}
+
+/**
+ * Validate a single timing field off the raw wire object and RETURN the
+ * validated value (not a type predicate — we need "return the value or throw").
+ * The unified rule: `undefined` → missing (returned as-is); `null` → returned
+ * only when `allowNull`, else throw; a finite number → returned; anything else
+ * (string, object, boolean, array, NaN, Infinity) → throw. Every timing field
+ * that later reaches a `+`, a comparison, or `getRemainingMs` MUST pass through
+ * here first, so a corrupted anchor can never feed a NaN deadline. The error
+ * never echoes the payload (it can carry question/answer content).
+ */
+export function validateTimingField(
+  value: unknown,
+  opts: { allowNull: boolean },
+): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) {
+    if (opts.allowNull) return null;
+    throw new Error(
+      "Invalid MatchStateMachine timing field: null not permitted (payload omitted)",
+    );
+  }
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  throw new Error(
+    "Invalid MatchStateMachine timing field: expected finite number or null (payload omitted)",
+  );
+}
 
 /** One entry in the append-only event log. */
 export interface EventLogEntry {
@@ -57,7 +103,12 @@ export interface DeserializedMatch {
     survivingPlayerIds: string[];
     eliminatedPlayerIds: string[];
     winnerId: string | null;
-    startedAt: number;
+    // Timing fields are `unknown` on the wire: the deserializer validates them
+    // via validateTimingField before any are read (v1 blobs may omit the two
+    // B1c fields entirely; v2 blobs must carry phaseEndsAt).
+    startedAt?: unknown;
+    phaseEndsAt?: unknown;
+    roundResultStartedAt?: unknown;
     endedAt: number | null;
   };
   currentRound:
@@ -142,12 +193,17 @@ export function deserializeMatch(json: string): DecodedMatchState {
   }
 
   const parsed = data as DeserializedMatch;
-  const hasSupportedStateVersion =
-    typeof parsed?._stateVersion === "number" &&
-    Number.isInteger(parsed._stateVersion) &&
-    parsed._stateVersion === SERIALIZED_STATE_VERSION;
+
+  // Version gate FIRST: an unsupported / malformed version throws before any
+  // field is read or copied. After this, the blob is v1 or v2.
+  if (!hasSupportedStateVersion(parsed)) {
+    throw new Error(
+      `Unsupported MatchStateMachine state version (payload omitted; length=${json.length})`,
+    );
+  }
+  const version = (parsed as { _stateVersion: number })._stateVersion;
+
   if (
-    !parsed ||
     !parsed.state ||
     !Array.isArray(parsed.state.players) ||
     !Array.isArray(parsed.eventLog)
@@ -177,12 +233,12 @@ export function deserializeMatch(json: string): DecodedMatchState {
     const correctAnswerOk =
       cr.correctAnswer === undefined || typeof cr.correctAnswer === "string";
 
+    // Note: cr.startedAt / cr.endsAt are validated by the Phase-1 timing
+    // pass below (validateTimingField), which also permits null on the wire.
     if (
       !correctAnswerOk ||
       !Array.isArray(cr.answers) ||
       !isValidQuestion ||
-      typeof cr.startedAt !== "number" ||
-      typeof cr.endsAt !== "number" ||
       typeof cr.roundNo !== "number" ||
       !isValidStatus
     ) {
@@ -192,8 +248,91 @@ export function deserializeMatch(json: string): DecodedMatchState {
     }
   }
 
+  // ---- Phase 1: validate every timing field on the raw wire object ----
+  // Throws immediately on any invalid type / non-finite value, before any
+  // backfill or arithmetic. `undefined` = missing; `null` = allowed sentinel.
+  const rawState = parsed.state;
+  const startedAtRaw = validateTimingField(rawState.startedAt, {
+    allowNull: true,
+  });
+  const phaseEndsAtRaw = validateTimingField(rawState.phaseEndsAt, {
+    allowNull: true,
+  });
+  const roundResultStartedAtRaw = validateTimingField(
+    rawState.roundResultStartedAt,
+    { allowNull: true },
+  );
+  let crEndsAtRaw: number | null | undefined;
+  let crStartedAtRaw: number | null | undefined;
+  if (parsed.currentRound) {
+    crEndsAtRaw = validateTimingField(parsed.currentRound.endsAt, {
+      allowNull: true,
+    });
+    crStartedAtRaw = validateTimingField(parsed.currentRound.startedAt, {
+      allowNull: true,
+    });
+  }
+
+  // A v2 blob MUST carry phaseEndsAt (finite number or null). Only v1 blobs
+  // may omit it (undefined) and be backfilled.
+  if (version === 2 && phaseEndsAtRaw === undefined) {
+    throw new Error(
+      `Invalid MatchStateMachine data: v2 blob missing phaseEndsAt (payload omitted; length=${json.length})`,
+    );
+  }
+
+  const status = rawState.status;
+
+  // ---- Phase 2: normalize + v1 backfill (Date.now() is PROHIBITED here) ----
+  // startedAt: preserve finite number; missing/null → null.
+  const startedAt = startedAtRaw === undefined ? null : startedAtRaw;
+
+  // roundResultStartedAt: only meaningful in ROUND_RESULT; forced null
+  // everywhere else so a stale anchor never survives its phase.
+  const roundResultStartedAt =
+    status === MatchStatus.ROUND_RESULT &&
+    typeof roundResultStartedAtRaw === "number"
+      ? roundResultStartedAtRaw
+      : null;
+
+  // phaseEndsAt: pass through when present (v2, or a v1 blob that already had
+  // it); otherwise deterministically backfill a v1 blob from persisted anchors,
+  // failing closed to null (never Date.now()).
+  let phaseEndsAt: number | null;
+  if (phaseEndsAtRaw !== undefined) {
+    phaseEndsAt = phaseEndsAtRaw; // finite number or null, preserved
+  } else {
+    phaseEndsAt = backfillPhaseEndsAt(
+      status,
+      startedAtRaw,
+      crEndsAtRaw,
+      crStartedAtRaw,
+      roundResultStartedAt,
+    );
+  }
+
+  // F18: enforce the ROUND_RESULT timing invariant the writer guarantees
+  // (transition(ROUND_RESULT): phaseEndsAt === roundResultStartedAt +
+  // RESULT_DISPLAY_MS). For a v2 ROUND_RESULT blob the wire phaseEndsAt is
+  // NEVER trusted — it is derived from the result anchor. `roundResultStartedAt`
+  // here is already either a finite number (valid anchor) or null (missing).
+  // Fail closed to null when the anchor is missing OR the derived deadline is
+  // non-finite; only retain the derived deadline when both are finite. v1
+  // backfilling (above) and every other phase are unaffected.
+  if (version === 2 && status === MatchStatus.ROUND_RESULT) {
+    if (typeof roundResultStartedAt === "number") {
+      const expected = roundResultStartedAt + GAME_CONFIG.RESULT_DISPLAY_MS;
+      phaseEndsAt = Number.isFinite(expected) ? expected : null;
+    } else {
+      phaseEndsAt = null;
+    }
+  }
+
   const state = {
     ...parsed.state,
+    startedAt,
+    phaseEndsAt,
+    roundResultStartedAt,
     players: new Map(parsed.state.players),
   } as MatchState;
 
@@ -205,8 +344,46 @@ export function deserializeMatch(json: string): DecodedMatchState {
       ...rest
     } = parsed.currentRound;
     void _omitCorrectAnswer;
+
+    // F16: normalize the round's own timing anchors so a corrupt/legacy blob
+    // never leaves startedAt/endsAt null|undefined once spread into the
+    // in-memory round. These feed the submitAnswer window gate
+    // (serverTimestamp > endsAt), responseTimeMs (serverTimestamp -
+    // startedAt), scoring, and tie-break — a null there yields NaN. Derive a
+    // missing anchor from its sibling (or the reconstructed phaseEndsAt) using
+    // the fixed round duration; never Date.now() (deterministic across
+    // failover). crStartedAtRaw / crEndsAtRaw were Phase-1 validated to a
+    // finite number, null, or undefined.
+    let normStartedAt: number | null =
+      typeof crStartedAtRaw === "number" ? crStartedAtRaw : null;
+    let normEndsAt: number | null =
+      typeof crEndsAtRaw === "number" ? crEndsAtRaw : null;
+    if (normEndsAt === null && normStartedAt !== null) {
+      const derived = normStartedAt + GAME_CONFIG.ROUND_DURATION_MS;
+      normEndsAt = Number.isFinite(derived) ? derived : null;
+    }
+    if (normEndsAt === null && typeof phaseEndsAt === "number") {
+      normEndsAt = phaseEndsAt;
+    }
+    if (normStartedAt === null && normEndsAt !== null) {
+      const derived = normEndsAt - GAME_CONFIG.ROUND_DURATION_MS;
+      normStartedAt = Number.isFinite(derived) ? derived : null;
+    }
+
+    // Fail closed rather than assert: if neither anchor nor the reconstructed
+    // phaseEndsAt could supply a finite startedAt AND endsAt, the round is
+    // unusable (the submitAnswer gate / responseTimeMs / scoring would read
+    // null → NaN). Throw instead of returning invalid state via an unsafe cast.
+    if (normStartedAt === null || normEndsAt === null) {
+      throw new Error(
+        `Invalid MatchStateMachine data: currentRound has no reconstructable startedAt/endsAt (payload omitted; length=${json.length})`,
+      );
+    }
+
     currentRound = {
       ...rest,
+      startedAt: normStartedAt,
+      endsAt: normEndsAt,
       // Backfill any missing `submissionId` on legacy answers
       // serialized before that field was required on AnswerState.
       // The replay check elsewhere (`existingAnswer.submissionId ===
@@ -228,9 +405,10 @@ export function deserializeMatch(json: string): DecodedMatchState {
       // L3: correctAnswer is undefined after deserialize. The recovery
       // caller MUST invoke attachCorrectAnswer() before any
       // evaluateRound() / submitAnswer() that depends on it.
+      // Version is guaranteed supported (the gate above threw otherwise),
+      // so v1/v2 startingPlayers semantics are preserved identically.
       startingPlayers: deserializeStartingPlayers(
         parsed.currentRound.startingPlayers,
-        hasSupportedStateVersion,
       ),
     } as RoundWithAnswer;
   } else {
@@ -248,14 +426,64 @@ export function deserializeMatch(json: string): DecodedMatchState {
   return { state, currentRound, eventLog };
 }
 
+/**
+ * Deterministically reconstruct `phaseEndsAt` for a v1 blob that predates the
+ * field, from already-Phase-1-validated persisted anchors (each is `undefined`,
+ * `null`, or a finite number here). NEVER calls Date.now() — a fresh window is
+ * reserved for genuinely new phases armed by `transition`, and for the B3b
+ * owner materialization path. Fails closed to `null` ("deadline unknown") when
+ * no stable anchor exists; the owner's canonical `endRound` (not a timeout)
+ * then drives the phase.
+ */
+function backfillPhaseEndsAt(
+  status: MatchState["status"],
+  startedAt: number | null | undefined,
+  currentRoundEndsAt: number | null | undefined,
+  currentRoundStartedAt: number | null | undefined,
+  roundResultStartedAt: number | null,
+): number | null {
+  // Every anchor-plus-duration result must be a finite deadline. Even though
+  // each anchor is already finite (validateTimingField rejected NaN/Infinity),
+  // an anchor near Number.MAX_VALUE could overflow to Infinity when a duration
+  // is added; fail closed to null rather than emit a non-finite deadline.
+  const finiteOrNull = (n: number): number | null =>
+    Number.isFinite(n) ? n : null;
+
+  switch (status) {
+    case MatchStatus.ROUND_ACTIVE:
+      if (typeof currentRoundEndsAt === "number") {
+        return finiteOrNull(currentRoundEndsAt);
+      }
+      if (typeof currentRoundStartedAt === "number") {
+        return finiteOrNull(
+          currentRoundStartedAt + GAME_CONFIG.ROUND_DURATION_MS,
+        );
+      }
+      return null;
+    case MatchStatus.COUNTDOWN:
+      // Only anchor to a persisted startedAt; a null/undefined startedAt must
+      // NOT be granted a fresh full countdown window across failover.
+      if (typeof startedAt === "number") {
+        return finiteOrNull(startedAt + GAME_CONFIG.COUNTDOWN_DURATION_MS);
+      }
+      return null;
+    case MatchStatus.ROUND_RESULT:
+      // Reuse ONLY the dedicated persisted result anchor, never
+      // currentRound.endsAt (that belongs to the completed gameplay round).
+      if (typeof roundResultStartedAt === "number") {
+        return finiteOrNull(
+          roundResultStartedAt + GAME_CONFIG.RESULT_DISPLAY_MS,
+        );
+      }
+      return null;
+    default:
+      return null;
+  }
+}
+
 function deserializeStartingPlayers(
   rawStartingPlayers: unknown,
-  hasSupportedStateVersion: boolean,
 ): RoundStartingPlayers {
-  if (!hasSupportedStateVersion) {
-    return UNAVAILABLE;
-  }
-
   if (rawStartingPlayers === UNAVAILABLE_SENTINEL) {
     return UNAVAILABLE;
   }

@@ -14,7 +14,8 @@ import {
   ErrorCode,
   type RoundState,
 } from "@arena/shared";
-import { MatchService } from "./match.service";
+import { MatchService, type PersistOutcome } from "./match.service";
+import { MatchOwnershipService } from "./match-ownership.service";
 import { QuestionService } from "../question/question.service";
 import { RoomService } from "./../room/room.service";
 import { MatchTimerRegistry } from "./match-timer.registry";
@@ -76,6 +77,9 @@ export class MatchRoundRunner {
     private readonly matchService: MatchService,
     private readonly questionService: QuestionService,
     private readonly roomService: RoomService,
+    // B2c: fence the three mutating boundaries. Passed from GameLoopService
+    // (the runner is `new`'d there, not DI).
+    private readonly ownership: MatchOwnershipService,
   ) {}
 
   // ============================================================
@@ -190,6 +194,17 @@ export class MatchRoundRunner {
     roomId: string,
     server: Server,
   ): Promise<void> {
+    // B2c fencing: validate ownership the moment this callback begins — BEFORE
+    // any transition or persist. The countdown timer that scheduled us may have
+    // fired on a node that has since lost the lease (expired / fence bumped by a
+    // takeover); a non-owner must not drive the round.
+    if (!(await this.ownership.assertOwnership(matchId))) {
+      this.logger.warn(
+        `executeRound: assertOwnership failed for ${matchId} — not owner, aborting before transition`,
+      );
+      return;
+    }
+
     // 1. Get state machine
     const stateMachine = await this.matchService.getStateMachine(matchId);
     if (!stateMachine) return;
@@ -228,8 +243,18 @@ export class MatchRoundRunner {
     };
     stateMachine.startRound(questionState);
 
-    // F6: Persist after mutation
-    await this.matchService.persistStateMachine(matchId);
+    // F6: Persist after mutation. B2c: only broadcast ROUND_STARTED after the
+    // canonical write LANDS. A non-APPLIED outcome (RETRY = lost the lease
+    // between the assert above and the write; BLIND = no ownership snapshot)
+    // means the new owner will drive this round — skip the broadcast and the
+    // round timer so we don't emit or advance on state we could not persist.
+    const startOutcome = await this.matchService.persistStateMachine(matchId);
+    if (startOutcome !== "APPLIED") {
+      this.logger.warn(
+        `executeRound: persist ${startOutcome} for ${matchId} — no confirmed canonical write, skipping ROUND_STARTED broadcast and round timer`,
+      );
+      return;
+    }
 
     // 4. Count surviving players BEFORE broadcast (for early termination tracking)
     const state = stateMachine.getState();
@@ -277,6 +302,16 @@ export class MatchRoundRunner {
     roomId: string,
     server: Server,
   ): Promise<void> {
+    // B2c fencing: only the lease-holding owner may end a round. A resurrected
+    // old owner (lease expired / fence bumped by a takeover) fails the renew
+    // and aborts before claiming the H1 guard, mutating state, or broadcasting.
+    if (!(await this.ownership.assertOwnership(matchId))) {
+      this.logger.warn(
+        `endRound: assertOwnership failed for ${matchId} — not owner, aborting`,
+      );
+      return;
+    }
+
     // H1 fix (defensive double-check): the round-end guard is the
     // single source of truth for round-end idempotency. clearTimeout
     // does NOT cancel a callback already in Node's timer queue — so
@@ -352,6 +387,12 @@ export class MatchRoundRunner {
       // the state machine stays in ROUND_EVALUATING so a retry does not
       // leave a ROUND_RESULT with no DB row. We re-throw so the timer
       // callback surfaces the failure loudly.
+      // B2c: the single assertOwnership at the top of endRound does NOT
+      // authorize the later async side effects (DB persist → transition →
+      // broadcast). Capture and validate every canonical persist result; a
+      // non-APPLIED outcome means the lease was lost mid-flight, so we stop
+      // before advancing state or broadcasting and let the new owner finalize.
+      let evalOutcome: PersistOutcome | undefined;
       try {
         // 4. Save the round row + all answers atomically. The single
         //    $transaction means a failure on the answer batch rolls
@@ -373,7 +414,7 @@ export class MatchRoundRunner {
         );
 
         // 6. Persist state machine (now that DB writes succeeded).
-        await this.matchService.persistStateMachine(matchId);
+        evalOutcome = await this.matchService.persistStateMachine(matchId);
       } catch (dbError) {
         // H3 fix: a DB failure here must not silently advance the
         // state machine. Log at error level and re-throw; the state
@@ -385,9 +426,23 @@ export class MatchRoundRunner {
         throw dbError;
       }
 
+      if (evalOutcome !== "APPLIED") {
+        this.logger.warn(
+          `endRound: eval-phase persist ${evalOutcome} for ${matchId} — no confirmed canonical write, aborting before ROUND_RESULT transition/broadcast`,
+        );
+        return;
+      }
+
       // 7. Transition to ROUND_RESULT — safe now that DB is consistent.
       stateMachine.transition(MatchStatus.ROUND_RESULT);
-      await this.matchService.persistStateMachine(matchId);
+      const resultOutcome =
+        await this.matchService.persistStateMachine(matchId);
+      if (resultOutcome !== "APPLIED") {
+        this.logger.warn(
+          `endRound: result-phase persist ${resultOutcome} for ${matchId} — no confirmed canonical write, skipping ROUND_ENDED broadcast`,
+        );
+        return;
+      }
 
       // 8. Broadcast ROUND_ENDED (KHÔNG gửi correctAnswer trong question object)
       emitRoundEnded({
@@ -653,6 +708,14 @@ export class MatchRoundRunner {
     roomId: string,
     server: Server,
   ): Promise<void> {
+    // B2c fencing: a non-owner must not decide match-end / drive the next round.
+    if (!(await this.ownership.assertOwnership(matchId))) {
+      this.logger.warn(
+        `checkMatchEnd: assertOwnership failed for ${matchId} — not owner, aborting`,
+      );
+      return;
+    }
+
     const stateMachine = await this.matchService.getStateMachine(matchId);
     if (!stateMachine) return;
 
@@ -734,6 +797,14 @@ export class MatchRoundRunner {
     roomId: string,
     server: Server,
   ): Promise<void> {
+    // B2c fencing: only the owner finalizes the match.
+    if (!(await this.ownership.assertOwnership(matchId))) {
+      this.logger.warn(
+        `finishMatchLoopInner: assertOwnership failed for ${matchId} — not owner, aborting`,
+      );
+      return;
+    }
+
     // 1. Get state machine
     const stateMachine = await this.matchService.getStateMachine(matchId);
     if (!stateMachine) return;
@@ -749,8 +820,20 @@ export class MatchRoundRunner {
     // `undefined`, which would keep a stale winnerId).
     const winnerId: string | null = state.winnerId ?? null;
 
-    // F6: Persist lần cuối
-    await this.matchService.persistStateMachine(matchId);
+    // F6: Persist lần cuối, through the fenced CAS. B2c item 3: broadcast ONLY
+    // after the canonical write lands — a RETRY means we lost the lease between
+    // the assert and the write, so the new owner will finalize; skip finish+emit.
+    const outcome = await this.matchService.persistStateMachine(matchId);
+    if (outcome !== "APPLIED") {
+      // Only a confirmed canonical write (APPLIED) authorizes the finish DB
+      // update + MATCH_FINISHED broadcast. RETRY = lost the lease mid-finish;
+      // BLIND = no ownership snapshot (must not finalize on an unfenced write).
+      // Both defer to the owner rather than finish on unconfirmed state.
+      this.logger.warn(
+        `finishMatchLoopInner: fenced persist ${outcome} for ${matchId} — no confirmed canonical write, deferring finish/broadcast to the owner`,
+      );
+      return;
+    }
 
     // 3. Persist match result to DB (updates room status, cleans memory + Redis).
     await this.matchService.finishMatch(matchId, winnerId, roomId, false);

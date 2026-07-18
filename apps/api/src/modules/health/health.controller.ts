@@ -13,6 +13,7 @@ import { Public } from "../../common/decorators/public.decorator";
 import { CpuSamplerService } from "./services/cpu-sampler.service";
 import { EventLoopLagService } from "./services/event-loop-lag.service";
 import { ClusterService } from "../cluster/cluster.service";
+import { MatchOwnershipService } from "../match/match-ownership.service";
 import os from "node:os";
 
 // ── DTO Types ──────────────────────────────────────────────
@@ -47,6 +48,9 @@ interface ClusterHealthResponse {
   // Sockets on THIS node's /game namespace — used to assert the load
   // actually spread across nodes (distribution check).
   socketCount: number;
+  // B2c: max inter-node clock skew (ms) = max(offset) - min(offset) across live
+  // members. Warn at 1s, page at 2s. 0 with fewer than two live nodes.
+  maxSkew: number;
   timestamp: string;
 }
 
@@ -86,6 +90,9 @@ export class HealthController {
     private readonly cpuSampler: CpuSamplerService,
     private readonly eventLoopLag: EventLoopLagService,
     private readonly cluster: ClusterService,
+    // B2b: ownership moved off ClusterService (which now only knows nodeId);
+    // read the owned-match view from its authoritative in-memory owner.
+    private readonly matchOwnership: MatchOwnershipService,
   ) {}
 
   @Get()
@@ -125,8 +132,9 @@ export class HealthController {
     return {
       nodeId: this.cluster.nodeId,
       uptime: process.uptime(),
-      ownedMatches: await this.cluster.getOwnedMatchIds(),
+      ownedMatches: this.matchOwnership.getOwnedMatchIds(),
       socketCount: this.cluster.getLocalSocketCount(),
+      maxSkew: await this.matchOwnership.computeMaxSkew(),
       timestamp: new Date().toISOString(),
     };
   }

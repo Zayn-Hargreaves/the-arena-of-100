@@ -80,8 +80,19 @@ export interface MatchState {
   survivingPlayerIds: string[];
   eliminatedPlayerIds: string[];
   winnerId: string | null;
-  startedAt: number;
+  // number in the normal (freshly-created / live) path; null only when a
+  // legacy v1 blob omitted it entirely (B1c normalizes missing → null so the
+  // codec never passes an undefined through). See match-state.codec.ts.
+  startedAt: number | null;
   endedAt: number | null;
+  // epoch ms; deadline of the current phase (COUNTDOWN / ROUND_ACTIVE /
+  // ROUND_RESULT), null otherwise. Failover (B3) rebuilds the next timer from
+  // this instead of the fixed phase durations.
+  phaseEndsAt: number | null;
+  // epoch ms; server-authoritative moment ROUND_RESULT began, null in every
+  // other phase. B1c's result-display anchor; invariant for v2 blobs:
+  // phaseEndsAt === roundResultStartedAt + RESULT_DISPLAY_MS.
+  roundResultStartedAt: number | null;
 }
 
 // Round State

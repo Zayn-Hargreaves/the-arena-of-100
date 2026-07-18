@@ -113,12 +113,20 @@ function buildRunner(
 ) {
   const matchService = {
     getStateMachine: vi.fn().mockResolvedValue(stateMachine),
-    persistStateMachine: vi.fn().mockResolvedValue(undefined),
+    persistStateMachine: vi.fn().mockResolvedValue("APPLIED"),
     saveRoundAndAnswers: vi.fn().mockResolvedValue({ id: "round-1" }),
   } as unknown as MatchService;
 
   return {
-    runner: new MatchRoundRunner(matchService, questionService, roomService),
+    runner: new MatchRoundRunner(
+      matchService,
+      questionService,
+      roomService,
+      // B2c: owner by default so the fenced boundaries proceed.
+      {
+        assertOwnership: vi.fn().mockResolvedValue(true),
+      } as unknown as import("./match-ownership.service").MatchOwnershipService,
+    ),
     matchService,
   };
 }

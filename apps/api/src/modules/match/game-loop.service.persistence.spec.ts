@@ -44,7 +44,7 @@ describe("GameLoopService Persistence", () => {
 
     matchService = {
       getStateMachine: vi.fn().mockResolvedValue(stateMachine),
-      persistStateMachine: vi.fn().mockResolvedValue(undefined),
+      persistStateMachine: vi.fn().mockResolvedValue("APPLIED"),
       finishMatch: vi.fn().mockResolvedValue({}),
       // H2-style endRound fix: round + answers are now persisted
       // atomically via a single $transaction-backed call.
@@ -99,6 +99,16 @@ describe("GameLoopService Persistence", () => {
         $queryRaw: vi.fn().mockResolvedValue([]),
       } as any,
       new LobbyCountdownService(roomService, createMockRedisService() as any),
+      // B2c: owner by default so the fenced boundaries proceed; release/setRoundRunner no-ops.
+      {
+        acquireOnLaunch: vi.fn().mockResolvedValue(true),
+        release: vi.fn().mockResolvedValue(undefined),
+        setRoundRunner: vi.fn(),
+        assertOwnership: vi.fn().mockResolvedValue(true),
+        getOwnershipSnapshot: vi.fn().mockReturnValue(undefined),
+        getOwnedMatchIds: vi.fn().mockReturnValue([]),
+        computeMaxSkew: vi.fn().mockResolvedValue(0),
+      } as any,
     );
   });
 
