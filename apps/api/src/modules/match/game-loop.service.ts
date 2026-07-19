@@ -13,6 +13,7 @@ import { RoomService } from "../room/room.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { MatchRoundRunner } from "./match-round-runner";
 import { LobbyCountdownService } from "./lobby-countdown.service";
+import { MatchOwnershipService } from "./match-ownership.service";
 import {
   emitMatchStarting,
   emitRoomStatusUpdated,
@@ -69,12 +70,18 @@ export class GameLoopService {
     // only caller that drives it (launch/stop); the reverse edge is the
     // launcher callback wired below, so the DI is one-directional.
     private readonly lobbyCountdown: LobbyCountdownService,
+    // B2b: owner-lease acquisition at launch + release on stop/finish.
+    private readonly matchOwnership: MatchOwnershipService,
   ) {
     this.roundRunner = new MatchRoundRunner(
       matchService,
       questionService,
       roomService,
+      matchOwnership,
     );
+    // B2c: let the ownership heartbeat cancel a match's timers when this node
+    // loses the lease (relinquish path). One-directional: the runner is not DI.
+    this.matchOwnership.setRoundRunner(this.roundRunner);
     // When a lobby countdown expires (live or recovered), launch the
     // match through the same auto-start path the timer used to call.
     this.lobbyCountdown.setLauncher((roomId, server) =>
@@ -132,6 +139,10 @@ export class GameLoopService {
     let match:
       | Awaited<ReturnType<typeof this.matchService.createMatch>>
       | undefined = undefined;
+    // B2c: track whether we claimed the owner lease so the rollback below can
+    // release it (and stop the heartbeat renewing it) when the loop fails to
+    // start AFTER acquisition.
+    let ownershipAcquired = false;
     try {
       // B3 fix: atomic guard against the double-launch race.
       //
@@ -245,6 +256,22 @@ export class GameLoopService {
         GAME_CONFIG.COUNTDOWN_DURATION_MS / 1000,
       );
 
+      // B2b: claim the owner lease before driving the loop. If another node
+      // owns it (or a leftover lease survives), DO NOT start the loop — that
+      // would break the single-owner invariant. acquireOnLaunch has already
+      // reconciled ownership; route a failure into the generic launch
+      // rollback below (clears currentMatchId / reverts room status).
+      const acquired = await this.matchOwnership.acquireOnLaunch(
+        match.id,
+        roomId,
+      );
+      if (!acquired) {
+        throw new Error(
+          `launchRoomMatch: could not acquire owner lease for match ${match.id} (room ${roomId}); aborting launch`,
+        );
+      }
+      ownershipAcquired = true;
+
       await this.roundRunner.startMatchLoop(match.id, roomId, server);
       return match;
     } catch (error) {
@@ -300,6 +327,24 @@ export class GameLoopService {
 
       // Clean up orphaned match in DB if created
       if (match) {
+        // B2c: if we acquired the owner lease before the loop failed to start,
+        // tear that ownership down BEFORE deleting the match row. Cancel this
+        // match's timers (so the heartbeat stops renewing / relinquishing a
+        // match we are aborting) and release the lease + match:active index —
+        // otherwise the lease lingers until its TTL and recovery could adopt a
+        // match we are deleting. Failures that occurred BEFORE acquisition skip
+        // this (ownershipAcquired stays false), preserving prior rollback.
+        if (ownershipAcquired) {
+          this.roundRunner.cancelMatchLoop(match.id);
+          try {
+            await this.matchOwnership.release(match.id);
+          } catch (releaseError) {
+            this.logger.error(
+              `Failed to release owner lease for match ${match.id} during launch rollback.`,
+              releaseError instanceof Error ? releaseError.stack : undefined,
+            );
+          }
+        }
         try {
           this.logger.warn(
             `Deleting orphaned match ${match.id} for room ${roomId}`,
@@ -347,6 +392,9 @@ export class GameLoopService {
     await this.lobbyCountdown.clearCountdown(roomId);
     if (matchId) {
       this.roundRunner.cancelMatchLoop(matchId);
+      // B2b: release the owner lease + match:active entry so recovery does not
+      // adopt a match we intentionally tore down.
+      await this.matchOwnership.release(matchId);
     }
   }
 
@@ -371,6 +419,9 @@ export class GameLoopService {
     roomId: string,
   ): Promise<FinishResult | null> {
     this.roundRunner.cancelMatchLoop(matchId);
+    // B2b: release the owner lease + match:active entry once for this teardown,
+    // covering every branch below (already-finishing, idempotent no-op, finish).
+    await this.matchOwnership.release(matchId);
 
     if (this.roundRunner.isMatchFinishing(matchId)) {
       this.logger.warn(

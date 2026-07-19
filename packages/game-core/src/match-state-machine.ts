@@ -81,6 +81,8 @@ export class MatchStateMachine {
       winnerId: null,
       startedAt: 0,
       endedAt: null,
+      phaseEndsAt: null,
+      roundResultStartedAt: null,
     };
   }
 
@@ -141,13 +143,44 @@ export class MatchStateMachine {
 
     this.state.status = to;
 
-    // Handle specific transitions
+    // Handle specific transitions.
+    // B1b: every transition also maintains phaseEndsAt (the wall-clock deadline
+    // failover rebuilds the next timer from) and roundResultStartedAt (the
+    // result-phase anchor), so no stale value survives a phase change.
     switch (to) {
       case MatchStatus.COUNTDOWN:
         this.state.startedAt = Date.now();
+        this.state.phaseEndsAt = Date.now() + GAME_CONFIG.COUNTDOWN_DURATION_MS;
+        this.state.roundResultStartedAt = null;
         break;
+      case MatchStatus.ROUND_RESULT: {
+        // Read the clock ONCE so the codec invariant
+        // phaseEndsAt === roundResultStartedAt + RESULT_DISPLAY_MS holds
+        // exactly for v2 blobs (two Date.now() calls could differ by a tick).
+        const now = Date.now();
+        this.state.roundResultStartedAt = now;
+        this.state.phaseEndsAt = now + GAME_CONFIG.RESULT_DISPLAY_MS;
+        break;
+      }
       case MatchStatus.FINISHED:
         this.state.endedAt = Date.now();
+        this.state.phaseEndsAt = null;
+        this.state.roundResultStartedAt = null;
+        break;
+      case MatchStatus.ROUND_EVALUATING:
+        this.state.phaseEndsAt = null;
+        this.state.roundResultStartedAt = null;
+        break;
+      case MatchStatus.ROUND_ACTIVE:
+        // startRound() assigns the active-round deadline (mirrors
+        // currentRound.endsAt) and installs the new round. Clear phaseEndsAt
+        // AND the previous (completed) currentRound here so a snapshot taken —
+        // or a failover occurring — between this transition and startRound()
+        // cannot retain the prior phase's deadline OR the prior round. Only
+        // startRound() initializes the new active round.
+        this.state.phaseEndsAt = null;
+        this.state.roundResultStartedAt = null;
+        this.currentRound = null;
         break;
     }
   }
@@ -192,6 +225,12 @@ export class MatchStateMachine {
       startingPlayers: [...this.state.survivingPlayerIds],
       correctAnswer: question.correctAnswer,
     } as RoundRuntimeState;
+
+    // B1b: mirror the round deadline into phaseEndsAt so failover arms the
+    // ROUND_ACTIVE timer from one phase-end source, and drop any stale result
+    // anchor a previous ROUND_RESULT left behind.
+    this.state.phaseEndsAt = endsAt;
+    this.state.roundResultStartedAt = null;
 
     // Plan D delta replay: carry the full client-safe question + timer
     // so a reconnecting client can rebuild the in-flight round from the

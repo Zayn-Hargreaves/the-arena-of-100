@@ -280,6 +280,7 @@ describe("MatchStateMachine delta replay (Plan D)", () => {
     // position (the log is append-only, so position + 1 is exactly the
     // seqNo the entry would have carried).
     const legacy = JSON.stringify({
+      _stateVersion: 1,
       state: {
         id: "m-legacy",
         roomId: "r-legacy",
@@ -495,22 +496,23 @@ describe("MatchStateMachine.deserialize error handling", () => {
     );
   });
 
-  it("throws on non-object data", () => {
-    expect(() => MatchStateMachine.deserialize('"string"')).toThrow(
-      "Invalid MatchStateMachine data",
-    );
+  it("throws on non-object data (fails the version gate first)", () => {
+    // B1c: a bare string has no supported _stateVersion, so it is rejected by
+    // the version gate before any field is read.
+    expect(() => MatchStateMachine.deserialize('"string"')).toThrow();
   });
 
   it("throws on missing state field", () => {
-    expect(() => MatchStateMachine.deserialize("{}")).toThrow(
-      "Invalid MatchStateMachine data",
-    );
+    // Valid version, but no state → shape check throws "Invalid data".
+    expect(() =>
+      MatchStateMachine.deserialize(JSON.stringify({ _stateVersion: 1 })),
+    ).toThrow("Invalid MatchStateMachine data");
   });
 
   it("throws on non-array players", () => {
     expect(() =>
       MatchStateMachine.deserialize(
-        JSON.stringify({ state: { players: "bad" } }),
+        JSON.stringify({ _stateVersion: 1, state: { players: "bad" } }),
       ),
     ).toThrow("Invalid MatchStateMachine data");
   });
@@ -518,7 +520,11 @@ describe("MatchStateMachine.deserialize error handling", () => {
   it("throws on non-array eventLog", () => {
     expect(() =>
       MatchStateMachine.deserialize(
-        JSON.stringify({ state: { players: [] }, eventLog: "bad" }),
+        JSON.stringify({
+          _stateVersion: 1,
+          state: { players: [] },
+          eventLog: "bad",
+        }),
       ),
     ).toThrow("Invalid MatchStateMachine data");
   });
@@ -527,6 +533,7 @@ describe("MatchStateMachine.deserialize error handling", () => {
     expect(() =>
       MatchStateMachine.deserialize(
         JSON.stringify({
+          _stateVersion: 1,
           state: { players: [] },
           currentRound: { answers: [] },
           eventLog: [],
@@ -539,6 +546,7 @@ describe("MatchStateMachine.deserialize error handling", () => {
     expect(() =>
       MatchStateMachine.deserialize(
         JSON.stringify({
+          _stateVersion: 1,
           state: { players: [] },
           currentRound: { correctAnswer: "A", answers: "bad" },
           eventLog: [],
@@ -551,6 +559,7 @@ describe("MatchStateMachine.deserialize error handling", () => {
     expect(() =>
       MatchStateMachine.deserialize(
         JSON.stringify({
+          _stateVersion: 1,
           state: { players: [] },
           currentRound: {
             correctAnswer: "A",
@@ -568,6 +577,7 @@ describe("MatchStateMachine.deserialize error handling", () => {
     expect(() =>
       MatchStateMachine.deserialize(
         JSON.stringify({
+          _stateVersion: 1,
           state: { players: [] },
           currentRound: {
             correctAnswer: "A",
@@ -586,6 +596,7 @@ describe("MatchStateMachine.deserialize error handling", () => {
     expect(() =>
       MatchStateMachine.deserialize(
         JSON.stringify({
+          _stateVersion: 1,
           state: { players: [] },
           currentRound: {
             correctAnswer: "A",
@@ -602,27 +613,33 @@ describe("MatchStateMachine.deserialize error handling", () => {
     ).toThrow("Invalid MatchStateMachine data");
   });
 
-  it("throws on missing/malformed startedAt or endsAt in currentRound", () => {
+  it("throws on malformed startedAt or endsAt in currentRound", () => {
+    // B1c: a MISSING startedAt/endsAt is now a legal v1 shape (backfilled), so
+    // this test asserts only the MALFORMED (non-finite-typed) cases, which the
+    // Phase-1 timing validator rejects before any backfill arithmetic runs.
     expect(() =>
       MatchStateMachine.deserialize(
         JSON.stringify({
+          _stateVersion: 1,
           state: { players: [] },
           currentRound: {
             correctAnswer: "A",
             answers: [],
             question: { id: "q1", content: "Q", options: ["A"] },
-            endsAt: 200,
+            startedAt: 100,
+            endsAt: "not-a-number",
             roundNo: 1,
             status: "ACTIVE",
           },
           eventLog: [],
         }),
       ),
-    ).toThrow("Invalid MatchStateMachine data");
+    ).toThrow();
 
     expect(() =>
       MatchStateMachine.deserialize(
         JSON.stringify({
+          _stateVersion: 1,
           state: { players: [] },
           currentRound: {
             correctAnswer: "A",
@@ -636,13 +653,14 @@ describe("MatchStateMachine.deserialize error handling", () => {
           eventLog: [],
         }),
       ),
-    ).toThrow("Invalid MatchStateMachine data");
+    ).toThrow();
   });
 
   it("throws on missing/malformed roundNo in currentRound", () => {
     expect(() =>
       MatchStateMachine.deserialize(
         JSON.stringify({
+          _stateVersion: 1,
           state: { players: [] },
           currentRound: {
             correctAnswer: "A",
@@ -662,6 +680,7 @@ describe("MatchStateMachine.deserialize error handling", () => {
     expect(() =>
       MatchStateMachine.deserialize(
         JSON.stringify({
+          _stateVersion: 1,
           state: { players: [] },
           currentRound: {
             correctAnswer: "A",
@@ -1034,6 +1053,63 @@ describe("MatchStateMachine guard branches", () => {
         correctAnswer: "A",
       }),
     ).toThrow("Cannot start round");
+  });
+
+  it("clears the stale COUNTDOWN phaseEndsAt on entering ROUND_ACTIVE, before startRound assigns the round deadline", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    // COUNTDOWN armed a deadline.
+    expect(machine.getState().phaseEndsAt).not.toBeNull();
+
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    // No deadline should survive the transition until startRound() runs — a
+    // snapshot/failover here must not retain the COUNTDOWN deadline.
+    expect(machine.getState().phaseEndsAt).toBeNull();
+
+    const round = machine.startRound({
+      id: "q1",
+      content: "Q?",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+    // startRound then assigns the active-round deadline.
+    expect(machine.getState().phaseEndsAt).toBe(round.endsAt);
+  });
+
+  it("drops the completed currentRound on entering ROUND_ACTIVE, so a snapshot before startRound cannot retain it", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    // Run a full round through to ROUND_RESULT so a completed currentRound exists.
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    const round1 = machine.startRound({
+      id: "q1",
+      content: "Q1?",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+    machine.submitAnswer("p1", "A", round1.startedAt + 100);
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    machine.evaluateRound();
+    machine.transition(MatchStatus.ROUND_RESULT);
+    expect(machine.getCurrentRound()).not.toBeNull();
+
+    // Enter ROUND_ACTIVE for the next round but do NOT start it yet.
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    // Capture a snapshot in the transition→startRound window and restore it.
+    const restored = MatchStateMachine.deserialize(machine.serialize());
+    // The restored snapshot must not carry the previous round, and must have no
+    // stale deadline.
+    expect(restored.getCurrentRound()).toBeNull();
+    expect(restored.getState().phaseEndsAt).toBeNull();
+
+    // startRound then installs the fresh round with its own deadline.
+    const round2 = machine.startRound({
+      id: "q2",
+      content: "Q2?",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+    expect(machine.getState().phaseEndsAt).toBe(round2.endsAt);
   });
 
   it("submitAnswer throws when no active round", () => {
@@ -1535,7 +1611,7 @@ describe("MatchStateMachine score accumulation (B2)", () => {
       ).toEqual(["p1", "p2"]);
     });
 
-    it("serialize() emits version 1 and preserves startingPlayers when correctAnswer is omitted", () => {
+    it("serialize() emits version 2 and preserves startingPlayers when correctAnswer is omitted", () => {
       const machine = new MatchStateMachine("m1", "r1", makePlayers());
       machine.transition(MatchStatus.COUNTDOWN);
       machine.transition(MatchStatus.ROUND_ACTIVE);
@@ -1549,7 +1625,7 @@ describe("MatchStateMachine score accumulation (B2)", () => {
       const json = machine.serialize();
       const parsed = JSON.parse(json);
 
-      expect(parsed._stateVersion).toBe(1);
+      expect(parsed._stateVersion).toBe(2);
       expect(parsed.currentRound.correctAnswer).toBeUndefined();
       expect(parsed.currentRound.startingPlayers).toEqual(["p1", "p2"]);
 
@@ -1596,7 +1672,7 @@ describe("MatchStateMachine score accumulation (B2)", () => {
       ).toBe(UNAVAILABLE);
     });
 
-    it("deserialize() returns UNAVAILABLE startingPlayers for missing or unsupported state versions", () => {
+    it("deserialize() throws for missing or unsupported state versions (B1c)", () => {
       const machine = new MatchStateMachine("m1", "r1", makePlayers());
       machine.transition(MatchStatus.COUNTDOWN);
       machine.transition(MatchStatus.ROUND_ACTIVE);
@@ -1607,31 +1683,19 @@ describe("MatchStateMachine score accumulation (B2)", () => {
         correctAnswer: "A",
       });
 
-      const parsed = JSON.parse(machine.serialize());
+      // Missing _stateVersion → rejected by the version gate.
+      const missing = JSON.parse(machine.serialize());
+      delete missing._stateVersion;
+      expect(() =>
+        MatchStateMachine.deserialize(JSON.stringify(missing)),
+      ).toThrow();
 
-      delete parsed._stateVersion;
-      const legacyRound = MatchStateMachine.deserialize(
-        JSON.stringify(parsed),
-      ).getCurrentRound();
-      expect(
-        (
-          legacyRound as unknown as {
-            startingPlayers?: string[] | typeof UNAVAILABLE;
-          }
-        ).startingPlayers,
-      ).toBe(UNAVAILABLE);
-
-      parsed._stateVersion = 2;
-      const futureRound = MatchStateMachine.deserialize(
-        JSON.stringify(parsed),
-      ).getCurrentRound();
-      expect(
-        (
-          futureRound as unknown as {
-            startingPlayers?: string[] | typeof UNAVAILABLE;
-          }
-        ).startingPlayers,
-      ).toBe(UNAVAILABLE);
+      // Future (unsupported) version → rejected by the version gate.
+      const future = JSON.parse(machine.serialize());
+      future._stateVersion = 3;
+      expect(() =>
+        MatchStateMachine.deserialize(JSON.stringify(future)),
+      ).toThrow();
     });
 
     // L3 coverage: the `else if (this.currentRound.startingPlayers
@@ -1945,5 +2009,70 @@ describe("MatchStateMachine — AFK/elimination semantics (Plan C)", () => {
     expect(machine.getState().players.get("p2")?.status).toBe(
       PlayerStatus.ELIMINATED,
     );
+  });
+});
+
+describe("MatchStateMachine phase deadlines (B1b)", () => {
+  const startQuestion = {
+    id: "q1",
+    content: "What is 1+1?",
+    options: ["1", "2", "3", "4"],
+    correctAnswer: "2",
+  };
+
+  it("sets phaseEndsAt ~5s ahead on COUNTDOWN and clears the result anchor", () => {
+    const machine = new MatchStateMachine("m", "r", makePlayers());
+    const before = Date.now();
+    machine.transition(MatchStatus.COUNTDOWN);
+    const state = machine.getState();
+
+    expect(state.phaseEndsAt).not.toBeNull();
+    // GAME_CONFIG.COUNTDOWN_DURATION_MS === 5000
+    expect(state.phaseEndsAt!).toBeGreaterThanOrEqual(before + 5000 - 50);
+    expect(state.phaseEndsAt!).toBeLessThanOrEqual(Date.now() + 5000 + 50);
+    expect(state.roundResultStartedAt).toBeNull();
+  });
+
+  it("mirrors currentRound.endsAt into phaseEndsAt on startRound with no stale anchor", () => {
+    const machine = new MatchStateMachine("m", "r", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    const round = machine.startRound(startQuestion);
+
+    const state = machine.getState();
+    expect(state.phaseEndsAt).toBe(round.endsAt);
+    expect(state.roundResultStartedAt).toBeNull();
+  });
+
+  it("derives phaseEndsAt and roundResultStartedAt from one clock read on ROUND_RESULT", () => {
+    const machine = new MatchStateMachine("m", "r", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    machine.startRound(startQuestion);
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    const before = Date.now();
+    machine.transition(MatchStatus.ROUND_RESULT);
+
+    const state = machine.getState();
+    expect(state.roundResultStartedAt).not.toBeNull();
+    expect(state.roundResultStartedAt!).toBeGreaterThanOrEqual(before - 50);
+    // GAME_CONFIG.RESULT_DISPLAY_MS === 3000; invariant holds exactly (one read).
+    expect(state.phaseEndsAt).toBe(state.roundResultStartedAt! + 3000);
+  });
+
+  it("clears both deadline anchors on ROUND_EVALUATING and FINISHED", () => {
+    const machine = new MatchStateMachine("m", "r", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    machine.startRound(startQuestion);
+
+    machine.transition(MatchStatus.ROUND_EVALUATING);
+    expect(machine.getState().phaseEndsAt).toBeNull();
+    expect(machine.getState().roundResultStartedAt).toBeNull();
+
+    machine.transition(MatchStatus.ROUND_RESULT);
+    machine.transition(MatchStatus.FINISHED);
+    expect(machine.getState().phaseEndsAt).toBeNull();
+    expect(machine.getState().roundResultStartedAt).toBeNull();
   });
 });
