@@ -406,4 +406,64 @@ describe("match-state.codec v2 + back-compat (B1c)", () => {
       expect((captured as Error).message).not.toContain("secret-answer-key");
     });
   });
+
+  describe("cross-field timing invariants (fail-closed)", () => {
+    it("rejects a v2 ROUND_ACTIVE blob whose phaseEndsAt differs from currentRound.endsAt", () => {
+      const state = buildState();
+      state.status = "ROUND_ACTIVE" as MatchState["status"];
+      state.phaseEndsAt = 1000;
+      const round = buildRound({
+        startedAt: 100,
+        endsAt: 1000,
+        status: "ACTIVE",
+      });
+      const parsed = JSON.parse(serializeMatch(state, round, []));
+      // Corrupt: the phase deadline no longer equals the live round deadline.
+      parsed.state.phaseEndsAt = 2000;
+      expect(() => deserializeMatch(JSON.stringify(parsed))).toThrow();
+    });
+
+    it("accepts a v2 ROUND_ACTIVE blob whose phaseEndsAt equals currentRound.endsAt", () => {
+      const state = buildState();
+      state.status = "ROUND_ACTIVE" as MatchState["status"];
+      state.phaseEndsAt = 1000;
+      const round = buildRound({
+        startedAt: 100,
+        endsAt: 1000,
+        status: "ACTIVE",
+      });
+      const decoded = deserializeMatch(serializeMatch(state, round, []));
+      expect(decoded.state.phaseEndsAt).toBe(1000);
+      expect((decoded.currentRound as { endsAt: number }).endsAt).toBe(1000);
+    });
+
+    it("rejects a round whose endsAt precedes startedAt", () => {
+      const parsed = JSON.parse(v1Blob());
+      parsed.currentRound.startedAt = 5000;
+      parsed.currentRound.endsAt = 1000; // ends before it starts → corrupt
+      expect(() => deserializeMatch(JSON.stringify(parsed))).toThrow();
+    });
+
+    it("rejects a ROUND_RESULT round missing its own timing instead of borrowing the result-phase deadline", () => {
+      // A ROUND_RESULT blob whose currentRound has no startedAt/endsAt must NOT
+      // silently inherit phaseEndsAt (the result-display deadline) as the
+      // gameplay round's endsAt — it should fail closed.
+      const parsed = JSON.parse(
+        v1Blob({
+          status: "ROUND_RESULT",
+          roundResultStartedAt: 12345,
+          currentRound: {
+            matchId: "m1",
+            roundNo: 1,
+            question: { id: "q1", content: "Q?", options: ["A", "B"] },
+            // startedAt / endsAt deliberately omitted
+            answers: [],
+            status: "COMPLETED",
+            startingPlayers: ["p1"],
+          },
+        }),
+      );
+      expect(() => deserializeMatch(JSON.stringify(parsed))).toThrow();
+    });
+  });
 });

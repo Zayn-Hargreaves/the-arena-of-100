@@ -146,20 +146,27 @@ export class MatchOwnershipService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    // Retry-exhaustion compensation: the match never entered match:active, so
-    // fully release the lease rather than strand a half-owned match. Verify the
+    // Retry-exhaustion compensation: a prior attempt may have SADD'd the match
+    // into match:active before renewLease failed, so release the lease AND the
+    // index entry ATOMICALLY (releaseLeaseAndIndex) — a lease-only release would
+    // strand an owner-less matchId in match:active for B3b to adopt. Verify the
     // release (CAS false + a confirming read) before trusting it.
     let released = false;
     for (let attempt = 0; attempt < 3 && !released; attempt++) {
       try {
-        released = await this.redis.releaseLease(ownerKey(matchId), leaseValue);
+        released = await this.redis.releaseLeaseAndIndex(
+          ownerKey(matchId),
+          leaseValue,
+          ACTIVE_SET,
+          matchId,
+        );
         if (!released) {
           const cur = await this.redis.get(ownerKey(matchId));
           released = cur !== leaseValue; // no longer ours ⇒ safely relinquished
         }
       } catch (err) {
         this.logger.warn(
-          `acquireOnLaunch: releaseLease retry ${attempt + 1} failed for ${matchId}: ${
+          `acquireOnLaunch: releaseLeaseAndIndex retry ${attempt + 1} failed for ${matchId}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -293,6 +300,12 @@ export class MatchOwnershipService implements OnModuleInit, OnModuleDestroy {
             return;
           }
           if (!held) {
+            // The renewal we awaited belongs to a specific ownership epoch. If
+            // this match was released and reacquired while our renew was in
+            // flight, `owned` now holds a fresh entry (new lease/fence) that a
+            // stale "lost" result must NOT relinquish — that would cancel the
+            // newly reacquired match's timers and drop live ownership.
+            if (this.owned.get(matchId) !== entry) return;
             this.logger.warn(
               `heartbeat: lost lease for ${matchId}; relinquishing (timers cancelled without firing)`,
             );

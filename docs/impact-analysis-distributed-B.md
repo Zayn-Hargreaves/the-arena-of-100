@@ -1,8 +1,8 @@
 # B1a — Distributed Refactor Blast-Radius Snapshot
 
 > **Phase:** B1a (impact-analysis GATE, no source code).
-> **Mandate:** `CLAUDE.md` requires `gitnexus_impact` before editing any CRITICAL
-> symbol and **warning the user on HIGH/CRITICAL**. This doc records the blast
+> **Mandate:** `CLAUDE.md` requires `gitnexus_impact` before editing **any**
+> symbol, and **warning the user on HIGH/CRITICAL**. This doc records the blast
 > radius once, up front, so B1b–B5 proceed with it already surfaced.
 > **Revision binding:** `HEAD = 15d68de` (main, post Stage-A merge PR #75/#76).
 > **Captured:** `2026-07-17T18:23:05Z`. Re-run any symbol below if a later phase
@@ -40,7 +40,7 @@ Ambiguity notes (resolved by candidate UID):
 
 ## HIGH / CRITICAL surfaced to user (CLAUDE.md mandate)
 
-⚠️ **Four symbols are HIGH/CRITICAL. Phases touching them proceed with the
+⚠️ **Five symbols are HIGH/CRITICAL. Phases touching them proceed with the
 following understood:**
 
 1. **`MatchStateMachine.transition` — CRITICAL (17 impacted, 11 processes).**

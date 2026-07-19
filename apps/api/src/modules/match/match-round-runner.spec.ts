@@ -108,6 +108,7 @@ describe("MatchRoundRunner", () => {
       // B2c: owner by default so the three fenced boundaries proceed.
       {
         assertOwnership: vi.fn().mockResolvedValue(true),
+        release: vi.fn().mockResolvedValue(undefined),
       } as unknown as import("./match-ownership.service").MatchOwnershipService,
     );
   });
@@ -1683,6 +1684,88 @@ describe("MatchRoundRunner", () => {
       );
 
       vi.useRealTimers();
+    });
+  });
+
+  describe("B2c fail-closed fencing branches", () => {
+    const makeRunner = (
+      ownershipOverrides: Record<string, unknown> = {},
+    ): MatchRoundRunner =>
+      new MatchRoundRunner(matchService, questionService, roomService, {
+        assertOwnership: vi.fn().mockResolvedValue(true),
+        release: vi.fn().mockResolvedValue(undefined),
+        ...ownershipOverrides,
+      } as unknown as import("./match-ownership.service").MatchOwnershipService);
+
+    const armActiveRound = () => {
+      stateMachine.transition(MatchStatus.COUNTDOWN);
+      stateMachine.transition(MatchStatus.ROUND_ACTIVE);
+      stateMachine.startRound({
+        id: "q1",
+        content: "Q",
+        options: ["A", "B"],
+        correctAnswer: "A",
+        difficulty: "MEDIUM",
+      });
+    };
+
+    it("startMatchLoop: a non-APPLIED persist skips MATCH_STARTED and the countdown", async () => {
+      vi.useFakeTimers();
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+      vi.mocked(matchService.persistStateMachine).mockResolvedValue("RETRY");
+
+      const runner2 = makeRunner();
+      await runner2.startMatchLoop(
+        "match-1",
+        "room-1",
+        mockServer as unknown as Server,
+      );
+
+      const emittedEvents = emitSpy.mock.calls.map((c) => c[0]);
+      expect(emittedEvents).not.toContain(ServerEvent.MATCH_STARTED);
+      // No countdown was armed → advancing past it drives no round.
+      await vi.advanceTimersByTimeAsync(
+        GAME_CONFIG.COUNTDOWN_DURATION_MS + 100,
+      );
+      expect(questionService.getRandom).not.toHaveBeenCalled();
+      vi.useRealTimers();
+    });
+
+    it("endRound: assertOwnership=false aborts before any persist, DB write, transition, or broadcast", async () => {
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+      armActiveRound();
+
+      const runner2 = makeRunner({
+        assertOwnership: vi.fn().mockResolvedValue(false),
+      });
+      await (runner2 as any).endRound("match-1", "room-1", mockServer);
+
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+      expect(matchService.saveRoundAndAnswers).not.toHaveBeenCalled();
+      // No transition off ROUND_ACTIVE, no broadcast.
+      expect(stateMachine.getState().status).toBe(MatchStatus.ROUND_ACTIVE);
+      expect(emitSpy).not.toHaveBeenCalled();
+    });
+
+    it("endRound: an eval-snapshot persist RETRY aborts before saveRoundAndAnswers / ROUND_RESULT / broadcast", async () => {
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+      armActiveRound();
+
+      // The ROUND_EVALUATING snapshot persist reports a lost lease (RETRY). The
+      // round must not write the DB, advance to ROUND_RESULT, or broadcast.
+      vi.mocked(matchService.persistStateMachine).mockResolvedValue("RETRY");
+
+      await (runner as any).endRound("match-1", "room-1", mockServer);
+
+      expect(matchService.saveRoundAndAnswers).not.toHaveBeenCalled();
+      expect(stateMachine.getState().status).toBe(MatchStatus.ROUND_EVALUATING);
+      expect(emitSpy).not.toHaveBeenCalledWith(
+        ServerEvent.ROUND_ENDED,
+        expect.anything(),
+      );
     });
   });
 

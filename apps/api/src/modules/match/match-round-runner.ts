@@ -120,8 +120,18 @@ export class MatchRoundRunner {
     // F2: Init question tracking
     this.timers.initUsedQuestions(matchId);
 
-    // F6: Persist state machine to Redis
-    await this.matchService.persistStateMachine(matchId);
+    // F6: Persist state machine to Redis. B2c: only broadcast MATCH_STARTED and
+    // arm the countdown once the canonical write LANDS. A non-APPLIED outcome
+    // (RETRY = never held / lost the lease; BLIND = no ownership snapshot) means
+    // this node must not drive the loop — skip the broadcast and the countdown
+    // so clients never see a match started on state we could not persist.
+    const startOutcome = await this.matchService.persistStateMachine(matchId);
+    if (startOutcome !== "APPLIED") {
+      this.logger.warn(
+        `startMatchLoop: persist ${startOutcome} for ${matchId} — no confirmed canonical write, skipping MATCH_STARTED broadcast and countdown`,
+      );
+      return;
+    }
 
     // 3. Broadcast MATCH_STARTED
     emitMatchStarted(
@@ -482,13 +492,24 @@ export class MatchRoundRunner {
   private async handleActiveRoundEnd(
     matchId: string,
     stateMachine: MatchStateMachine,
-  ): Promise<RoundEndContext> {
+  ): Promise<RoundEndContext | null> {
     stateMachine.transition(MatchStatus.ROUND_EVALUATING);
 
     const evaluation = stateMachine.evaluateRound();
 
     // Fully snapshot the ROUND_EVALUATING state in Redis before database writes.
-    await this.matchService.persistStateMachine(matchId);
+    // B2c: this is a canonical write. If it does not land (RETRY = lost the
+    // lease mid-round; BLIND = no ownership snapshot) we must NOT go on to write
+    // the round/answers to the DB or advance to ROUND_RESULT — abort here and
+    // let the new owner finalize the round from canonical state. Returning null
+    // makes endRound short-circuit before saveRoundAndAnswers.
+    const outcome = await this.matchService.persistStateMachine(matchId);
+    if (outcome !== "APPLIED") {
+      this.logger.warn(
+        `handleActiveRoundEnd: eval-snapshot persist ${outcome} for ${matchId} — no confirmed canonical write, aborting before DB write / ROUND_RESULT`,
+      );
+      return null;
+    }
 
     return {
       survivingIds: evaluation.survivingIds,
@@ -844,6 +865,16 @@ export class MatchRoundRunner {
     // 5. Cleanup
     this.timers.disposeMatch(matchId);
 
+    // B2b/B2c: release the owner lease + match:active index + in-memory owned
+    // entry on natural completion, consistent with the kill-switch, disband, and
+    // launch-rollback teardown paths. Without this the heartbeat would renew the
+    // lease for a finished match forever, /health/cluster would keep listing it,
+    // and B3b recovery could re-adopt it from match:active. Runs only after the
+    // canonical write + DB finish succeeded above. release() is a no-op when this
+    // node no longer owns the match, so it is safe if forceFinishMatchForDisband
+    // already released.
+    await this.ownership.release(matchId);
+
     if (winnerId === null) {
       this.logger.warn(
         `Match ${matchId} finished with no winner (empty roster or unresolvable tie-break). Rounds: ${state.currentRoundNo}. Clients receive MATCH_FINISHED with winnerId: null.`,
@@ -885,8 +916,17 @@ export class MatchRoundRunner {
     // 4. Mark player as DISCONNECTED in state machine
     stateMachine.disconnectPlayer(userId);
 
-    // 5. Persist state machine
-    await this.matchService.persistStateMachine(matchId);
+    // 5. Persist state machine. B2c: only broadcast the disconnect once the
+    // canonical write lands — a non-APPLIED outcome (RETRY/BLIND = this node is
+    // not the confirmed owner) means the mutation is not canonical, so skip the
+    // broadcast rather than announce a disconnect the owner never recorded.
+    const outcome = await this.matchService.persistStateMachine(matchId);
+    if (outcome !== "APPLIED") {
+      this.logger.warn(
+        `handlePlayerDisconnect: persist ${outcome} for ${matchId} — no confirmed canonical write, skipping disconnect broadcast`,
+      );
+      return;
+    }
 
     // 6. Broadcast PLAYER_LEFT with reason field
     const roomId = state.roomId;

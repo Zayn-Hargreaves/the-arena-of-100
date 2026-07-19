@@ -33,8 +33,21 @@ export type PersistOutcome = "APPLIED" | "RETRY" | "BLIND";
 export class MatchService {
   private readonly logger = new Logger(MatchService.name);
   private readonly stateMachines = new Map<string, MatchStateMachine>();
-  // Per-match state revision this node has applied (B2c fenced CAS).
-  private readonly revisions = new Map<string, number>();
+  // Per-match state revision this node has applied (B2c fenced CAS), BOUND to
+  // the ownership fence it was written under. A cached revision is only valid
+  // for its own ownership epoch: after a takeover / handoff the fence advances
+  // and the persisted revision may have moved past our cached value, so a
+  // revision from a stale fence must be discarded (reloaded from Redis) rather
+  // than fed into the CAS — otherwise every persist RETRYs forever.
+  private readonly revisions = new Map<
+    string,
+    { fence: number; revision: number }
+  >();
+  // Per-match serialization for the fenced persist path. Concurrent persists
+  // for the same match (e.g. a disconnect handler racing a round timer) would
+  // otherwise both read the same expected revision and the loser's CAS would
+  // spuriously RETRY, dropping a legitimate owner's canonical write.
+  private readonly persistChains = new Map<string, Promise<void>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -232,6 +245,20 @@ export class MatchService {
     matchId: string,
     opts: { allowBlindBootstrap?: boolean } = {},
   ): Promise<PersistOutcome> {
+    // Serialize persists for the SAME match so a concurrent pair cannot both
+    // read the same expected revision and CAS with the same nextRevision — the
+    // loser would RETRY and its canonical write would be silently dropped even
+    // though this node is the legitimate owner. Each persist runs after the
+    // previous one, observing its advanced revision.
+    return this.runPersistExclusive(matchId, () =>
+      this.persistStateMachineInner(matchId, opts),
+    );
+  }
+
+  private async persistStateMachineInner(
+    matchId: string,
+    opts: { allowBlindBootstrap?: boolean },
+  ): Promise<PersistOutcome> {
     const machine = this.stateMachines.get(matchId);
     if (!machine) return "BLIND";
     const blob = machine.serialize();
@@ -257,16 +284,17 @@ export class MatchService {
       return "RETRY";
     }
 
-    // B2c fenced path. Hydrate the expected revision from Redis when this node
-    // has no local revision for the match — a recovered owner / ownership
-    // handoff starts with an empty revisions map, but the persisted revision
-    // may be well past INITIAL. Defaulting to INITIAL_STATE_REVISION there
-    // would make the fenced CAS compare 0 against the live revision and RETRY
-    // forever, stranding the restored owner.
-    let expectedRevision = this.revisions.get(matchId);
-    if (expectedRevision === undefined) {
-      expectedRevision = await this.readPersistedRevision(matchId);
-    }
+    // B2c fenced path. The cached revision is valid ONLY when it was written
+    // under the SAME ownership fence we now hold. On a fence mismatch (takeover
+    // / ownership handoff — the local cache is empty or belongs to a prior
+    // epoch) reload the canonical revision from Redis; the persisted revision
+    // may be well past INITIAL, and a stale/default 0 would make the fenced CAS
+    // RETRY forever, stranding the restored owner.
+    const cached = this.revisions.get(matchId);
+    const expectedRevision =
+      cached && cached.fence === snapshot.fence
+        ? cached.revision
+        : await this.readPersistedRevision(matchId);
     const nextRevision = expectedRevision + 1;
     const outcome = await this.redis.fencedStateSet(
       ownerKey(matchId),
@@ -283,13 +311,38 @@ export class MatchService {
       },
     );
     if (outcome === "APPLIED") {
-      this.revisions.set(matchId, nextRevision);
+      // Bind the advanced revision to the fence it was written under.
+      this.revisions.set(matchId, {
+        fence: snapshot.fence,
+        revision: nextRevision,
+      });
     } else {
       this.logger.warn(
         `persistStateMachine: fenced CAS RETRY for ${matchId} (lost ownership / stale fence); state NOT written, broadcast must be skipped`,
       );
     }
     return outcome;
+  }
+
+  // Run `fn` after any in-flight persist for the same match completes, so
+  // fenced CAS operations on one match never overlap (see `persistChains`).
+  // The stored chain tail never rejects (so a thrown persist can't orphan the
+  // chain as an unhandled rejection); the returned promise still surfaces the
+  // real outcome — including a throw — to the caller.
+  private runPersistExclusive(
+    matchId: string,
+    fn: () => Promise<PersistOutcome>,
+  ): Promise<PersistOutcome> {
+    const prev = this.persistChains.get(matchId) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    this.persistChains.set(
+      matchId,
+      next.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return next;
   }
 
   // Read the persisted match:state-revision from Redis for a match this node
@@ -425,9 +478,30 @@ export class MatchService {
     // stays consistent. Operators see a logged warning; the state
     // is functionally clean for new requests.
     try {
-      await this.redis.del(`match:state:${matchId}`);
-      // B2c: drop the fenced-CAS revision key alongside the state.
-      await this.redis.del(revisionKey(matchId));
+      const snapshot = this.matchOwnership.getOwnershipSnapshot(matchId);
+      if (snapshot) {
+        // Owner-path cleanup: fence the delete so a superseded owner's late
+        // finish cannot remove canonical state a NEW owner has since written.
+        // A no-op (false) means ownership already moved on — leave it intact.
+        const deleted = await this.redis.fencedStateDelete(
+          ownerKey(matchId),
+          fenceKey(matchId),
+          stateKey(matchId),
+          revisionKey(matchId),
+          { leaseValue: snapshot.leaseValue, expectedFence: snapshot.fence },
+        );
+        if (!deleted) {
+          this.logger.warn(
+            `finishMatch: fenced state cleanup for ${matchId} was a no-op (ownership moved on); leaving canonical state for the current owner`,
+          );
+        }
+      } else {
+        // No ownership snapshot (admin force-termination / legacy path): delete
+        // unconditionally so a terminated match never strands Redis state.
+        await this.redis.del(stateKey(matchId));
+        // B2c: drop the fenced-CAS revision key alongside the state.
+        await this.redis.del(revisionKey(matchId));
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(
@@ -438,6 +512,7 @@ export class MatchService {
     // Only after Redis is clean do we drop the in-memory entry.
     this.stateMachines.delete(matchId);
     this.revisions.delete(matchId);
+    this.persistChains.delete(matchId);
 
     this.logger.log(
       `Match finished: ${matchId}${winnerId ? `, winner: ${winnerId}` : " (admin termination, no winner)"}`,

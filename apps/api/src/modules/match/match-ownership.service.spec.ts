@@ -98,27 +98,52 @@ describe("MatchOwnershipService (B2b)", () => {
       expect(redis.sadd).toHaveBeenCalledWith(ACTIVE_SET, "m1");
     });
 
-    it("releases the lease and returns false when addActiveMatch fails every retry", async () => {
+    it("releases the lease + index atomically and returns false when addActiveMatch fails every retry", async () => {
       redis.sadd.mockRejectedValue(new Error("redis down"));
 
       await expect(service.acquireOnLaunch("m1", "r1")).resolves.toBe(false);
       expect(service.isOwner("m1")).toBe(false);
-      expect(redis.releaseLease).toHaveBeenCalledWith(
+      // Compensation goes through the atomic release-and-deindex CAS, never the
+      // lease-only release (which would strand an owner-less match:active entry).
+      expect(redis.releaseLeaseAndIndex).toHaveBeenCalledWith(
         "match:owner:m1",
         "node-a:1",
+        ACTIVE_SET,
+        "m1",
       );
+      expect(redis.releaseLease).not.toHaveBeenCalled();
+    });
+
+    it("atomically releases lease + index when renewLease exhausts its retry budget after indexing", async () => {
+      // addActiveMatch (sadd) succeeds on every attempt so the match IS in
+      // match:active, but the post-index renew throws all three times. The
+      // compensation must remove BOTH the lease and the index entry atomically
+      // (releaseLeaseAndIndex) — a lease-only release would orphan the index.
+      redis.sadd.mockResolvedValue(1);
+      redis.renewLease.mockRejectedValue(new Error("redis blip"));
+
+      await expect(service.acquireOnLaunch("m1", "r1")).resolves.toBe(false);
+
+      expect(service.isOwner("m1")).toBe(false);
+      expect(redis.releaseLeaseAndIndex).toHaveBeenCalledWith(
+        "match:owner:m1",
+        "node-a:1",
+        ACTIVE_SET,
+        "m1",
+      );
+      expect(redis.releaseLease).not.toHaveBeenCalled();
     });
 
     it("hands off to match:active when the lease release cannot be proven", async () => {
-      // addActiveMatch fails during indexing (all retries), then the release
-      // CAS also fails and the confirming read still shows our lease.
+      // addActiveMatch fails during indexing (all retries), then the atomic
+      // release CAS also fails and the confirming read still shows our lease.
       let saddCalls = 0;
       redis.sadd.mockImplementation(async () => {
         saddCalls++;
         if (saddCalls <= 3) throw new Error("index write failed");
         return 1; // the final recovery handoff succeeds
       });
-      redis.releaseLease.mockResolvedValue(false);
+      redis.releaseLeaseAndIndex.mockResolvedValue(false);
       redis.get.mockResolvedValue("node-a:1"); // still ours ⇒ unproven release
 
       await expect(service.acquireOnLaunch("m1", "r1")).resolves.toBe(false);
@@ -303,6 +328,42 @@ describe("MatchOwnershipService (B2b)", () => {
       await service.heartbeat();
 
       expect(service.isOwner("m1")).toBe(true);
+    });
+
+    it("does not relinquish reacquired ownership when a stale renewal from a prior epoch resolves late", async () => {
+      // Race: the match is released and reacquired (new lease/fence) while a
+      // heartbeat's renew for the OLD lease is still in flight. When that stale
+      // renewal finally resolves `false`, it must NOT relinquish the freshly
+      // reacquired ownership (which would cancel the new match's timers).
+      await service.acquireOnLaunch("m1", "r1");
+      const runner = { cancelMatchLoop: vi.fn() };
+      service.setRoundRunner(runner);
+
+      // Hold the heartbeat's renew for the current (soon-to-be-stale) lease.
+      let resolveStaleRenew!: (held: boolean) => void;
+      redis.renewLease.mockImplementationOnce(
+        () => new Promise<boolean>((r) => (resolveStaleRenew = r)),
+      );
+      const beat = service.heartbeat(); // renew for node-a:1 now pending
+      await Promise.resolve();
+
+      // Release and reacquire the same match → fresh entry (node-a:2).
+      await service.release("m1");
+      redis.acquireLeaseWithFence.mockResolvedValueOnce({
+        fence: 2,
+        leaseValue: "node-a:2",
+      });
+      await service.acquireOnLaunch("m1", "r1");
+      expect(service.getLeaseValue("m1")).toBe("node-a:2");
+
+      // The stale renewal (for the old lease) reports the lease is lost.
+      resolveStaleRenew(false);
+      await beat;
+
+      // Reacquired ownership survives: no relinquish of the new epoch's entry.
+      expect(runner.cancelMatchLoop).not.toHaveBeenCalled();
+      expect(service.isOwner("m1")).toBe(true);
+      expect(service.getLeaseValue("m1")).toBe("node-a:2");
     });
 
     it("publishes a clock offset against the shared Redis clock and indexes the node", async () => {

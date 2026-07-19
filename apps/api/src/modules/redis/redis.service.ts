@@ -14,6 +14,14 @@ type MessageHandler = (msg: string) => void;
 // drain set (handoff) to avoid a self-deadlock.
 interface OpMarker {
   promise?: Promise<void>;
+  // Resolves when this op HANDS OFF to an in-progress reset barrier: at that
+  // point its map mutation has already been rolled back and it is only awaiting
+  // the barrier, so a running reset's drain must stop waiting on its full
+  // completion. Without this, two ops on DIFFERENT channels that fail and reset
+  // concurrently deadlock: the first reset's drain awaits the second op, while
+  // the second op awaits the first reset's barrier.
+  detached?: Promise<void>;
+  detach?: () => void;
 }
 
 @Injectable()
@@ -360,7 +368,53 @@ return 'APPLIED'`;
         String(opts.nextRevision),
       ],
     );
-    return result === "APPLIED" ? "APPLIED" : "RETRY";
+    // The script returns exactly "APPLIED" or "RETRY". Any other reply is a
+    // contract violation (wrong script cached, Redis returned an error object,
+    // a partial write) — do NOT silently collapse it to "RETRY" (a CAS miss),
+    // which would mask corruption and let the caller proceed as if the write
+    // were merely contended. Surface it as an infrastructure error instead.
+    if (result === "APPLIED") return "APPLIED";
+    if (result === "RETRY") return "RETRY";
+    throw new Error(
+      `fencedStateSet: unexpected Lua reply for ${stateKey} ` +
+        `(state may be inconsistent): ${JSON.stringify(result)}`,
+    );
+  }
+
+  // Fenced cleanup of the canonical match:state + revision (B2c). In ONE Lua
+  // transaction, verify the caller still owns the match (owner == leaseValue
+  // AND fence == expectedFence), then DEL both the state and revision keys.
+  // Returns:
+  //   - true:  ownership matched; both keys removed.
+  //   - false: ownership already moved on (owner/fence mismatch) → NO-OP, so a
+  //            superseded owner's late finish can never delete the state a NEW
+  //            owner has since written. Non-owned / admin-force cleanup (no
+  //            ownership snapshot) uses an unconditional del at the call site.
+  async fencedStateDelete(
+    ownerKey: string,
+    fenceKey: string,
+    stateKey: string,
+    revisionKey: string,
+    opts: { leaseValue: string; expectedFence: number },
+  ): Promise<boolean> {
+    const script = `
+local currentOwner = redis.call('GET', KEYS[1])
+if currentOwner == false or currentOwner ~= ARGV[1] then
+  return 0
+end
+local currentFence = redis.call('GET', KEYS[2])
+if currentFence == false or currentFence ~= ARGV[2] then
+  return 0
+end
+redis.call('DEL', KEYS[3])
+redis.call('DEL', KEYS[4])
+return 1`;
+    const result = await this.eval(
+      script,
+      [ownerKey, fenceKey, stateKey, revisionKey],
+      [opts.leaseValue, String(opts.expectedFence)],
+    );
+    return result === 1;
   }
 
   // Redis server clock in epoch ms (from the TIME command). Used by the
@@ -368,7 +422,10 @@ return 'APPLIED'`;
   // common reference so synchronized nodes report ~0 skew regardless of when
   // their heartbeats last fired.
   async serverTimeMs(): Promise<number> {
-    const [sec, micros] = (await this.client.time()) as [string, string];
+    const [sec, micros] = (await this.client.time()) as unknown as [
+      string,
+      string,
+    ];
     return Number(sec) * 1000 + Math.floor(Number(micros) / 1000);
   }
 
@@ -384,7 +441,7 @@ return 'APPLIED'`;
   // is not missed.
   async subscribe(channel: string, handler: MessageHandler): Promise<void> {
     await this.awaitResetBarrier();
-    const marker: OpMarker = {};
+    const marker = this.newMarker();
     const op = this.chain(channel, () =>
       this.runInFlight(marker, () =>
         this.doSubscribe(channel, handler, marker),
@@ -399,7 +456,7 @@ return 'APPLIED'`;
   // is the map entry dropped AND `subscriber.unsubscribe(channel)` issued.
   async unsubscribe(channel: string, handler: MessageHandler): Promise<void> {
     await this.awaitResetBarrier();
-    const marker: OpMarker = {};
+    const marker = this.newMarker();
     const op = this.chain(channel, () =>
       this.runInFlight(marker, () =>
         this.doUnsubscribe(channel, handler, marker),
@@ -506,7 +563,15 @@ return 'APPLIED'`;
   // handler list is non-empty. Runs behind the global barrier so no new
   // lifecycle op mutates the handler map mid-rebuild.
   private resetSubscriber(self?: OpMarker): Promise<void> {
-    if (this.resetInProgress) return this.resetInProgress;
+    if (this.resetInProgress) {
+      // A reset is already running and `self` is about to await this barrier.
+      // Detach it so the running reset's drain does not wait on an op that is
+      // itself blocked on the barrier — the cycle that deadlocks two concurrent
+      // cross-channel resets. `self` is quiescent here (handler already rolled
+      // back / removed), so its remaining work never mutates the handler map.
+      if (self) self.detach?.();
+      return this.resetInProgress;
+    }
     let resolve!: () => void;
     let reject!: (err: unknown) => void;
     const barrier = new Promise<void>((res, rej) => {
@@ -523,11 +588,17 @@ return 'APPLIED'`;
         // further map mutation), so exclude it from the drain to avoid a cycle.
         if (self) this.inFlight.delete(self);
         // Drain already-admitted ops so no handler-map mutation overlaps the
-        // rebuild snapshot.
+        // rebuild snapshot. An op that hands off to this barrier resolves its
+        // `detached` signal; race against it so the drain stops waiting on an
+        // op blocked on the very reset it is draining (cross-channel deadlock),
+        // while still fully awaiting ops that are actively mutating the map.
         await Promise.allSettled(
-          [...this.inFlight].map((m) =>
-            (m.promise ?? Promise.resolve()).catch(() => undefined),
-          ),
+          [...this.inFlight].map((m) => {
+            const settled = (m.promise ?? Promise.resolve()).catch(
+              () => undefined,
+            );
+            return m.detached ? Promise.race([settled, m.detached]) : settled;
+          }),
         );
         try {
           this.subscriber?.disconnect();
@@ -650,6 +721,17 @@ return 'APPLIED'`;
     return fn().finally(() => {
       this.inFlight.delete(marker);
     });
+  }
+
+  // Build a lifecycle-op marker with its detach signal wired up. `detached`
+  // resolves only when `detach()` is called (on handoff to an in-progress
+  // reset), so a normal op that never resets is fully awaited by any drain.
+  private newMarker(): OpMarker {
+    const marker: OpMarker = {};
+    marker.detached = new Promise<void>((resolve) => {
+      marker.detach = resolve;
+    });
+    return marker;
   }
 
   private removeHandler(channel: string, handler: MessageHandler): boolean {

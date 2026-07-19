@@ -500,7 +500,7 @@ describe("RedisService", () => {
       expect(script).toContain("APPLIED");
     });
 
-    it("fencedStateSet maps any non-APPLIED Lua reply to RETRY", async () => {
+    it("fencedStateSet returns RETRY on an explicit RETRY reply", async () => {
       client.eval.mockResolvedValueOnce("RETRY");
       await expect(
         service.fencedStateSet("o", "f", "s", "r", {
@@ -512,6 +512,40 @@ describe("RedisService", () => {
           nextRevision: 1,
         }),
       ).resolves.toBe("RETRY");
+    });
+
+    it("fencedStateSet throws on a contract-violating (non APPLIED/RETRY) Lua reply", async () => {
+      // The script returns exactly "APPLIED" or "RETRY". Anything else is a
+      // contract violation and must NOT be silently collapsed to a CAS miss.
+      client.eval.mockResolvedValueOnce("UNEXPECTED");
+      await expect(
+        service.fencedStateSet("o", "f", "s", "r", {
+          leaseValue: "n:1",
+          expectedFence: 1,
+          blob: "{}",
+          ttlSec: 10,
+          expectedRevision: 0,
+          nextRevision: 1,
+        }),
+      ).rejects.toThrow();
+    });
+
+    it("fencedStateDelete deletes state+revision only when owner+fence still match", async () => {
+      client.eval.mockResolvedValueOnce(1);
+      await expect(
+        service.fencedStateDelete("o", "f", "s", "r", {
+          leaseValue: "n:3",
+          expectedFence: 3,
+        }),
+      ).resolves.toBe(true);
+
+      client.eval.mockResolvedValueOnce(0);
+      await expect(
+        service.fencedStateDelete("o", "f", "s", "r", {
+          leaseValue: "n:3",
+          expectedFence: 3,
+        }),
+      ).resolves.toBe(false);
     });
 
     it("serverTimeMs converts redis TIME [sec, micros] to epoch ms", async () => {
@@ -667,6 +701,35 @@ describe("RedisService", () => {
 
       subscriber.emit("ch1", "delivered");
       expect(received).toEqual(["delivered"]);
+    });
+
+    it("does not deadlock when two DIFFERENT-channel subscribes fail and reset concurrently", async () => {
+      // Regression for the cross-channel reset-drain deadlock. Two subscribes on
+      // DIFFERENT channels (NOT serialized by the per-channel chain) both have
+      // their SUBSCRIBE accepted-but-reply-dropped, and every orphan-unsubscribe
+      // retry fails, so BOTH escalate to a subscriber reset concurrently. The
+      // first reset's drain would await the second op while the second op is
+      // itself blocked on that reset's barrier (and vice versa) — a cycle. The
+      // handoff (detach) of an op that joins an in-progress reset breaks it.
+      subscriber.subscribe
+        .mockRejectedValueOnce(new Error("dropped-a"))
+        .mockRejectedValueOnce(new Error("dropped-b"));
+      subscriber.unsubscribe.mockRejectedValue(
+        new Error("orphan-unsub-failing"),
+      );
+
+      const a = service.subscribe("chA", () => {});
+      const b = service.subscribe("chB", () => {});
+
+      // Neither promise hangs — both settle. (If the deadlock regressed, this
+      // await would never resolve and the test would time out.)
+      const results = await Promise.allSettled([a, b]);
+      expect(results[0].status).toBe("rejected");
+      expect(results[1].status).toBe("rejected");
+
+      // A single reset rebuilt the connection (disconnect + one fresh duplicate).
+      expect(subscriber.disconnect).toHaveBeenCalled();
+      expect(client.duplicate.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
   });
 });

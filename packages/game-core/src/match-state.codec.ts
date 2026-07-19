@@ -362,7 +362,16 @@ export function deserializeMatch(json: string): DecodedMatchState {
       const derived = normStartedAt + GAME_CONFIG.ROUND_DURATION_MS;
       normEndsAt = Number.isFinite(derived) ? derived : null;
     }
-    if (normEndsAt === null && typeof phaseEndsAt === "number") {
+    // Borrow the reconstructed phase deadline for a missing round endsAt ONLY in
+    // ROUND_ACTIVE, where phaseEndsAt IS this round's deadline. In COUNTDOWN /
+    // ROUND_RESULT the phase deadline belongs to a different phase (countdown /
+    // result display), so borrowing it as the gameplay round's endsAt would
+    // corrupt the submit-answer window and responseTimeMs.
+    if (
+      normEndsAt === null &&
+      status === MatchStatus.ROUND_ACTIVE &&
+      typeof phaseEndsAt === "number"
+    ) {
       normEndsAt = phaseEndsAt;
     }
     if (normStartedAt === null && normEndsAt !== null) {
@@ -377,6 +386,30 @@ export function deserializeMatch(json: string): DecodedMatchState {
     if (normStartedAt === null || normEndsAt === null) {
       throw new Error(
         `Invalid MatchStateMachine data: currentRound has no reconstructable startedAt/endsAt (payload omitted; length=${json.length})`,
+      );
+    }
+
+    // Cross-field invariant: a round can never end before it starts. A blob
+    // (persisted or reconstructed) with endsAt < startedAt is corrupt — reject
+    // it rather than feed a negative-length window into the submit gate / scoring.
+    if (normEndsAt < normStartedAt) {
+      throw new Error(
+        `Invalid MatchStateMachine data: currentRound endsAt precedes startedAt (payload omitted; length=${json.length})`,
+      );
+    }
+
+    // v2 writer invariant: in ROUND_ACTIVE, phaseEndsAt === currentRound.endsAt
+    // (both are the live round's deadline). A v2 ROUND_ACTIVE blob whose two
+    // anchors disagree is corrupt — reject rather than trust an ambiguous
+    // deadline. (v1 blobs are exempt: their phaseEndsAt is reconstructed, not
+    // persisted, so it is derived from currentRound.endsAt by construction.)
+    if (
+      version === 2 &&
+      status === MatchStatus.ROUND_ACTIVE &&
+      phaseEndsAtRaw !== crEndsAtRaw
+    ) {
+      throw new Error(
+        `Invalid MatchStateMachine data: v2 ROUND_ACTIVE phaseEndsAt does not match currentRound.endsAt (payload omitted; length=${json.length})`,
       );
     }
 
