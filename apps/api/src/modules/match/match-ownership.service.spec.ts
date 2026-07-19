@@ -426,5 +426,166 @@ describe("MatchOwnershipService (B2b)", () => {
       await service.computeMaxSkew();
       expect(redis.srem).toHaveBeenCalledWith("node:clocks", "dead");
     });
+
+    it("ignores non-finite clock offsets when computing skew", async () => {
+      redis.smembers.mockResolvedValue(["a", "b", "c"]);
+      redis.get.mockImplementation(async (key: string) => {
+        if (key === "node:clock:a") return "10";
+        if (key === "node:clock:b") return "not-a-number";
+        if (key === "node:clock:c") return "2";
+        return null;
+      });
+      await expect(service.computeMaxSkew()).resolves.toBe(8);
+    });
+  });
+
+  describe("lifecycle and recovery edges (B2c)", () => {
+    it("onModuleInit arms a heartbeat interval and onModuleDestroy clears it", () => {
+      vi.useFakeTimers();
+      const heartbeatSpy = vi
+        .spyOn(service, "heartbeat")
+        .mockResolvedValue(undefined);
+
+      service.onModuleInit();
+      vi.advanceTimersByTime(5000);
+      expect(heartbeatSpy).toHaveBeenCalledTimes(1);
+
+      service.onModuleDestroy();
+      vi.advanceTimersByTime(5000);
+      expect(heartbeatSpy).toHaveBeenCalledTimes(1);
+      vi.useRealTimers();
+    });
+
+    it("relinquish logs and still drops ownership when cancelMatchLoop throws", async () => {
+      await service.acquireOnLaunch("m1", "r1");
+      const cancel = vi.fn(() => {
+        throw new Error("cancel-boom");
+      });
+      service.setRoundRunner({ cancelMatchLoop: cancel });
+      redis.renewLease.mockResolvedValue(false);
+
+      await service.heartbeat();
+
+      expect(cancel).toHaveBeenCalledWith("m1");
+      expect(service.isOwner("m1")).toBe(false);
+    });
+
+    it("publishClockOffset failure is swallowed so the heartbeat tick completes", async () => {
+      redis.serverTimeMs.mockRejectedValueOnce(new Error("time-down"));
+      await expect(service.heartbeat()).resolves.toBeUndefined();
+    });
+
+    it("recoveryHandoff logs when addActiveMatch fails after acquire throws", async () => {
+      redis.acquireLeaseWithFence.mockRejectedValueOnce(
+        new Error("infra-error"),
+      );
+      redis.sadd.mockRejectedValueOnce(new Error("index-down"));
+
+      await expect(service.acquireOnLaunch("m1", "r1")).resolves.toBe(false);
+      expect(service.isOwner("m1")).toBe(false);
+    });
+
+    it("assertOwnership returns false when ownership epoch changes mid-renew", async () => {
+      await service.acquireOnLaunch("m1", "r1");
+      const firstEntry = (service as any).owned.get("m1");
+
+      redis.renewLease.mockImplementation(async () => {
+        // Simulate release+reacquire while the renew is in flight.
+        (service as any).owned.set("m1", {
+          roomId: "r1",
+          fence: 2,
+          leaseValue: "node-a:2",
+        });
+        return true;
+      });
+
+      await expect(service.assertOwnership("m1")).resolves.toBe(false);
+      // Fresh epoch is still present; we must not have deleted it.
+      expect(service.getLeaseValue("m1")).toBe("node-a:2");
+      expect(firstEntry).toBeDefined();
+    });
+
+    it("getOwnershipSnapshot returns the fence/lease for owned matches and undefined otherwise", async () => {
+      expect(service.getOwnershipSnapshot("m1")).toBeUndefined();
+      await service.acquireOnLaunch("m1", "r1");
+      expect(service.getOwnershipSnapshot("m1")).toEqual({
+        fence: 1,
+        leaseValue: "node-a:1",
+      });
+    });
+
+    it("treats CAS false + foreign owner as a proven release (no recovery handoff)", async () => {
+      redis.sadd.mockRejectedValue(new Error("index write failed"));
+      redis.releaseLeaseAndIndex.mockResolvedValue(false);
+      redis.get.mockResolvedValue("node-b:9");
+
+      await expect(service.acquireOnLaunch("m1", "r1")).resolves.toBe(false);
+      expect(service.isOwner("m1")).toBe(false);
+      // Handoff only runs when release cannot be proven; here it was proven.
+      expect(redis.sadd).toHaveBeenCalledTimes(3);
+    });
+
+    it("assertOwnership returns false when the ownership epoch changes before renew", async () => {
+      await service.acquireOnLaunch("m1", "r1");
+      redis.renewLease.mockClear();
+      const originalEntry = (service as any).owned.get("m1");
+      const owned = (service as any).owned as Map<string, unknown>;
+      const originalGet = owned.get.bind(owned);
+      const staleReplacement = {
+        roomId: "r1",
+        fence: 99,
+        leaseValue: "node-a:99",
+      };
+      let getCalls = 0;
+      (service as any).owned.get = (() => {
+        getCalls++;
+        const v = getCalls === 1 ? originalEntry : staleReplacement;
+        return v;
+      }) as typeof owned.get;
+
+      await expect(service.assertOwnership("m1")).resolves.toBe(false);
+      expect(redis.renewLease).not.toHaveBeenCalled();
+      (service as any).owned.get = originalGet;
+    });
+
+    it("assertOwnership returns false without double-relinquish when epoch changes after exhausted retries", async () => {
+      await service.acquireOnLaunch("m1", "r1");
+      const runner = { cancelMatchLoop: vi.fn() };
+      service.setRoundRunner(runner);
+      let renewCalls = 0;
+      redis.renewLease.mockImplementation(async () => {
+        renewCalls++;
+        if (renewCalls >= 3) {
+          (service as any).owned.set("m1", {
+            roomId: "r1",
+            fence: 2,
+            leaseValue: "node-a:2",
+          });
+        }
+        throw new Error("redis down");
+      });
+
+      await expect(service.assertOwnership("m1")).resolves.toBe(false);
+      expect(runner.cancelMatchLoop).not.toHaveBeenCalled();
+      expect(service.getLeaseValue("m1")).toBe("node-a:2");
+    });
+
+    it("logs non-Error throws on acquire / release / heartbeat without crashing", async () => {
+      redis.acquireLeaseWithFence.mockRejectedValueOnce("string-acquire-fail");
+      await expect(service.acquireOnLaunch("m1", "r1")).resolves.toBe(false);
+
+      redis.acquireLeaseWithFence.mockResolvedValue({
+        fence: 1,
+        leaseValue: "node-a:1",
+      });
+      await service.acquireOnLaunch("m2", "r2");
+      redis.releaseLeaseAndIndex.mockRejectedValue("string-release-fail");
+      await expect(service.release("m2")).resolves.toBeUndefined();
+
+      await service.acquireOnLaunch("m3", "r3");
+      redis.renewLease.mockRejectedValue("string-renew-fail");
+      await expect(service.heartbeat()).resolves.toBeUndefined();
+      expect(service.isOwner("m3")).toBe(true);
+    });
   });
 });

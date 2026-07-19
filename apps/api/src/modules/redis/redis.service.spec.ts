@@ -452,6 +452,41 @@ describe("RedisService", () => {
       ).rejects.toThrow(/inconsistent/);
     });
 
+    it("acquireLeaseWithFence returns null when Lua replies undefined (live-owner path)", async () => {
+      client.eval.mockResolvedValueOnce(undefined);
+
+      await expect(
+        service.acquireLeaseWithFence(
+          "match:owner:m1",
+          "match:fence:m1",
+          "node-b",
+          15,
+        ),
+      ).resolves.toBeNull();
+    });
+
+    it("acquireLeaseWithFence throws when fence is non-positive or non-integer", async () => {
+      client.eval.mockResolvedValueOnce(["0", "node-a:0"]);
+      await expect(
+        service.acquireLeaseWithFence(
+          "match:owner:m1",
+          "match:fence:m1",
+          "node-a",
+          15,
+        ),
+      ).rejects.toThrow(/inconsistent/);
+
+      client.eval.mockResolvedValueOnce(["1.5", "node-a:1.5"]);
+      await expect(
+        service.acquireLeaseWithFence(
+          "match:owner:m1",
+          "match:fence:m1",
+          "node-a",
+          15,
+        ),
+      ).rejects.toThrow(/inconsistent/);
+    });
+
     it("releaseLeaseAndIndex maps APPLIED-style Lua (1) to true", async () => {
       client.eval.mockResolvedValueOnce(1);
       await expect(
@@ -465,6 +500,18 @@ describe("RedisService", () => {
       const [script, keyCount] = client.eval.mock.calls[0] as unknown[];
       expect(script).toContain("SREM");
       expect(keyCount).toBe(2);
+    });
+
+    it("releaseLeaseAndIndex maps Lua 0 to false (ownership already moved)", async () => {
+      client.eval.mockResolvedValueOnce(0);
+      await expect(
+        service.releaseLeaseAndIndex(
+          "match:owner:m1",
+          "node-a:1",
+          "match:active",
+          "m1",
+        ),
+      ).resolves.toBe(false);
     });
 
     it("fencedStateSet passes owner/fence/state/revision keys and maps outcome", async () => {
@@ -730,6 +777,252 @@ describe("RedisService", () => {
       // A single reset rebuilt the connection (disconnect + one fresh duplicate).
       expect(subscriber.disconnect).toHaveBeenCalled();
       expect(client.duplicate.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("isolates a sync-throwing message handler so siblings still receive", async () => {
+      const good: string[] = [];
+      const errorSpy = vi
+        .spyOn((service as unknown as ServiceInternals).logger, "error")
+        .mockImplementation(() => undefined);
+
+      await service.subscribe("ch1", () => {
+        throw new Error("sync-boom");
+      });
+      await service.subscribe("ch1", (m) => good.push(m));
+
+      subscriber.emit("ch1", "payload");
+      expect(good).toEqual(["payload"]);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Message handler for channel ch1 threw"),
+      );
+    });
+
+    it("isolates an async-rejecting message handler so siblings still receive", async () => {
+      const good: string[] = [];
+      const errorSpy = vi
+        .spyOn((service as unknown as ServiceInternals).logger, "error")
+        .mockImplementation(() => undefined);
+
+      await service.subscribe("ch1", async () => {
+        throw new Error("async-boom");
+      });
+      await service.subscribe("ch1", (m) => good.push(m));
+
+      subscriber.emit("ch1", "payload");
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(good).toEqual(["payload"]);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Async message handler for channel ch1 rejected",
+        ),
+      );
+    });
+
+    it("quits the subscriber connection on module destroy when one was created", async () => {
+      await service.subscribe("ch1", () => {});
+      await service.onModuleDestroy();
+      expect(subscriber.quit).toHaveBeenCalled();
+      expect(client.quit).toHaveBeenCalled();
+    });
+
+    it("retries a pending subscriber reset on the next lifecycle op", async () => {
+      // Live channel so a later reset rebuild has non-empty handlers to re-subscribe.
+      await service.subscribe("ch1", () => {});
+
+      // A different-channel subscribe fails and escalates to reset. The rebuild
+      // re-subscribes ch1 and we make that fail → resetPending is set.
+      const rebuildSub = makeSubscriber();
+      rebuildSub.subscribe.mockRejectedValue(new Error("rebuild-fail"));
+      client.duplicate.mockReturnValueOnce(rebuildSub as unknown as Redis);
+
+      subscriber.subscribe.mockRejectedValueOnce(
+        new Error("ch2-subscribe-fail"),
+      );
+      subscriber.unsubscribe.mockRejectedValue(
+        new Error("orphan-unsub-failing"),
+      );
+
+      await expect(service.subscribe("ch2", () => {})).rejects.toThrow();
+
+      // Next lifecycle op retries the pending reset with a healthy subscriber.
+      const recovered = makeSubscriber();
+      client.duplicate.mockReturnValueOnce(recovered as unknown as Redis);
+      recovered.subscribe.mockResolvedValue(undefined);
+
+      await expect(service.subscribe("ch3", () => {})).resolves.toBeUndefined();
+      expect(recovered.subscribe).toHaveBeenCalled();
+    });
+
+    it("unsubscribe is a no-op for an unknown channel or unknown handler", async () => {
+      const known: string[] = [];
+      const fn = (m: string) => known.push(m);
+      await service.subscribe("ch1", fn);
+
+      await expect(
+        service.unsubscribe("never-subscribed", () => {}),
+      ).resolves.toBeUndefined();
+      await expect(
+        service.unsubscribe("ch1", () => {}),
+      ).resolves.toBeUndefined();
+
+      expect(subscriber.unsubscribe).not.toHaveBeenCalled();
+      subscriber.emit("ch1", "still");
+      expect(known).toEqual(["still"]);
+    });
+
+    it("skips Redis UNSUBSCRIBE when the subscriber connection is already gone", async () => {
+      const fn = () => {};
+      await service.subscribe("ch1", fn);
+      (service as unknown as { subscriber: null }).subscriber = null;
+
+      await service.unsubscribe("ch1", fn);
+
+      expect(subscriber.unsubscribe).not.toHaveBeenCalled();
+    });
+
+    it("leaves the Redis subscription when handlers are re-added during a failed final unsubscribe", async () => {
+      const keep: string[] = [];
+      const keepFn = (m: string) => keep.push(m);
+      const lastFn = () => {};
+      await service.subscribe("ch1", keepFn);
+      await service.subscribe("ch1", lastFn);
+
+      // Drop keepFn first so lastFn is the final handler.
+      await service.unsubscribe("ch1", keepFn);
+      // Force the final unsubscribe to fail. Re-install keepFn on the channel
+      // BEFORE the throw so the post-fail re-check sees the handler is wanted
+      // again and short-circuits before resetSubscriber.
+      subscriber.unsubscribe.mockImplementationOnce(async () => {
+        const internals = service as unknown as {
+          handlers: Map<string, Array<(m: string) => void>>;
+        };
+        internals.handlers.set("ch1", [keepFn]);
+        throw new Error("unsub-fail");
+      });
+
+      await expect(service.unsubscribe("ch1", lastFn)).resolves.toBeUndefined();
+      // Reset must NOT fire — the still-wanted handler survives the failure.
+      expect(subscriber.disconnect).not.toHaveBeenCalled();
+      subscriber.emit("ch1", "kept");
+      expect(keep).toEqual(["kept"]);
+    });
+    it("rethrows the original unsubscribe error when the escalated reset also fails", async () => {
+      const fn = () => {};
+      const keepFn = () => {};
+      await service.subscribe("ch1", keepFn);
+      await service.subscribe("ch1", fn);
+      // A second live channel so the rebuild has something to re-subscribe —
+      // we make that rebuild subscribe reject, which fails the reset.
+      await service.subscribe("ch2", () => {});
+      // Drop keepFn so fn is the final handler on ch1.
+      await service.unsubscribe("ch1", keepFn);
+
+      subscriber.unsubscribe.mockRejectedValueOnce(new Error("unsub-original"));
+      const rebuildSub = makeSubscriber();
+      rebuildSub.subscribe.mockImplementation((channel: string) => {
+        if (channel === "ch2") return Promise.reject(new Error("rebuild-fail"));
+        return Promise.resolve(undefined);
+      });
+      client.duplicate.mockReturnValueOnce(rebuildSub as unknown as Redis);
+
+      await expect(service.unsubscribe("ch1", fn)).rejects.toThrow(
+        "unsub-original",
+      );
+    });
+
+    it("reconcileAfterFailedSubscribe keeps a still-wanted channel subscription", async () => {
+      // First handler lives; second handler's SUBSCRIBE is forced to reject by
+      // temporarily clearing the handler list so doSubscribe issues Redis
+      // SUBSCRIBE, then re-adding the first handler before reconcile runs.
+      const keep: string[] = [];
+      const keepFn = (m: string) => keep.push(m);
+      await service.subscribe("ch1", keepFn);
+
+      // Force a path where subscribe is attempted for ch1 again: clear handlers
+      // so alreadyLive is false, then fail SUBSCRIBE while re-installing keepFn
+      // so reconcile sees remaining handlers and keeps the subscription.
+      const internals = service as unknown as {
+        handlers: Map<string, Array<(m: string) => void>>;
+      };
+      internals.handlers.set("ch1", []);
+      subscriber.subscribe.mockImplementationOnce(async () => {
+        internals.handlers.set("ch1", [keepFn]);
+        throw new Error("dropped-reply");
+      });
+
+      await expect(service.subscribe("ch1", () => {})).rejects.toThrow(
+        "dropped-reply",
+      );
+      // No orphan unsubscribe / reset — channel still wanted.
+      expect(subscriber.disconnect).not.toHaveBeenCalled();
+      subscriber.emit("ch1", "alive");
+      expect(keep).toEqual(["alive"]);
+    });
+
+    it("reconcileAfterFailedSubscribe is a no-op when the subscriber is already null", async () => {
+      subscriber.subscribe.mockImplementationOnce(async () => {
+        (service as unknown as { subscriber: null }).subscriber = null;
+        throw new Error("dropped");
+      });
+
+      await expect(service.subscribe("orphan", () => {})).rejects.toThrow(
+        "dropped",
+      );
+      expect(subscriber.disconnect).not.toHaveBeenCalled();
+    });
+
+    it("continues a subscriber reset when disconnect throws", async () => {
+      await service.subscribe("keep", () => {});
+      subscriber.disconnect.mockImplementation(() => {
+        throw new Error("disconnect-boom");
+      });
+      subscriber.subscribe.mockRejectedValueOnce(new Error("dropped-reply"));
+      subscriber.unsubscribe.mockRejectedValue(new Error("still-failing"));
+
+      await expect(service.subscribe("orphan", () => {})).rejects.toThrow(
+        "dropped-reply",
+      );
+      // Reset still rebuilt despite disconnect throw.
+      expect(client.duplicate).toHaveBeenCalledTimes(2);
+    });
+
+    it("logs a non-Error rejection when a subscriber reset fails", async () => {
+      await service.subscribe("ch1", () => {});
+      const errorSpy = vi
+        .spyOn((service as unknown as ServiceInternals).logger, "error")
+        .mockImplementation(() => undefined);
+
+      const rebuildSub = makeSubscriber();
+      rebuildSub.subscribe.mockRejectedValue("string-fail");
+      client.duplicate.mockReturnValueOnce(rebuildSub as unknown as Redis);
+
+      subscriber.subscribe.mockRejectedValueOnce(new Error("ch2-fail"));
+      subscriber.unsubscribe.mockRejectedValue(new Error("orphan-unsub"));
+
+      await expect(service.subscribe("ch2", () => {})).rejects.toThrow();
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("string-fail"),
+      );
+    });
+
+    it("ignores messages for channels with no registered handlers", async () => {
+      await service.subscribe("ch1", () => {});
+      const fn = () => {};
+      await service.subscribe("ch2", fn);
+      await service.unsubscribe("ch2", fn);
+
+      // Dispatch for a fully-torn-down channel must not throw.
+      expect(() => subscriber.emit("ch2", "ghost")).not.toThrow();
+    });
+
+    it("swallows subscriber.quit failures on module destroy", async () => {
+      await service.subscribe("ch1", () => {});
+      subscriber.quit.mockRejectedValueOnce(new Error("quit-fail"));
+
+      await expect(service.onModuleDestroy()).resolves.toBeUndefined();
+      expect(client.quit).toHaveBeenCalled();
     });
   });
 });

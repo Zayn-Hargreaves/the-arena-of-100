@@ -1503,6 +1503,52 @@ describe("MatchService", () => {
       expect(b).toBe("APPLIED");
       expect(liveRevision).toBe(2);
     });
+
+    it("returns BLIND when no state machine is loaded for the match", async () => {
+      await expect(service.persistStateMachine("missing")).resolves.toBe(
+        "BLIND",
+      );
+      expect(redis.fencedStateSet).not.toHaveBeenCalled();
+      expect(redis.set).not.toHaveBeenCalled();
+    });
+
+    it("defaults expectedRevision to 0 when the persisted revision is malformed", async () => {
+      await loadMachine("m1");
+      vi.mocked(matchOwnership.getOwnershipSnapshot).mockReturnValue({
+        fence: 2,
+        leaseValue: "node-a:2",
+      });
+      vi.mocked(redis.get).mockResolvedValueOnce("not-an-int");
+      vi.mocked(redis.fencedStateSet).mockResolvedValue("APPLIED");
+
+      await service.persistStateMachine("m1");
+
+      expect(
+        vi.mocked(redis.fencedStateSet).mock.calls.at(-1)![4],
+      ).toMatchObject({
+        expectedRevision: 0,
+        nextRevision: 1,
+      });
+    });
+
+    it("defaults expectedRevision to 0 when reading the revision throws", async () => {
+      await loadMachine("m1");
+      vi.mocked(matchOwnership.getOwnershipSnapshot).mockReturnValue({
+        fence: 3,
+        leaseValue: "node-a:3",
+      });
+      vi.mocked(redis.get).mockRejectedValueOnce(new Error("redis-down"));
+      vi.mocked(redis.fencedStateSet).mockResolvedValue("APPLIED");
+
+      await service.persistStateMachine("m1");
+
+      expect(
+        vi.mocked(redis.fencedStateSet).mock.calls.at(-1)![4],
+      ).toMatchObject({
+        expectedRevision: 0,
+        nextRevision: 1,
+      });
+    });
   });
 
   describe("finishMatch fenced cleanup (B2c)", () => {
@@ -1557,6 +1603,17 @@ describe("MatchService", () => {
       expect(redis.fencedStateDelete).not.toHaveBeenCalled();
       expect(redis.del).toHaveBeenCalledWith("match:state:m1");
       expect(redis.del).toHaveBeenCalledWith("match:state-revision:m1");
+    });
+
+    it("leaves canonical state intact when fencedStateDelete is a no-op (ownership moved)", async () => {
+      await createAndOwn({ fence: 5, leaseValue: "node-a:5" });
+      vi.mocked(redis.fencedStateDelete).mockResolvedValueOnce(false);
+
+      await service.finishMatch("m1", "u1", "r1");
+
+      expect(redis.fencedStateDelete).toHaveBeenCalled();
+      expect(redis.del).not.toHaveBeenCalledWith("match:state:m1");
+      expect(redis.del).not.toHaveBeenCalledWith("match:state-revision:m1");
     });
   });
 });

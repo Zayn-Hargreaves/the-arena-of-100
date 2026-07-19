@@ -5,6 +5,7 @@ import {
   validateTimingField,
 } from "./match-state.codec";
 import type { MatchState, RoundState, AnswerState } from "@arena/shared";
+import { GAME_CONFIG } from "@arena/shared";
 import { UNAVAILABLE, type RoundStartingPlayers } from "./round-elimination";
 
 function buildState(): MatchState {
@@ -464,6 +465,136 @@ describe("match-state.codec v2 + back-compat (B1c)", () => {
         }),
       );
       expect(() => deserializeMatch(JSON.stringify(parsed))).toThrow();
+    });
+
+    it("F18: rewrites v2 ROUND_RESULT phaseEndsAt from the result anchor", () => {
+      const state = buildState();
+      state.status = "ROUND_RESULT" as MatchState["status"];
+      state.roundResultStartedAt = 10_000;
+      // Corrupt wire value — deserializer must ignore it and derive from anchor.
+      state.phaseEndsAt = 99_999;
+      const round = buildRound({
+        startedAt: 1000,
+        endsAt: 16_000,
+        status: "COMPLETED",
+      });
+      const decoded = deserializeMatch(serializeMatch(state, round, []));
+      expect(decoded.state.phaseEndsAt).toBe(
+        10_000 + GAME_CONFIG.RESULT_DISPLAY_MS,
+      );
+      expect(decoded.state.roundResultStartedAt).toBe(10_000);
+    });
+
+    it("F18: nulls v2 ROUND_RESULT phaseEndsAt when the result anchor is missing", () => {
+      const state = buildState();
+      state.status = "ROUND_RESULT" as MatchState["status"];
+      state.roundResultStartedAt = null;
+      state.phaseEndsAt = 50_000;
+      const round = buildRound({
+        startedAt: 1000,
+        endsAt: 16_000,
+        status: "COMPLETED",
+      });
+      const decoded = deserializeMatch(serializeMatch(state, round, []));
+      expect(decoded.state.phaseEndsAt).toBeNull();
+      expect(decoded.state.roundResultStartedAt).toBeNull();
+    });
+
+    it("backfills phaseEndsAt to null for terminal statuses without anchors", () => {
+      const decoded = deserializeMatch(
+        v1Blob({ status: "FINISHED", currentRound: null }),
+      );
+      expect(decoded.state.phaseEndsAt).toBeNull();
+    });
+
+    it("derives missing currentRound.startedAt from endsAt - ROUND_DURATION_MS", () => {
+      const parsed = JSON.parse(v1Blob());
+      parsed.currentRound.startedAt = null;
+      parsed.currentRound.endsAt = 16_000;
+      const decoded = deserializeMatch(JSON.stringify(parsed));
+      expect((decoded.currentRound as { startedAt: number }).startedAt).toBe(
+        16_000 - GAME_CONFIG.ROUND_DURATION_MS,
+      );
+      expect((decoded.currentRound as { endsAt: number }).endsAt).toBe(16_000);
+    });
+
+    it("backfills missing answer submissionId as a legacy id", () => {
+      const parsed = JSON.parse(v1Blob());
+      parsed.currentRound.answers = [
+        [
+          "p1",
+          {
+            answer: "A",
+            isCorrect: true,
+            responseTimeMs: 100,
+            submittedAt: 1234,
+            // submissionId deliberately omitted
+          },
+        ],
+      ];
+      const decoded = deserializeMatch(JSON.stringify(parsed));
+      const answer = (
+        decoded.currentRound as { answers: Map<string, AnswerState> }
+      ).answers.get("p1");
+      expect(answer?.submissionId).toBe("legacy-p1-1234");
+    });
+
+    it("borrows reconstructed phaseEndsAt as the round endsAt on a v1 ROUND_ACTIVE blob missing both round anchors", () => {
+      // v1 ROUND_ACTIVE: phaseEndsAt reconstructed from currentRound.endsAt
+      // (perms 1 of backfillPhaseEndsAt). When the round's own endsAt is also
+      // missing, the round-timer block in the codec borrows phaseEndsAt as the
+      // round's endsAt — this is the ROUND_ACTIVE-only borrow path.
+      const parsed = JSON.parse(
+        v1Blob({
+          status: "ROUND_ACTIVE",
+          startedAt: 1000,
+          currentRound: {
+            matchId: "m1",
+            roundNo: 1,
+            question: { id: "q1", content: "Q?", options: ["A", "B"] },
+            startedAt: 1000,
+            endsAt: 16_000,
+            answers: [],
+            status: "ACTIVE",
+            startingPlayers: ["p1"],
+          },
+        }),
+      );
+      // Remove the round's endsAt; phaseEndsAt (reconstructed = 16_000) must
+      // become the round's endsAt and the missing startedAt must be backfilled
+      // from endsAt - ROUND_DURATION_MS.
+      delete (parsed.currentRound as { endsAt?: number }).endsAt;
+      const decoded = deserializeMatch(JSON.stringify(parsed));
+      const round = decoded.currentRound as {
+        startedAt: number;
+        endsAt: number;
+      };
+      expect(round.endsAt).toBe(16_000);
+      expect(round.startedAt).toBe(16_000 - GAME_CONFIG.ROUND_DURATION_MS);
+    });
+
+    it("anchors v1 ROUND_ACTIVE backfill to startedAt + ROUND_DURATION_MS when only endsAt is missing", () => {
+      // Explicit hit on the `currentRoundStartedAt` arm of backfillPhaseEndsAt:
+      // currentRound has startedAt but no endsAt; phaseEndsAt must be
+      // startedAt + ROUND_DURATION_MS.
+      const parsed = JSON.parse(
+        v1Blob({
+          status: "ROUND_ACTIVE",
+          currentRound: {
+            matchId: "m1",
+            roundNo: 1,
+            question: { id: "q1", content: "Q?", options: ["A", "B"] },
+            startedAt: 2000,
+            answers: [],
+            status: "ACTIVE",
+            startingPlayers: ["p1"],
+          },
+        }),
+      );
+      const decoded = deserializeMatch(JSON.stringify(parsed));
+      expect(decoded.state.phaseEndsAt).toBe(
+        2000 + GAME_CONFIG.ROUND_DURATION_MS,
+      );
     });
   });
 });

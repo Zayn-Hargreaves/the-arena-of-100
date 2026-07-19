@@ -1220,4 +1220,157 @@ describe("GameLoopService", () => {
       );
     });
   });
+
+  describe("B2b/B2c ownership acquire and release", () => {
+    it("aborts launch when acquireOnLaunch returns false (no startMatchLoop)", async () => {
+      vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+        id: "r1",
+        status: RoomStatus.WAITING,
+        currentMatchId: null,
+        players: [{ userId: "p1" }, { userId: "p2" }],
+      } as any);
+      (matchService.createMatch as any) = vi
+        .fn()
+        .mockResolvedValue({ id: "m1" });
+      const ownership = (service as any).matchOwnership;
+      ownership.acquireOnLaunch.mockResolvedValueOnce(false);
+      const startLoopSpy = vi
+        .spyOn((service as any).roundRunner, "startMatchLoop")
+        .mockResolvedValue(undefined);
+
+      await expect(
+        (service as any).launchRoomMatch("r1", mockServer, {
+          isAutoStart: false,
+        }),
+      ).rejects.toThrow(/could not acquire owner lease/);
+
+      expect(startLoopSpy).not.toHaveBeenCalled();
+      // Lease was never acquired → release is not part of this rollback path.
+      expect(ownership.release).not.toHaveBeenCalled();
+    });
+
+    it("releases ownership when startMatchLoop fails after a successful acquire", async () => {
+      vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+        id: "r1",
+        status: RoomStatus.WAITING,
+        currentMatchId: null,
+        players: [{ userId: "p1" }, { userId: "p2" }],
+      } as any);
+      (matchService.createMatch as any) = vi
+        .fn()
+        .mockResolvedValue({ id: "m1" });
+      const ownership = (service as any).matchOwnership;
+      ownership.acquireOnLaunch.mockResolvedValueOnce(true);
+      const cancelSpy = vi.spyOn(
+        (service as any).roundRunner,
+        "cancelMatchLoop",
+      );
+      vi.spyOn(
+        (service as any).roundRunner,
+        "startMatchLoop",
+      ).mockRejectedValueOnce(new Error("loop-boom"));
+
+      await expect(
+        (service as any).launchRoomMatch("r1", mockServer, {
+          isAutoStart: false,
+        }),
+      ).rejects.toThrow("loop-boom");
+
+      expect(cancelSpy).toHaveBeenCalledWith("m1");
+      expect(ownership.release).toHaveBeenCalledWith("m1");
+    });
+
+    it("stopRoomRuntime releases ownership when a matchId is provided", async () => {
+      const ownership = createMockMatchOwnership();
+      const redis = createMockRedisService() as any;
+      vi.spyOn(redis.getClient(), "multi").mockImplementation(
+        () =>
+          ({
+            set: () => ({ sadd: () => ({ exec: () => Promise.resolve([]) }) }),
+            del: () => ({ srem: () => ({ exec: () => Promise.resolve([]) }) }),
+            sadd: () => ({ exec: () => Promise.resolve([]) }),
+            srem: () => ({ exec: () => Promise.resolve([]) }),
+            exec: () => Promise.resolve([]),
+          }) as any,
+      );
+      const svc = new GameLoopService(
+        matchService,
+        questionService,
+        roomService,
+        createMockPrismaService() as any,
+        new LobbyCountdownService(roomService, redis),
+        ownership as any,
+      );
+
+      await svc.stopRoomRuntime("r1", "m1");
+      expect(ownership.release).toHaveBeenCalledWith("m1");
+    });
+
+    it("forceFinishMatchForDisband releases ownership before finishing", async () => {
+      const ownership = createMockMatchOwnership();
+      const redis = createMockRedisService() as any;
+      vi.spyOn(redis.getClient(), "multi").mockImplementation(
+        () =>
+          ({
+            set: () => ({ sadd: () => ({ exec: () => Promise.resolve([]) }) }),
+            del: () => ({ srem: () => ({ exec: () => Promise.resolve([]) }) }),
+            sadd: () => ({ exec: () => Promise.resolve([]) }),
+            srem: () => ({ exec: () => Promise.resolve([]) }),
+            exec: () => Promise.resolve([]),
+          }) as any,
+      );
+      (matchService.getStateMachine as any) = vi.fn().mockResolvedValue(null);
+      (matchService.finishMatch as any) = vi.fn().mockResolvedValue(null);
+      const svc = new GameLoopService(
+        matchService,
+        questionService,
+        roomService,
+        createMockPrismaService() as any,
+        new LobbyCountdownService(roomService, redis),
+        ownership as any,
+      );
+
+      await svc.forceFinishMatchForDisband("m9", "r9");
+      expect(ownership.release).toHaveBeenCalledWith("m9");
+    });
+
+    it("logs and continues launch rollback when release throws after a successful acquire", async () => {
+      vi.mocked(roomService.getRoom).mockResolvedValueOnce({
+        id: "r1",
+        status: RoomStatus.WAITING,
+        currentMatchId: null,
+        players: [{ userId: "p1" }, { userId: "p2" }],
+      } as any);
+      (matchService.createMatch as any) = vi
+        .fn()
+        .mockResolvedValue({ id: "m1" });
+      const ownership = (service as any).matchOwnership;
+      ownership.acquireOnLaunch.mockResolvedValueOnce(true);
+      ownership.release.mockRejectedValueOnce(new Error("release-boom"));
+      const cancelSpy = vi.spyOn(
+        (service as any).roundRunner,
+        "cancelMatchLoop",
+      );
+      vi.spyOn(
+        (service as any).roundRunner,
+        "startMatchLoop",
+      ).mockRejectedValueOnce(new Error("loop-boom"));
+      const errorSpy = vi
+        .spyOn((service as any).logger, "error")
+        .mockImplementation(() => undefined);
+
+      await expect(
+        (service as any).launchRoomMatch("r1", mockServer, {
+          isAutoStart: false,
+        }),
+      ).rejects.toThrow("loop-boom");
+
+      expect(cancelSpy).toHaveBeenCalledWith("m1");
+      expect(ownership.release).toHaveBeenCalledWith("m1");
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Failed to release owner lease"),
+        expect.anything(),
+      );
+    });
+  });
 });
