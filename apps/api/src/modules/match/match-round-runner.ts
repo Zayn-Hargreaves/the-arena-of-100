@@ -155,17 +155,52 @@ export class MatchRoundRunner {
     roomId: string,
     server: Server,
   ): void {
-    // M5 fix: register the timer set in `activeTimers` BEFORE setTimeout
-    // returns, closing the window where `cancelMatchLoop` could iterate
-    // the timers before the handle was tracked. Defence-in-depth: the
-    // callback re-checks the state machine still exists.
-    const timerSet = this.timers.ensureMatch(matchId);
+    // Arm the COUNTDOWN → executeRound transition on the shared, M5-safe
+    // registration path. B3a: `resumeMatchLoop` re-arms the exact same
+    // callback with a `remaining` derived from the persisted deadline, so
+    // the live and recovered paths stay identical.
+    this.armPhaseTimer(
+      matchId,
+      this.countdownTimerCallback(matchId, roomId, server),
+      GAME_CONFIG.COUNTDOWN_DURATION_MS,
+    );
+  }
 
-    const timer = setTimeout(async () => {
+  // ============================================================
+  // Phase-timer registration + callbacks (shared by the live loop
+  // and B3a `resumeMatchLoop`)
+  // ============================================================
+
+  /**
+   * Register a phase timer on the M5-safe path: the match's timer set is
+   * created (`ensureMatch`) BEFORE `setTimeout` returns, closing the window
+   * where `cancelMatchLoop` could iterate the set before the handle was
+   * tracked. `remaining` is the ms delay — a fixed phase duration on the live
+   * path, or the clamped persisted-deadline remainder on the resume path.
+   * Mirrors `lobby-countdown.service.ts:armLobbyCountdownTimer`.
+   */
+  private armPhaseTimer(
+    matchId: string,
+    callback: () => void,
+    remaining: number,
+  ): void {
+    const timerSet = this.timers.ensureMatch(matchId);
+    const timer = setTimeout(callback, remaining);
+    timerSet.add(timer);
+  }
+
+  /**
+   * COUNTDOWN expiry: advance the match into its first/next round.
+   * Defence-in-depth (M5): re-check the state machine still exists — the
+   * match may have been torn down between the timer firing and this line.
+   */
+  private countdownTimerCallback(
+    matchId: string,
+    roomId: string,
+    server: Server,
+  ): () => Promise<void> {
+    return async () => {
       try {
-        // M5 defence-in-depth: confirm the state machine still
-        // exists. The match may have been torn down between
-        // setTimeout firing and us reaching this line.
         const sm = await this.matchService.getStateMachine(matchId);
         if (!sm) {
           this.logger.log(
@@ -181,9 +216,203 @@ export class MatchRoundRunner {
           error,
         );
       }
-    }, GAME_CONFIG.COUNTDOWN_DURATION_MS);
+    };
+  }
 
-    timerSet.add(timer);
+  /** ROUND_ACTIVE expiry: end the round when the 15s window elapses. */
+  private roundEndTimerCallback(
+    matchId: string,
+    roomId: string,
+    server: Server,
+  ): () => Promise<void> {
+    return async () => {
+      try {
+        await this.endRound(matchId, roomId, server);
+        /* c8 ignore next 6 */
+      } catch (error) {
+        this.logger.error(
+          `Error in endRound timeout callback for match ${matchId}:`,
+          error,
+        );
+      }
+    };
+  }
+
+  /** ROUND_RESULT expiry: decide match-end / drive the next round. */
+  private matchEndCheckCallback(
+    matchId: string,
+    roomId: string,
+    server: Server,
+  ): () => Promise<void> {
+    return async () => {
+      try {
+        await this.checkMatchEnd(matchId, roomId, server);
+        /* c8 ignore next 6 */
+      } catch (error) {
+        this.logger.error(
+          `Error in checkMatchEnd timeout callback for match ${matchId}:`,
+          error,
+        );
+      }
+    };
+  }
+
+  // ============================================================
+  // B3a: resume a running match from persisted state
+  // ============================================================
+
+  /**
+   * Rebuild the in-memory runtime for a match this node just acquired the
+   * lease for (boot or takeover — B3b is the caller) and arm the correct next
+   * timer from persisted state. No new Redis keys.
+   *
+   * The caller (B3b) supplies the already-hydrated + revalidated state
+   * machine: it acquires the lease, hydrates from the canonical `match:state`
+   * blob, performs the final revalidation, and only then calls this. We do NOT
+   * re-hydrate here — a second `getStateMachine` would reopen the TOCTOU
+   * between B3b's revalidation and the timer arm. Undefined/missing state and
+   * the `ownership.release` for it live at the caller; this method may assume a
+   * valid hydrated state machine.
+   */
+  async resumeMatchLoop(
+    matchId: string,
+    hydratedSm: MatchStateMachine,
+    roomId: string,
+    server: Server,
+  ): Promise<void> {
+    const state = hydratedSm.getState();
+
+    // F2: rebuild the used-question set from the event log — the one piece of
+    // in-memory runtime not carried in state. Without it a resumed match could
+    // re-serve a question it already used (breaks the F2 anti-repeat contract).
+    this.timers.initUsedQuestions(matchId);
+    for (const entry of hydratedSm.getEventLog()) {
+      if (entry.type !== "ROUND_STARTED") continue;
+      const questionId = (entry.payload as { questionId?: unknown })
+        ?.questionId;
+      if (typeof questionId === "string") {
+        this.timers.markQuestionUsed(matchId, questionId);
+      }
+    }
+
+    // Restore the early-termination expected-answer count if we resume mid-round.
+    if (state.status === MatchStatus.ROUND_ACTIVE) {
+      this.timers.setExpectedAnswers(matchId, state.survivingPlayerIds.length);
+    }
+
+    // Arm the next timer from status + the persisted deadline.
+    switch (state.status) {
+      case MatchStatus.COUNTDOWN:
+        this.armPhaseTimer(
+          matchId,
+          this.countdownTimerCallback(matchId, roomId, server),
+          this.resumePhaseRemaining(
+            hydratedSm,
+            MatchStatus.COUNTDOWN,
+            GAME_CONFIG.COUNTDOWN_DURATION_MS,
+          ),
+        );
+        return;
+      case MatchStatus.ROUND_ACTIVE:
+        this.armPhaseTimer(
+          matchId,
+          this.roundEndTimerCallback(matchId, roomId, server),
+          this.resumePhaseRemaining(
+            hydratedSm,
+            MatchStatus.ROUND_ACTIVE,
+            GAME_CONFIG.ROUND_DURATION_MS,
+          ),
+        );
+        return;
+      case MatchStatus.ROUND_EVALUATING:
+        // Mid-evaluation on the previous owner: finish the round now via the
+        // recovered path (endRound → handleRecoveredRoundEnd).
+        await this.endRound(matchId, roomId, server);
+        return;
+      case MatchStatus.ROUND_RESULT:
+        this.armPhaseTimer(
+          matchId,
+          this.matchEndCheckCallback(matchId, roomId, server),
+          this.resumePhaseRemaining(
+            hydratedSm,
+            MatchStatus.ROUND_RESULT,
+            GAME_CONFIG.RESULT_DISPLAY_MS,
+          ),
+        );
+        return;
+      case MatchStatus.FINISHED:
+        // Already finished before we took over: nothing to drive. Drop the
+        // in-memory runtime and release the lease so the heartbeat stops
+        // renewing it and B3b recovery never re-adopts it from match:active.
+        this.timers.disposeMatch(matchId);
+        await this.ownership.release(matchId);
+        return;
+      default:
+        // WAITING or any non-timed status: nothing to arm.
+        this.logger.warn(
+          `resumeMatchLoop: unexpected status ${state.status} for match ${matchId}, arming nothing`,
+        );
+        return;
+    }
+  }
+
+  /**
+   * `remaining` ms until the current phase's deadline, clamped to
+   * `[0, phaseMax]`. B3a fail-closed contract for a RESUMED phase: never grant
+   * a fresh full `phaseMax` (that would silently extend a deadline that has
+   * partly/fully elapsed). Use the canonical `phaseEndsAt`; if it is absent —
+   * which B1b/B1c should make impossible — reconstruct from the persisted
+   * phase-start anchor, and only if no anchor exists at all fire immediately
+   * (`0`) rather than re-arming the whole window.
+   */
+  private resumePhaseRemaining(
+    hydratedSm: MatchStateMachine,
+    status: MatchStatus,
+    phaseMax: number,
+  ): number {
+    const deadline = this.resolvePhaseDeadline(hydratedSm, status);
+    if (deadline === null) {
+      return 0;
+    }
+    return Math.min(Math.max(deadline - Date.now(), 0), phaseMax);
+  }
+
+  /**
+   * The canonical epoch-ms deadline for `status`. Prefers `state.phaseEndsAt`
+   * (B1b sets it on every transition; B1c backfills v1 blobs). Falls back to
+   * the persisted phase-start anchor when it is somehow absent; returns null
+   * when no anchor is reconstructable (caller then fires immediately).
+   */
+  private resolvePhaseDeadline(
+    hydratedSm: MatchStateMachine,
+    status: MatchStatus,
+  ): number | null {
+    const state = hydratedSm.getState();
+    if (
+      typeof state.phaseEndsAt === "number" &&
+      Number.isFinite(state.phaseEndsAt)
+    ) {
+      return state.phaseEndsAt;
+    }
+
+    switch (status) {
+      case MatchStatus.ROUND_ACTIVE: {
+        const round = hydratedSm.getCurrentRound();
+        return round && Number.isFinite(round.endsAt) ? round.endsAt : null;
+      }
+      case MatchStatus.COUNTDOWN:
+        return typeof state.startedAt === "number" &&
+          Number.isFinite(state.startedAt)
+          ? state.startedAt + GAME_CONFIG.COUNTDOWN_DURATION_MS
+          : null;
+      case MatchStatus.ROUND_RESULT:
+        return typeof state.roundResultStartedAt === "number" &&
+          Number.isFinite(state.roundResultStartedAt)
+          ? state.roundResultStartedAt + GAME_CONFIG.RESULT_DISPLAY_MS
+          : null;
+      default:
+        return null;
+    }
   }
 
   // ============================================================
@@ -288,19 +517,12 @@ export class MatchRoundRunner {
       round.endsAt,
     );
 
-    // 6. Set 15s timer → endRound
-    const timer = setTimeout(async () => {
-      try {
-        await this.endRound(matchId, roomId, server);
-        /* c8 ignore next 3 */
-      } catch (error) {
-        this.logger.error(
-          `Error in endRound timeout callback for match ${matchId}:`,
-          error,
-        );
-      }
-    }, GAME_CONFIG.ROUND_DURATION_MS);
-    this.timers.addTimer(matchId, timer);
+    // 6. Set 15s timer → endRound (shared registration path with resume).
+    this.armPhaseTimer(
+      matchId,
+      this.roundEndTimerCallback(matchId, roomId, server),
+      GAME_CONFIG.ROUND_DURATION_MS,
+    );
   }
 
   // ============================================================
@@ -610,18 +832,11 @@ export class MatchRoundRunner {
     roomId: string,
     server: Server,
   ): Promise<void> {
-    const timer = setTimeout(async () => {
-      try {
-        await this.checkMatchEnd(matchId, roomId, server);
-        /* c8 ignore next 3 */
-      } catch (error) {
-        this.logger.error(
-          `Error in checkMatchEnd timeout callback for match ${matchId}:`,
-          error,
-        );
-      }
-    }, GAME_CONFIG.RESULT_DISPLAY_MS);
-    this.timers.addTimer(matchId, timer);
+    this.armPhaseTimer(
+      matchId,
+      this.matchEndCheckCallback(matchId, roomId, server),
+      GAME_CONFIG.RESULT_DISPLAY_MS,
+    );
   }
 
   private getRecoveryStartingPlayers(

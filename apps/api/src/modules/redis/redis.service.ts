@@ -24,6 +24,28 @@ interface OpMarker {
   detach?: () => void;
 }
 
+/** One Redis Stream entry: its id + the decoded envelope payload string (B4a). */
+export interface StreamEntry {
+  readonly id: string;
+  readonly data: string;
+}
+
+/** XPENDING summary (group-wide): total pending + id range (diagnostics only). */
+export interface XPendingSummary {
+  readonly count: number;
+  readonly minId: string | null;
+  readonly maxId: string | null;
+  readonly consumers: ReadonlyArray<{ consumer: string; count: number }>;
+}
+
+/** XPENDING per-entry detail: idle ms + delivery count for fine-grained claim. */
+export interface XPendingEntry {
+  readonly id: string;
+  readonly consumer: string;
+  readonly idleMs: number;
+  readonly deliveries: number;
+}
+
 @Injectable()
 export class RedisService implements OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
@@ -415,6 +437,494 @@ return 1`;
       [opts.leaseValue, String(opts.expectedFence)],
     );
     return result === 1;
+  }
+
+  // ============================================================
+  // B3b — failover recovery primitives
+  // ============================================================
+
+  // Match-aware atomic lease-and-fence acquisition. Extends B0's
+  // acquireLeaseWithFence with a THIRD key: the canonical terminal marker
+  // `match:tombstone:<id>`, checked FIRST inside the same transaction so a
+  // finalized match can never be observed as acquirable between a separate read
+  // and the acquire. Three-way outcome — the two nil-ish cases mean OPPOSITE
+  // things to a caller and must never be collapsed:
+  //   - { fence, leaseValue } : acquired (fence advanced, lease claimed);
+  //   - null                  : a LIVE owner holds the lease (retryable — the
+  //                             next sweep re-checks after the TTL lapses);
+  //   - "TERMINAL"            : the match is tombstoned (permanent — stop
+  //                             retrying; fence untouched).
+  // Malformed / inconsistent payloads are THROWN (the script may already have
+  // written the lease), exactly as in B0.
+  async acquireMatchLease(
+    ownerKey: string,
+    fenceKey: string,
+    tombstoneKey: string,
+    nodeId: string,
+    ttlSec: number,
+  ): Promise<{ fence: number; leaseValue: string } | null | "TERMINAL"> {
+    const script = `
+if redis.call('EXISTS', KEYS[3]) == 1 then
+  return 'TOMBSTONED'
+end
+local currentOwner = redis.call('GET', KEYS[1])
+if currentOwner == false or currentOwner == nil or currentOwner == "" then
+  local newFence = redis.call('INCR', KEYS[2])
+  local leaseValue = ARGV[1] .. ":" .. tostring(newFence)
+  redis.call('SET', KEYS[1], leaseValue, 'EX', ARGV[2])
+  return {tostring(newFence), leaseValue}
+else
+  return nil
+end`;
+    const result = await this.eval(
+      script,
+      [ownerKey, fenceKey, tombstoneKey],
+      [nodeId, String(ttlSec)],
+    );
+
+    // Terminal marker hit — distinct from the live-owner nil below.
+    if (result === "TOMBSTONED") return "TERMINAL";
+    // Live-owner path: Lua returned nil → the fence was NOT advanced.
+    if (result === null || result === undefined) return null;
+
+    if (!Array.isArray(result) || result.length < 2) {
+      throw new Error(
+        `acquireMatchLease: malformed Lua payload for ${ownerKey} ` +
+          `(may have written the lease): ${JSON.stringify(result)}`,
+      );
+    }
+    const [fenceRaw, leaseValue] = result as unknown[];
+    const fence = Number(fenceRaw);
+    if (
+      !Number.isInteger(fence) ||
+      fence <= 0 ||
+      typeof leaseValue !== "string" ||
+      leaseValue !== `${nodeId}:${fence}`
+    ) {
+      throw new Error(
+        `acquireMatchLease: inconsistent Lua payload for ${ownerKey} ` +
+          `(fence=${String(fenceRaw)}, leaseValue=${String(leaseValue)})`,
+      );
+    }
+    return { fence, leaseValue };
+  }
+
+  // Atomic conditional stale-index cleanup. Removes `member` from `indexKey`
+  // ONLY when `stateKey` is still absent, in one Redis operation, so a fresh
+  // match state recreated between a separate `EXISTS` read and `SREM` cannot
+  // lose its active-index entry. Returns:
+  //   - "REMOVED": state absent → member SREM'd from the index;
+  //   - "PRESENT": canonical state exists (or was recreated) → index untouched,
+  //                caller continues normal owner/state recovery.
+  async removeActiveIfStateAbsent(
+    stateKey: string,
+    indexKey: string,
+    member: string,
+  ): Promise<"REMOVED" | "PRESENT"> {
+    const script = `
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  return 'PRESENT'
+end
+redis.call('SREM', KEYS[2], ARGV[1])
+return 'REMOVED'`;
+    const result = await this.eval(script, [stateKey, indexKey], [member]);
+    if (result === "REMOVED") return "REMOVED";
+    if (result === "PRESENT") return "PRESENT";
+    throw new Error(
+      `removeActiveIfStateAbsent: unexpected Lua reply for ${member}: ${JSON.stringify(result)}`,
+    );
+  }
+
+  // Atomic conditional removal for the TERMINAL path: SREM `member` from
+  // `indexKey` ONLY when the tombstone still exists, re-validated in the same
+  // operation so a match that was concurrently requeued (tombstone deleted, id
+  // re-added to match:active) is not stripped from the index again. Returns
+  // "REMOVED" (tombstone present → member SREM'd) or "ABSENT" (no tombstone →
+  // index untouched).
+  async removeActiveIfTombstoned(
+    tombstoneKey: string,
+    indexKey: string,
+    member: string,
+  ): Promise<"REMOVED" | "ABSENT"> {
+    const script = `
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 'ABSENT'
+end
+redis.call('SREM', KEYS[2], ARGV[1])
+return 'REMOVED'`;
+    const result = await this.eval(script, [tombstoneKey, indexKey], [member]);
+    if (result === "REMOVED") return "REMOVED";
+    if (result === "ABSENT") return "ABSENT";
+    throw new Error(
+      `removeActiveIfTombstoned: unexpected Lua reply for ${member}: ${JSON.stringify(result)}`,
+    );
+  }
+
+  // Atomic fenced finalization. In ONE transaction: validate the caller still
+  // owns the match (owner == leaseValue AND fence == expectedFence); then write
+  // the canonical tombstone `"<reason>:<expectedFence>"`, SREM the match from
+  // `match:active`, and (for the dead-letter reason) SADD it to the ops-facing
+  // dead-letter set. The tombstone's fence is the finalizing owner's fence, so
+  // the requeue gate can later validate it. Returns:
+  //   - "FINALIZED": ownership matched; tombstone written, index cleaned.
+  //   - "STALE":     owner/fence moved on (a newer lease took over) → NO-OP, so
+  //                  a superseded owner can never tombstone a match a new owner
+  //                  now drives. Caller must preserve match:active for the new owner.
+  async finalizeMatchTombstone(
+    ownerKey: string,
+    fenceKey: string,
+    tombstoneKey: string,
+    indexKey: string,
+    deadLetterSet: string,
+    member: string,
+    opts: {
+      leaseValue: string;
+      expectedFence: number;
+      reason: "finished" | "dead-letter" | "cleaned";
+      ttlSec: number;
+    },
+  ): Promise<"FINALIZED" | "STALE"> {
+    const script = `
+local currentOwner = redis.call('GET', KEYS[1])
+if currentOwner == false or currentOwner ~= ARGV[1] then
+  return 'STALE'
+end
+local currentFence = redis.call('GET', KEYS[2])
+if currentFence == false or currentFence ~= ARGV[2] then
+  return 'STALE'
+end
+redis.call('SET', KEYS[3], ARGV[3] .. ':' .. ARGV[2], 'EX', ARGV[4])
+redis.call('SREM', KEYS[4], ARGV[5])
+if ARGV[3] == 'dead-letter' then
+  redis.call('SADD', KEYS[5], ARGV[5])
+end
+return 'FINALIZED'`;
+    const result = await this.eval(
+      script,
+      [ownerKey, fenceKey, tombstoneKey, indexKey, deadLetterSet],
+      [
+        opts.leaseValue,
+        String(opts.expectedFence),
+        opts.reason,
+        String(opts.ttlSec),
+        member,
+      ],
+    );
+    if (result === "FINALIZED") return "FINALIZED";
+    if (result === "STALE") return "STALE";
+    throw new Error(
+      `finalizeMatchTombstone: unexpected Lua reply for ${member} ` +
+        `(state may be inconsistent): ${JSON.stringify(result)}`,
+    );
+  }
+
+  // Requeue a dead-lettered match — a manual/ops action, structured as
+  // "validate everything first, mutate last". Three read-only gates run IN
+  // ORDER before any key is touched, so every rejection leaves ALL keys
+  // unchanged (tombstone byte-identical, match:active/dead-letter set members
+  // unchanged, owner key + fence counter untouched — even in forced mode):
+  //   1. Reason gate:  tombstone missing → "NOT_TERMINAL"; malformed value or
+  //                    unknown reason → "INVALID_TOMBSTONE"; reason finished /
+  //                    cleaned → "FINALIZED"; only dead-letter proceeds.
+  //   2. State gate:   match:state absent → "NO_STATE".
+  //   3. Owner gate:   a live owner lease → "CONFLICT" unless force=1.
+  // Only after all three pass does the mutation run (still atomic): on a forced
+  // call with a live lease, DEL owner + INCR fence (fence out the stale owner);
+  // then DEL tombstone, SADD match:active, SREM dead-letter. Returns "REQUEUED".
+  // The finalizedFence grammar is validated in-Lua identically to
+  // isValidFinalizedFence (see match-ownership.store.ts).
+  async requeueDeadLetter(
+    tombstoneKey: string,
+    stateKey: string,
+    ownerKey: string,
+    fenceKey: string,
+    indexKey: string,
+    deadLetterSet: string,
+    member: string,
+    opts: { force: boolean },
+  ): Promise<
+    | "REQUEUED"
+    | "NOT_TERMINAL"
+    | "INVALID_TOMBSTONE"
+    | "FINALIZED"
+    | "NO_STATE"
+    | "CONFLICT"
+  > {
+    const script = `
+-- Gate 1: reason
+local tomb = redis.call('GET', KEYS[1])
+if tomb == false then return 'NOT_TERMINAL' end
+local sep = string.find(tomb, ':', 1, true)
+if sep == nil or sep == 1 or sep == string.len(tomb) then
+  return 'INVALID_TOMBSTONE'
+end
+local reason = string.sub(tomb, 1, sep - 1)
+local fenceStr = string.sub(tomb, sep + 1)
+if string.match(fenceStr, '^[1-9][0-9]*$') == nil then
+  return 'INVALID_TOMBSTONE'
+end
+-- Range guard [1, 9007199254740991]. No leading zeros (grammar above), so
+-- same-length digit strings compare lexicographically == numerically.
+local flen = string.len(fenceStr)
+if flen > 16 or (flen == 16 and fenceStr > '9007199254740991') then
+  return 'INVALID_TOMBSTONE'
+end
+if reason ~= 'finished' and reason ~= 'dead-letter' and reason ~= 'cleaned' then
+  return 'INVALID_TOMBSTONE'
+end
+if reason ~= 'dead-letter' then return 'FINALIZED' end
+-- Gate 2: state
+if redis.call('EXISTS', KEYS[2]) == 0 then return 'NO_STATE' end
+-- Gate 3: owner precondition
+local owner = redis.call('GET', KEYS[3])
+local ownerLive = owner ~= false and owner ~= nil and owner ~= ''
+if ownerLive and ARGV[1] ~= '1' then return 'CONFLICT' end
+-- Mutation phase (all gates passed)
+if ownerLive then
+  redis.call('DEL', KEYS[3])
+  redis.call('INCR', KEYS[4])
+end
+redis.call('DEL', KEYS[1])
+redis.call('SADD', KEYS[5], ARGV[2])
+redis.call('SREM', KEYS[6], ARGV[2])
+return 'REQUEUED'`;
+    const result = await this.eval(
+      script,
+      [tombstoneKey, stateKey, ownerKey, fenceKey, indexKey, deadLetterSet],
+      [opts.force ? "1" : "0", member],
+    );
+    const outcomes = [
+      "REQUEUED",
+      "NOT_TERMINAL",
+      "INVALID_TOMBSTONE",
+      "FINALIZED",
+      "NO_STATE",
+      "CONFLICT",
+    ] as const;
+    if ((outcomes as readonly unknown[]).includes(result)) {
+      return result as (typeof outcomes)[number];
+    }
+    throw new Error(
+      `requeueDeadLetter: unexpected Lua reply for ${member}: ${JSON.stringify(result)}`,
+    );
+  }
+
+  // ============================================================
+  // B4a — Redis Stream wrappers (owner command channel)
+  //
+  // Typed wrappers over the ioredis stream commands. Service-layer code MUST
+  // go through these — never getClient() — so call sites can't reach untyped
+  // raw replies. Each entry carries a single "data" field holding the JSON
+  // CommandEnvelope. The stream is capped with MAXLEN ~ so it can't grow
+  // unbounded (also trimmed/deleted with the match on finish).
+  // ============================================================
+
+  private static readonly STREAM_MAXLEN = 10_000;
+  private static readonly STREAM_FIELD = "data";
+
+  /** Append an entry, return its id. Approximate-trims the stream to bound it. */
+  async xadd(stream: string, payload: string): Promise<string> {
+    const id = await this.client.xadd(
+      stream,
+      "MAXLEN",
+      "~",
+      RedisService.STREAM_MAXLEN,
+      "*",
+      RedisService.STREAM_FIELD,
+      payload,
+    );
+    return String(id);
+  }
+
+  /**
+   * Read up to `count` new (`>`) entries for this consumer, blocking up to
+   * `blockMs`. Cancellable: if `signal` is already aborted the call resolves to
+   * `[]` immediately without a blocked read, so ownership loss / shutdown does
+   * not leave a read pinning the stream.
+   */
+  async xreadgroup(
+    group: string,
+    consumer: string,
+    stream: string,
+    count: number,
+    blockMs: number,
+    signal?: AbortSignal,
+  ): Promise<StreamEntry[]> {
+    if (signal?.aborted) return [];
+    const reply = (await this.client.xreadgroup(
+      "GROUP",
+      group,
+      consumer,
+      "COUNT",
+      count,
+      "BLOCK",
+      blockMs,
+      "STREAMS",
+      stream,
+      ">",
+    )) as [string, [string, string[]][]][] | null;
+    return RedisService.parseStreamReply(reply, stream);
+  }
+
+  /** Ack processed entries; returns the number actually acknowledged. */
+  async xack(stream: string, group: string, ...ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    return this.client.xack(stream, group, ...ids);
+  }
+
+  /** Delete entries by id (used after a dead-lettered entry is persisted). */
+  async xdel(stream: string, ...ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    return this.client.xdel(stream, ...ids);
+  }
+
+  /** Create the consumer group (MKSTREAM if absent). Idempotent — a BUSYGROUP
+   *  error (group already exists) is swallowed. */
+  async xgroupCreate(
+    stream: string,
+    group: string,
+    opts: { mkStream?: boolean; startId?: string } = {},
+  ): Promise<void> {
+    const args: (string | number)[] = [
+      "CREATE",
+      stream,
+      group,
+      opts.startId ?? "0",
+    ];
+    if (opts.mkStream !== false) args.push("MKSTREAM");
+    try {
+      await (this.client.xgroup as (...a: unknown[]) => Promise<unknown>)(
+        ...args,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes("BUSYGROUP")) throw err;
+    }
+  }
+
+  /**
+   * Atomically claim idle pending entries from failed consumers and reassign
+   * them to `consumer`. Returns the next cursor (loop until it is "0-0") and the
+   * entries transferred this call. Used on takeover so entries stranded in a
+   * dead owner's PEL are picked up.
+   */
+  async xautoclaim(
+    stream: string,
+    group: string,
+    consumer: string,
+    minIdleMs: number,
+    startId: string,
+    count: number,
+  ): Promise<{ nextCursor: string; claimed: StreamEntry[] }> {
+    const reply = (await (
+      this.client.xautoclaim as (...a: unknown[]) => Promise<unknown>
+    )(stream, group, consumer, minIdleMs, startId, "COUNT", count)) as
+      | [string, [string, string[]][], string[]?]
+      | null;
+    if (!Array.isArray(reply)) return { nextCursor: "0-0", claimed: [] };
+    const [nextCursor, entries] = reply;
+    return {
+      nextCursor: String(nextCursor),
+      claimed: RedisService.parseEntries(entries),
+    };
+  }
+
+  /** Group-wide pending summary (diagnostics only — NOT a dead-letter guard). */
+  async xpending(stream: string, group: string): Promise<XPendingSummary> {
+    const reply = (await this.client.xpending(stream, group)) as [
+      number,
+      string | null,
+      string | null,
+      [string, string][] | null,
+    ];
+    const [count, minId, maxId, consumers] = reply;
+    return {
+      count: Number(count) || 0,
+      minId: minId ?? null,
+      maxId: maxId ?? null,
+      consumers: (consumers ?? []).map(([consumer, c]) => ({
+        consumer,
+        count: Number(c) || 0,
+      })),
+    };
+  }
+
+  /** Per-entry pending detail (id, consumer, idle ms, deliveries). */
+  async xpendingDetail(
+    stream: string,
+    group: string,
+    opts: { start?: string; end?: string; count: number; minIdleMs?: number },
+  ): Promise<XPendingEntry[]> {
+    const args: (string | number)[] = [stream, group];
+    if (opts.minIdleMs !== undefined) args.push("IDLE", opts.minIdleMs);
+    args.push(opts.start ?? "-", opts.end ?? "+", opts.count);
+    const reply = (await (
+      this.client.xpending as (...a: unknown[]) => Promise<unknown>
+    )(...args)) as [string, string, number, number][] | null;
+    if (!Array.isArray(reply)) return [];
+    return reply.map(([id, consumer, idleMs, deliveries]) => ({
+      id: String(id),
+      consumer: String(consumer),
+      idleMs: Number(idleMs) || 0,
+      deliveries: Number(deliveries) || 0,
+    }));
+  }
+
+  /** Explicitly claim specific pending ids for `consumer`. */
+  async xclaim(
+    stream: string,
+    group: string,
+    consumer: string,
+    minIdleMs: number,
+    ...ids: string[]
+  ): Promise<StreamEntry[]> {
+    if (ids.length === 0) return [];
+    const reply = (await (
+      this.client.xclaim as (...a: unknown[]) => Promise<unknown>
+    )(stream, group, consumer, minIdleMs, ...ids)) as
+      | [string, string[]][]
+      | null;
+    return RedisService.parseEntries(reply);
+  }
+
+  /** Delete a whole stream (match finish cleanup). */
+  async xdelStream(stream: string): Promise<void> {
+    await this.client.del(stream);
+  }
+
+  // Parse an XREADGROUP reply: [[stream, [[id, [field, value, ...]], ...]], ...].
+  private static parseStreamReply(
+    reply: [string, [string, string[]][]][] | null,
+    stream: string,
+  ): StreamEntry[] {
+    if (!Array.isArray(reply)) return [];
+    const streamPart = reply.find(([s]) => s === stream) ?? reply[0];
+    if (!streamPart) return [];
+    return RedisService.parseEntries(streamPart[1]);
+  }
+
+  // Parse an array of [id, [field, value, field, value, ...]] into StreamEntry[].
+  private static parseEntries(
+    entries: [string, string[]][] | null | undefined,
+  ): StreamEntry[] {
+    if (!Array.isArray(entries)) return [];
+    const out: StreamEntry[] = [];
+    for (const entry of entries) {
+      if (!Array.isArray(entry)) continue;
+      const [id, fields] = entry;
+      // fields is [field1, value1, field2, value2, ...]; find the "data" field.
+      let data = "";
+      if (Array.isArray(fields)) {
+        for (let i = 0; i + 1 < fields.length; i += 2) {
+          if (fields[i] === RedisService.STREAM_FIELD) {
+            data = fields[i + 1];
+            break;
+          }
+        }
+      }
+      out.push({ id: String(id), data });
+    }
+    return out;
   }
 
   // Redis server clock in epoch ms (from the TIME command). Used by the

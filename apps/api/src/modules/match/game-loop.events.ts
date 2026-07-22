@@ -6,6 +6,32 @@ interface MatchStateLike {
   currentRoundNo: number;
 }
 
+/**
+ * B4b: the owner's canonical ANSWER_RESULT. Emitted to the room channel (so the
+ * Redis adapter delivers it cross-node to the submitter, whose socket may be on
+ * a different node) ONLY after the fenced authoritative apply landed. Carries
+ * userId + submissionId so the submitter's client can match it to its pending
+ * submission; other clients ignore a result that is not theirs.
+ */
+export function emitAnswerResult(
+  server: Server,
+  roomId: string,
+  matchId: string,
+  userId: string,
+  result: { submissionId: string; isCorrect: boolean; responseTimeMs: number },
+  roundNo: number,
+) {
+  const channel = getRoomChannel(roomId);
+  server.to(channel).emit(ServerEvent.ANSWER_RESULT, {
+    matchId,
+    userId,
+    submissionId: result.submissionId,
+    roundNo,
+    isCorrect: result.isCorrect,
+    responseTimeMs: result.responseTimeMs,
+  });
+}
+
 export function emitRoundStarted(
   server: Server,
   roomId: string,

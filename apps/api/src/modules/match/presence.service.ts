@@ -6,7 +6,14 @@ import {
 } from "@nestjs/common";
 import { Server } from "socket.io";
 import { RoomService } from "../room/room.service";
+import { RedisService } from "../redis/redis.service";
+import { ClusterService } from "../cluster/cluster.service";
 import { LobbyCountdownService } from "./lobby-countdown.service";
+import { MatchOwnershipService } from "./match-ownership.service";
+import {
+  MatchCommandService,
+  makeCommandEnvelope,
+} from "./match-command.service";
 import {
   ServerEvent,
   RoomStatus,
@@ -15,6 +22,14 @@ import {
 import { GameLoopService, type FinishResult } from "./game-loop.service";
 import { emitMatchPlayerLeft } from "./game-loop.events";
 import { emitRoomStatusUpdated } from "./game-loop.helpers";
+
+// B5 presence-leader election: exactly one node sweeps. Fenced with an INCR
+// token `${nodeId}:${fence}` (never bare nodeId) so a demoted leader that
+// re-acquires later gets a strictly greater token and its stale-epoch mutations
+// fail the per-mutation CAS. TTL 15s, interval 5s → renew 3× before expiry.
+const LEADER_KEY = "presence:leader";
+const LEADER_FENCE_KEY = "presence:leader:fence";
+const LEADER_TTL_SEC = 15;
 
 // A room this young hasn't had a fair chance to establish presence yet:
 // under a burst of concurrent connections, a just-created room's host can
@@ -48,6 +63,9 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
   private sweepInterval?: NodeJS.Timeout;
   private server?: Server;
   private isSweeping = false;
+  // B5: the leadership token `${nodeId}:${fence}` this node last acquired. Used
+  // to renew (stay leader) and as the per-mutation fence CAS value.
+  private leaderToken?: string;
   // roomId -> consecutive sweep ticks where the host has been stale.
   // Reset to absent whenever the host is seen present again.
   private readonly hostStaleStrikes = new Map<string, number>();
@@ -56,6 +74,11 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
     private readonly roomService: RoomService,
     private readonly lobbyCountdownService: LobbyCountdownService,
     private readonly gameLoopService: GameLoopService,
+    // B5: leader election + owner-routing of IN_GAME disconnects.
+    private readonly redis: RedisService,
+    private readonly cluster: ClusterService,
+    private readonly ownership: MatchOwnershipService,
+    private readonly matchCommand: MatchCommandService,
   ) {}
 
   setServer(server: Server) {
@@ -67,7 +90,10 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
       if (this.isSweeping) return;
       this.isSweeping = true;
       try {
-        await this.sweep();
+        // B5: exactly one node sweeps. Elect/renew leadership; non-leaders skip.
+        const token = await this.acquireOrRenewLeadership();
+        if (!token) return;
+        await this.sweep(token);
       } catch (error) {
         this.logger.error(
           `Error during presence sweep: ${error instanceof Error ? error.message : String(error)}`,
@@ -77,6 +103,48 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
         this.isSweeping = false;
       }
     }, 5000);
+  }
+
+  /**
+   * Acquire or renew presence leadership. Renews the remembered token first
+   * (staying leader extends the TTL); on failure, mints a NEW monotonic fence
+   * (INCR) and tries a fresh acquire. Returns the held token, or null for a
+   * non-leader (which skips the sweep). The fence — not a bare nodeId — means a
+   * demoted leader that re-acquires later holds a strictly greater token, so its
+   * stale-epoch mutations fail the per-mutation CAS even if INSTANCE_ID was reused.
+   */
+  private async acquireOrRenewLeadership(): Promise<string | null> {
+    if (this.leaderToken) {
+      const stillLeader = await this.redis.renewLease(
+        LEADER_KEY,
+        this.leaderToken,
+        LEADER_TTL_SEC,
+      );
+      if (stillLeader) return this.leaderToken;
+      this.leaderToken = undefined;
+    }
+    const fence = await this.redis.incr(LEADER_FENCE_KEY);
+    const token = `${this.cluster.nodeId}:${fence}`;
+    const acquired = await this.redis.acquireLease(
+      LEADER_KEY,
+      token,
+      LEADER_TTL_SEC,
+    );
+    this.leaderToken = acquired ? token : undefined;
+    return acquired ? token : null;
+  }
+
+  /**
+   * Per-mutation fence: re-check (via a CAS renew) that `presence:leader` still
+   * equals our full token before mutating a room. A sweep can outlast the lease
+   * TTL, so the tick-start election is not enough — leadership can be lost
+   * mid-sweep. Returns false (and clears our token) the moment we are no longer
+   * the current leader, so the caller aborts the rest of the sweep.
+   */
+  private async stillLeader(token: string): Promise<boolean> {
+    const held = await this.redis.renewLease(LEADER_KEY, token, LEADER_TTL_SEC);
+    if (!held) this.leaderToken = undefined;
+    return held;
   }
 
   onModuleDestroy() {
@@ -97,7 +165,37 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
     return this.roomService.checkPresence(roomId, userId);
   }
 
-  private async sweep() {
+  /**
+   * B5: an IN_GAME stale player mutates a match state machine, so it must run on
+   * the match OWNER (single writer), not necessarily the sweeping leader.
+   *   - owner → apply directly (leader is also owner).
+   *   - non-owner → durably forward a `player_disconnect` command; the owner's
+   *     consumer applies it. The envelope carries ONLY userId — the owner
+   *     resolves roomId from authoritative state, so a stale leader cannot
+   *     inject a wrong room.
+   */
+  private async routeInGameDisconnect(
+    matchId: string,
+    userId: string,
+  ): Promise<void> {
+    if (this.ownership.isOwner(matchId)) {
+      await this.gameLoopService.handlePlayerDisconnect(
+        matchId,
+        userId,
+        this.server!,
+      );
+      return;
+    }
+    await this.matchCommand.forward(
+      makeCommandEnvelope({
+        matchId,
+        emittedByNodeId: this.cluster.nodeId,
+        body: { type: "player_disconnect", userId },
+      }),
+    );
+  }
+
+  private async sweep(token: string) {
     if (!this.server) return;
 
     const activeRooms = await this.roomService.getActiveRooms();
@@ -115,6 +213,17 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
     for (const room of activeRooms) {
       if (now - room.createdAt.getTime() < ROOM_SWEEP_GRACE_PERIOD_MS) {
         continue;
+      }
+
+      // B5: re-assert leadership as part of each room's mutation window. A sweep
+      // can outlast the lease TTL; the moment we are no longer the current
+      // leader, abort the rest of the sweep so a demoted ex-leader never
+      // disbands rooms / removes players while a new leader is also sweeping.
+      if (!(await this.stillLeader(token))) {
+        this.logger.warn(
+          `presence sweep: leadership lost mid-sweep (token ${token}); aborting before mutating room ${room.code}`,
+        );
+        return;
       }
 
       // Check all players' presence in parallel (single round-trip per player
@@ -330,11 +439,7 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
                 });
 
                 const disconnectPromise = executeWithRetry(() =>
-                  this.gameLoopService.handlePlayerDisconnect(
-                    room.currentMatchId!,
-                    userId,
-                    this.server!,
-                  ),
+                  this.routeInGameDisconnect(room.currentMatchId!, userId),
                 );
 
                 return Promise.race([

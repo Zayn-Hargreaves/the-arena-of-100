@@ -33,6 +33,14 @@ type RedisClientMock = {
   eval: ReturnType<typeof vi.fn>;
   time: ReturnType<typeof vi.fn>;
   duplicate: ReturnType<typeof vi.fn>;
+  xadd: ReturnType<typeof vi.fn>;
+  xreadgroup: ReturnType<typeof vi.fn>;
+  xack: ReturnType<typeof vi.fn>;
+  xdel: ReturnType<typeof vi.fn>;
+  xgroup: ReturnType<typeof vi.fn>;
+  xautoclaim: ReturnType<typeof vi.fn>;
+  xpending: ReturnType<typeof vi.fn>;
+  xclaim: ReturnType<typeof vi.fn>;
 };
 
 // Build a controllable subscriber connection (what client.duplicate() returns).
@@ -88,6 +96,14 @@ describe("RedisService", () => {
       eval: vi.fn(),
       time: vi.fn().mockResolvedValue(["1000", "500000"]),
       duplicate: vi.fn(() => subscriber as unknown as Redis),
+      xadd: vi.fn().mockResolvedValue("1-0"),
+      xreadgroup: vi.fn().mockResolvedValue(null),
+      xack: vi.fn().mockResolvedValue(1),
+      xdel: vi.fn().mockResolvedValue(1),
+      xgroup: vi.fn().mockResolvedValue("OK"),
+      xautoclaim: vi.fn().mockResolvedValue(["0-0", [], []]),
+      xpending: vi.fn().mockResolvedValue([0, null, null, null]),
+      xclaim: vi.fn().mockResolvedValue([]),
     };
     vi.mocked(Redis).mockImplementation(() => client as unknown as Redis);
 
@@ -605,6 +621,305 @@ describe("RedisService", () => {
   // ============================================================
   // B0 — pub/sub subscribe machinery
   // ============================================================
+  describe("stream wrappers (B4a)", () => {
+    it("xadd appends with MAXLEN ~ and returns the id", async () => {
+      client.xadd.mockResolvedValueOnce("5-0");
+      await expect(service.xadd("match:cmd:m1", "{}")).resolves.toBe("5-0");
+      const args = client.xadd.mock.calls[0] as unknown[];
+      expect(args[0]).toBe("match:cmd:m1");
+      expect(args).toContain("MAXLEN");
+      expect(args).toContain("~");
+      expect(args).toContain("*");
+      expect(args).toContain("data");
+    });
+
+    it("xreadgroup parses [[stream,[[id,[field,value]]]]] into StreamEntry[]", async () => {
+      client.xreadgroup.mockResolvedValueOnce([
+        [
+          "match:cmd:m1",
+          [
+            ["1-0", ["data", '{"a":1}']],
+            ["2-0", ["data", '{"b":2}']],
+          ],
+        ],
+      ]);
+      const entries = await service.xreadgroup(
+        "owners",
+        "node-a",
+        "match:cmd:m1",
+        16,
+        1000,
+      );
+      expect(entries).toEqual([
+        { id: "1-0", data: '{"a":1}' },
+        { id: "2-0", data: '{"b":2}' },
+      ]);
+    });
+
+    it("xreadgroup short-circuits to [] when the signal is already aborted", async () => {
+      const ac = new AbortController();
+      ac.abort();
+      const entries = await service.xreadgroup(
+        "owners",
+        "node-a",
+        "match:cmd:m1",
+        16,
+        1000,
+        ac.signal,
+      );
+      expect(entries).toEqual([]);
+      expect(client.xreadgroup).not.toHaveBeenCalled();
+    });
+
+    it("xreadgroup returns [] on a null reply (no new entries)", async () => {
+      client.xreadgroup.mockResolvedValueOnce(null);
+      await expect(
+        service.xreadgroup("owners", "node-a", "match:cmd:m1", 16, 1000),
+      ).resolves.toEqual([]);
+    });
+
+    it("xack acks only when ids are present", async () => {
+      await expect(service.xack("s", "g")).resolves.toBe(0);
+      expect(client.xack).not.toHaveBeenCalled();
+      client.xack.mockResolvedValueOnce(2);
+      await expect(service.xack("s", "g", "1-0", "2-0")).resolves.toBe(2);
+      expect(client.xack).toHaveBeenCalledWith("s", "g", "1-0", "2-0");
+    });
+
+    it("xgroupCreate swallows BUSYGROUP (idempotent) but rethrows other errors", async () => {
+      client.xgroup.mockRejectedValueOnce(
+        new Error("BUSYGROUP Consumer Group name already exists"),
+      );
+      await expect(
+        service.xgroupCreate("s", "g", { mkStream: true }),
+      ).resolves.toBeUndefined();
+
+      client.xgroup.mockRejectedValueOnce(new Error("boom"));
+      await expect(service.xgroupCreate("s", "g")).rejects.toThrow("boom");
+    });
+
+    it("xautoclaim returns { nextCursor, claimed } and terminates the loop at 0-0", async () => {
+      client.xautoclaim.mockResolvedValueOnce([
+        "0-0",
+        [["9-0", ["data", '{"x":1}']]],
+        [],
+      ]);
+      const { nextCursor, claimed } = await service.xautoclaim(
+        "s",
+        "g",
+        "node-b",
+        30000,
+        "0-0",
+        16,
+      );
+      expect(nextCursor).toBe("0-0");
+      expect(claimed).toEqual([{ id: "9-0", data: '{"x":1}' }]);
+    });
+
+    it("xpending returns count + min/max ids + per-consumer counts", async () => {
+      client.xpending.mockResolvedValueOnce([
+        3,
+        "1-0",
+        "3-0",
+        [["node-a", "3"]],
+      ]);
+      await expect(service.xpending("s", "g")).resolves.toEqual({
+        count: 3,
+        minId: "1-0",
+        maxId: "3-0",
+        consumers: [{ consumer: "node-a", count: 3 }],
+      });
+    });
+
+    it("xpendingDetail reports idle ms + deliveries per entry", async () => {
+      client.xpending.mockResolvedValueOnce([["1-0", "node-a", 45000, 2]]);
+      const detail = await service.xpendingDetail("s", "g", {
+        count: 10,
+        minIdleMs: 30000,
+      });
+      expect(detail).toEqual([
+        { id: "1-0", consumer: "node-a", idleMs: 45000, deliveries: 2 },
+      ]);
+      const args = client.xpending.mock.calls[0] as unknown[];
+      expect(args).toContain("IDLE");
+    });
+
+    it("xclaim transfers requested ids and returns the claimed entries", async () => {
+      client.xclaim.mockResolvedValueOnce([["1-0", ["data", "{}"]]]);
+      const claimed = await service.xclaim("s", "g", "node-b", 30000, "1-0");
+      expect(claimed).toEqual([{ id: "1-0", data: "{}" }]);
+      expect(client.xclaim).toHaveBeenCalledWith(
+        "s",
+        "g",
+        "node-b",
+        30000,
+        "1-0",
+      );
+      // No ids → no call.
+      client.xclaim.mockClear();
+      await expect(service.xclaim("s", "g", "node-b", 30000)).resolves.toEqual(
+        [],
+      );
+      expect(client.xclaim).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("failover recovery primitives (B3b)", () => {
+    it("acquireMatchLease returns { fence, leaseValue } and passes the tombstone key as KEYS[3]", async () => {
+      client.eval.mockResolvedValueOnce(["3", "node-a:3"]);
+
+      await expect(
+        service.acquireMatchLease(
+          "match:owner:m1",
+          "match:fence:m1",
+          "match:tombstone:m1",
+          "node-a",
+          15,
+        ),
+      ).resolves.toEqual({ fence: 3, leaseValue: "node-a:3" });
+
+      const [script, keyCount, k1, k2, k3] = client.eval.mock
+        .calls[0] as unknown[];
+      expect(script).toContain("EXISTS");
+      expect(keyCount).toBe(3);
+      expect(k1).toBe("match:owner:m1");
+      expect(k2).toBe("match:fence:m1");
+      expect(k3).toBe("match:tombstone:m1");
+    });
+
+    it("acquireMatchLease maps 'TOMBSTONED' → 'TERMINAL' (distinct from the live-owner null)", async () => {
+      client.eval.mockResolvedValueOnce("TOMBSTONED");
+      await expect(
+        service.acquireMatchLease("o", "f", "t", "node-a", 15),
+      ).resolves.toBe("TERMINAL");
+
+      client.eval.mockResolvedValueOnce(null);
+      await expect(
+        service.acquireMatchLease("o", "f", "t", "node-a", 15),
+      ).resolves.toBeNull();
+    });
+
+    it("acquireMatchLease throws on a malformed non-nil payload (lease may have been written)", async () => {
+      client.eval.mockResolvedValueOnce(["oops"]);
+      await expect(
+        service.acquireMatchLease("o", "f", "t", "node-a", 15),
+      ).rejects.toThrow(/malformed Lua payload/);
+    });
+
+    it("removeActiveIfStateAbsent returns REMOVED / PRESENT", async () => {
+      client.eval.mockResolvedValueOnce("REMOVED");
+      await expect(
+        service.removeActiveIfStateAbsent(
+          "match:state:m1",
+          "match:active",
+          "m1",
+        ),
+      ).resolves.toBe("REMOVED");
+
+      client.eval.mockResolvedValueOnce("PRESENT");
+      await expect(
+        service.removeActiveIfStateAbsent(
+          "match:state:m1",
+          "match:active",
+          "m1",
+        ),
+      ).resolves.toBe("PRESENT");
+    });
+
+    it("removeActiveIfTombstoned returns REMOVED / ABSENT", async () => {
+      client.eval.mockResolvedValueOnce("REMOVED");
+      await expect(
+        service.removeActiveIfTombstoned(
+          "match:tombstone:m1",
+          "match:active",
+          "m1",
+        ),
+      ).resolves.toBe("REMOVED");
+
+      client.eval.mockResolvedValueOnce("ABSENT");
+      await expect(
+        service.removeActiveIfTombstoned(
+          "match:tombstone:m1",
+          "match:active",
+          "m1",
+        ),
+      ).resolves.toBe("ABSENT");
+    });
+
+    it("finalizeMatchTombstone returns FINALIZED / STALE and SADDs only for dead-letter", async () => {
+      client.eval.mockResolvedValueOnce("FINALIZED");
+      await expect(
+        service.finalizeMatchTombstone(
+          "match:owner:m1",
+          "match:fence:m1",
+          "match:tombstone:m1",
+          "match:active",
+          "match:recovery:dead-letter",
+          "m1",
+          {
+            leaseValue: "node-a:3",
+            expectedFence: 3,
+            reason: "dead-letter",
+            ttlSec: 604800,
+          },
+        ),
+      ).resolves.toBe("FINALIZED");
+
+      const [script] = client.eval.mock.calls[0] as unknown[];
+      expect(script).toContain("SADD");
+      expect(script).toContain("dead-letter");
+
+      client.eval.mockResolvedValueOnce("STALE");
+      await expect(
+        service.finalizeMatchTombstone("o", "f", "t", "a", "d", "m1", {
+          leaseValue: "node-a:3",
+          expectedFence: 3,
+          reason: "cleaned",
+          ttlSec: 604800,
+        }),
+      ).resolves.toBe("STALE");
+    });
+
+    it("requeueDeadLetter passes through each gate outcome and forwards the force flag", async () => {
+      const outcomes = [
+        "REQUEUED",
+        "NOT_TERMINAL",
+        "INVALID_TOMBSTONE",
+        "FINALIZED",
+        "NO_STATE",
+        "CONFLICT",
+      ] as const;
+      for (const outcome of outcomes) {
+        client.eval.mockResolvedValueOnce(outcome);
+        await expect(
+          service.requeueDeadLetter(
+            "match:tombstone:m1",
+            "match:state:m1",
+            "match:owner:m1",
+            "match:fence:m1",
+            "match:active",
+            "match:recovery:dead-letter",
+            "m1",
+            { force: true },
+          ),
+        ).resolves.toBe(outcome);
+      }
+      // force=true → ARGV[1] === "1"
+      const lastCall = client.eval.mock.calls.at(-1) as unknown[];
+      expect(lastCall.at(-2)).toBe("1"); // ARGV[1] force
+      expect(lastCall.at(-1)).toBe("m1"); // ARGV[2] member
+    });
+
+    it("requeueDeadLetter throws on an unexpected Lua reply", async () => {
+      client.eval.mockResolvedValueOnce("???");
+      await expect(
+        service.requeueDeadLetter("t", "s", "o", "f", "a", "d", "m1", {
+          force: false,
+        }),
+      ).rejects.toThrow(/unexpected Lua reply/);
+    });
+  });
+
   describe("subscribe/unsubscribe (B0)", () => {
     it("round-trips a published message to the handler", async () => {
       const received: string[] = [];

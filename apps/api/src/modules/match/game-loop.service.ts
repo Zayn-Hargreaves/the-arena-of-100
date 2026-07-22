@@ -14,12 +14,14 @@ import { PrismaService } from "../prisma/prisma.service";
 import { MatchRoundRunner } from "./match-round-runner";
 import { LobbyCountdownService } from "./lobby-countdown.service";
 import { MatchOwnershipService } from "./match-ownership.service";
+import { MatchCommandService } from "./match-command.service";
 import {
   emitMatchStarting,
   emitRoomStatusUpdated,
   emitRoomTerminated,
   emitWaitingRoomState,
 } from "./game-loop.helpers";
+import { emitAnswerResult } from "./game-loop.events";
 import { LOBBY_COUNTDOWN_INDEX_KEY } from "./game-loop.countdown-store";
 
 // Re-export for backwards compatibility with existing spec imports.
@@ -72,6 +74,8 @@ export class GameLoopService {
     private readonly lobbyCountdown: LobbyCountdownService,
     // B2b: owner-lease acquisition at launch + release on stop/finish.
     private readonly matchOwnership: MatchOwnershipService,
+    // B4a/B4b: owner command channel — forwarded-answer consumer + fenced apply.
+    private readonly matchCommand: MatchCommandService,
   ) {
     this.roundRunner = new MatchRoundRunner(
       matchService,
@@ -79,9 +83,63 @@ export class GameLoopService {
       roomService,
       matchOwnership,
     );
+    // B4b: wire the fenced side effects the authoritative answer apply runs
+    // after a successful persist (canonical ANSWER_RESULT + early termination).
+    this.matchCommand.setSideEffects({
+      publishAnswerResult: (env, roomId, result, roundNo, server) =>
+        emitAnswerResult(
+          server,
+          roomId,
+          env.matchId,
+          env.body.userId,
+          result,
+          roundNo,
+        ),
+      checkEarlyTermination: (matchId, roomId, server) =>
+        this.roundRunner.checkEarlyTermination(matchId, roomId, server),
+      // B5: player_disconnect forwarded from a non-owner presence leader. The
+      // owner is the single writer; roomId is resolved from authoritative state
+      // inside handlePlayerDisconnect, never from the command payload.
+      handlePlayerDisconnect: async (env, _owner, server) => {
+        if (env.body.type !== "player_disconnect") return "APPLIED";
+        try {
+          await this.roundRunner.handlePlayerDisconnect(
+            env.matchId,
+            env.body.userId,
+            server,
+          );
+          return "APPLIED";
+        } catch (err) {
+          this.logger.warn(
+            `handlePlayerDisconnect apply failed for ${env.matchId}/${env.body.userId} (RETRY): ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+          return "RETRY";
+        }
+      },
+    });
     // B2c: let the ownership heartbeat cancel a match's timers when this node
     // loses the lease (relinquish path). One-directional: the runner is not DI.
     this.matchOwnership.setRoundRunner(this.roundRunner);
+    // B3b: wire the recovery collaborators so boot/orphan takeover can hydrate
+    // canonical state and resume the loop. MatchService already depends on
+    // MatchOwnershipService, so this setter (not DI) avoids the cycle.
+    this.matchOwnership.setRecoveryDeps({
+      getStateMachine: (matchId) => matchService.getStateMachine(matchId),
+      getRoomIdByMatchId: (matchId) => matchService.getRoomIdByMatchId(matchId),
+      resumeMatchLoop: async (matchId, hydratedSm, roomId, server) => {
+        // B4b: register the owner command consumer on takeover so forwarded
+        // answers (incl. any XAUTOCLAIM'd during the failover gap) are drained.
+        await this.matchCommand.registerMatch(matchId, server);
+        await this.roundRunner.resumeMatchLoop(
+          matchId,
+          hydratedSm,
+          roomId,
+          server,
+        );
+      },
+    });
     // When a lobby countdown expires (live or recovered), launch the
     // match through the same auto-start path the timer used to call.
     this.lobbyCountdown.setLauncher((roomId, server) =>
@@ -97,6 +155,8 @@ export class GameLoopService {
   setServer(server: Server) {
     this.server = server;
     this.lobbyCountdown.setServer(server);
+    // B3b: drains buffered boot recovery + enables the orphan sweep to resume.
+    this.matchOwnership.setServer(server);
   }
 
   async forceStartRoomMatch(roomId: string, server: Server) {
@@ -272,6 +332,10 @@ export class GameLoopService {
       }
       ownershipAcquired = true;
 
+      // B4b: register the owner command channel consumer so SUBMIT_ANSWER
+      // envelopes forwarded from any node are drained + applied here.
+      await this.matchCommand.registerMatch(match.id, server);
+
       await this.roundRunner.startMatchLoop(match.id, roomId, server);
       return match;
     } catch (error) {
@@ -395,6 +459,9 @@ export class GameLoopService {
       // B2b: release the owner lease + match:active entry so recovery does not
       // adopt a match we intentionally tore down.
       await this.matchOwnership.release(matchId);
+      // B4b: stop the command consumer + drop the stream/dedup set.
+      this.matchCommand.deregisterMatch(matchId);
+      await this.matchCommand.disposeStream(matchId);
     }
   }
 

@@ -108,6 +108,16 @@ describe("GameLoopService Persistence", () => {
         getOwnershipSnapshot: vi.fn().mockReturnValue(undefined),
         getOwnedMatchIds: vi.fn().mockReturnValue([]),
         computeMaxSkew: vi.fn().mockResolvedValue(0),
+        setRecoveryDeps: vi.fn(),
+        setServer: vi.fn(),
+      } as any,
+      // B4a/B4b: MatchCommandService stub.
+      {
+        setSideEffects: vi.fn(),
+        registerMatch: vi.fn().mockResolvedValue(undefined),
+        deregisterMatch: vi.fn(),
+        disposeStream: vi.fn().mockResolvedValue(undefined),
+        forward: vi.fn().mockResolvedValue(undefined),
       } as any,
     );
   });

@@ -9,7 +9,7 @@ import type { RedisService } from "../redis/redis.service";
 import type { ClusterService } from "../cluster/cluster.service";
 
 type RedisMock = {
-  acquireLeaseWithFence: ReturnType<typeof vi.fn>;
+  acquireMatchLease: ReturnType<typeof vi.fn>;
   renewLease: ReturnType<typeof vi.fn>;
   releaseLease: ReturnType<typeof vi.fn>;
   releaseLeaseAndIndex: ReturnType<typeof vi.fn>;
@@ -48,7 +48,7 @@ describe("MatchOwnershipService (B2b)", () => {
 
   beforeEach(() => {
     redis = {
-      acquireLeaseWithFence: vi
+      acquireMatchLease: vi
         .fn()
         .mockResolvedValue({ fence: 1, leaseValue: "node-a:1" }),
       renewLease: vi.fn().mockResolvedValue(true),
@@ -68,9 +68,10 @@ describe("MatchOwnershipService (B2b)", () => {
     it("acquires the lease, indexes match:active, and records ownership", async () => {
       await expect(service.acquireOnLaunch("m1", "r1")).resolves.toBe(true);
 
-      expect(redis.acquireLeaseWithFence).toHaveBeenCalledWith(
+      expect(redis.acquireMatchLease).toHaveBeenCalledWith(
         "match:owner:m1",
         "match:fence:m1",
+        "match:tombstone:m1",
         "node-a",
         LEASE_TTL_SEC,
       );
@@ -81,7 +82,7 @@ describe("MatchOwnershipService (B2b)", () => {
     });
 
     it("returns false and records nothing when the lease is already held", async () => {
-      redis.acquireLeaseWithFence.mockResolvedValueOnce(null);
+      redis.acquireMatchLease.mockResolvedValueOnce(null);
 
       await expect(service.acquireOnLaunch("m1", "r1")).resolves.toBe(false);
       expect(service.isOwner("m1")).toBe(false);
@@ -152,8 +153,8 @@ describe("MatchOwnershipService (B2b)", () => {
       expect(saddCalls).toBeGreaterThan(3);
     });
 
-    it("treats a thrown acquireLeaseWithFence as a recovery handoff and returns false", async () => {
-      redis.acquireLeaseWithFence.mockRejectedValueOnce(
+    it("treats a thrown acquireMatchLease as a recovery handoff and returns false", async () => {
+      redis.acquireMatchLease.mockRejectedValueOnce(
         new Error("truncated Lua payload"),
       );
 
@@ -170,8 +171,8 @@ describe("MatchOwnershipService (B2b)", () => {
       await service.acquireOnLaunch("m1", "r1");
 
       // Second node against the same (mock) Redis: lease already held → null.
-      const redis2 = { ...redis, acquireLeaseWithFence: vi.fn() };
-      redis2.acquireLeaseWithFence.mockResolvedValue(null);
+      const redis2 = { ...redis, acquireMatchLease: vi.fn() };
+      redis2.acquireMatchLease.mockResolvedValue(null);
       const cluster2 = { nodeId: "node-b" } as unknown as ClusterService;
       const svc2 = new MatchOwnershipService(
         redis2 as unknown as RedisService,
@@ -349,7 +350,7 @@ describe("MatchOwnershipService (B2b)", () => {
 
       // Release and reacquire the same match → fresh entry (node-a:2).
       await service.release("m1");
-      redis.acquireLeaseWithFence.mockResolvedValueOnce({
+      redis.acquireMatchLease.mockResolvedValueOnce({
         fence: 2,
         leaseValue: "node-a:2",
       });
@@ -476,9 +477,7 @@ describe("MatchOwnershipService (B2b)", () => {
     });
 
     it("recoveryHandoff logs when addActiveMatch fails after acquire throws", async () => {
-      redis.acquireLeaseWithFence.mockRejectedValueOnce(
-        new Error("infra-error"),
-      );
+      redis.acquireMatchLease.mockRejectedValueOnce(new Error("infra-error"));
       redis.sadd.mockRejectedValueOnce(new Error("index-down"));
 
       await expect(service.acquireOnLaunch("m1", "r1")).resolves.toBe(false);
@@ -571,10 +570,10 @@ describe("MatchOwnershipService (B2b)", () => {
     });
 
     it("logs non-Error throws on acquire / release / heartbeat without crashing", async () => {
-      redis.acquireLeaseWithFence.mockRejectedValueOnce("string-acquire-fail");
+      redis.acquireMatchLease.mockRejectedValueOnce("string-acquire-fail");
       await expect(service.acquireOnLaunch("m1", "r1")).resolves.toBe(false);
 
-      redis.acquireLeaseWithFence.mockResolvedValue({
+      redis.acquireMatchLease.mockResolvedValue({
         fence: 1,
         leaseValue: "node-a:1",
       });

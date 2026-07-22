@@ -147,6 +147,17 @@ export class MatchService {
     return match?.roomId;
   }
 
+  /**
+   * B4b snapshot-restore safety: drop the cached in-memory state machine so the
+   * next `getStateMachine` reloads the canonical `match:state` from Redis. The
+   * authoritative answer apply calls this after a fenced-persist RETRY (lease
+   * lost / stale fence) so an unpersisted in-memory mutation can never be
+   * observed by a later apply, resume, or presence sweep.
+   */
+  evictStateMachine(matchId: string): void {
+    this.stateMachines.delete(matchId);
+  }
+
   // Get state machine for match (restores from Redis if not in memory)
   async getStateMachine(
     matchId: string,

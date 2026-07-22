@@ -95,6 +95,7 @@ describe("GameLoopService", () => {
       createMockPrismaService() as any,
       lobbyCountdown,
       createMockMatchOwnership() as any,
+      createMockMatchCommand() as any,
     );
   });
 
@@ -121,6 +122,7 @@ describe("GameLoopService", () => {
       createMockPrismaService() as any,
       new LobbyCountdownService(roomService, redis),
       createMockMatchOwnership() as any,
+      createMockMatchCommand() as any,
     );
     return { svc, redis, multiSpy };
   }
@@ -139,6 +141,21 @@ describe("GameLoopService", () => {
       assertOwnership: vi.fn().mockResolvedValue(true),
       getOwnershipSnapshot: vi.fn().mockReturnValue(undefined),
       computeMaxSkew: vi.fn().mockResolvedValue(0),
+      // B3b additions (boot/orphan recovery wiring).
+      setRecoveryDeps: vi.fn(),
+      setServer: vi.fn(),
+    };
+  }
+
+  // B4a/B4b: minimal MatchCommandService stub.
+  function createMockMatchCommand() {
+    return {
+      setSideEffects: vi.fn(),
+      setDispatcher: vi.fn(),
+      registerMatch: vi.fn().mockResolvedValue(undefined),
+      deregisterMatch: vi.fn(),
+      disposeStream: vi.fn().mockResolvedValue(undefined),
+      forward: vi.fn().mockResolvedValue(undefined),
     };
   }
 
@@ -1300,6 +1317,7 @@ describe("GameLoopService", () => {
         createMockPrismaService() as any,
         new LobbyCountdownService(roomService, redis),
         ownership as any,
+        createMockMatchCommand() as any,
       );
 
       await svc.stopRoomRuntime("r1", "m1");
@@ -1328,6 +1346,7 @@ describe("GameLoopService", () => {
         createMockPrismaService() as any,
         new LobbyCountdownService(roomService, redis),
         ownership as any,
+        createMockMatchCommand() as any,
       );
 
       await svc.forceFinishMatchForDisband("m9", "r9");
