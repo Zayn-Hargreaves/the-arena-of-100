@@ -1588,5 +1588,360 @@ describe("RedisService", () => {
       await expect(service.onModuleDestroy()).resolves.toBeUndefined();
       expect(client.quit).toHaveBeenCalled();
     });
+
+    it("acquireBlockingReader short-circuits to null when shutting down", async () => {
+      (
+        service as unknown as { blockingReadersShuttingDown: boolean }
+      ).blockingReadersShuttingDown = true;
+      const result = await (
+        service as unknown as {
+          acquireBlockingReader: () => Promise<Redis | null>;
+        }
+      ).acquireBlockingReader();
+      expect(result).toBeNull();
+      expect(client.duplicate).not.toHaveBeenCalled();
+    });
+
+    it("acquireBlockingReader short-circuits to null when the signal is already aborted", async () => {
+      const ac = new AbortController();
+      ac.abort();
+      const result = await (
+        service as unknown as {
+          acquireBlockingReader: (signal: AbortSignal) => Promise<Redis | null>;
+        }
+      ).acquireBlockingReader(ac.signal);
+      expect(result).toBeNull();
+      expect(client.duplicate).not.toHaveBeenCalled();
+    });
+
+    it("acquireBlockingReader waiter's onAbort handler removes the waiter and resolves it to null", async () => {
+      // Saturate the in-use set so the next acquire enters the waiter branch.
+      const inUse = (service as unknown as { blockingReadersInUse: Set<Redis> })
+        .blockingReadersInUse;
+      for (let i = 0; i < 16; i++) {
+        inUse.add({} as unknown as Redis);
+      }
+      const ac = new AbortController();
+      const waiterPromise = (
+        service as unknown as {
+          acquireBlockingReader: (signal: AbortSignal) => Promise<Redis | null>;
+        }
+      ).acquireBlockingReader(ac.signal);
+      // Yield so the waiter is registered.
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+
+      // Trigger the onAbort handler (lines 877-881).
+      ac.abort();
+      await expect(waiterPromise).resolves.toBeNull();
+      // The waiter was removed from the queue.
+      expect(
+        (service as unknown as { blockingReaderWaiters: unknown[] })
+          .blockingReaderWaiters.length,
+      ).toBe(0);
+    });
+
+    it("acquireBlockingReader onAbort fires synchronously when the signal is already aborted at entry", async () => {
+      // Saturate the in-use set so the next acquire enters the waiter branch.
+      const inUse = (service as unknown as { blockingReadersInUse: Set<Redis> })
+        .blockingReadersInUse;
+      for (let i = 0; i < 16; i++) {
+        inUse.add({} as unknown as Redis);
+      }
+      const ac = new AbortController();
+      ac.abort();
+      // Calling with an already-aborted signal must resolve to null
+      // immediately via the synchronous onAbort path (lines 899-902).
+      const result = await (
+        service as unknown as {
+          acquireBlockingReader: (signal: AbortSignal) => Promise<Redis | null>;
+        }
+      ).acquireBlockingReader(ac.signal);
+      expect(result).toBeNull();
+    });
+
+    it("resolves pending blocking-reader waiters to null on shutdown", async () => {
+      // Saturate the in-use set to MAX (16) so the next acquire goes through
+      // the waiter path. When onModuleDestroy runs, those waiters are drained
+      // and resolved to null.
+      const inUse = (service as unknown as { blockingReadersInUse: Set<Redis> })
+        .blockingReadersInUse;
+      for (let i = 0; i < 16; i++) {
+        inUse.add({} as unknown as Redis);
+      }
+
+      const ac = new AbortController();
+      const waiterPromise = (
+        service as unknown as {
+          acquireBlockingReader: (signal: AbortSignal) => Promise<Redis | null>;
+        }
+      ).acquireBlockingReader(ac.signal);
+      // Yield so the waiter is registered before destroy runs.
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      expect(
+        (service as unknown as { blockingReaderWaiters: unknown[] })
+          .blockingReaderWaiters.length,
+      ).toBe(1);
+
+      await service.onModuleDestroy();
+
+      // Pending acquire() resolves to null rather than hanging.
+      await expect(waiterPromise).resolves.toBeNull();
+    });
+
+    it("does not crash onModuleDestroy when an allocated reader's disconnect throws", async () => {
+      const reader = {
+        xreadgroup: vi.fn().mockResolvedValue(null),
+        quit: vi.fn().mockResolvedValue("OK"),
+        disconnect: vi.fn(() => {
+          throw new Error("disconnect-fail");
+        }),
+        on: vi.fn(),
+      };
+      client.duplicate.mockReturnValueOnce(reader as unknown as Redis);
+
+      // First xreadgroup mints + releases the reader back to the idle pool.
+      await service.xreadgroup("owners", "node-a", "match:cmd:m1", 16, 1000);
+
+      // onModuleDestroy must close every pooled reader; disconnect throws,
+      // but the catch swallows it so the next teardown steps still run.
+      await expect(service.onModuleDestroy()).resolves.toBeUndefined();
+      expect(client.quit).toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================
+  // Coverage gap fill — error branches + lifecycle edges that
+  // were uncovered in the patch report.
+  // ============================================================
+  describe("coverage gaps (B0/B3b/B4a)", () => {
+    it("xdel with no ids short-circuits to 0 and never calls the client", async () => {
+      client.xdel.mockClear();
+      await expect(service.xdel("s")).resolves.toBe(0);
+      expect(client.xdel).not.toHaveBeenCalled();
+    });
+
+    it("xdel forwards ids to the client and returns its reply", async () => {
+      client.xdel.mockClear();
+      client.xdel.mockResolvedValueOnce(2);
+      await expect(service.xdel("s", "1-0", "2-0")).resolves.toBe(2);
+      expect(client.xdel).toHaveBeenCalledWith("s", "1-0", "2-0");
+    });
+
+    it("acquireMatchLease throws on an inconsistent leaseValue (post-write)", async () => {
+      // fence=7, leaseValue doesn't match `${nodeId}:${fence}` → mismatch.
+      client.eval.mockResolvedValueOnce(["7", "someone-else:7"]);
+      await expect(
+        service.acquireMatchLease("o", "f", "t", "node-a", 15),
+      ).rejects.toThrow(/inconsistent/);
+    });
+
+    it("removeActiveIfStateAbsent throws on an unexpected Lua reply", async () => {
+      client.eval.mockResolvedValueOnce("???");
+      await expect(
+        service.removeActiveIfStateAbsent("s", "a", "m1"),
+      ).rejects.toThrow(/unexpected Lua reply/);
+    });
+
+    it("removeActiveIfTombstoned throws on an unexpected Lua reply", async () => {
+      client.eval.mockResolvedValueOnce("???");
+      await expect(
+        service.removeActiveIfTombstoned("t", "a", "m1"),
+      ).rejects.toThrow(/unexpected Lua reply/);
+    });
+
+    it("finalizeMatchTombstone throws on an unexpected Lua reply", async () => {
+      client.eval.mockResolvedValueOnce("???");
+      await expect(
+        service.finalizeMatchTombstone("o", "f", "t", "a", "d", "m1", {
+          leaseValue: "node-a:1",
+          expectedFence: 1,
+          reason: "cleaned",
+          ttlSec: 60,
+        }),
+      ).rejects.toThrow(/unexpected Lua reply/);
+    });
+
+    it("releaseBlockingReader disconnects and short-circuits while shutting down", async () => {
+      const reader = {
+        xreadgroup: vi.fn().mockResolvedValue(null),
+        quit: vi.fn().mockResolvedValue("OK"),
+        disconnect: vi.fn(() => {
+          throw new Error("disconnect-boom");
+        }),
+        on: vi.fn(),
+      };
+      client.duplicate.mockReturnValueOnce(reader as unknown as Redis);
+      // First call mints + releases to pool.
+      await service.xreadgroup("owners", "node-a", "match:cmd:m1", 16, 1000);
+
+      // Simulate an in-use reader that's about to be released after shutdown.
+      // Pull it back into `in-use` so releaseBlockingReader exercises the
+      // shutdown branch (delete + disconnect, no pool push, no waiter handoff).
+      const inUse = (service as unknown as { blockingReadersInUse: Set<Redis> })
+        .blockingReadersInUse;
+      inUse.add(reader as unknown as Redis);
+      (
+        service as unknown as { blockingReadersShuttingDown: boolean }
+      ).blockingReadersShuttingDown = true;
+
+      const pool = (service as unknown as { blockingReaderPool: Redis[] })
+        .blockingReaderPool;
+      const poolBefore = pool.length;
+
+      (
+        service as unknown as {
+          releaseBlockingReader: (r: Redis) => void;
+        }
+      ).releaseBlockingReader(reader as unknown as Redis);
+
+      // Disconnect was called (and threw); the catch swallows the error
+      // and the reader was NOT pushed back to the pool.
+      expect(reader.disconnect).toHaveBeenCalled();
+      expect(pool).toHaveLength(poolBefore); // pool unchanged
+    });
+
+    it("releaseBlockingReader closes the reader when the pool is already full", async () => {
+      const reader = {
+        xreadgroup: vi.fn().mockResolvedValue(null),
+        quit: vi.fn().mockResolvedValue("OK"),
+        disconnect: vi.fn(),
+        on: vi.fn(),
+      };
+      client.duplicate.mockReturnValueOnce(reader as unknown as Redis);
+      await service.xreadgroup("owners", "node-a", "match:cmd:m1", 16, 1000);
+
+      // Pre-fill the pool to BLOCKING_READER_POOL_MAX (16) and have no waiters.
+      const pool = (service as unknown as { blockingReaderPool: Redis[] })
+        .blockingReaderPool;
+      while (pool.length < 16) {
+        pool.push({} as unknown as Redis);
+      }
+      expect(pool).toHaveLength(16);
+
+      // The just-released reader cannot be re-pooled (pool full) and there
+      // are no waiters to hand it to → disconnect runs.
+      (
+        service as unknown as {
+          releaseBlockingReader: (r: Redis) => void;
+        }
+      ).releaseBlockingReader(reader as unknown as Redis);
+
+      expect(reader.disconnect).toHaveBeenCalled();
+      expect(pool).toHaveLength(16); // unchanged — the released reader dropped
+    });
+
+    it("releaseBlockingReader falls back to quit() when disconnect throws on overflow", async () => {
+      const reader = {
+        xreadgroup: vi.fn().mockResolvedValue(null),
+        quit: vi.fn().mockResolvedValue("OK"),
+        disconnect: vi.fn(() => {
+          throw new Error("disconnect-boom");
+        }),
+        on: vi.fn(),
+      };
+      client.duplicate.mockReturnValueOnce(reader as unknown as Redis);
+      await service.xreadgroup("owners", "node-a", "match:cmd:m1", 16, 1000);
+
+      // Fill the pool so release falls into the disconnect branch.
+      const pool = (service as unknown as { blockingReaderPool: Redis[] })
+        .blockingReaderPool;
+      while (pool.length < 16) {
+        pool.push({} as unknown as Redis);
+      }
+
+      (
+        service as unknown as {
+          releaseBlockingReader: (r: Redis) => void;
+        }
+      ).releaseBlockingReader(reader as unknown as Redis);
+
+      // disconnect throws → catch falls through to quit().
+      expect(reader.quit).toHaveBeenCalled();
+    });
+
+    it("discardBlockingReader falls back to quit() when disconnect throws", async () => {
+      const reader = {
+        xreadgroup: vi.fn().mockRejectedValue(new Error("NOGROUP")),
+        quit: vi.fn().mockResolvedValue("OK"),
+        disconnect: vi.fn(() => {
+          throw new Error("disconnect-boom");
+        }),
+        on: vi.fn(),
+      };
+      client.duplicate.mockReturnValueOnce(reader as unknown as Redis);
+
+      // Trigger the discard via a failed xreadgroup (NOGROUP path).
+      await expect(
+        service.xreadgroup("owners", "node-a", "match:cmd:m1", 16, 1000),
+      ).resolves.toEqual([]);
+
+      expect(reader.disconnect).toHaveBeenCalled();
+      expect(reader.quit).toHaveBeenCalled();
+    });
+
+    it("awaitResetBarrier waits for an in-flight subscriber reset to resolve", async () => {
+      // Drive an escalating reset: SUBSCRIBE rejected + every reconciliation
+      // unsubscribe rejected → resetSubscriber rebuilds with a fresh subscriber
+      // whose subscribe call hangs. While the rebuild is hung, a fresh subscribe
+      // must block on awaitResetBarrier (lines 1340-1342).
+      await service.subscribe("ch-keep", () => {});
+
+      // Hold the rebuild's subscribe so the reset barrier stays pending.
+      let resolveRebuild!: () => void;
+      const rebuildSub = makeSubscriber();
+      rebuildSub.subscribe.mockImplementation((channel: string) => {
+        if (channel === "ch-keep") {
+          return new Promise<void>((res) => (resolveRebuild = res));
+        }
+        return Promise.resolve(undefined);
+      });
+      client.duplicate.mockReturnValueOnce(rebuildSub as unknown as Redis);
+
+      // First subscribe on a fresh channel: SUBSCRIBE rejected, every orphan-
+      // unsubscribe retries rejected → escalation to full subscriber reset.
+      subscriber.subscribe.mockRejectedValueOnce(new Error("dropped-reply"));
+      subscriber.unsubscribe.mockRejectedValue(new Error("orphan-unsub-fail"));
+
+      // The trigger subscribe is rejected AFTER the reset barrier resolves,
+      // because reconcileAfterFailedSubscribe awaits the barrier before
+      // rethrowing the original error. We resolve the rebuild FIRST, then
+      // catch the rejection.
+      const trigger = service
+        .subscribe("ch-trigger", () => {})
+        .catch(() => undefined);
+
+      // Yield microtasks so resetSubscriber runs and starts the rebuild.
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+
+      // The reset is now in flight (rebuild is hanging on subscribe).
+      expect(
+        (service as unknown as { resetInProgress: Promise<void> | null })
+          .resetInProgress,
+      ).not.toBeNull();
+      expect(rebuildSub.subscribe).toHaveBeenCalled();
+
+      // A second subscribe on a fresh channel must await the in-flight reset.
+      let chainedSettled = false;
+      const chained = service
+        .subscribe("ch-chained", () => {})
+        .then(() => {
+          chainedSettled = true;
+        });
+
+      // Yield again — chained should NOT have settled yet because the reset
+      // is still pending (its rebuild subscribe is hanging).
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+      expect(chainedSettled).toBe(false);
+
+      // Resolve the rebuild's subscribe → reset barrier resolves → both
+      // the trigger subscribe (which is awaiting the barrier inside
+      // reconcileAfterFailedSubscribe) and the chained subscribe proceed.
+      resolveRebuild();
+      await trigger;
+      await chained;
+
+      expect(chainedSettled).toBe(true);
+      expect(rebuildSub.subscribe).toHaveBeenCalledWith("ch-chained");
+    });
   });
 });

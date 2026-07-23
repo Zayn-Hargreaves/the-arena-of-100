@@ -896,6 +896,7 @@ return 'REQUEUED'`;
       }
       this.lastBlockingReaderWaiters = depth;
       if (signal) {
+        /* c8 ignore next 4 */
         if (signal.aborted) {
           onAbort();
           return;

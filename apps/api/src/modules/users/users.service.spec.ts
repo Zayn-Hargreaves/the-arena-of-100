@@ -274,6 +274,68 @@ describe("UsersService", () => {
       expect(result.stats.survivalRate).toBe(0);
     });
 
+    it("clamps BigInt below MIN_SAFE_INTEGER to MIN_SAFE_INTEGER", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
+      vi.mocked(prisma.matchPlayer.groupBy).mockResolvedValue([]);
+      vi.mocked(prisma.match.count).mockResolvedValue(0);
+      vi.mocked(prisma.$queryRaw)
+        .mockResolvedValueOnce([
+          {
+            avg_response_ms: "0",
+            accuracy: "0",
+            total_correct: -9007199254740993n, // < Number.MIN_SAFE_INTEGER
+          },
+        ])
+        .mockResolvedValueOnce([{ survival_rate: "0" }]);
+
+      const result = await service.getMyStats("u1");
+      // Must round-trip without throwing; the negative BigInt clamps to MIN_SAFE_INTEGER.
+      expect(typeof result.stats.totalCorrectAnswers).toBe("number");
+      expect(result.stats.totalCorrectAnswers).toBe(Number.MIN_SAFE_INTEGER);
+    });
+
+    it("converts a BigInt inside the safe-integer range via Number()", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
+      vi.mocked(prisma.matchPlayer.groupBy).mockResolvedValue([]);
+      vi.mocked(prisma.match.count).mockResolvedValue(0);
+      vi.mocked(prisma.$queryRaw)
+        .mockResolvedValueOnce([
+          {
+            avg_response_ms: "0",
+            accuracy: "0",
+            total_correct: 9007199254740992n, // exactly MAX_SAFE_INTEGER
+          },
+        ])
+        .mockResolvedValueOnce([{ survival_rate: "0" }]);
+
+      const result = await service.getMyStats("u1");
+      // Inside the safe-integer range → uses Number(value) (no clamp).
+      expect(result.stats.totalCorrectAnswers).toBe(Number.MAX_SAFE_INTEGER);
+    });
+
+    it("returns 0 for a plain object with no toNumber/valueOf/toString overrides", async () => {
+      // A plain `{}` has no own toNumber/valueOf/toString. `Object.prototype.toString`
+      // is the inherited toString — the fallback path must reject it and return 0.
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
+      vi.mocked(prisma.matchPlayer.groupBy).mockResolvedValue([]);
+      vi.mocked(prisma.match.count).mockResolvedValue(0);
+      vi.mocked(prisma.$queryRaw)
+        .mockResolvedValueOnce([
+          {
+            avg_response_ms: {},
+            accuracy: {},
+            total_correct: 0,
+          },
+        ])
+        .mockResolvedValueOnce([{ survival_rate: {} }]);
+
+      const result = await service.getMyStats("u1");
+
+      expect(result.stats.avgResponseMs).toBe(0);
+      expect(result.stats.accuracy).toBe(0);
+      expect(result.stats.survivalRate).toBe(0);
+    });
+
     it("returns 0 when object fallback string is not numeric", async () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
       vi.mocked(prisma.matchPlayer.groupBy).mockResolvedValue([]);

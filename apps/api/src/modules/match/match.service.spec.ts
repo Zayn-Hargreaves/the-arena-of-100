@@ -1661,4 +1661,77 @@ describe("MatchService", () => {
       expect(redis.del).not.toHaveBeenCalledWith("match:state-revision:m1");
     });
   });
+
+  // ============================================================
+  // Coverage gap fill — evictStateMachine + idempotent finish +
+  // saveRoundAndAnswers pre-check branch.
+  // ============================================================
+  describe("coverage gaps", () => {
+    it("evictStateMachine removes the cached state machine (snapshot-restore safety)", () => {
+      // Pre-seed the in-memory cache.
+      const fakeSm = { id: "m1" } as unknown as MatchStateMachine;
+      (
+        service as unknown as { stateMachines: Map<string, MatchStateMachine> }
+      ).stateMachines.set("m1", fakeSm);
+
+      service.evictStateMachine("m1");
+
+      expect(
+        (
+          service as unknown as {
+            stateMachines: Map<string, MatchStateMachine>;
+          }
+        ).stateMachines.has("m1"),
+      ).toBe(false);
+    });
+
+    it("finishMatch returns the canonical row when a prior finish already won the race (count === 0)", async () => {
+      // Default mock: updateMany returns { count: 1 }. Force the idempotent
+      // guard by making this finish see count: 0.
+      vi.mocked(prisma.match.updateMany).mockResolvedValueOnce({ count: 0 });
+      const canonical = { id: "m1", winnerId: "u1", endedAt: new Date() };
+      vi.mocked(prisma.match.findUnique).mockResolvedValueOnce(
+        canonical as any,
+      );
+      const warnSpy = vi.spyOn(
+        (service as unknown as { logger: { warn: typeof vi.fn } }).logger,
+        "warn",
+      );
+
+      const result = await service.finishMatch("m1", "u1", "r1");
+
+      expect(result).toEqual(canonical);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "finishMatch: match m1 was already FINISHED; treating this call as a no-op",
+        ),
+      );
+    });
+
+    it("saveRoundAndAnswers short-circuits when the pre-check finds the round already persisted", async () => {
+      // The pre-check inside the transaction finds an existing round row,
+      // so the function logs a warning and returns the existing row
+      // without re-creating.
+      vi.mocked(prisma.matchRound.findUnique).mockResolvedValueOnce({
+        id: "round-existing",
+      } as any);
+      const warnSpy = vi.spyOn(
+        (service as unknown as { logger: { warn: typeof vi.fn } }).logger,
+        "warn",
+      );
+
+      const round = await service.saveRoundAndAnswers("m1", 2, "q2", [
+        { userId: "u1", answer: "A", isCorrect: true, responseTimeMs: 100 },
+      ]);
+
+      expect(round).toEqual({ id: "round-existing" });
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "saveRoundAndAnswers: round 2 for match m1 already persisted; treating as no-op",
+        ),
+      );
+      // We must NOT have called create on the existing round.
+      expect(prisma.matchRound.create).not.toHaveBeenCalled();
+    });
+  });
 });

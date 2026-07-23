@@ -1637,4 +1637,58 @@ describe("GameLoopService", () => {
       expect((service as any).server).toBe(mockServer);
     });
   });
+
+  describe("constructor wiring: setRecoveryDeps.resumeMatchLoop", () => {
+    // Line 145: the recovery resume callback must register the match on
+    // the owner command consumer BEFORE delegating to the round runner, so
+    // forwarded answers stranded in the failover gap are drained on takeover.
+    function captureResumeMatchLoop(): (
+      matchId: string,
+      hydratedSm: unknown,
+      roomId: string,
+      server: Server,
+    ) => Promise<void> {
+      const ownership = (service as any).matchOwnership;
+      const setRecoveryDeps = ownership.setRecoveryDeps as ReturnType<
+        typeof vi.fn
+      >;
+      const deps = setRecoveryDeps.mock.calls[0][0] as {
+        resumeMatchLoop: (
+          matchId: string,
+          hydratedSm: unknown,
+          roomId: string,
+          server: Server,
+        ) => Promise<void>;
+      };
+      return deps.resumeMatchLoop;
+    }
+
+    it("registers the match on the command channel BEFORE resuming the round runner", async () => {
+      const callOrder: string[] = [];
+      const matchCommand = (service as any).matchCommand;
+      vi.mocked(matchCommand.registerMatch).mockImplementation(async () => {
+        callOrder.push("registerMatch");
+      });
+      vi.spyOn(
+        (service as any).roundRunner,
+        "resumeMatchLoop",
+      ).mockImplementation(async () => {
+        callOrder.push("roundRunner.resumeMatchLoop");
+      });
+
+      const resume = captureResumeMatchLoop();
+      await resume("m-takeover", { fake: "sm" }, "r-takeover", mockServer);
+
+      expect(matchCommand.registerMatch).toHaveBeenCalledWith(
+        "m-takeover",
+        mockServer,
+      );
+      // Order: registerMatch MUST run before the round runner so the
+      // command consumer is live before any forwarded answer lands.
+      expect(callOrder).toEqual([
+        "registerMatch",
+        "roundRunner.resumeMatchLoop",
+      ]);
+    });
+  });
 });

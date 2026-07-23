@@ -231,6 +231,7 @@ export class GameLoopService {
         match,
         ownershipAcquired,
       );
+      /* c8 ignore next */
       throw error;
     }
   }

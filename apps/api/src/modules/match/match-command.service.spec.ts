@@ -892,4 +892,95 @@ describe("MatchCommandService (B4a)", () => {
       expect(redis.xdel).not.toHaveBeenCalled();
     });
   });
+
+  // ============================================================
+  // Coverage gap fill — polling loop iteration + mid-loop abort.
+  // ============================================================
+  describe("coverage gaps (B4a polling loop)", () => {
+    it("ensurePolling iterates every registered match and dispatches a poll", async () => {
+      vi.useFakeTimers();
+      const pollOnceSpy = vi.spyOn(service, "pollOnce").mockResolvedValue();
+
+      // Register two matches — polling loop iterates both.
+      await service.registerMatch("m-a", server);
+      await service.registerMatch("m-b", server);
+
+      // Advance by POLL_INTERVAL_MS (250) — the setInterval callback fires.
+      vi.advanceTimersByTime(250);
+      // The dispatch is async; flush microtasks so the promise chain settles.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(pollOnceSpy).toHaveBeenCalledWith(
+        "m-a",
+        server,
+        expect.any(AbortSignal),
+      );
+      expect(pollOnceSpy).toHaveBeenCalledWith(
+        "m-b",
+        server,
+        expect.any(AbortSignal),
+      );
+
+      vi.useRealTimers();
+    });
+
+    it("pollOnce short-circuits mid-loop when the abort signal fires between entries", async () => {
+      // Force two entries through xreadgroup; abort the registration's signal
+      // BEFORE the second entry is processed. (mock is on RedisService's own
+      // xreadgroup method, so return the already-parsed StreamEntry[] shape.)
+      redis.xreadgroup.mockResolvedValueOnce([
+        {
+          id: "1-0",
+          data: JSON.stringify(submitEnv({ matchId: "m-mid-abort" })),
+        },
+        {
+          id: "2-0",
+          data: JSON.stringify(
+            submitEnv({ matchId: "m-mid-abort", eventId: "evt-2" }),
+          ),
+        },
+      ]);
+      redis.xautoclaim.mockResolvedValueOnce({
+        nextCursor: "0-0",
+        claimed: [],
+      });
+
+      // Track call order so we can abort after the FIRST entry's dispatch.
+      let firstEntryDone = false;
+      service.setDispatcher(async () => {
+        if (!firstEntryDone) {
+          firstEntryDone = true;
+          const regs = (
+            service as unknown as {
+              registered: Map<string, { abort: AbortController }>;
+            }
+          ).registered;
+          regs.get("m-mid-abort")?.abort.abort();
+        }
+        return "APPLIED";
+      });
+
+      await service.registerMatch("m-mid-abort", server);
+
+      // pollOnce must receive the registration's abort signal so the
+      // mid-loop abort check (line 268) can short-circuit the second entry.
+      const regAbort = (
+        service as unknown as {
+          registered: Map<string, { abort: AbortController }>;
+        }
+      ).registered.get("m-mid-abort")!.abort;
+      await service.pollOnce("m-mid-abort", server, regAbort.signal);
+
+      // First entry was acked; second entry MUST NOT have been processed.
+      expect(redis.xack).toHaveBeenCalledTimes(1);
+      expect(redis.xack).toHaveBeenCalledWith(
+        "match:cmd:m-mid-abort",
+        OWNER_GROUP,
+        "1-0",
+      );
+      // Clean up so afterEach's onModuleDestroy is a no-op.
+      service.deregisterMatch("m-mid-abort");
+    });
+  });
 });

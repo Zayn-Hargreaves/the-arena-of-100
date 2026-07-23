@@ -19,6 +19,9 @@ type RedisMock = {
   get: ReturnType<typeof vi.fn>;
   set: ReturnType<typeof vi.fn>;
   serverTimeMs: ReturnType<typeof vi.fn>;
+  removeActiveIfStateAbsent?: ReturnType<typeof vi.fn>;
+  removeActiveIfTombstoned?: ReturnType<typeof vi.fn>;
+  finalizeMatchTombstone?: ReturnType<typeof vi.fn>;
 };
 
 describe("MatchOwnershipService (B2b)", () => {
@@ -60,6 +63,9 @@ describe("MatchOwnershipService (B2b)", () => {
       get: vi.fn().mockResolvedValue(null),
       set: vi.fn().mockResolvedValue(undefined),
       serverTimeMs: vi.fn().mockResolvedValue(1_000_000),
+      removeActiveIfStateAbsent: vi.fn().mockResolvedValue("PRESENT"),
+      removeActiveIfTombstoned: vi.fn().mockResolvedValue("REMOVED"),
+      finalizeMatchTombstone: vi.fn().mockResolvedValue("FINALIZED"),
     };
     service = makeService();
   });
@@ -585,6 +591,207 @@ describe("MatchOwnershipService (B2b)", () => {
       redis.renewLease.mockRejectedValue("string-renew-fail");
       await expect(service.heartbeat()).resolves.toBeUndefined();
       expect(service.isOwner("m3")).toBe(true);
+    });
+  });
+
+  // ============================================================
+  // Coverage gap fill — launch / recovery error branches.
+  // ============================================================
+  describe("coverage gaps (B2b/B3b)", () => {
+    it("acquireOnLaunch returns false when the match is tombstoned (TERMINAL)", async () => {
+      redis.acquireMatchLease.mockResolvedValueOnce("TERMINAL");
+
+      await expect(service.acquireOnLaunch("m-finalized", "r1")).resolves.toBe(
+        false,
+      );
+      expect(service.isOwner("m-finalized")).toBe(false);
+      // No match:active index write for a tombstoned match.
+      expect(redis.sadd).not.toHaveBeenCalled();
+    });
+
+    it("compensateLaunchFailure treats CAS false + foreign owner as a proven release", async () => {
+      // 3rd retry: CAS returns false AND the confirming read shows a foreign
+      // owner ⇒ release proven, no recovery handoff (no extra sadd call).
+      redis.sadd.mockRejectedValue(new Error("index write failed"));
+      redis.releaseLeaseAndIndex.mockResolvedValue(false);
+      redis.get.mockResolvedValue("node-b:9");
+
+      await expect(service.acquireOnLaunch("m1", "r1")).resolves.toBe(false);
+      // Only the 3 index-write retries ran; no extra handoff sadd.
+      expect(redis.sadd).toHaveBeenCalledTimes(3);
+      expect(service.isOwner("m1")).toBe(false);
+    });
+
+    it("recoverOnBoot logs and continues when per-match recovery scan throws", async () => {
+      // listActiveMatchIds reads from redis.smembers — make it return two ids,
+      // and make removeActiveIfStateAbsent throw for one of them.
+      redis.smembers.mockResolvedValueOnce(["m-good", "m-bad"]);
+      redis.removeActiveIfStateAbsent
+        .mockResolvedValueOnce("PRESENT")
+        .mockRejectedValueOnce(new Error("scan-boom"));
+      // Wire server so recoverOnBoot dispatches recovery instead of buffering.
+      (service as unknown as { server: unknown }).server = {
+        to: vi.fn().mockReturnValue({ emit: vi.fn() }),
+      };
+
+      await (
+        service as unknown as {
+          recoverOnBoot: () => Promise<void>;
+        }
+      ).recoverOnBoot();
+
+      // Both ids were attempted — the per-match catch swallowed the throw
+      // and the good one continued through the recovery path.
+      expect(redis.removeActiveIfStateAbsent).toHaveBeenCalledWith(
+        "match:state:m-good",
+        ACTIVE_SET,
+        "m-good",
+      );
+      expect(redis.removeActiveIfStateAbsent).toHaveBeenCalledWith(
+        "match:state:m-bad",
+        ACTIVE_SET,
+        "m-bad",
+      );
+    });
+
+    it("reverifyOwnedRecoveryLease returns the fresh entry after a takeover reacquire", async () => {
+      // Seed an owned entry; renewLease fails; the recovery acquire succeeds.
+      await service.acquireOnLaunch("m1", "r1");
+      redis.renewLease.mockResolvedValue(false);
+      redis.acquireMatchLease.mockResolvedValueOnce({
+        fence: 2,
+        leaseValue: "node-a:2",
+      });
+
+      const result = await (
+        service as unknown as {
+          reverifyOwnedRecoveryLease: (
+            matchId: string,
+            entry: unknown,
+            server: unknown,
+          ) => Promise<unknown>;
+        }
+      ).reverifyOwnedRecoveryLease(
+        "m1",
+        { roomId: "r1", fence: 1, leaseValue: "node-a:1" },
+        { to: vi.fn().mockReturnValue({ emit: vi.fn() }) },
+      );
+
+      // The fresh fence/lease is reflected in the result.
+      expect(result).toEqual({ roomId: "", fence: 2, leaseValue: "node-a:2" });
+    });
+
+    it("resumeRecoveryLoop falls back to getRoomIdByMatchId when the SM roomId is empty", async () => {
+      // Bypass acquireOnLaunch so we can pre-seed owned state without the
+      // full launch flow.
+      (service as unknown as { owned: Map<string, unknown> }).owned.set("m1", {
+        roomId: "",
+        fence: 1,
+        leaseValue: "node-a:1",
+      });
+
+      const recovery = {
+        getStateMachine: vi.fn().mockResolvedValue(null),
+        getRoomIdByMatchId: vi.fn().mockResolvedValue("r-from-db"),
+        resumeMatchLoop: vi.fn().mockResolvedValue(undefined),
+      };
+      (service as unknown as { recovery: unknown }).recovery = recovery;
+
+      // Stub the SM with an empty roomId so the fallback fires.
+      const fakeSm = {
+        getState: () => ({ roomId: "", currentRoundNo: 0 }),
+        getEventLog: () => [],
+      };
+
+      await (
+        service as unknown as {
+          resumeRecoveryLoop: (
+            matchId: string,
+            sm: unknown,
+            entry: unknown,
+            server: unknown,
+          ) => Promise<void>;
+        }
+      ).resumeRecoveryLoop(
+        "m1",
+        fakeSm,
+        { roomId: "r1", fence: 1, leaseValue: "node-a:1" },
+        { to: vi.fn().mockReturnValue({ emit: vi.fn() }) },
+      );
+
+      // The DB-backed roomId is used.
+      expect(recovery.getRoomIdByMatchId).toHaveBeenCalledWith("m1");
+      expect(recovery.resumeMatchLoop).toHaveBeenCalledWith(
+        "m1",
+        fakeSm,
+        "r-from-db",
+        expect.anything(),
+      );
+    });
+
+    it("finalizeTerminal swallows a releaseLease throw after FINALIZED (lease self-expires)", async () => {
+      // Pre-seed ownership so finalizeTerminal can find the entry.
+      (service as unknown as { owned: Map<string, unknown> }).owned.set("m1", {
+        roomId: "r1",
+        fence: 1,
+        leaseValue: "node-a:1",
+      });
+
+      // Drive a recovery that finishes cleanly (FINALIZED) but the post-
+      // finalize releaseLease throws — the catch must absorb it so we don't
+      // surface an error to the caller.
+      redis.finalizeMatchTombstone?.mockResolvedValueOnce("FINALIZED");
+      redis.releaseLease.mockRejectedValueOnce(new Error("release-boom"));
+
+      await (
+        service as unknown as {
+          finalizeTerminal: (matchId: string, reason: string) => Promise<void>;
+        }
+      ).finalizeTerminal("m1", "cleaned");
+
+      // releaseLease was attempted (and threw) — the call did NOT propagate.
+      expect(redis.releaseLease).toHaveBeenCalledWith(
+        "match:owner:m1",
+        "node-a:1",
+      );
+    });
+
+    it("scheduleRecoveryRetry arms the first backoff timer and re-attempts recovery", async () => {
+      vi.useFakeTimers();
+      const attemptRecovery = vi.fn().mockResolvedValue(undefined);
+      (
+        service as unknown as {
+          attemptRecovery: typeof attemptRecovery;
+        }
+      ).attemptRecovery = attemptRecovery;
+
+      await (
+        service as unknown as {
+          scheduleRecoveryRetry: (matchId: string, server: unknown) => void;
+        }
+      ).scheduleRecoveryRetry("m1", {
+        to: vi.fn().mockReturnValue({ emit: vi.fn() }),
+      });
+
+      // A timer was registered for the first backoff (~1s).
+      const timers = (
+        service as unknown as {
+          retries: Map<string, { timer: ReturnType<typeof setTimeout> | null }>;
+        }
+      ).retries;
+      const ctx = timers.get("m1");
+      expect(ctx).toBeDefined();
+      expect(ctx?.timer).not.toBeNull();
+
+      // Advancing the timer triggers another recovery attempt.
+      vi.advanceTimersByTime(1500);
+      // Wait for the scheduleRecoveryRetry's promise chain to flush.
+      await Promise.resolve();
+      expect(attemptRecovery).toHaveBeenCalledWith(
+        "m1",
+        expect.objectContaining({ to: expect.any(Function) }),
+      );
+      vi.useRealTimers();
     });
   });
 });

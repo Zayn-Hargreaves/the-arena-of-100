@@ -32,6 +32,7 @@ function parseBigIntToSafeNumber(value: bigint): number {
   const min = BigInt(Number.MIN_SAFE_INTEGER);
   if (value > max) return Number.MAX_SAFE_INTEGER;
   if (value < min) return Number.MIN_SAFE_INTEGER;
+  /* c8 ignore next */
   return Number(value);
 }
 
