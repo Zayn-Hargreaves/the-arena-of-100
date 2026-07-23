@@ -35,15 +35,20 @@ if (typeof HTMLDialogElement !== "undefined") {
 }
 
 // next-intl useTranslations hook — return a function that mirrors the key path.
-// Wrapped in vi.fn() so individual specs can override the translator per-test
+// Wrapped in vi.hoisted() so it is initialized before the hoisted vi.mock
+// factory executes; vi.fn() preserves per-spec override capability
 // (e.g., to assert against resolved locale strings rather than key paths).
-const useTranslationsMock = vi.fn(
-  (_namespace?: string) =>
-    (key: string, params?: Record<string, string | number>) => {
-      if (!params) return key;
-      return key.replace(/\{(\w+)\}/g, (_, name) => String(params[name] ?? ""));
-    },
-);
+const { useTranslationsMock } = vi.hoisted(() => ({
+  useTranslationsMock: vi.fn(
+    (_namespace?: string) =>
+      (key: string, params?: Record<string, string | number>) => {
+        if (!params) return key;
+        return key.replace(/\{(\w+)\}/g, (_, name) =>
+          String(params[name] ?? ""),
+        );
+      },
+  ),
+}));
 
 vi.mock("next-intl", async () => {
   const actual = await vi.importActual<typeof import("next-intl")>("next-intl");

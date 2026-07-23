@@ -260,6 +260,7 @@ describe("Sidebar — mobile", () => {
 
   it("closes the mobile overlay when the dialog close button is clicked", async () => {
     const user = userEvent.setup();
+    const previousImpl = vi.mocked(useTranslations).getMockImplementation();
     // Localize the Sidebar translator so the dialog close button exposes its
     // resolved accessible name ("Close menu") instead of the key path.
     vi.mocked(useTranslations).mockImplementation(((namespace?: string) =>
@@ -273,17 +274,23 @@ describe("Sidebar — mobile", () => {
         );
       }) as never);
 
-    render(<Sidebar nickname="Alice" />);
-    await user.click(screen.getByRole("button", { name: "Open menu" }));
-    const dialog = screen.getByRole("dialog", {
-      name: "Mobile navigation menu",
-    });
-    const closeButton = within(dialog).getByRole("button", {
-      name: "Close menu",
-    });
-    await user.click(closeButton);
-    expect(
-      screen.queryByRole("dialog", { name: "Mobile navigation menu" }),
-    ).not.toBeInTheDocument();
+    try {
+      render(<Sidebar nickname="Alice" />);
+      await user.click(screen.getByRole("button", { name: "Open menu" }));
+      const dialog = screen.getByRole("dialog", {
+        name: "Mobile navigation menu",
+      });
+      const closeButton = within(dialog).getByRole("button", {
+        name: "Close menu",
+      });
+      await user.click(closeButton);
+      expect(
+        screen.queryByRole("dialog", { name: "Mobile navigation menu" }),
+      ).not.toBeInTheDocument();
+    } finally {
+      if (previousImpl) {
+        vi.mocked(useTranslations).mockImplementation(previousImpl);
+      }
+    }
   });
 });
