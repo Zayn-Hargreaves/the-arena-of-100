@@ -152,6 +152,7 @@
     "guestName": "Người chơi khách",
     "guestRole": "Người chơi khách",
     "playerRole": "Người chơi",
+    "closeMenu": "Đóng menu",
     "nav": {
       "createRoom": "Tạo Phòng",
       "arena": "Đấu Trường",

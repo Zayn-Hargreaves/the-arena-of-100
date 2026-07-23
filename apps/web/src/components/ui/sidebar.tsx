@@ -64,10 +64,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       if (typeof dialog.showModal === "function") {
         dialog.showModal();
       }
-    } else if (!mobileOpen && dialog.open) {
-      if (typeof dialog.close === "function") {
-        dialog.close();
-      }
     }
   }, [mobileOpen]);
 
@@ -254,6 +250,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onClick={() => setMobileOpen(false)}
             className="absolute inset-0 -z-10 cursor-default"
           />
+          <button
+            type="button"
+            onClick={() => dialogRef.current?.close()}
+            aria-label={t("closeMenu")}
+            className="self-end p-2 rounded-xl bg-candy-cloud border-3 border-candy-ink hover:bg-candy-yellow text-candy-ink transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-candy-yellow"
+          >
+            <X className="w-5 h-5" />
+          </button>
           <nav className="flex-1 space-y-3">
             {navItems.map((item) => {
               const Icon = item.icon;

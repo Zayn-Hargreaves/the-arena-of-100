@@ -152,6 +152,7 @@
     "guestName": "Guest Player",
     "guestRole": "Guest Player",
     "playerRole": "Player",
+    "closeMenu": "Close menu",
     "nav": {
       "createRoom": "Create Room",
       "arena": "Arena",
@@ -422,7 +423,7 @@
     "secondsShort": "{seconds}s",
     "categoryLabel": "Question Topic",
     "maxPlayersLabel": "Player Limit",
-    "playersCount": "{count} Players",
+    "playersCount": "{count, plural, one {# Player} other {# Players}}",
     "warningNoticeTitle": "Notice:",
     "warningNoticeBody": "Once the room is created, you will be the Host responsible for starting the match when players are ready. Survival battle will instantly eliminate anyone who answers incorrectly or runs out of time!",
     "createErrorFallback": "Failed to create room. Please try again.",

@@ -1,6 +1,8 @@
 // Unit tests for Sidebar (desktop shell + mobile overlay).
 // Validates: gradient removal, desktop collapse, active state, mobile open/close,
 // Escape key, backdrop click, focus styling, tooltip in collapsed mode.
+import "@testing-library/jest-dom/vitest";
+import { useTranslations } from "next-intl";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -237,5 +239,51 @@ describe("Sidebar — mobile", () => {
     // nav.arena is disabled even in the mobile overlay.
     expect(within(dialog).queryByText("nav.arena")).not.toBeInTheDocument();
     expect(within(dialog).getByText("nav.rankings")).toBeInTheDocument();
+  });
+
+  it("closes the mobile overlay when the hidden backdrop button is clicked", async () => {
+    const user = userEvent.setup();
+    render(<Sidebar nickname="Alice" />);
+    await user.click(screen.getByRole("button", { name: "Open menu" }));
+    const dialog = screen.getByRole("dialog", {
+      name: "Mobile navigation menu",
+    });
+    const backdropButton = dialog.querySelector('button[aria-hidden="true"]');
+    expect(backdropButton).not.toBeNull();
+    if (backdropButton) {
+      await user.click(backdropButton);
+    }
+    expect(
+      screen.queryByRole("dialog", { name: "Mobile navigation menu" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("closes the mobile overlay when the dialog close button is clicked", async () => {
+    const user = userEvent.setup();
+    // Localize the Sidebar translator so the dialog close button exposes its
+    // resolved accessible name ("Close menu") instead of the key path.
+    vi.mocked(useTranslations).mockImplementation(((namespace?: string) =>
+      (key: string, params?: Record<string, string | number>) => {
+        if (namespace === "Sidebar" && key === "closeMenu") {
+          return "Close menu";
+        }
+        if (!params) return key;
+        return key.replace(/\{(\w+)\}/g, (_, name) =>
+          String(params[name] ?? ""),
+        );
+      }) as never);
+
+    render(<Sidebar nickname="Alice" />);
+    await user.click(screen.getByRole("button", { name: "Open menu" }));
+    const dialog = screen.getByRole("dialog", {
+      name: "Mobile navigation menu",
+    });
+    const closeButton = within(dialog).getByRole("button", {
+      name: "Close menu",
+    });
+    await user.click(closeButton);
+    expect(
+      screen.queryByRole("dialog", { name: "Mobile navigation menu" }),
+    ).not.toBeInTheDocument();
   });
 });
