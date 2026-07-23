@@ -1366,13 +1366,15 @@ describe("MatchRoundRunner", () => {
       vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
       const loggerWarnSpy = vi.spyOn((runner as any).logger, "warn");
 
-      await runner.handlePlayerDisconnect(
+      const outcome = await runner.handlePlayerDisconnect(
         "match-nonexistent",
         "p1",
         mockServer,
       );
 
       expect(loggerWarnSpy).not.toHaveBeenCalled();
+      // B5 hardening: return "NOOP" so the command-stream wrapper acks.
+      expect(outcome).toBe("NOOP");
     });
 
     it("should return early in checkEarlyTermination if stateMachine is not found", async () => {
@@ -1690,12 +1692,19 @@ describe("MatchRoundRunner", () => {
   describe("B2c fail-closed fencing branches", () => {
     const makeRunner = (
       ownershipOverrides: Record<string, unknown> = {},
+      disposeCommandStream?: (matchId: string) => Promise<void>,
     ): MatchRoundRunner =>
-      new MatchRoundRunner(matchService, questionService, roomService, {
-        assertOwnership: vi.fn().mockResolvedValue(true),
-        release: vi.fn().mockResolvedValue(undefined),
-        ...ownershipOverrides,
-      } as unknown as import("./match-ownership.service").MatchOwnershipService);
+      new MatchRoundRunner(
+        matchService,
+        questionService,
+        roomService,
+        {
+          assertOwnership: vi.fn().mockResolvedValue(true),
+          release: vi.fn().mockResolvedValue(undefined),
+          ...ownershipOverrides,
+        } as unknown as import("./match-ownership.service").MatchOwnershipService,
+        disposeCommandStream,
+      );
 
     const armActiveRound = () => {
       stateMachine.transition(MatchStatus.COUNTDOWN);
@@ -1920,7 +1929,8 @@ describe("MatchRoundRunner", () => {
       const emitSpy = vi.fn();
       (mockServer.to as any).mockReturnValue({ emit: emitSpy });
       const release = vi.fn().mockResolvedValue(undefined);
-      const runner2 = makeRunner({ release });
+      const disposeCommandStream = vi.fn().mockResolvedValue(undefined);
+      const runner2 = makeRunner({ release }, disposeCommandStream);
 
       stateMachine.transition(MatchStatus.COUNTDOWN);
       stateMachine.transition(MatchStatus.ROUND_ACTIVE);
@@ -1935,14 +1945,20 @@ describe("MatchRoundRunner", () => {
         expect.objectContaining({ matchId: "match-1" }),
       );
       expect(release).toHaveBeenCalledWith("match-1");
+      // B4b: natural finish drops match:cmd + match:applied.
+      expect(disposeCommandStream).toHaveBeenCalledWith("match-1");
     });
 
-    it("handlePlayerDisconnect: a non-APPLIED persist skips the disconnect broadcast", async () => {
+    it("handlePlayerDisconnect: a non-APPLIED persist skips the disconnect broadcast and propagates the outcome", async () => {
+      // B5 hardening: the runner now returns the underlying persist outcome so
+      // the command-stream wrapper can decide XACK vs RETRY. A non-APPLIED
+      // outcome here means the lease was lost mid-apply; the wrapper MUST map
+      // this to "RETRY" so the entry stays pending for the new owner.
       const emitSpy = vi.fn();
       (mockServer.to as any).mockReturnValue({ emit: emitSpy });
       vi.mocked(matchService.persistStateMachine).mockResolvedValue("RETRY");
 
-      await runner.handlePlayerDisconnect(
+      const outcome = await runner.handlePlayerDisconnect(
         "match-1",
         "p1",
         mockServer as unknown as Server,
@@ -1950,6 +1966,76 @@ describe("MatchRoundRunner", () => {
 
       expect(matchService.persistStateMachine).toHaveBeenCalled();
       expect(emitSpy).not.toHaveBeenCalled();
+      expect(outcome).toBe("RETRY");
+    });
+
+    it("handlePlayerDisconnect: BLIND persist outcome is also propagated (no broadcast)", async () => {
+      // Symmetric coverage for the BLIND branch — same XACK-vs-RETRY contract.
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+      vi.mocked(matchService.persistStateMachine).mockResolvedValue("BLIND");
+
+      const outcome = await runner.handlePlayerDisconnect(
+        "match-1",
+        "p1",
+        mockServer as unknown as Server,
+      );
+
+      expect(emitSpy).not.toHaveBeenCalled();
+      expect(outcome).toBe("BLIND");
+    });
+
+    it("handlePlayerDisconnect: APPLIED persist returns 'APPLIED' after the broadcast", async () => {
+      // Symmetric coverage for the happy path.
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+      vi.mocked(matchService.persistStateMachine).mockResolvedValue("APPLIED");
+
+      const outcome = await runner.handlePlayerDisconnect(
+        "match-1",
+        "p1",
+        mockServer as unknown as Server,
+      );
+
+      expect(emitSpy).toHaveBeenCalledWith(
+        ServerEvent.PLAYER_LEFT,
+        expect.objectContaining({
+          roomId: "room-1",
+          playerId: "p1",
+          reason: "DISCONNECTED",
+        }),
+      );
+      expect(outcome).toBe("APPLIED");
+    });
+
+    it("handlePlayerDisconnect: missing state machine returns 'NOOP' (ackable)", async () => {
+      // Pre-conditions failed → no persist attempted → caller can XACK.
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
+
+      const outcome = await runner.handlePlayerDisconnect(
+        "match-nonexistent",
+        "p1",
+        mockServer as unknown as Server,
+      );
+
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+      expect(outcome).toBe("NOOP");
+    });
+
+    it("handlePlayerDisconnect: unknown player returns 'NOOP' (ackable)", async () => {
+      // Same as the missing-SM case: nothing to persist, ackable no-op.
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+      const outcome = await runner.handlePlayerDisconnect(
+        "match-1",
+        "non-existent-player",
+        mockServer as unknown as Server,
+      );
+
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+      expect(emitSpy).not.toHaveBeenCalled();
+      expect(outcome).toBe("NOOP");
     });
   });
 
@@ -2465,6 +2551,216 @@ describe("MatchRoundRunner", () => {
 
     it("awaitFinish resolves immediately when no finish is in flight", async () => {
       await expect(runner.awaitFinish("match-99")).resolves.toBeUndefined();
+    });
+  });
+
+  // ============================================================
+  // Coverage gap fill — phase-deadline fallback branches and
+  // recovery event-log / endRound bypass edges.
+  // ============================================================
+  describe("coverage gaps (resolvePhaseDeadline + endRound + recovery)", () => {
+    // Build a state machine stub for the deadline tests without relying on
+    // transition() side-effects (which set phaseEndsAt on every transition).
+    function makeStubSm(opts: {
+      status: MatchStatus;
+      phaseEndsAt?: number | null;
+      startedAt?: number;
+      roundResultStartedAt?: number;
+      currentRound?: { endsAt: number } | null;
+    }): MatchStateMachine {
+      const state: Record<string, unknown> = {
+        status: opts.status,
+        phaseEndsAt: opts.phaseEndsAt ?? null,
+        startedAt: opts.startedAt,
+        roundResultStartedAt: opts.roundResultStartedAt,
+        currentRoundNo: 1,
+      };
+      return {
+        getState: () => state,
+        getCurrentRound: () => opts.currentRound ?? null,
+        getEventLog: () => [],
+      } as unknown as MatchStateMachine;
+    }
+
+    it("resolvePhaseDeadline falls back to round.endsAt for ROUND_ACTIVE when phaseEndsAt is missing", () => {
+      const sm = makeStubSm({
+        status: MatchStatus.ROUND_ACTIVE,
+        phaseEndsAt: null,
+        currentRound: { endsAt: 1234 },
+      });
+
+      const deadline = (
+        runner as unknown as {
+          resolvePhaseDeadline: (
+            sm: MatchStateMachine,
+            status: MatchStatus,
+          ) => number | null;
+        }
+      ).resolvePhaseDeadline(sm, MatchStatus.ROUND_ACTIVE);
+
+      expect(deadline).toBe(1234);
+    });
+
+    it("resolvePhaseDeadline falls back to startedAt + COUNTDOWN_DURATION_MS for COUNTDOWN when phaseEndsAt is missing", () => {
+      const sm = makeStubSm({
+        status: MatchStatus.COUNTDOWN,
+        phaseEndsAt: null,
+        startedAt: 1000,
+      });
+
+      const deadline = (
+        runner as unknown as {
+          resolvePhaseDeadline: (
+            sm: MatchStateMachine,
+            status: MatchStatus,
+          ) => number | null;
+        }
+      ).resolvePhaseDeadline(sm, MatchStatus.COUNTDOWN);
+
+      expect(deadline).toBe(1000 + GAME_CONFIG.COUNTDOWN_DURATION_MS);
+    });
+
+    it("resolvePhaseDeadline returns null for COUNTDOWN when startedAt is missing", () => {
+      const sm = makeStubSm({
+        status: MatchStatus.COUNTDOWN,
+        phaseEndsAt: null,
+        startedAt: undefined,
+      });
+
+      const deadline = (
+        runner as unknown as {
+          resolvePhaseDeadline: (
+            sm: MatchStateMachine,
+            status: MatchStatus,
+          ) => number | null;
+        }
+      ).resolvePhaseDeadline(sm, MatchStatus.COUNTDOWN);
+
+      expect(deadline).toBeNull();
+    });
+
+    it("resolvePhaseDeadline falls back to roundResultStartedAt + RESULT_DISPLAY_MS for ROUND_RESULT when phaseEndsAt is missing", () => {
+      const sm = makeStubSm({
+        status: MatchStatus.ROUND_RESULT,
+        phaseEndsAt: null,
+        roundResultStartedAt: 2000,
+      });
+
+      const deadline = (
+        runner as unknown as {
+          resolvePhaseDeadline: (
+            sm: MatchStateMachine,
+            status: MatchStatus,
+          ) => number | null;
+        }
+      ).resolvePhaseDeadline(sm, MatchStatus.ROUND_RESULT);
+
+      expect(deadline).toBe(2000 + GAME_CONFIG.RESULT_DISPLAY_MS);
+    });
+
+    it("resolvePhaseDeadline returns null for an unrecognized status (default branch)", () => {
+      // CREATED is a valid MatchStatus that doesn't have a fallback branch.
+      const sm = makeStubSm({
+        status: MatchStatus.CREATED,
+        phaseEndsAt: null,
+      });
+
+      const deadline = (
+        runner as unknown as {
+          resolvePhaseDeadline: (
+            sm: MatchStateMachine,
+            status: MatchStatus,
+          ) => number | null;
+        }
+      ).resolvePhaseDeadline(sm, MatchStatus.CREATED);
+
+      expect(deadline).toBeNull();
+    });
+
+    it("endRound bypasses when state is ROUND_EVALUATING but the round is not COMPLETED", async () => {
+      // Stub the state machine to ROUND_EVALUATING with a non-COMPLETED round.
+      const fakeRound = { status: "ACTIVE", roundNo: 1 };
+      const fakeSm = {
+        getState: () => ({ status: MatchStatus.ROUND_EVALUATING }),
+        getCurrentRound: () => fakeRound,
+        getEventLog: () => [],
+      } as unknown as MatchStateMachine;
+      vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(fakeSm);
+
+      const warnSpy = vi
+        .spyOn(
+          (runner as unknown as { logger: { warn: typeof vi.fn } }).logger,
+          "warn",
+        )
+        .mockImplementation(() => undefined);
+
+      await (
+        runner as unknown as {
+          endRound: (
+            matchId: string,
+            roomId: string,
+            server: Server,
+          ) => Promise<void>;
+        }
+      ).endRound("match-1", "room-1", mockServer);
+
+      // Bypass path: no persist, no broadcast, warn logged.
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "endRound bypassed for match match-1: state.status is ROUND_EVALUATING, round status is ACTIVE",
+        ),
+      );
+    });
+
+    it("getRecoveryEliminatedIdsFromEventLog returns null when eliminatedIds is not an array", () => {
+      const fakeEvent = {
+        type: "ROUND_EVALUATED",
+        payload: { eliminatedIds: "not-an-array" },
+      };
+      const result = (
+        runner as unknown as {
+          getRecoveryEliminatedIdsFromEventLog: (
+            events: unknown[],
+            recoveryRound: { roundNo: number },
+            startingPlayers: string[] | typeof UNAVAILABLE,
+            correctAnswer: string,
+            matchId: string,
+          ) => string[] | null;
+        }
+      ).getRecoveryEliminatedIdsFromEventLog(
+        [fakeEvent],
+        { roundNo: 1 },
+        ["p1", "p2"],
+        "A",
+        "match-1",
+      );
+      expect(result).toBeNull();
+    });
+
+    it("getRecoveryEliminatedIdsFromEventLog returns null when startingPlayers is UNAVAILABLE", () => {
+      const fakeEvent = {
+        type: "ROUND_EVALUATED",
+        payload: { eliminatedIds: ["p1"] },
+      };
+      const result = (
+        runner as unknown as {
+          getRecoveryEliminatedIdsFromEventLog: (
+            events: unknown[],
+            recoveryRound: { roundNo: number },
+            startingPlayers: string[] | typeof UNAVAILABLE,
+            correctAnswer: string,
+            matchId: string,
+          ) => string[] | null;
+        }
+      ).getRecoveryEliminatedIdsFromEventLog(
+        [fakeEvent],
+        { roundNo: 1 },
+        UNAVAILABLE,
+        "A",
+        "match-1",
+      );
+      expect(result).toBeNull();
     });
   });
 });

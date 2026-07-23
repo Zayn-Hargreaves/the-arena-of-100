@@ -7,7 +7,7 @@ export const API_URL =
 
 function getCsrfToken(): string | null {
   if (typeof document === "undefined") return null;
-  const match = document.cookie.match(/csrf_token=([^;]+)/);
+  const match = new RegExp(/csrf_token=([^;]+)/).exec(document.cookie);
   return match ? decodeURIComponent(match[1]) : null;
 }
 

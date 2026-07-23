@@ -18,6 +18,12 @@ interface LobbyStartControlsProps {
 const FOCUS_RING =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-candy-ink focus-visible:ring-offset-2";
 
+const ROOM_STATUS_LABEL_KEYS: Partial<Record<RoomStatus, string>> = {
+  [RoomStatus.COUNTDOWN]: "countdown",
+  [RoomStatus.STARTING]: "starting",
+  [RoomStatus.IN_GAME]: "inGame",
+};
+
 export const LobbyStartControls: FC<LobbyStartControlsProps> = ({
   isHost,
   isPrivateRoom,
@@ -32,14 +38,7 @@ export const LobbyStartControls: FC<LobbyStartControlsProps> = ({
     return null;
   }
 
-  const labelKey =
-    roomStatus === RoomStatus.COUNTDOWN
-      ? "countdown"
-      : roomStatus === RoomStatus.STARTING
-        ? "starting"
-        : roomStatus === RoomStatus.IN_GAME
-          ? "inGame"
-          : "waiting";
+  const labelKey = ROOM_STATUS_LABEL_KEYS[roomStatus] ?? "waiting";
 
   const label =
     labelKey === "countdown"

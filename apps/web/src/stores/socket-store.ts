@@ -27,6 +27,7 @@ import {
   ErrorCode,
 } from "@arena/shared";
 import { API_URL } from "@/lib/api";
+import { generateId } from "@/lib/id";
 import type { AuthResponse, SocketState } from "./socket-store.types";
 import {
   applyClearedTerminationState,
@@ -274,7 +275,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       if (get().socket !== newSocket) return;
       const prev = get().lastAnswerResult;
       const priorForThisRound =
-        prev && prev.matchId === data.matchId && prev.roundNo === data.roundNo
+        prev?.matchId === data.matchId && prev?.roundNo === data.roundNo
           ? prev
           : null;
 
@@ -341,7 +342,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       // request is safe.
       const pending = pendingSnapshotRequest;
       pendingSnapshotRequest = null;
-      if (pending && pending.matchId === data.matchId) {
+      if (pending?.matchId === data.matchId) {
         set((state) => {
           const hydrated = applySnapshotState(state, data);
           return { ...hydrated, lastSeenSeqNo: state.lastSeenSeqNo };
@@ -536,6 +537,41 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
     const AUTH_TIMEOUT_MS = 5000;
 
+    let token: string;
+    try {
+      const response = await fetch(`${API_URL}/auth/guest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ username: nickname }),
+      });
+
+      if (!response.ok) {
+        let errorMessage = "Authentication failed";
+        try {
+          const errorData = (await response.json()) as { message?: string };
+          if (errorData.message) errorMessage = errorData.message;
+        } catch {
+          // Ignore JSON parse failure
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = (await response.json()) as AuthResponse;
+
+      set({
+        accessToken: data.accessToken,
+        userRole: data.user.role,
+      });
+      token = data.accessToken;
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to authenticate";
+      set({ error: message });
+      console.error("❌ Authentication error:", err);
+      throw err instanceof Error ? err : new Error(message);
+    }
+
     return new Promise<void>((resolve, reject) => {
       const cleanup = () => {
         clearTimeout(timeoutId);
@@ -566,39 +602,9 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       socket.on(ServerEvent.AUTHENTICATED, onAuthenticated);
       socket.on(ServerEvent.ERROR, onAuthError);
 
-      void (async () => {
-        try {
-          const response = await fetch(`${API_URL}/auth/guest`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ username: nickname }),
-          });
-
-          if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.message || "Authentication failed");
-          }
-
-          const data = (await response.json()) as AuthResponse;
-
-          set({
-            accessToken: data.accessToken,
-            userRole: data.user.role,
-          });
-
-          emitIfConnected(socket, ClientEvent.AUTHENTICATE, {
-            token: data.accessToken,
-          });
-        } catch (err) {
-          cleanup();
-          const message =
-            err instanceof Error ? err.message : "Failed to authenticate";
-          set({ error: message });
-          console.error("❌ Authentication error:", err);
-          reject(err instanceof Error ? err : new Error(message));
-        }
-      })();
+      emitIfConnected(socket, ClientEvent.AUTHENTICATE, {
+        token,
+      });
     });
   },
 
@@ -671,9 +677,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       return null;
     }
 
-    const submissionId =
-      globalThis.crypto?.randomUUID?.() ??
-      `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const submissionId = generateId();
     set({ pendingAnswer: { matchId, roundNo, answer, submissionId } });
     emitIfConnected(socket, ClientEvent.SUBMIT_ANSWER, {
       matchId,
@@ -707,8 +711,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     const cleanup = () => {
       resolved = true;
       if (timeoutId) clearTimeout(timeoutId);
-      socket.off(ServerEvent.EVENT_BATCH, handleEventBatch);
-      socket.off(ServerEvent.SNAPSHOT, handleSnapshot);
+      socket.off(ServerEvent.EVENT_BATCH, handleMatchEvent);
+      socket.off(ServerEvent.SNAPSHOT, handleMatchEvent);
       socket.off(ServerEvent.ERROR, handleError);
       socket.off("disconnect", handleDisconnect);
     };
@@ -721,7 +725,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       if (get().socket !== socket) return;
 
       const currentMatch = get().match;
-      if (currentMatch && currentMatch.id === matchId) {
+      if (currentMatch?.id === matchId) {
         set((state) => applySnapshotState(state, fallbackSnapshot));
         console.warn(
           `⚠️ Delta request failed or timed out. Hydrated fallback snapshot for match: ${matchId}`,
@@ -729,14 +733,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       }
     };
 
-    const handleEventBatch = (data: EventBatchPayload) => {
-      if (get().socket !== socket) return;
-      if (data.matchId === matchId) {
-        cleanup();
-      }
-    };
-
-    const handleSnapshot = (data: SnapshotPayload) => {
+    const handleMatchEvent = (data: { matchId: string }) => {
       if (get().socket !== socket) return;
       if (data.matchId === matchId) {
         cleanup();
@@ -760,8 +757,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       applyFallback();
     };
 
-    socket.on(ServerEvent.EVENT_BATCH, handleEventBatch);
-    socket.on(ServerEvent.SNAPSHOT, handleSnapshot);
+    socket.on(ServerEvent.EVENT_BATCH, handleMatchEvent);
+    socket.on(ServerEvent.SNAPSHOT, handleMatchEvent);
     socket.on(ServerEvent.ERROR, handleError);
     socket.on("disconnect", handleDisconnect);
 

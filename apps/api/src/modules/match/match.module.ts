@@ -9,6 +9,7 @@ import { GameLoopService } from "./game-loop.service";
 import { LobbyCountdownService } from "./lobby-countdown.service";
 import { PresenceService } from "./presence.service";
 import { MatchOwnershipService } from "./match-ownership.service";
+import { MatchCommandService } from "./match-command.service";
 import { QuestionModule } from "../question/question.module";
 import { RoomModule } from "../room/room.module";
 import { RedisModule } from "../redis/redis.module";
@@ -25,6 +26,7 @@ import { ClusterModule } from "../cluster/cluster.module";
     LobbyCountdownService,
     PresenceService,
     MatchOwnershipService,
+    MatchCommandService,
   ],
   exports: [
     MatchService,
@@ -32,6 +34,7 @@ import { ClusterModule } from "../cluster/cluster.module";
     LobbyCountdownService,
     PresenceService,
     MatchOwnershipService,
+    MatchCommandService,
   ],
 })
 export class MatchModule {}

@@ -31,7 +31,10 @@ export const RoomCodeCard: React.FC<RoomCodeCardProps> = ({ roomCode }) => {
         try {
           textarea.focus();
           textarea.select();
-          const successful = document.execCommand("copy");
+          const doc = document as unknown as {
+            execCommand?: (commandId: string) => boolean;
+          };
+          const successful = doc.execCommand ? doc.execCommand("copy") : false;
           if (successful) {
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
@@ -42,7 +45,7 @@ export const RoomCodeCard: React.FC<RoomCodeCardProps> = ({ roomCode }) => {
           console.error("Fallback copy failed", err);
         } finally {
           if (textarea.parentNode) {
-            document.body.removeChild(textarea);
+            textarea.parentNode.removeChild(textarea);
           }
         }
       }

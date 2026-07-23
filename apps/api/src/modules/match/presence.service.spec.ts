@@ -5,6 +5,10 @@ import { PresenceService } from "./presence.service";
 import { RoomService } from "../room/room.service";
 import { LobbyCountdownService } from "./lobby-countdown.service";
 import { GameLoopService } from "./game-loop.service";
+import { RedisService } from "../redis/redis.service";
+import { ClusterService } from "../cluster/cluster.service";
+import { MatchOwnershipService } from "./match-ownership.service";
+import { MatchCommandService } from "./match-command.service";
 
 /**
  * Build a mock server whose `.to(channel)` returns a fresh emitter
@@ -86,6 +90,13 @@ describe("PresenceService", () => {
     handlePlayerDisconnect: ReturnType<typeof vi.fn>;
     forceFinishMatchForDisband: ReturnType<typeof vi.fn>;
   };
+  let redis: {
+    renewLease: ReturnType<typeof vi.fn>;
+    acquireLease: ReturnType<typeof vi.fn>;
+    incr: ReturnType<typeof vi.fn>;
+  };
+  let ownership: { isOwner: ReturnType<typeof vi.fn> };
+  let matchCommand: { forward: ReturnType<typeof vi.fn> };
   let mockServer: ReturnType<typeof makeMockServer>;
 
   beforeEach(() => {
@@ -108,12 +119,27 @@ describe("PresenceService", () => {
       forceFinishMatchForDisband: vi.fn().mockResolvedValue(null),
     };
 
+    // B5: redis (leader election), cluster (nodeId), ownership (owner routing),
+    // matchCommand (forward). Defaults: this node wins + keeps leadership, and
+    // is the owner (so IN_GAME disconnects apply directly, matching legacy tests).
+    redis = {
+      renewLease: vi.fn().mockResolvedValue(true),
+      acquireLease: vi.fn().mockResolvedValue(true),
+      incr: vi.fn().mockResolvedValue(1),
+    };
+    ownership = { isOwner: vi.fn().mockReturnValue(true) };
+    matchCommand = { forward: vi.fn().mockResolvedValue(undefined) };
+
     mockServer = makeMockServer();
 
     service = new PresenceService(
       roomService,
       lobbyCountdownService as unknown as LobbyCountdownService,
       gameLoopService as unknown as GameLoopService,
+      redis as unknown as RedisService,
+      { nodeId: "node-a" } as unknown as ClusterService,
+      ownership as unknown as MatchOwnershipService,
+      matchCommand as unknown as MatchCommandService,
     );
   });
 
@@ -1078,6 +1104,118 @@ describe("PresenceService", () => {
     it("onModuleDestroy is a no-op when onModuleInit was never called", () => {
       // Should not throw when sweepInterval is undefined
       expect(() => service.onModuleDestroy()).not.toThrow();
+    });
+  });
+
+  // === B5: leader election + owner-routing ===
+
+  describe("leader election (B5)", () => {
+    it("acquires leadership with a fenced token when none is held", async () => {
+      redis.incr.mockResolvedValue(7);
+      redis.acquireLease.mockResolvedValue(true);
+
+      const token = await (service as any).acquireOrRenewLeadership();
+
+      expect(redis.incr).toHaveBeenCalledWith("presence:leader:fence");
+      expect(redis.acquireLease).toHaveBeenCalledWith(
+        "presence:leader",
+        "node-a:7",
+        15,
+      );
+      expect(token).toBe("node-a:7");
+    });
+
+    it("a second node that loses the acquire race returns null (skips the sweep)", async () => {
+      redis.acquireLease.mockResolvedValue(false); // another node holds it
+
+      const token = await (service as any).acquireOrRenewLeadership();
+
+      expect(token).toBeNull();
+    });
+
+    it("renews the held token without minting a new fence while it stays leader", async () => {
+      (service as any).leaderToken = "node-a:3";
+      redis.renewLease.mockResolvedValue(true);
+
+      const token = await (service as any).acquireOrRenewLeadership();
+
+      expect(redis.renewLease).toHaveBeenCalledWith(
+        "presence:leader",
+        "node-a:3",
+        15,
+      );
+      expect(redis.incr).not.toHaveBeenCalled();
+      expect(token).toBe("node-a:3");
+    });
+
+    it("re-acquires with a higher fence after the previous leader died (renew fails)", async () => {
+      (service as any).leaderToken = "node-a:3";
+      redis.renewLease.mockResolvedValue(false); // lease expired / taken
+      redis.incr.mockResolvedValue(8);
+      redis.acquireLease.mockResolvedValue(true);
+
+      const token = await (service as any).acquireOrRenewLeadership();
+
+      expect(token).toBe("node-a:8"); // strictly greater fence
+    });
+  });
+
+  describe("IN_GAME disconnect routing (B5)", () => {
+    it("applies directly when this node owns the match", async () => {
+      ownership.isOwner.mockReturnValue(true);
+      service.setServer(mockServer as unknown as Server);
+
+      await (service as any).routeInGameDisconnect("m1", "p1");
+
+      expect(gameLoopService.handlePlayerDisconnect).toHaveBeenCalledWith(
+        "m1",
+        "p1",
+        mockServer,
+      );
+      expect(matchCommand.forward).not.toHaveBeenCalled();
+    });
+
+    it("forwards a player_disconnect command when this node is NOT the owner", async () => {
+      ownership.isOwner.mockReturnValue(false);
+
+      await (service as any).routeInGameDisconnect("m1", "p1");
+
+      expect(gameLoopService.handlePlayerDisconnect).not.toHaveBeenCalled();
+      expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+      const env = matchCommand.forward.mock.calls[0][0];
+      expect(env).toMatchObject({
+        schemaVersion: 1,
+        matchId: "m1",
+        emittedByNodeId: "node-a",
+        body: { type: "player_disconnect", userId: "p1" },
+      });
+      // Envelope carries ONLY userId in the body (no roomId injection).
+      expect(env.body).not.toHaveProperty("roomId");
+      expect(typeof env.eventId).toBe("string");
+    });
+  });
+
+  describe("mid-sweep demotion (B5)", () => {
+    it("aborts the sweep immediately when the per-room leader CAS is rejected", async () => {
+      service.setServer(mockServer as unknown as Server);
+      vi.mocked(roomService.getActiveRooms).mockResolvedValueOnce([
+        makeActiveRoom({ id: "r1", code: "ROOM1" }),
+        makeActiveRoom({ id: "r2", code: "ROOM2" }),
+      ]);
+      // Every player is stale so both rooms WOULD be mutated if leadership held.
+      vi.mocked(roomService.checkPresence).mockResolvedValue(false);
+      // Leadership CAS: still leader for room 1, lost before room 2.
+      redis.renewLease.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+      await (service as any).sweep("node-a:5");
+
+      // Room 1 mutated exactly once; room 2 never mutated (sweep aborted).
+      expect(roomService.removePlayerBatch).toHaveBeenCalledTimes(1);
+      expect(roomService.removePlayerBatch).toHaveBeenCalledWith(
+        "r1",
+        expect.anything(),
+      );
+      expect((service as any).leaderToken).toBeUndefined();
     });
   });
 });

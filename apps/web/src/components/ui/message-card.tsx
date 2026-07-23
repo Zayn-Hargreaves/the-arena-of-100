@@ -13,7 +13,7 @@ export function MessageCard({
   actionLabel,
   onAction,
   tone = "default",
-}: MessageCardProps) {
+}: Readonly<MessageCardProps>) {
   return (
     <div className="bg-white border-[3px] border-candy-ink rounded-2xl p-5 shadow-[4px_4px_0_0_#2B2D42] space-y-3">
       <p

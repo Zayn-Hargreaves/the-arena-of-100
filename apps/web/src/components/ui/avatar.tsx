@@ -54,8 +54,8 @@ const statusIndicatorSizes = {
 
 const hashString = (str: string): number => {
   let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  for (const char of str) {
+    hash = (char.codePointAt(0) ?? 0) + ((hash << 5) - hash);
   }
   return Math.abs(hash);
 };
@@ -66,7 +66,10 @@ const getInitials = (name?: string): string => {
   let initials = names[0].substring(0, 1).toUpperCase();
 
   if (names.length > 1) {
-    initials += names[names.length - 1].substring(0, 1).toUpperCase();
+    const lastName = names.at(-1);
+    if (lastName) {
+      initials += lastName.substring(0, 1).toUpperCase();
+    }
   }
 
   return initials.substring(0, 2);

@@ -147,6 +147,17 @@ export class MatchService {
     return match?.roomId;
   }
 
+  /**
+   * B4b snapshot-restore safety: drop the cached in-memory state machine so the
+   * next `getStateMachine` reloads the canonical `match:state` from Redis. The
+   * authoritative answer apply calls this after a fenced-persist RETRY (lease
+   * lost / stale fence) so an unpersisted in-memory mutation can never be
+   * observed by a later apply, resume, or presence sweep.
+   */
+  evictStateMachine(matchId: string): void {
+    this.stateMachines.delete(matchId);
+  }
+
   // Get state machine for match (restores from Redis if not in memory)
   async getStateMachine(
     matchId: string,
@@ -292,7 +303,7 @@ export class MatchService {
     // RETRY forever, stranding the restored owner.
     const cached = this.revisions.get(matchId);
     const expectedRevision =
-      cached && cached.fence === snapshot.fence
+      cached?.fence === snapshot.fence
         ? cached.revision
         : await this.readPersistedRevision(matchId);
     const nextRevision = expectedRevision + 1;
@@ -514,9 +525,10 @@ export class MatchService {
     this.revisions.delete(matchId);
     this.persistChains.delete(matchId);
 
-    this.logger.log(
-      `Match finished: ${matchId}${winnerId ? `, winner: ${winnerId}` : " (admin termination, no winner)"}`,
-    );
+    const winnerDetails = winnerId
+      ? `, winner: ${winnerId}`
+      : " (admin termination, no winner)";
+    this.logger.log(`Match finished: ${matchId}${winnerDetails}`);
     return match;
   }
 

@@ -5,7 +5,7 @@ import type { SocketState } from "./socket-store.types";
 export const SOCKET_NOT_CONNECTED_MESSAGE = "Socket not connected";
 
 export function requireSocket(socket: Socket | null): Socket {
-  if (!socket || !socket.connected) {
+  if (!socket?.connected) {
     throw new Error(SOCKET_NOT_CONNECTED_MESSAGE);
   }
 
@@ -40,7 +40,7 @@ export function emitIfConnected<TPayload>(
   event: ClientEvent,
   payload: TPayload,
 ) {
-  if (!socket || !socket.connected) return;
+  if (!socket?.connected) return;
   socket.emit(event, payload);
 }
 

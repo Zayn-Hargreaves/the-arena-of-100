@@ -41,9 +41,10 @@ export const LobbyPlayerGrid: FC<LobbyPlayerGridProps> = ({
       return { seed, name, isAnimated, spritesheet };
     }
 
-    const hash = player.name
-      .split("")
-      .reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const hash = Array.from(player.name).reduce(
+      (acc, char) => acc + (char.codePointAt(0) ?? 0),
+      0,
+    );
     const index = hash % avatars.length;
     const avatar = avatars[index];
     return {
@@ -74,6 +75,15 @@ export const LobbyPlayerGrid: FC<LobbyPlayerGridProps> = ({
         const playerAvatar = getPlayerAvatar(player);
         const isCurrent = player.id === currentUserId;
         const isPlayerHost = player.id === hostId;
+
+        let roleLabel = t("ready");
+        if (isCurrent && isPlayerHost) {
+          roleLabel = t("youHost");
+        } else if (isCurrent) {
+          roleLabel = t("you");
+        } else if (isPlayerHost) {
+          roleLabel = t("host");
+        }
 
         return (
           <div
@@ -118,13 +128,7 @@ export const LobbyPlayerGrid: FC<LobbyPlayerGridProps> = ({
                   isCurrent ? "text-candy-ink" : "text-candy-pink",
                 )}
               >
-                {isCurrent && isPlayerHost
-                  ? t("youHost")
-                  : isCurrent
-                    ? t("you")
-                    : isPlayerHost
-                      ? t("host")
-                      : t("ready")}
+                {roleLabel}
               </p>
             </div>
           </div>

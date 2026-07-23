@@ -21,7 +21,7 @@ const borderWidthClasses = {
   lg: "border-4",
 };
 
-export const Spinner = React.forwardRef<HTMLDivElement, SpinnerProps>(
+export const Spinner = React.forwardRef<HTMLOutputElement, SpinnerProps>(
   ({ size = "md", className = "", label = "Đang tải" }, ref) => {
     const sizeClass = sizeClasses[size];
     const borderClass = borderWidthClasses[size];
@@ -40,9 +40,9 @@ export const Spinner = React.forwardRef<HTMLDivElement, SpinnerProps>(
       .join(" ");
 
     return (
-      <div ref={ref} className={baseClasses} role="status">
+      <output ref={ref} className={baseClasses}>
         <span className="sr-only">{label}</span>
-      </div>
+      </output>
     );
   },
 );

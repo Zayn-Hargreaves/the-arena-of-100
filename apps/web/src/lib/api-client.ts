@@ -29,39 +29,42 @@ function createHeaders(token?: string) {
   };
 }
 
+function parseArrayMessages(raw: unknown[]): string | undefined {
+  if (raw.length === 0) return undefined;
+  const parts: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== "string" || !item.trim()) return undefined;
+    parts.push(item.trim());
+  }
+  return parts.join(", ") || undefined;
+}
+
+function parseMessageValue(raw: unknown): string | undefined {
+  if (typeof raw === "string") {
+    return raw.trim() || undefined;
+  }
+  if (Array.isArray(raw)) {
+    return parseArrayMessages(raw);
+  }
+  return undefined;
+}
+
+function parseErrorPayload(payload: unknown): string | undefined {
+  if (typeof payload === "string") {
+    return payload.trim() || undefined;
+  }
+  if (payload && typeof payload === "object") {
+    return parseMessageValue((payload as { message?: unknown }).message);
+  }
+  return undefined;
+}
+
 async function parseError(response: Response) {
   const fallback = `Request failed with status ${response.status}`;
 
   try {
-    // Parse as `unknown` and validate at runtime — we never trust
-    // the error-payload shape. The DTO contract (when present)
-    // allows `message: string | string[]`, but the server may also
-    // surface a 401 page, a proxy error, a sanitized message, or
-    // a non-JSON body. We accept only:
-    //   1. a non-empty string, OR
-    //   2. an array whose every item is a non-empty string.
-    // Anything else (object, number, boolean, null, mixed/empty
-    // arrays, etc.) ⇒ `fallback`.
     const payload: unknown = await response.json();
-    if (typeof payload === "string") {
-      return payload.trim() ? payload : fallback;
-    }
-    if (payload && typeof payload === "object") {
-      const raw = (payload as { message?: unknown }).message;
-      if (typeof raw === "string") {
-        return raw.trim() ? raw : fallback;
-      }
-      if (Array.isArray(raw)) {
-        if (raw.length === 0) return fallback;
-        const allValid = raw.every(
-          (p) => typeof p === "string" && p.trim().length > 0,
-        );
-        if (!allValid) return fallback;
-        const parts = raw.map((p) => (p as string).trim());
-        return parts.join(", ") || fallback;
-      }
-    }
-    return fallback;
+    return parseErrorPayload(payload) ?? fallback;
   } catch {
     return fallback;
   }

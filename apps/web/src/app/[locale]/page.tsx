@@ -117,7 +117,7 @@ export default function HomePage() {
   };
 
   const triggerSubmitTransition = (
-    e: React.FormEvent,
+    e: React.SubmitEvent,
     callback: () => void,
   ) => {
     e.preventDefault();
@@ -143,7 +143,7 @@ export default function HomePage() {
     setTimeout(callback, 650);
   };
 
-  const handleQuickMatchSubmit = (e: React.FormEvent) => {
+  const handleQuickMatchSubmit = (e: React.SubmitEvent) => {
     triggerSubmitTransition(e, () => {
       router.push("/room/create");
     });
@@ -201,6 +201,7 @@ export default function HomePage() {
       <canvas
         ref={confettiCanvasRef}
         className="pointer-events-none fixed inset-0 z-50"
+        tabIndex={-1}
         aria-hidden="true"
       />
 
@@ -411,14 +412,14 @@ export default function HomePage() {
           <div className="flex gap-6 font-hand text-xl text-gray-300">
             <a
               className="hover:text-candy-yellow hover:underline transition-colors"
-              href="#"
+              href="#terms"
             >
               Điều khoản Đấu võ
             </a>
             <span>•</span>
             <a
               className="hover:text-candy-yellow hover:underline transition-colors"
-              href="#"
+              href="#rules"
             >
               Khai trừ Gian lận
             </a>

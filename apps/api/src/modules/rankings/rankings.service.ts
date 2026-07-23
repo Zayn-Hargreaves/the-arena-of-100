@@ -14,13 +14,15 @@ import {
 
 const FINISHED = "FINISHED";
 
+type NumericValue = string | number | bigint;
+
 interface RawLeaderboardRow {
   user_id: string;
   username: string;
   avatar: string;
-  wins: string | number | bigint;
-  matches_played: string | number | bigint;
-  total_score: string | number | bigint;
+  wins: NumericValue;
+  matches_played: NumericValue;
+  total_score: NumericValue;
   avg_response_ms: string | number | null;
   accuracy: string | number | null;
 }

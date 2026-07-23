@@ -34,7 +34,7 @@ export function AuditFilters({
   onApply,
   onReset,
   disabled,
-}: AuditFiltersProps) {
+}: Readonly<AuditFiltersProps>) {
   const t = useTranslations("admin.audit");
   const [draft, setDraft] = useState<AuditFilters>(value);
 
@@ -44,7 +44,7 @@ export function AuditFilters({
     setDraft(value);
   }, [value]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.SubmitEvent) => {
     e.preventDefault();
     onApply({
       eventType: draft.eventType.trim(),

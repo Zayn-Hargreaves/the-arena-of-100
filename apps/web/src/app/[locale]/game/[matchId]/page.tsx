@@ -34,7 +34,7 @@ interface GamePageProps {
   params: Promise<{ matchId: string; locale?: string }>;
 }
 
-export default function GamePage({ params }: GamePageProps) {
+export default function GamePage({ params }: Readonly<GamePageProps>) {
   const resolvedParams = use(params);
   const { matchId } = resolvedParams;
   const router = useRouter();

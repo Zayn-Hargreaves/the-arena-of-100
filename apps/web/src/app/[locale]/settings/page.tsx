@@ -67,9 +67,16 @@ function syncLocalAvatar(seed: AvatarSeed) {
 }
 
 export default function SettingsPage() {
+  const t = useTranslations("settings");
   const tAvatar = useTranslations("settings.avatar");
   const profileQuery = useProfileStats();
   const updateAvatar = useUpdateAvatar();
+
+  const getGlowIntensityLabel = (val: string) => {
+    if (val === "normal") return t("graphics.intensityNormal");
+    if (val === "high") return t("graphics.intensityHigh");
+    return t("graphics.intensityExtreme");
+  };
 
   // Audio State
   const [sfxEnabled, setSfxEnabled] = useState(defaultSettings.sfxEnabled);
@@ -181,12 +188,11 @@ export default function SettingsPage() {
                   variant="settings"
                   className="w-6 h-6 animate-spin-slow"
                 />
-              </span>
-              CẤU HÌNH HỆ THỐNG
+              </span>{" "}
+              {t("title")}
             </h1>
             <p className="font-body text-xs md:text-sm text-candy-ink font-semibold opacity-85 leading-6">
-              Tinh chỉnh âm thanh, đồ họa và phím tắt điều khiển đấu trường của
-              bạn
+              {t("subtitle")}
             </p>
           </div>
         </div>
@@ -195,7 +201,7 @@ export default function SettingsPage() {
           {/* Column 1: Sound Settings */}
           <div className="space-y-6">
             <PanelSection
-              title="Cài Đặt Âm Thanh"
+              title={t("sound.title")}
               glyph="sound"
               className="space-y-6"
             >
@@ -206,7 +212,7 @@ export default function SettingsPage() {
                     htmlFor="settings-sfx-volume"
                     className="font-display font-black text-xs uppercase tracking-wide text-candy-ink"
                   >
-                    Hiệu Ứng (SFX)
+                    {t("sound.sfx")}
                   </label>
                   <button
                     onClick={() => setSfxEnabled(!sfxEnabled)}
@@ -217,7 +223,7 @@ export default function SettingsPage() {
                         : "bg-white hover:bg-candy-cloud text-candy-ink",
                     )}
                   >
-                    {sfxEnabled ? "BẬT" : "TẮT"}
+                    {sfxEnabled ? t("sound.on") : t("sound.off")}
                   </button>
                 </div>
                 <div className="flex items-center gap-4 bg-white/50 border-[2px] border-candy-ink p-3 rounded-2xl shadow-[2px_2px_0_0_#2B2D42]">
@@ -248,7 +254,7 @@ export default function SettingsPage() {
                     htmlFor="settings-bgm-volume"
                     className="font-display font-black text-xs uppercase tracking-wide text-candy-ink"
                   >
-                    Nhạc Nền (BGM)
+                    {t("sound.bgm")}
                   </label>
                   <button
                     onClick={() => setBgmEnabled(!bgmEnabled)}
@@ -259,7 +265,7 @@ export default function SettingsPage() {
                         : "bg-white hover:bg-candy-cloud text-candy-ink",
                     )}
                   >
-                    {bgmEnabled ? "BẬT" : "TẮT"}
+                    {bgmEnabled ? t("sound.on") : t("sound.off")}
                   </button>
                 </div>
                 <div className="flex items-center gap-4 bg-white/50 border-[2px] border-candy-ink p-3 rounded-2xl shadow-[2px_2px_0_0_#2B2D42]">
@@ -286,17 +292,17 @@ export default function SettingsPage() {
 
             {/* Keyboard Shortcuts controls */}
             <PanelSection
-              title="Phím Tắt Điều Khiển"
+              title={t("controls.title")}
               glyph="controls"
               className="space-y-4"
             >
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-2">
                 <div className="space-y-0.5">
                   <span className="font-display font-black text-xs uppercase tracking-wide text-candy-ink block">
-                    Trả Lời Bằng Phím Tắt
+                    {t("controls.quickAnswersTitle")}
                   </span>
                   <span className="font-body text-xs text-candy-ink/75 font-semibold block">
-                    Bấm phím 1, 2, 3, 4 tương ứng đáp án A, B, C, D
+                    {t("controls.quickAnswersDesc")}
                   </span>
                 </div>
                 <button
@@ -308,7 +314,9 @@ export default function SettingsPage() {
                       : "bg-white hover:bg-candy-cloud text-candy-ink",
                   )}
                 >
-                  {quickAnswers ? "KÍCH HOẠT" : "VÔ HIỆU"}
+                  {quickAnswers
+                    ? t("controls.enabled")
+                    : t("controls.disabled")}
                 </button>
               </div>
             </PanelSection>
@@ -398,14 +406,14 @@ export default function SettingsPage() {
           {/* Column 2: Graphics Settings */}
           <div className="space-y-6">
             <PanelSection
-              title="Cài Đặt Đồ Họa (UI/UX)"
+              title={t("graphics.title")}
               glyph="display"
               className="space-y-6"
             >
               {/* Glowing strength */}
               <div className="space-y-3 pt-2">
                 <span className="font-display font-black text-xs uppercase tracking-wide text-candy-ink block">
-                  Cường Độ Neon Glow
+                  {t("graphics.glowTitle")}
                 </span>
                 <div className="flex gap-2">
                   {["normal", "high", "extreme"].map((val) => (
@@ -419,11 +427,7 @@ export default function SettingsPage() {
                           : "bg-white hover:bg-candy-cloud text-candy-ink",
                       )}
                     >
-                      {val === "normal"
-                        ? "Cơ bản"
-                        : val === "high"
-                          ? "Đặc trưng"
-                          : "Cực hạn"}
+                      {getGlowIntensityLabel(val)}
                     </button>
                   ))}
                 </div>
@@ -433,7 +437,7 @@ export default function SettingsPage() {
               <div className="space-y-4 pt-2 border-t-[2px] border-dashed border-candy-ink/20">
                 <div className="flex items-center justify-between">
                   <span className="font-display font-black text-xs uppercase tracking-wide text-candy-ink">
-                    Đường Quét CRT (Scanlines)
+                    {t("graphics.scanlines")}
                   </span>
                   <button
                     onClick={() => setScanlines(!scanlines)}
@@ -444,13 +448,13 @@ export default function SettingsPage() {
                         : "bg-white hover:bg-candy-cloud text-candy-ink",
                     )}
                   >
-                    {scanlines ? "BẬT" : "TẮT"}
+                    {scanlines ? t("graphics.on") : t("graphics.off")}
                   </button>
                 </div>
 
                 <div className="flex items-center justify-between">
                   <span className="font-display font-black text-xs uppercase tracking-wide text-candy-ink">
-                    Lưới Không Gian (Tech Grids)
+                    {t("graphics.particles")}
                   </span>
                   <button
                     onClick={() => setParticles(!particles)}
@@ -461,7 +465,7 @@ export default function SettingsPage() {
                         : "bg-white hover:bg-candy-cloud text-candy-ink",
                     )}
                   >
-                    {particles ? "BẬT" : "ẨN"}
+                    {particles ? t("graphics.show") : t("graphics.hide")}
                   </button>
                 </div>
               </div>
@@ -473,13 +477,12 @@ export default function SettingsPage() {
                 className="jelly-btn bg-candy-pink text-white hover:bg-candy-pink/90 w-full h-12 font-display uppercase tracking-wider text-xs font-black border-[3px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42] rounded-2xl flex items-center justify-center gap-2"
                 onClick={() =>
                   toast({
-                    description:
-                      "Đã lưu các tùy chỉnh cấu hình vào bộ nhớ đệm browser!",
+                    description: t("saveSuccess"),
                   })
                 }
               >
                 <MiniGlyph variant="settings" className="w-5 h-5 text-white" />
-                Lưu Tùy Chỉnh
+                {t("saveButton")}
               </button>
             </div>
           </div>

@@ -98,8 +98,8 @@ export function useAuditEvents({
 }: UseAuditEventsOptions = {}): UseAuditEventsResult {
   const accessToken = useSocketStore((state) => state.accessToken);
 
-  const [page, setPageState] = useState(0);
-  const [filters, setFiltersState] = useState<AuditFilters>(EMPTY_FILTERS);
+  const [page, setPage] = useState(0);
+  const [filters, setFilters] = useState<AuditFilters>(EMPTY_FILTERS);
 
   const offset = page * pageSize;
 
@@ -130,29 +130,38 @@ export function useAuditEvents({
 
   // Changing a filter resets to the first page — otherwise the
   // current offset could point past the end of the filtered set.
-  const setFilters = useCallback((next: AuditFilters) => {
-    setFiltersState(next);
-    setPageState(0);
-  }, []);
+  const handleSetFilters = useCallback(
+    (next: AuditFilters) => {
+      setFilters(next);
+      setPage(0);
+    },
+    [setFilters, setPage],
+  );
 
   const resetFilters = useCallback(() => {
-    setFiltersState(EMPTY_FILTERS);
-    setPageState(0);
-  }, []);
+    setFilters(EMPTY_FILTERS);
+    setPage(0);
+  }, [setFilters, setPage]);
 
-  const setPage = useCallback(
+  const handleSetPage = useCallback(
     (next: number) => {
       // Clamp against the known page count so buttons can't scroll
       // into an empty offset. `total` may be stale mid-fetch, so we
       // still allow 0.
       const maxPage = Math.max(0, Math.ceil(total / pageSize) - 1);
-      setPageState(Math.min(Math.max(0, next), Math.max(maxPage, 0)));
+      setPage(Math.min(Math.max(0, next), Math.max(maxPage, 0)));
     },
-    [total, pageSize],
+    [total, pageSize, setPage],
   );
 
-  const nextPage = useCallback(() => setPage(page + 1), [setPage, page]);
-  const prevPage = useCallback(() => setPage(page - 1), [setPage, page]);
+  const nextPage = useCallback(
+    () => handleSetPage(page + 1),
+    [handleSetPage, page],
+  );
+  const prevPage = useCallback(
+    () => handleSetPage(page - 1),
+    [handleSetPage, page],
+  );
 
   // Guarded manual refetch. The initial query is gated on
   // `enabled && Boolean(accessToken)` (see `useQuery` above), so we
@@ -164,7 +173,7 @@ export function useAuditEvents({
   const queryRefetch = query.refetch;
   const refetch = useCallback(() => {
     if (!enabled || !accessToken) return;
-    void queryRefetch();
+    queryRefetch();
   }, [enabled, accessToken, queryRefetch]);
 
   return useMemo(
@@ -181,10 +190,10 @@ export function useAuditEvents({
       isFetching: query.isFetching,
       isError: query.isError,
       error: query.error,
-      setPage,
+      setPage: handleSetPage,
       nextPage,
       prevPage,
-      setFilters,
+      setFilters: handleSetFilters,
       resetFilters,
       refetch,
     }),
@@ -200,10 +209,10 @@ export function useAuditEvents({
       pageSize,
       pageCount,
       filters,
-      setPage,
+      handleSetPage,
       nextPage,
       prevPage,
-      setFilters,
+      handleSetFilters,
       resetFilters,
     ],
   );

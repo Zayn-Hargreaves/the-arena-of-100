@@ -13,7 +13,7 @@ import type { Locale } from "@/i18n/routing";
 const KNOWN_EVENT_TYPE_SET = new Set<string>(KNOWN_AUDIT_EVENT_TYPES);
 
 interface AuditTableProps {
-  events: AuditEvent[];
+  readonly events: readonly AuditEvent[];
   /**
    * True until the first response arrives. Must be `isPending`-style
    * semantics (stays true while the query is disabled with no cached
@@ -21,11 +21,11 @@ interface AuditTableProps {
    * before `accessToken` hydrates. Field name stays `isLoading` to
    * match the hook's public API.
    */
-  isLoading: boolean;
-  isFetching: boolean;
-  isError: boolean;
-  onRetry: () => void;
-  pageSize: number;
+  readonly isLoading: boolean;
+  readonly isFetching: boolean;
+  readonly isError: boolean;
+  readonly onRetry: () => void;
+  readonly pageSize: number;
 }
 
 const LOCALE_BCP47: Record<string, string> = {
@@ -73,7 +73,9 @@ const headClass =
  * `KNOWN_AUDIT_EVENT_TYPES` (forward-compat: a new admin action
  * on the backend shouldn't render as a broken i18n key in the UI).
  */
-function EventTypeBadge({ eventType }: { eventType: AuditEventType }) {
+function EventTypeBadge({
+  eventType,
+}: Readonly<{ eventType: AuditEventType }>) {
   const t = useTranslations("admin.audit");
   // Fall back to the raw event type if it isn't one we have a
   // translation for (unknown/future event types still render
@@ -91,7 +93,9 @@ function EventTypeBadge({ eventType }: { eventType: AuditEventType }) {
 }
 
 /** Compact, scrollable JSON view of the audit row payload. */
-function PayloadCell({ payload }: { payload: Record<string, unknown> }) {
+function PayloadCell({
+  payload,
+}: Readonly<{ payload: Record<string, unknown> }>) {
   const t = useTranslations("admin.audit");
   const hasPayload = payload && Object.keys(payload).length > 0;
 
@@ -112,7 +116,7 @@ function PayloadCell({ payload }: { payload: Record<string, unknown> }) {
  * Either or both may be missing — admin actions don't always have
  * a target (e.g. system-wide reset).
  */
-function TargetCell({ event }: { event: AuditEvent }) {
+function TargetCell({ event }: Readonly<{ event: AuditEvent }>) {
   const t = useTranslations("admin.audit");
   if (!event.roomId && !event.matchId) {
     return <span className="text-candy-ink/40">{t("table.none")}</span>;
@@ -147,7 +151,7 @@ export function AuditTable({
   isError,
   onRetry,
   pageSize,
-}: AuditTableProps) {
+}: Readonly<AuditTableProps>) {
   const t = useTranslations("admin.audit");
   const locale = useLocale() as Locale;
 

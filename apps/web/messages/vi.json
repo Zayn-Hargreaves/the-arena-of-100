@@ -152,6 +152,7 @@
     "guestName": "Người chơi khách",
     "guestRole": "Người chơi khách",
     "playerRole": "Người chơi",
+    "closeMenu": "Đóng menu",
     "nav": {
       "createRoom": "Tạo Phòng",
       "arena": "Đấu Trường",
@@ -284,6 +285,37 @@
     }
   },
   "settings": {
+    "title": "CẤU HÌNH HỆ THỐNG",
+    "subtitle": "Tinh chỉnh âm thanh, đồ họa và phím tắt điều khiển đấu trường của bạn",
+    "sound": {
+      "title": "Cài Đặt Âm Thanh",
+      "sfx": "Hiệu Ứng (SFX)",
+      "bgm": "Nhạc Nền (BGM)",
+      "on": "BẬT",
+      "off": "TẮT"
+    },
+    "controls": {
+      "title": "Phím Tắt Điều Khiển",
+      "quickAnswersTitle": "Trả Lời Bằng Phím Tắt",
+      "quickAnswersDesc": "Bấm phím 1, 2, 3, 4 tương ứng đáp án A, B, C, D",
+      "enabled": "KÍCH HOẠT",
+      "disabled": "VÔ HIỆU"
+    },
+    "graphics": {
+      "title": "Cài Đặt Đồ Họa (UI/UX)",
+      "glowTitle": "Cường Độ Neon Glow",
+      "intensityNormal": "Cơ bản",
+      "intensityHigh": "Đặc trưng",
+      "intensityExtreme": "Cực hạn",
+      "scanlines": "Đường Quét CRT (Scanlines)",
+      "particles": "Lưới Không Gian (Tech Grids)",
+      "on": "BẬT",
+      "off": "TẮT",
+      "show": "BẬT",
+      "hide": "ẨN"
+    },
+    "saveButton": "Lưu Tùy Chỉnh",
+    "saveSuccess": "Đã lưu các tùy chỉnh cấu hình vào bộ nhớ đệm browser!",
     "avatar": {
       "title": "HÌNH ĐẠI DIỆN",
       "subtitle": "Chọn nhân vật đại diện cho bạn trong đấu trường.",
@@ -377,5 +409,25 @@
       "toastTitle": "Đã vào với tư cách khán giả",
       "toastDescription": "Bạn đang xem một trận đang diễn ra. Chức năng trả lời đã bị tắt."
     }
+  },
+  "createRoomPage": {
+    "title": "Thiết Lập Đấu Trường",
+    "subtitle": "Cấu hình các thông số phòng thi đấu sinh tử của riêng bạn",
+    "visibilityLabel": "Chế Độ Hiển Thị",
+    "publicTitle": "Công Khai (Public)",
+    "publicDesc": "Bất kỳ ai cũng có thể tìm thấy và tham gia.",
+    "privateTitle": "Bảo Mật (Private)",
+    "privateDesc": "Chỉ tham gia được thông qua mã mời trực tiếp.",
+    "timeLimitLabel": "Thời Gian Suy Nghĩ",
+    "seconds": "{seconds} giây",
+    "secondsShort": "{seconds}s",
+    "categoryLabel": "Chủ Đề Câu Hỏi",
+    "maxPlayersLabel": "Giới Hạn Đối Thủ",
+    "playersCount": "{count} Người",
+    "warningNoticeTitle": "Lưu ý:",
+    "warningNoticeBody": "Một khi phòng đấu được khởi tạo, bạn sẽ là Chủ Phòng (Host) chịu trách nhiệm nhấn nút bắt đầu khi đủ người chơi. Trận đấu sinh tử sẽ ngay lập tức loại bỏ bất kỳ ai chọn sai hoặc hết thời gian!",
+    "createErrorFallback": "Không thể tạo phòng. Vui lòng thử lại.",
+    "creating": "Đang tạo phòng...",
+    "submit": "Khởi Chạy Đấu Trường"
   }
 }

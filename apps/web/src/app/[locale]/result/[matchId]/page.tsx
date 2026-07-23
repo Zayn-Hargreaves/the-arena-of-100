@@ -57,7 +57,7 @@ type LoadState =
   | "unauthorized"
   | "network_error";
 
-export default function ResultPage({ params }: ResultPageProps) {
+export default function ResultPage({ params }: Readonly<ResultPageProps>) {
   const { matchId } = use(params);
   const router = useRouter();
   const userId = useSocketStore((s) => s.userId);

@@ -7,6 +7,7 @@ import {
   RoomJoinedPayload,
   RoomError,
   asRoomTypeOrDefault,
+  getPlayerChannel,
 } from "@arena/shared";
 import { AuthService } from "../../modules/auth/auth.service";
 import { RoomService } from "../../modules/room/room.service";
@@ -86,6 +87,17 @@ export class AuthHandler extends BaseHandler {
         client.data.connectionGen = newGen;
         client.data.userId = decoded.userId;
         client.data.username = decoded.username;
+
+        // B4b (revert): the per-player `player:${userId}` channel is the
+        // submitter-private destination for the owner's canonical
+        // ANSWER_RESULT. Cross-node delivery is handled by the Socket.io
+        // Redis adapter. Leave any previously-joined `player:*` channel
+        // first (user-switch on a reused socket), then join the new one.
+        for (const roomName of Array.from(client.rooms ?? [])) {
+          if (roomName === client.id) continue;
+          if (roomName.startsWith("player:")) client.leave(roomName);
+        }
+        client.join(getPlayerChannel(decoded.userId));
 
         if (
           previousUserId &&

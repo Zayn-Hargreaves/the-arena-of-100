@@ -95,6 +95,7 @@ describe("GameLoopService", () => {
       createMockPrismaService() as any,
       lobbyCountdown,
       createMockMatchOwnership() as any,
+      createMockMatchCommand() as any,
     );
   });
 
@@ -121,6 +122,7 @@ describe("GameLoopService", () => {
       createMockPrismaService() as any,
       new LobbyCountdownService(roomService, redis),
       createMockMatchOwnership() as any,
+      createMockMatchCommand() as any,
     );
     return { svc, redis, multiSpy };
   }
@@ -139,6 +141,21 @@ describe("GameLoopService", () => {
       assertOwnership: vi.fn().mockResolvedValue(true),
       getOwnershipSnapshot: vi.fn().mockReturnValue(undefined),
       computeMaxSkew: vi.fn().mockResolvedValue(0),
+      // B3b additions (boot/orphan recovery wiring).
+      setRecoveryDeps: vi.fn(),
+      setServer: vi.fn(),
+    };
+  }
+
+  // B4a/B4b: minimal MatchCommandService stub.
+  function createMockMatchCommand() {
+    return {
+      setSideEffects: vi.fn(),
+      setDispatcher: vi.fn(),
+      registerMatch: vi.fn().mockResolvedValue(undefined),
+      deregisterMatch: vi.fn(),
+      disposeStream: vi.fn().mockResolvedValue(undefined),
+      forward: vi.fn().mockResolvedValue(undefined),
     };
   }
 
@@ -1300,6 +1317,7 @@ describe("GameLoopService", () => {
         createMockPrismaService() as any,
         new LobbyCountdownService(roomService, redis),
         ownership as any,
+        createMockMatchCommand() as any,
       );
 
       await svc.stopRoomRuntime("r1", "m1");
@@ -1321,6 +1339,7 @@ describe("GameLoopService", () => {
       );
       (matchService.getStateMachine as any) = vi.fn().mockResolvedValue(null);
       (matchService.finishMatch as any) = vi.fn().mockResolvedValue(null);
+      const matchCommand = createMockMatchCommand();
       const svc = new GameLoopService(
         matchService,
         questionService,
@@ -1328,10 +1347,14 @@ describe("GameLoopService", () => {
         createMockPrismaService() as any,
         new LobbyCountdownService(roomService, redis),
         ownership as any,
+        matchCommand as any,
       );
 
       await svc.forceFinishMatchForDisband("m9", "r9");
       expect(ownership.release).toHaveBeenCalledWith("m9");
+      // B4b: disband path must clean match:cmd + match:applied (no stopRoomRuntime).
+      expect(matchCommand.deregisterMatch).toHaveBeenCalledWith("m9");
+      expect(matchCommand.disposeStream).toHaveBeenCalledWith("m9");
     });
 
     it("logs and continues launch rollback when release throws after a successful acquire", async () => {
@@ -1371,6 +1394,301 @@ describe("GameLoopService", () => {
         expect.stringContaining("Failed to release owner lease"),
         expect.anything(),
       );
+    });
+  });
+
+  // ============================================================
+  // Thin facades + B5 side-effect wiring in the constructor.
+  // These exercise the `matchCommand.setSideEffects({...})` callback
+  // and the `MatchRoundRunner` delegators so the uncovered lines get
+  // hit without spinning up the full game loop.
+  // ============================================================
+  describe("constructor wiring: side effects + runner facades", () => {
+    function captureSideEffects() {
+      const setSideEffects = (
+        (service as any).matchCommand.setSideEffects as ReturnType<typeof vi.fn>
+      ).mock.calls[0][0] as {
+        publishAnswerResult: (
+          env: { body: { userId: string } },
+          roomId: string,
+          result: {
+            submissionId: string;
+            isCorrect: boolean;
+            responseTimeMs: number;
+          },
+          roundNo: number,
+          server: Server,
+        ) => void;
+        checkEarlyTermination: (
+          matchId: string,
+          roomId: string,
+          server: Server,
+        ) => Promise<void>;
+        handlePlayerDisconnect?: (
+          env: {
+            body: { type: string; userId: string };
+            matchId: string;
+          },
+          owner: { fence: number; leaseValue: string },
+          server: Server,
+        ) => Promise<string>;
+      };
+      return setSideEffects;
+    }
+
+    it("publishAnswerResult routes the canonical ANSWER_RESULT to the per-player channel", () => {
+      const emit = vi.fn();
+      const to = vi.fn().mockReturnValue({ emit });
+      const server = { to } as unknown as Server;
+      const side = captureSideEffects();
+
+      side.publishAnswerResult(
+        { body: { userId: "p1" } } as any,
+        "r1",
+        { submissionId: "sub-1", isCorrect: true, responseTimeMs: 200 },
+        3,
+        server,
+      );
+
+      expect(emit).toHaveBeenCalledWith(
+        ServerEvent.ANSWER_RESULT,
+        expect.objectContaining({
+          userId: "p1",
+          submissionId: "sub-1",
+          isCorrect: true,
+          roundNo: 3,
+        }),
+      );
+    });
+
+    it("checkEarlyTermination delegates to MatchRoundRunner.checkEarlyTermination", async () => {
+      const side = captureSideEffects();
+      const spy = vi
+        .spyOn((service as any).roundRunner, "checkEarlyTermination")
+        .mockResolvedValue(undefined);
+
+      await side.checkEarlyTermination("m1", "r1", mockServer);
+      expect(spy).toHaveBeenCalledWith("m1", "r1", mockServer);
+    });
+
+    it("handlePlayerDisconnect returns APPLIED for a non-disconnect envelope (defensive guard)", async () => {
+      const side = captureSideEffects();
+      const outcome = await side.handlePlayerDisconnect!(
+        { matchId: "m1", body: { type: "submit_answer", userId: "p1" } } as any,
+        { fence: 1, leaseValue: "node-a:1" },
+        mockServer,
+      );
+      expect(outcome).toBe("APPLIED");
+    });
+
+    it("handlePlayerDisconnect returns APPLIED when the runner reports APPLIED", async () => {
+      const side = captureSideEffects();
+      vi.spyOn(
+        (service as any).roundRunner,
+        "handlePlayerDisconnect",
+      ).mockResolvedValue("APPLIED");
+
+      const outcome = await side.handlePlayerDisconnect!(
+        {
+          matchId: "m1",
+          body: { type: "player_disconnect", userId: "p1" },
+        } as any,
+        { fence: 1, leaseValue: "node-a:1" },
+        mockServer,
+      );
+      expect(outcome).toBe("APPLIED");
+    });
+
+    it("handlePlayerDisconnect returns APPLIED when the runner reports NOOP (ackable no-op)", async () => {
+      const side = captureSideEffects();
+      vi.spyOn(
+        (service as any).roundRunner,
+        "handlePlayerDisconnect",
+      ).mockResolvedValue("NOOP");
+
+      const outcome = await side.handlePlayerDisconnect!(
+        {
+          matchId: "m1",
+          body: { type: "player_disconnect", userId: "p1" },
+        } as any,
+        { fence: 1, leaseValue: "node-a:1" },
+        mockServer,
+      );
+      expect(outcome).toBe("APPLIED");
+    });
+
+    it("handlePlayerDisconnect returns RETRY for a non-canonical outcome (lease lost mid-apply)", async () => {
+      const side = captureSideEffects();
+      vi.spyOn(
+        (service as any).roundRunner,
+        "handlePlayerDisconnect",
+      ).mockResolvedValue("RETRY");
+      const warnSpy = vi
+        .spyOn((service as any).logger, "warn")
+        .mockImplementation(() => undefined);
+
+      const outcome = await side.handlePlayerDisconnect!(
+        {
+          matchId: "m1",
+          body: { type: "player_disconnect", userId: "p1" },
+        } as any,
+        { fence: 1, leaseValue: "node-a:1" },
+        mockServer,
+      );
+      expect(outcome).toBe("RETRY");
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("non-canonical outcome"),
+      );
+    });
+
+    it("handlePlayerDisconnect returns RETRY when the runner throws (no XACK, entry stays pending)", async () => {
+      const side = captureSideEffects();
+      vi.spyOn(
+        (service as any).roundRunner,
+        "handlePlayerDisconnect",
+      ).mockRejectedValue(new Error("apply-boom"));
+      const warnSpy = vi
+        .spyOn((service as any).logger, "warn")
+        .mockImplementation(() => undefined);
+
+      const outcome = await side.handlePlayerDisconnect!(
+        {
+          matchId: "m1",
+          body: { type: "player_disconnect", userId: "p1" },
+        } as any,
+        { fence: 1, leaseValue: "node-a:1" },
+        mockServer,
+      );
+      expect(outcome).toBe("RETRY");
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("apply failed"),
+      );
+    });
+  });
+
+  describe("MatchRoundRunner facades", () => {
+    it("cancelMatchLoop / isMatchFinishing delegate to the runner", () => {
+      const cancel = vi
+        .spyOn((service as any).roundRunner, "cancelMatchLoop")
+        .mockImplementation(() => undefined);
+      const isFinishing = vi
+        .spyOn((service as any).roundRunner, "isMatchFinishing")
+        .mockReturnValue(true);
+
+      service.cancelMatchLoop("m1");
+      service.isMatchFinishing("m1");
+
+      expect(cancel).toHaveBeenCalledWith("m1");
+      expect(isFinishing).toHaveBeenCalledWith("m1");
+    });
+
+    it("handlePlayerDiscard delegate ignores the return value (fire-and-forget)", async () => {
+      const spy = vi
+        .spyOn((service as any).roundRunner, "handlePlayerDisconnect")
+        .mockResolvedValue("APPLIED");
+
+      await service.handlePlayerDisconnect("m1", "p1", mockServer);
+      expect(spy).toHaveBeenCalledWith("m1", "p1", mockServer);
+    });
+
+    it("handleMatchPlayerLeft delegates with the default reason=LEFT", async () => {
+      const spy = vi
+        .spyOn((service as any).roundRunner, "handleMatchPlayerLeft")
+        .mockResolvedValue(undefined);
+
+      await service.handleMatchPlayerLeft("m1", "r1", "p1", mockServer);
+      expect(spy).toHaveBeenCalledWith("m1", "r1", "p1", mockServer, "LEFT");
+    });
+
+    it("handleMatchPlayerLeft passes an explicit STALE reason", async () => {
+      const spy = vi
+        .spyOn((service as any).roundRunner, "handleMatchPlayerLeft")
+        .mockResolvedValue(undefined);
+
+      await service.handleMatchPlayerLeft(
+        "m1",
+        "r1",
+        "p1",
+        mockServer,
+        "STALE",
+      );
+      expect(spy).toHaveBeenCalledWith("m1", "r1", "p1", mockServer, "STALE");
+    });
+
+    it("checkEarlyTermination delegates to the runner", async () => {
+      const spy = vi
+        .spyOn((service as any).roundRunner, "checkEarlyTermination")
+        .mockResolvedValue(undefined);
+
+      await service.checkEarlyTermination("m1", "r1", mockServer);
+      expect(spy).toHaveBeenCalledWith("m1", "r1", mockServer);
+    });
+  });
+
+  describe("setServer also wires matchOwnership.setServer (B3b boot recovery)", () => {
+    it("forwards the server to matchOwnership so it can drain buffered recovery", () => {
+      const ownership = (service as any).matchOwnership;
+      const setServerSpy = vi.spyOn(ownership, "setServer");
+
+      service.setServer(mockServer);
+
+      expect(setServerSpy).toHaveBeenCalledWith(mockServer);
+      // And the server field is populated.
+      expect((service as any).server).toBe(mockServer);
+    });
+  });
+
+  describe("constructor wiring: setRecoveryDeps.resumeMatchLoop", () => {
+    // Line 145: the recovery resume callback must register the match on
+    // the owner command consumer BEFORE delegating to the round runner, so
+    // forwarded answers stranded in the failover gap are drained on takeover.
+    function captureResumeMatchLoop(): (
+      matchId: string,
+      hydratedSm: unknown,
+      roomId: string,
+      server: Server,
+    ) => Promise<void> {
+      const ownership = (service as any).matchOwnership;
+      const setRecoveryDeps = ownership.setRecoveryDeps as ReturnType<
+        typeof vi.fn
+      >;
+      const deps = setRecoveryDeps.mock.calls[0][0] as {
+        resumeMatchLoop: (
+          matchId: string,
+          hydratedSm: unknown,
+          roomId: string,
+          server: Server,
+        ) => Promise<void>;
+      };
+      return deps.resumeMatchLoop;
+    }
+
+    it("registers the match on the command channel BEFORE resuming the round runner", async () => {
+      const callOrder: string[] = [];
+      const matchCommand = (service as any).matchCommand;
+      vi.mocked(matchCommand.registerMatch).mockImplementation(async () => {
+        callOrder.push("registerMatch");
+      });
+      vi.spyOn(
+        (service as any).roundRunner,
+        "resumeMatchLoop",
+      ).mockImplementation(async () => {
+        callOrder.push("roundRunner.resumeMatchLoop");
+      });
+
+      const resume = captureResumeMatchLoop();
+      await resume("m-takeover", { fake: "sm" }, "r-takeover", mockServer);
+
+      expect(matchCommand.registerMatch).toHaveBeenCalledWith(
+        "m-takeover",
+        mockServer,
+      );
+      // Order: registerMatch MUST run before the round runner so the
+      // command consumer is live before any forwarded answer lands.
+      expect(callOrder).toEqual([
+        "registerMatch",
+        "roundRunner.resumeMatchLoop",
+      ]);
     });
   });
 });

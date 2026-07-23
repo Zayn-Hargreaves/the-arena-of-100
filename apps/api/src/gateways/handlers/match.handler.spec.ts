@@ -12,6 +12,8 @@ import { MatchHandler } from "./match.handler";
 import { RoomService } from "../../modules/room/room.service";
 import { MatchService } from "../../modules/match/match.service";
 import { GameLoopService } from "../../modules/match/game-loop.service";
+import { MatchCommandService } from "../../modules/match/match-command.service";
+import { ClusterService } from "../../modules/cluster/cluster.service";
 
 describe("MatchHandler", () => {
   let handler: MatchHandler;
@@ -21,6 +23,7 @@ describe("MatchHandler", () => {
     checkEarlyTermination: ReturnType<typeof vi.fn>;
     forceStartRoomMatch: ReturnType<typeof vi.fn>;
   };
+  let matchCommand: { forward: ReturnType<typeof vi.fn> };
   let client: Socket;
   let server: Server;
 
@@ -35,10 +38,13 @@ describe("MatchHandler", () => {
       checkEarlyTermination: vi.fn().mockResolvedValue(undefined),
       forceStartRoomMatch: vi.fn().mockResolvedValue({ id: "m1" }),
     };
+    matchCommand = { forward: vi.fn().mockResolvedValue(undefined) };
     handler = new MatchHandler(
       roomService,
       matchService,
       gameLoopService as unknown as GameLoopService,
+      matchCommand as unknown as MatchCommandService,
+      { nodeId: "node-a" } as unknown as ClusterService,
     );
     server = {
       to: vi.fn().mockReturnValue({ emit: vi.fn() }),
@@ -164,357 +170,23 @@ describe("MatchHandler", () => {
     });
   });
 
-  describe("handleSubmitAnswer", () => {
-    it("submits answer and emits ANSWER_RESULT", async () => {
-      const mockMachine = {
-        getCurrentRound: vi.fn().mockReturnValue({
-          roundNo: 1,
-          answers: new Map(),
-        }),
-        getState: vi.fn().mockReturnValue({
-          roomId: "r1",
-          players: new Map([["u1", { id: "u1" }]]),
-        }),
-        submitAnswer: vi.fn().mockReturnValue({
-          submissionId: "canonical-s1",
-          isCorrect: true,
-          responseTimeMs: 500,
-        }),
-      };
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(
-        mockMachine as any,
-      );
-      vi.mocked(matchService.persistStateMachine).mockResolvedValue(undefined);
-
-      await handler.handleSubmitAnswer(client, {
-        matchId: "m1",
-        answer: "A",
-        roundNo: 1,
-        submissionId: "s1",
-        clientTimestamp: 1234567890,
-      });
-
-      expect(mockMachine.submitAnswer).toHaveBeenCalledWith(
-        "u1",
-        "A",
-        expect.any(Number),
-        "s1",
-      );
-      expect(matchService.persistStateMachine).toHaveBeenCalledWith("m1");
-      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ANSWER_RESULT, {
-        matchId: "m1",
-        roundNo: 1,
-        submissionId: "canonical-s1",
-        isCorrect: true,
-        responseTimeMs: 500,
-      });
-    });
-
-    it("skips early termination for a replayed submissionId", async () => {
-      const matchId = "m1";
-      const roomId = "r1";
-      const currentRound = {
-        roundNo: 1,
-        answers: new Map([
-          [
-            "u1",
-            {
-              playerId: "u1",
-              answer: "A",
-              submissionId: "s1",
-              isCorrect: true,
-              responseTimeMs: 500,
-              submittedAt: 1234567890,
-            },
-          ],
-        ]),
-      };
-      const mockMachine = {
-        getCurrentRound: vi.fn().mockReturnValue(currentRound),
-        getState: vi.fn().mockReturnValue({
-          roomId,
-          players: new Map([["u1", { id: "u1" }]]),
-        }),
-        submitAnswer: vi.fn().mockReturnValue({
-          submissionId: "s1",
-          isCorrect: true,
-          responseTimeMs: 500,
-        }),
-      };
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(
-        mockMachine as any,
-      );
-      vi.mocked(matchService.persistStateMachine).mockResolvedValue(undefined);
-
-      await handler.handleSubmitAnswer(client, {
-        matchId,
-        answer: "A",
-        roundNo: 1,
-        submissionId: "s1",
-        clientTimestamp: 1234567890,
-      });
-
-      expect(matchService.persistStateMachine).toHaveBeenCalledWith(matchId);
-      expect(gameLoopService.checkEarlyTermination).not.toHaveBeenCalled();
-      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ANSWER_RESULT, {
-        matchId,
-        roundNo: 1,
-        submissionId: "s1",
-        isCorrect: true,
-        responseTimeMs: 500,
-      });
-    });
-
-    // Replay race guard: the handler captures currentRoundBefore
-    // before submitAnswer and must reuse it for the roundNo in
-    // ANSWER_RESULT. A previous version re-called getCurrentRound()
-    // after the persistStateMachine await — during that await the
-    // round can transition (timer fires -> endRound -> currentRound
-    // becomes null or a different round), crashing via the `!`
-    // assertion or emitting the wrong roundNo. These two tests pin
-    // the fix by queueing a divergent second return value on
-    // getCurrentRound; if a future change re-introduces the second
-    // call, the mock sequence is consumed and the assertions fail.
-    it("replays a prior submissionId without crashing when getCurrentRound returns null after the round ends", async () => {
-      const matchId = "m1";
-      const roomId = "r1";
-      const roundWithAnswer = {
-        roundNo: 1,
-        answers: new Map([
-          [
-            "u1",
-            {
-              playerId: "u1",
-              answer: "A",
-              submissionId: "s1",
-              isCorrect: true,
-              responseTimeMs: 500,
-              submittedAt: 1234567890,
-            },
-          ],
-        ]),
-      };
-      const mockMachine = {
-        // First call (currentRoundBefore) returns the round; a
-        // second call (if re-introduced) returns null — simulating
-        // the round having ended during the persist await.
-        getCurrentRound: vi
-          .fn()
-          .mockReturnValueOnce(roundWithAnswer)
-          .mockReturnValueOnce(null),
-        getState: vi.fn().mockReturnValue({
-          roomId,
-          players: new Map([["u1", { id: "u1" }]]),
-        }),
-        submitAnswer: vi.fn().mockReturnValue({
-          submissionId: "s1",
-          isCorrect: true,
-          responseTimeMs: 500,
-        }),
-      };
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(
-        mockMachine as any,
-      );
-      vi.mocked(matchService.persistStateMachine).mockResolvedValue(undefined);
-
-      await handler.handleSubmitAnswer(client, {
-        matchId,
-        answer: "A",
-        roundNo: 1,
-        submissionId: "s1",
-        clientTimestamp: 1234567890,
-      });
-
-      expect(matchService.persistStateMachine).toHaveBeenCalledWith(matchId);
-      expect(gameLoopService.checkEarlyTermination).not.toHaveBeenCalled();
-      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ANSWER_RESULT, {
-        matchId,
-        roundNo: 1,
-        submissionId: "s1",
-        isCorrect: true,
-        responseTimeMs: 500,
-      });
-    });
-
-    it("replays a prior submissionId with the original roundNo when getCurrentRound returns a different round after transition", async () => {
-      const matchId = "m1";
-      const roomId = "r1";
-      const roundWithAnswer = {
-        roundNo: 1,
-        answers: new Map([
-          [
-            "u1",
-            {
-              playerId: "u1",
-              answer: "A",
-              submissionId: "s1",
-              isCorrect: true,
-              responseTimeMs: 500,
-              submittedAt: 1234567890,
-            },
-          ],
-        ]),
-      };
-      const mockMachine = {
-        // First call returns round 1 (the round the answer belongs
-        // to); a second call (if re-introduced) returns round 2 —
-        // simulating a new round having started during the persist
-        // await. The handler must emit roundNo: 1, not 2.
-        getCurrentRound: vi
-          .fn()
-          .mockReturnValueOnce(roundWithAnswer)
-          .mockReturnValueOnce({ roundNo: 2, answers: new Map() }),
-        getState: vi.fn().mockReturnValue({
-          roomId,
-          players: new Map([["u1", { id: "u1" }]]),
-        }),
-        submitAnswer: vi.fn().mockReturnValue({
-          submissionId: "s1",
-          isCorrect: true,
-          responseTimeMs: 500,
-        }),
-      };
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(
-        mockMachine as any,
-      );
-      vi.mocked(matchService.persistStateMachine).mockResolvedValue(undefined);
-
-      await handler.handleSubmitAnswer(client, {
-        matchId,
-        answer: "A",
-        roundNo: 1,
-        submissionId: "s1",
-        clientTimestamp: 1234567890,
-      });
-
-      expect(matchService.persistStateMachine).toHaveBeenCalledWith(matchId);
-      expect(gameLoopService.checkEarlyTermination).not.toHaveBeenCalled();
-      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ANSWER_RESULT, {
-        matchId,
-        roundNo: 1,
-        submissionId: "s1",
-        isCorrect: true,
-        responseTimeMs: 500,
-      });
-    });
-
-    // Regression guard for the isReplay false-positive: when the
-    // player has not yet answered AND the payload omits submissionId,
-    // `existingAnswerBefore` is undefined and `payload.submissionId`
-    // is undefined. A naive `?.submissionId === payload.submissionId`
-    // would resolve to `undefined === undefined` and skip the
-    // termination check on the first answer. The handler now guards
-    // against this; this test pins that behavior.
-    it("calls checkEarlyTermination for a first submission even when submissionId is missing", async () => {
-      const matchId = "m1";
-      const roomId = "r1";
-      const mockMachine = {
-        getCurrentRound: vi.fn().mockReturnValue({
-          roundNo: 1,
-          // Player has not answered yet — answers is empty for u1.
-          answers: new Map(),
-        }),
-        getState: vi.fn().mockReturnValue({
-          roomId,
-          players: new Map([["u1", { id: "u1" }]]),
-        }),
-        submitAnswer: vi.fn().mockReturnValue({
-          submissionId: "s1",
-          isCorrect: true,
-          responseTimeMs: 500,
-        }),
-      };
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(
-        mockMachine as any,
-      );
-      vi.mocked(matchService.persistStateMachine).mockResolvedValue(undefined);
-
-      // submissionId is intentionally omitted from the payload.
-      await handler.handleSubmitAnswer(client, {
-        matchId,
-        answer: "A",
-        roundNo: 1,
-        clientTimestamp: 1234567890,
-      } as unknown as Parameters<MatchHandler["handleSubmitAnswer"]>[1]);
-
-      expect(matchService.persistStateMachine).toHaveBeenCalledWith(matchId);
-      expect(gameLoopService.checkEarlyTermination).toHaveBeenCalledWith(
-        matchId,
-        roomId,
-        server,
-      );
-    });
-
-    it("rejects submitAnswer from a non-player (drop-in spectator gate)", async () => {
-      // Drop-in spectating baseline: a user that is not in the match
-      // roster must NOT be allowed to submit answers even if they emit
-      // SUBMIT_ANSWER. This is the server-side counterpart of the
-      // client-side UI gate; the server is the source of truth.
-      const mockMachine = {
-        getCurrentRound: vi.fn().mockReturnValue({
-          roundNo: 1,
-          answers: new Map(),
-        }),
-        getState: vi.fn().mockReturnValue({
-          roomId: "r1",
-          players: new Map([["u2", { id: "u2" }]]),
-        }),
-        submitAnswer: vi.fn(),
-      };
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(
-        mockMachine as any,
-      );
-
-      await handler.handleSubmitAnswer(client, {
-        matchId: "m1",
-        answer: "A",
-        roundNo: 1,
-        submissionId: "s1",
-        clientTimestamp: 1234567890,
-      });
-
-      // The state machine must never be invoked.
-      expect(mockMachine.submitAnswer).not.toHaveBeenCalled();
-      // The client must receive a typed error so the UI can surface a
-      // localized message.
-      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
-        code: ErrorCode.SPECTATOR_CANNOT_ANSWER,
-        message: ERROR_MESSAGES[ErrorCode.SPECTATOR_CANNOT_ANSWER],
-        failedEvent: ClientEvent.SUBMIT_ANSWER,
-        submissionId: "s1",
-      });
-    });
-
-    // M6 fix: a player who is in the match roster but is
-    // currently DISCONNECTED (e.g. brief network blip, dropped
-    // socket that hasn't yet hit the presence sweep) must get
-    // a distinct error code so the frontend can drive a
-    // reconnect flow instead of an error toast. The
-    // SPECTATOR_CANNOT_ANSWER gate above passes (player IS in
-    // the roster), but this inner guard rejects before the
-    // answer is graded.
-    it("rejects submitAnswer from a DISCONNECTED player with PLAYER_DISCONNECTED (not SPECTATOR_CANNOT_ANSWER)", async () => {
-      const mockMachine = {
-        getCurrentRound: vi.fn().mockReturnValue({
-          roundNo: 1,
-          answers: new Map(),
-        }),
+  describe("handleSubmitAnswer (B4b single-writer)", () => {
+    const activeMachine = (userId = "u1") =>
+      ({
         getState: vi.fn().mockReturnValue({
           roomId: "r1",
           players: new Map([
-            [
-              "u1",
-              {
-                id: "u1",
-                status: PlayerStatus.DISCONNECTED,
-              },
-            ],
+            [userId, { id: userId, status: PlayerStatus.ACTIVE }],
           ]),
         }),
-        submitAnswer: vi.fn(),
-      };
+        getCurrentRound: vi
+          .fn()
+          .mockReturnValue({ roundNo: 1, answers: new Map() }),
+      }) as any;
+
+    it("forwards the answer to the owner command channel instead of applying locally", async () => {
       vi.mocked(matchService.getStateMachine).mockResolvedValue(
-        mockMachine as any,
+        activeMachine(),
       );
 
       await handler.handleSubmitAnswer(client, {
@@ -525,140 +197,27 @@ describe("MatchHandler", () => {
         clientTimestamp: 1234567890,
       });
 
-      // The state machine must never be invoked — the
-      // disconnect guard fires first.
-      expect(mockMachine.submitAnswer).not.toHaveBeenCalled();
-      // The client must receive PLAYER_DISCONNECTED, not the
-      // spectator error and not the generic MATCH_NOT_FOUND.
-      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
-        code: ErrorCode.PLAYER_DISCONNECTED,
-        message: ERROR_MESSAGES[ErrorCode.PLAYER_DISCONNECTED],
-        failedEvent: ClientEvent.SUBMIT_ANSWER,
-        submissionId: "s1",
-      });
-    });
-
-    it("emits error when match not found", async () => {
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
-
-      await handler.handleSubmitAnswer(client, {
+      // Durable forward with a well-formed submit_answer envelope.
+      expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+      const env = matchCommand.forward.mock.calls[0][0];
+      expect(env).toMatchObject({
+        schemaVersion: 1,
         matchId: "m1",
-        answer: "A",
-        roundNo: 1,
-        submissionId: "s1",
-        clientTimestamp: 1234567890,
-      });
-
-      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
-        code: ErrorCode.MATCH_NOT_FOUND,
-        message: ERROR_MESSAGES[ErrorCode.MATCH_NOT_FOUND],
-        failedEvent: ClientEvent.SUBMIT_ANSWER,
-        submissionId: "s1",
-      });
-    });
-
-    it("emits error when not authenticated", async () => {
-      client.data = {};
-      await handler.handleSubmitAnswer(client, {
-        matchId: "m1",
-        answer: "A",
-        roundNo: 1,
-        submissionId: "s1",
-        clientTimestamp: 1234567890,
-      });
-      expect(client.emit).toHaveBeenCalledWith(
-        ServerEvent.ERROR,
-        expect.objectContaining({ code: ErrorCode.UNAUTHORIZED }),
-      );
-    });
-
-    it("does not map Error.message strings as ErrorCode values", async () => {
-      const mockMachine = {
-        getCurrentRound: vi.fn().mockReturnValue({
-          roundNo: 1,
-          answers: new Map(),
-        }),
-        getState: vi.fn().mockReturnValue({
-          roomId: "r1",
-          players: new Map([["u1", { id: "u1" }]]),
-        }),
-        submitAnswer: vi.fn().mockImplementation(() => {
-          throw new Error(ErrorCode.MATCH_NOT_FOUND);
-        }),
-      };
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(
-        mockMachine as any,
-      );
-
-      await handler.handleSubmitAnswer(client, {
-        matchId: "m1",
-        answer: "A",
-        roundNo: 1,
-        submissionId: "s1",
-        clientTimestamp: 1234567890,
-      });
-
-      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
-        code: ErrorCode.INTERNAL_ERROR,
-        message: "Internal server error",
-        failedEvent: ClientEvent.SUBMIT_ANSWER,
-        submissionId: "s1",
-      });
-    });
-
-    it("emits error when submitAnswer throws", async () => {
-      const mockMachine = {
-        getCurrentRound: vi.fn().mockReturnValue({
-          roundNo: 1,
-          answers: new Map(),
-        }),
-        getState: vi.fn().mockReturnValue({
-          roomId: "r1",
-          players: new Map([["u1", { id: "u1" }]]),
-        }),
-        submitAnswer: vi.fn().mockImplementation(() => {
-          throw new RoomError(ErrorCode.ALREADY_ANSWERED);
-        }),
-      };
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(
-        mockMachine as any,
-      );
-
-      await handler.handleSubmitAnswer(client, {
-        matchId: "m1",
-        answer: "A",
-        roundNo: 1,
-        submissionId: "s1",
-        clientTimestamp: 1234567890,
-      });
-
-      expect(client.emit).toHaveBeenCalledWith(
-        ServerEvent.ERROR,
-        expect.objectContaining({
-          code: ErrorCode.ALREADY_ANSWERED,
-          message: ERROR_MESSAGES[ErrorCode.ALREADY_ANSWERED],
-          failedEvent: ClientEvent.SUBMIT_ANSWER,
+        emittedByNodeId: "node-a",
+        body: {
+          type: "submit_answer",
+          userId: "u1",
+          answer: "A",
           submissionId: "s1",
-        }),
-      );
+        },
+      });
+      expect(typeof env.eventId).toBe("string");
+      expect(env.eventId.length).toBeGreaterThan(0);
     });
 
-    it("handles non-Error thrown values", async () => {
-      const mockMachine = {
-        getCurrentRound: vi.fn().mockReturnValue({
-          roundNo: 1,
-          answers: new Map(),
-        }),
-        getState: vi.fn().mockReturnValue({
-          roomId: "r1",
-          players: new Map([["u1", { id: "u1" }]]),
-        }),
-        submitAnswer: vi.fn().mockImplementation(() => {
-          throw 42;
-        }),
-      };
+    it("does NOT apply/persist/emit ANSWER_RESULT locally (owner is the sole writer)", async () => {
       vi.mocked(matchService.getStateMachine).mockResolvedValue(
-        mockMachine as any,
+        activeMachine(),
       );
 
       await handler.handleSubmitAnswer(client, {
@@ -669,96 +228,85 @@ describe("MatchHandler", () => {
         clientTimestamp: 1234567890,
       });
 
-      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
-        code: ErrorCode.INTERNAL_ERROR,
-        message: "Internal server error",
-        failedEvent: ClientEvent.SUBMIT_ANSWER,
-        submissionId: "s1",
-      });
-    });
-
-    it("calls checkEarlyTermination after submitting answer", async () => {
-      const matchId = "m1";
-      const roomId = "r1";
-      const mockMachine = {
-        getCurrentRound: vi.fn().mockReturnValue({
-          roundNo: 1,
-          answers: new Map(),
-        }),
-        getState: vi.fn().mockReturnValue({
-          roomId,
-          players: new Map([["u1", { id: "u1" }]]),
-        }),
-        submitAnswer: vi.fn().mockReturnValue({
-          submissionId: "s1",
-          isCorrect: true,
-          responseTimeMs: 500,
-        }),
-      };
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(
-        mockMachine as any,
-      );
-      vi.mocked(matchService.persistStateMachine).mockResolvedValue(undefined);
-
-      await handler.handleSubmitAnswer(client, {
-        matchId,
-        answer: "A",
-        roundNo: 1,
-        submissionId: "s1",
-        clientTimestamp: 1234567890,
-      });
-
-      expect(gameLoopService.checkEarlyTermination).toHaveBeenCalledWith(
-        matchId,
-        roomId,
-        server,
-      );
-    });
-
-    it("does not emit submit failure when post-submit early termination fails", async () => {
-      const matchId = "m1";
-      const roomId = "r1";
-      const mockMachine = {
-        getCurrentRound: vi.fn().mockReturnValue({
-          roundNo: 1,
-          answers: new Map(),
-        }),
-        getState: vi.fn().mockReturnValue({
-          roomId,
-          players: new Map([["u1", { id: "u1" }]]),
-        }),
-        submitAnswer: vi.fn().mockReturnValue({
-          submissionId: "s1",
-          isCorrect: true,
-          responseTimeMs: 500,
-        }),
-      };
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(
-        mockMachine as any,
-      );
-      vi.mocked(matchService.persistStateMachine).mockResolvedValue(undefined);
-      gameLoopService.checkEarlyTermination.mockRejectedValueOnce(
-        new Error("post-submit failed"),
-      );
-
-      await handler.handleSubmitAnswer(client, {
-        matchId,
-        answer: "A",
-        roundNo: 1,
-        submissionId: "s1",
-        clientTimestamp: 1234567890,
-      });
-
-      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ANSWER_RESULT, {
-        matchId,
-        roundNo: 1,
-        submissionId: "s1",
-        isCorrect: true,
-        responseTimeMs: 500,
-      });
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+      expect(gameLoopService.checkEarlyTermination).not.toHaveBeenCalled();
       expect(client.emit).not.toHaveBeenCalledWith(
+        ServerEvent.ANSWER_RESULT,
+        expect.anything(),
+      );
+    });
+
+    it("rejects a spectator (not in the match roster) and does not forward", async () => {
+      const machine = {
+        getState: vi.fn().mockReturnValue({
+          roomId: "r1",
+          players: new Map(), // u1 is not a player
+        }),
+        getCurrentRound: vi.fn().mockReturnValue(null),
+      } as any;
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+
+      await handler.handleSubmitAnswer(client, {
+        matchId: "m1",
+        answer: "A",
+        roundNo: 1,
+        submissionId: "s1",
+        clientTimestamp: 1234567890,
+      });
+
+      expect(matchCommand.forward).not.toHaveBeenCalled();
+      expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.ERROR,
-        expect.objectContaining({ submissionId: "s1" }),
+        expect.objectContaining({ code: ErrorCode.SPECTATOR_CANNOT_ANSWER }),
+      );
+    });
+
+    it("rejects a DISCONNECTED player with PLAYER_DISCONNECTED and does not forward", async () => {
+      const machine = {
+        getState: vi.fn().mockReturnValue({
+          roomId: "r1",
+          players: new Map([
+            ["u1", { id: "u1", status: PlayerStatus.DISCONNECTED }],
+          ]),
+        }),
+        getCurrentRound: vi
+          .fn()
+          .mockReturnValue({ roundNo: 1, answers: new Map() }),
+      } as any;
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+
+      await handler.handleSubmitAnswer(client, {
+        matchId: "m1",
+        answer: "A",
+        roundNo: 1,
+        submissionId: "s1",
+        clientTimestamp: 1234567890,
+      });
+
+      expect(matchCommand.forward).not.toHaveBeenCalled();
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({ code: ErrorCode.PLAYER_DISCONNECTED }),
+      );
+    });
+
+    it("throws MATCH_NOT_FOUND when the match state machine is absent", async () => {
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        undefined as any,
+      );
+
+      await handler.handleSubmitAnswer(client, {
+        matchId: "gone",
+        answer: "A",
+        roundNo: 1,
+        submissionId: "s1",
+        clientTimestamp: 1234567890,
+      });
+
+      expect(matchCommand.forward).not.toHaveBeenCalled();
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({ code: ErrorCode.MATCH_NOT_FOUND }),
       );
     });
   });

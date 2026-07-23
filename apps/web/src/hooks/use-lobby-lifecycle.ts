@@ -45,7 +45,7 @@ export function useLobbyLifecycle(roomCode: string) {
 
   // Auto-join when the socket is ready and we are not already in the room.
   useEffect(() => {
-    if (!isConnected || (room && room.code === roomCode)) {
+    if (!isConnected || room?.code === roomCode) {
       return;
     }
 

@@ -33,7 +33,7 @@ function PodiumCard({
   spriteWidth,
   spriteHeight,
   spriteScale,
-}: {
+}: Readonly<{
   entry: LeaderboardEntry;
   badge: React.ReactNode;
   className: string;
@@ -41,7 +41,7 @@ function PodiumCard({
   spriteWidth: string;
   spriteHeight: string;
   spriteScale: number;
-}) {
+}>) {
   const avatar = isValidAvatarSeed(entry.avatar)
     ? findAvatarBySeed(entry.avatar)
     : (avatars[0] ?? null);
@@ -181,7 +181,7 @@ export default function RankingsPage() {
           <MessageCard
             message={t("error.loadFailed")}
             actionLabel={t("error.retry")}
-            onAction={() => void refetch()}
+            onAction={() => refetch()}
             tone="error"
           />
         ) : null}

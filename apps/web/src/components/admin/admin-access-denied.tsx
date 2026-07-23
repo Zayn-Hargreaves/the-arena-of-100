@@ -21,7 +21,7 @@ export function AdminAccessDenied({
   title,
   description,
   returnHomeLabel,
-}: AdminAccessDeniedProps) {
+}: Readonly<AdminAccessDeniedProps>) {
   const router = useRouter();
 
   return (
