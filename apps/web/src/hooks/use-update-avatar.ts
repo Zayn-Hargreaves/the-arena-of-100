@@ -19,8 +19,8 @@ export function useUpdateAvatar() {
         accessToken ?? undefined,
       ),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["profile"] });
-      void queryClient.invalidateQueries({
+      queryClient.invalidateQueries({ queryKey: ["profile"] });
+      queryClient.invalidateQueries({
         queryKey: ["rankings", "leaderboard"],
       });
     },

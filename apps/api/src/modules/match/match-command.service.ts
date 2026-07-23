@@ -20,32 +20,20 @@ import { RedisService, StreamEntry } from "../redis/redis.service";
 import { MatchService } from "./match.service";
 import { MatchOwnershipService } from "./match-ownership.service";
 import { ClusterService } from "../cluster/cluster.service";
+import {
+  type CommandEnvelope,
+  commandEnvelopeSchema,
+  type OwnerCommandBody,
+  type SubmitAnswerBody,
+} from "./dto/match-command.dto";
 
-// ---- Immutable command envelope ------------------------------
-
-export type SubmitAnswerBody = {
-  readonly type: "submit_answer";
-  readonly userId: string;
-  readonly answer: string;
-  readonly submissionId: string;
-  readonly clientTs: number;
-};
-export type PlayerDisconnectBody = {
-  readonly type: "player_disconnect";
-  readonly userId: string;
-};
-export type OwnerCommandBody = SubmitAnswerBody | PlayerDisconnectBody;
-
-export interface CommandEnvelope<
-  T extends OwnerCommandBody = OwnerCommandBody,
-> {
-  readonly eventId: string; // uuid — transport-level dedup key
-  readonly schemaVersion: 1;
-  readonly matchId: string;
-  readonly emittedByNodeId: string;
-  readonly emittedAt: number; // epoch ms
-  readonly body: T;
-}
+export {
+  type CommandEnvelope,
+  commandEnvelopeSchema,
+  type OwnerCommandBody,
+  type PlayerDisconnectBody,
+  type SubmitAnswerBody,
+} from "./dto/match-command.dto";
 
 /**
  * Shared envelope factory (B4a/B5). Stamps the required transport fields —
@@ -361,11 +349,59 @@ export class MatchCommandService implements OnModuleDestroy {
         server,
       );
     }
-    // player_disconnect → B5 (optional until wired).
+    // player_disconnect → B5 (optional until wired). eventId dedup mirrors
+    // submit_answer so a redelivery / XAUTOCLAIM of an already-applied
+    // disconnect is acked without re-broadcasting PLAYER_LEFT.
     if (this.sideEffects?.handlePlayerDisconnect) {
-      return this.sideEffects.handlePlayerDisconnect(env, owner, server);
+      return this.applyDisconnectAuthoritative(env, owner, server);
     }
     return "RETRY";
+  }
+
+  /**
+   * B5 authoritative disconnect apply. eventId-deduped so a redelivery of an
+   * already-applied disconnect is an ackable no-op (no second PLAYER_LEFT).
+   * Unlike submit_answer there is no heal step — the first owner already
+   * broadcast, and a second emit would be a false leave.
+   */
+  private async applyDisconnectAuthoritative(
+    env: CommandEnvelope,
+    owner: { fence: number; leaseValue: string },
+    server: Server,
+  ): Promise<CommandOutcome> {
+    const applied = appliedSetKey(env.matchId);
+    let alreadyApplied: boolean;
+    try {
+      alreadyApplied = await this.redis.sismember(applied, env.eventId);
+    } catch (err) {
+      this.logger.warn(
+        `applyDisconnectAuthoritative: dedup read failed for ${env.matchId} (RETRY): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return "RETRY";
+    }
+    if (alreadyApplied) {
+      // Ackable no-op: first apply already persisted + broadcast.
+      return "APPLIED";
+    }
+
+    const outcome = await this.sideEffects!.handlePlayerDisconnect!(
+      env,
+      owner,
+      server,
+    );
+    // Only record the eventId after a confirmed apply. RETRY leaves the entry
+    // pending and must NOT mark it applied (so the next owner reprocesses).
+    if (outcome === "APPLIED") {
+      try {
+        await this.redis.sadd(applied, env.eventId);
+      } catch {
+        // Non-fatal: a redelivery would re-apply idempotently via state machine
+        // (player already DISCONNECTED → NOOP).
+      }
+    }
+    return outcome;
   }
 
   /**
@@ -376,13 +412,14 @@ export class MatchCommandService implements OnModuleDestroy {
    * + fenced persist) mutates match:state — so two answers on two nodes can
    * never both blind-write. Outcome contract drives XACK vs retry:
    *   - APPLIED               — persisted; canonical ANSWER_RESULT emitted.
-   *   - DUPLICATE_EVENT       — same eventId already applied; heal (re-emit) + ack.
-   *   - DUPLICATE_SUBMISSION  — same submissionId replay; ackable no-op, no side effects.
+   *   - DUPLICATE_EVENT       — same eventId already applied, or same submissionId
+   *                            already in SM (incomplete prior attempt); heal + ack.
+   *   - DUPLICATE_SUBMISSION  — late/stale command that can never apply; ack no-op.
    *   - RETRY                 — lease lost / stale fence / persist failed; NOT acked.
    */
   async applyAnswerAuthoritative(
     env: CommandEnvelope<SubmitAnswerBody>,
-    owner: { fence: number; leaseValue: string },
+    _owner: { fence: number; leaseValue: string },
     server: Server,
   ): Promise<CommandOutcome> {
     const applied = appliedSetKey(env.matchId);
@@ -408,10 +445,13 @@ export class MatchCommandService implements OnModuleDestroy {
 
     const round = sm.getCurrentRound();
     const existing = round?.answers.get(env.body.userId);
-    const isReplay =
-      existing !== undefined &&
-      existing.submissionId !== undefined &&
-      existing.submissionId === env.body.submissionId;
+    const isReplay = existing?.submissionId === env.body.submissionId;
+    // Same submissionId already in SM: do NOT short-circuit as a no-op. The
+    // first attempt may have persisted but crashed before publishAnswerResult /
+    // checkEarlyTermination, or sadd(eventId) may have failed so eventId is
+    // not in match:applied. Route through recoverDuplicateEvent to re-emit the
+    // authoritative result before acknowledging.
+    if (isReplay) return this.recoverDuplicateEvent(env, server);
 
     // Server-authoritative timing: serverTs is minted here; clientTs is advisory.
     const serverTs = Date.now();
@@ -434,8 +474,6 @@ export class MatchCommandService implements OnModuleDestroy {
       return "DUPLICATE_SUBMISSION";
     }
 
-    if (isReplay) return "DUPLICATE_SUBMISSION"; // idempotent replay; no side effects
-
     // Fenced canonical persist (B2c). A non-APPLIED outcome means the lease was
     // lost / fence bumped mid-apply — discard the unpersisted in-memory mutation
     // (snapshot-restore safety) and do NOT broadcast.
@@ -445,18 +483,25 @@ export class MatchCommandService implements OnModuleDestroy {
       return "RETRY";
     }
 
-    // Record the eventId only AFTER a successful persist, so a RETRY never
-    // marks an unapplied command as applied.
-    try {
-      await this.redis.sadd(applied, env.eventId);
-    } catch {
-      // Non-fatal: a redelivery would re-apply idempotently via submissionId.
-    }
-
+    // Side effects BEFORE eventId marker: if we crash mid-way, redelivery either
+    // sees eventId (recover) or same submissionId in SM (isReplay → recover).
     const roomId = sm.getState().roomId;
     const roundNo = round?.roundNo ?? sm.getState().currentRoundNo;
     this.sideEffects?.publishAnswerResult(env, roomId, result, roundNo, server);
     await this.sideEffects?.checkEarlyTermination(env.matchId, roomId, server);
+
+    // Durable completion marker. Failure is non-fatal: state + realtime already
+    // applied; a redelivery heals via isReplay / recoverDuplicateEvent.
+    try {
+      await this.redis.sadd(applied, env.eventId);
+    } catch (err) {
+      this.logger.warn(
+        `applyAnswerAuthoritative: sadd applied marker failed for ${env.matchId}/${env.eventId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
     return "APPLIED";
   }
 
@@ -465,6 +510,12 @@ export class MatchCommandService implements OnModuleDestroy {
    * crashed before broadcasting. Reload canonical state, re-emit the canonical
    * ANSWER_RESULT idempotently, and re-run early termination before the caller
    * XACKs — so the submitter still receives the outcome.
+   *
+   * Fence revalidation is performed immediately before each side effect (and
+   * again at entry) so a lease takeover between the entry check and the
+   * publish cannot let an ex-owner broadcast. Any lost-fence detection here
+   * returns RETRY (the consumer leaves the stream entry pending and the new
+   * owner heals via DUPLICATE_EVENT on its own re-apply).
    */
   private async recoverDuplicateEvent(
     env: CommandEnvelope<SubmitAnswerBody>,
@@ -475,17 +526,21 @@ export class MatchCommandService implements OnModuleDestroy {
     if (!sm || !this.sideEffects) return "DUPLICATE_EVENT";
     const round = sm.getCurrentRound();
     const answer = round?.answers.get(env.body.userId);
-    if (answer) {
-      const roomId = sm.getState().roomId;
-      this.sideEffects.publishAnswerResult(
-        env,
-        roomId,
-        answer,
-        round?.roundNo ?? sm.getState().currentRoundNo,
-        server,
-      );
-      await this.sideEffects.checkEarlyTermination(env.matchId, roomId, server);
-    }
+    if (!answer) return "DUPLICATE_EVENT";
+    // Revalidate fence once more immediately before any wire emit so a
+    // lease takeover that landed between the entry check and this point
+    // cannot result in an unfenced publishAnswerResult / checkEarlyTermination.
+    if (this.ownership.currentFence(env.matchId) == null) return "RETRY";
+    const roomId = sm.getState().roomId;
+    this.sideEffects.publishAnswerResult(
+      env,
+      roomId,
+      answer,
+      round?.roundNo ?? sm.getState().currentRoundNo,
+      server,
+    );
+    if (this.ownership.currentFence(env.matchId) == null) return "RETRY";
+    await this.sideEffects.checkEarlyTermination(env.matchId, roomId, server);
     return "DUPLICATE_EVENT";
   }
 
@@ -498,38 +553,16 @@ export class MatchCommandService implements OnModuleDestroy {
     data: string,
     streamMatchId: string,
   ): CommandEnvelope | null {
-    let raw: unknown;
     try {
-      raw = JSON.parse(data);
+      const raw: unknown = JSON.parse(data);
+      const parsed = commandEnvelopeSchema.safeParse(raw);
+      if (!parsed.success || parsed.data.matchId !== streamMatchId) {
+        return null;
+      }
+      return parsed.data as CommandEnvelope;
     } catch {
       return null;
     }
-    if (typeof raw !== "object" || raw === null) return null;
-    const e = raw as Record<string, unknown>;
-    if (e.schemaVersion !== 1) return null;
-    if (typeof e.eventId !== "string" || e.eventId.length === 0) return null;
-    if (e.matchId !== streamMatchId) return null; // cross-stream mismatch
-    if (typeof e.emittedByNodeId !== "string") return null;
-    if (typeof e.emittedAt !== "number" || !Number.isFinite(e.emittedAt))
-      return null;
-    if (typeof e.body !== "object" || e.body === null) return null;
-    const body = e.body as Record<string, unknown>;
-    if (body.type === "submit_answer") {
-      if (
-        typeof body.userId !== "string" ||
-        typeof body.answer !== "string" ||
-        typeof body.submissionId !== "string" ||
-        typeof body.clientTs !== "number" ||
-        !Number.isFinite(body.clientTs)
-      ) {
-        return null;
-      }
-    } else if (body.type === "player_disconnect") {
-      if (typeof body.userId !== "string") return null;
-    } else {
-      return null;
-    }
-    return raw as CommandEnvelope;
   }
 
   /**

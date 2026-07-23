@@ -80,6 +80,10 @@ export class MatchRoundRunner {
     // B2c: fence the three mutating boundaries. Passed from GameLoopService
     // (the runner is `new`'d there, not DI).
     private readonly ownership: MatchOwnershipService,
+    // B4b: drop the per-match command stream + applied-eventId set on natural
+    // finish. Optional so unit tests that do not exercise the command channel
+    // can omit it. GameLoopService wires deregisterMatch + disposeStream.
+    private readonly disposeCommandStream?: (matchId: string) => Promise<void>,
   ) {}
 
   // ============================================================
@@ -344,14 +348,29 @@ export class MatchRoundRunner {
         // Already finished before we took over: nothing to drive. Drop the
         // in-memory runtime and release the lease so the heartbeat stops
         // renewing it and B3b recovery never re-adopts it from match:active.
+        // Also drop match:cmd / match:applied so the consumer does not keep
+        // polling a terminal match.
         this.timers.disposeMatch(matchId);
         await this.ownership.release(matchId);
+        if (this.disposeCommandStream) {
+          await this.disposeCommandStream(matchId);
+        }
         return;
       default:
-        // WAITING or any non-timed status: nothing to arm.
+        // WAITING or any non-timed status: nothing to arm. Drop runtime
+        // (used-question set was rebuilt above), command consumer, and lease
+        // so a leaked registration/ownership cannot poll forever.
         this.logger.warn(
           `resumeMatchLoop: unexpected status ${state.status} for match ${matchId}, arming nothing`,
         );
+        this.timers.disposeMatch(matchId);
+        try {
+          if (this.disposeCommandStream) {
+            await this.disposeCommandStream(matchId);
+          }
+        } finally {
+          await this.ownership.release(matchId);
+        }
         return;
     }
   }
@@ -1090,6 +1109,13 @@ export class MatchRoundRunner {
     // already released.
     await this.ownership.release(matchId);
 
+    // B4b: stop the command consumer + drop match:cmd / match:applied so a
+    // finished match does not leave a polling consumer and Redis keys behind.
+    // Mirrors stopRoomRuntime / forceFinishMatchForDisband cleanup.
+    if (this.disposeCommandStream) {
+      await this.disposeCommandStream(matchId);
+    }
+
     if (winnerId === null) {
       this.logger.warn(
         `Match ${matchId} finished with no winner (empty roster or unresolvable tie-break). Rounds: ${state.currentRoundNo}. Clients receive MATCH_FINISHED with winnerId: null.`,
@@ -1108,15 +1134,25 @@ export class MatchRoundRunner {
   /**
    * Handles player disconnection during a match: marks the player
    * DISCONNECTED in the state machine, persists, and broadcasts.
+   *
+   * Return contract (B5 hardening — symmetric with `submit_answer`):
+   *   - "APPLIED" — fenced persist landed; PLAYER_LEFT broadcast.
+   *   - "NOOP"    — pre-conditions failed (no state machine, unknown player);
+   *                 nothing to persist, ackable as a no-op.
+   *   - "RETRY" / "BLIND" — persist was NOT canonical (lease lost / fence bumped);
+   *                 broadcast was skipped, the caller MUST NOT XACK so the next
+   *                 owner re-evaluates. The command-stream wrapper maps this to
+   *                 a "RETRY" CommandOutcome; the owner-local path ignores the
+   *                 return value.
    */
   async handlePlayerDisconnect(
     matchId: string,
     userId: string,
     server: Server,
-  ): Promise<void> {
+  ): Promise<PersistOutcome | "NOOP"> {
     // 1. Get state machine
     const stateMachine = await this.matchService.getStateMachine(matchId);
-    if (!stateMachine) return;
+    if (!stateMachine) return "NOOP";
 
     // 2. Get current state
     const state = stateMachine.getState();
@@ -1125,7 +1161,7 @@ export class MatchRoundRunner {
     const player = state.players.get(userId);
     if (!player) {
       this.logger.warn(`Player ${userId} not found in match ${matchId}`);
-      return;
+      return "NOOP";
     }
 
     // 4. Mark player as DISCONNECTED in state machine
@@ -1135,12 +1171,15 @@ export class MatchRoundRunner {
     // canonical write lands — a non-APPLIED outcome (RETRY/BLIND = this node is
     // not the confirmed owner) means the mutation is not canonical, so skip the
     // broadcast rather than announce a disconnect the owner never recorded.
+    // The outcome is propagated to the caller so the command-stream wrapper can
+    // decide XACK vs RETRY; the owner-local path already applied (or tried to)
+    // in-memory and reports the outcome for logging.
     const outcome = await this.matchService.persistStateMachine(matchId);
     if (outcome !== "APPLIED") {
       this.logger.warn(
         `handlePlayerDisconnect: persist ${outcome} for ${matchId} — no confirmed canonical write, skipping disconnect broadcast`,
       );
-      return;
+      return outcome;
     }
 
     // 6. Broadcast PLAYER_LEFT with reason field
@@ -1149,6 +1188,7 @@ export class MatchRoundRunner {
 
     // 7. Log the disconnect
     this.logger.log(`Player ${userId} disconnected from match ${matchId}`);
+    return "APPLIED";
   }
 
   // ============================================================

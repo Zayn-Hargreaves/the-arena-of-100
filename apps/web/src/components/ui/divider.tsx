@@ -6,20 +6,19 @@ export interface DividerProps {
   className?: string;
 }
 
-export const Divider = React.forwardRef<HTMLDivElement, DividerProps>(
+export const Divider = React.forwardRef<HTMLHRElement, DividerProps>(
   ({ orientation = "horizontal", className = "" }, ref) => {
     const isHorizontal = orientation === "horizontal";
     const baseClasses = isHorizontal
-      ? "w-full h-1 rounded-full bg-candy-ink/20"
-      : "h-full w-1 rounded-full bg-candy-ink/20";
+      ? "w-full h-1 m-0 rounded-full bg-candy-ink/20 border-0"
+      : "h-full w-1 m-0 rounded-full bg-candy-ink/20 border-0";
 
     const combinedClassName = cn(baseClasses, className);
 
     return (
-      <div
+      <hr
         ref={ref}
         className={combinedClassName}
-        role="separator"
         aria-orientation={orientation}
       />
     );

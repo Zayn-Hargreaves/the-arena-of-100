@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import type { ToastActionElement, ToastProps } from "@/components/ui/toast";
+import { generateId } from "@/lib/id";
 
 const TOAST_LIMIT = 3;
 const TOAST_REMOVE_DELAY = 5000;
@@ -36,13 +37,7 @@ interface State {
 }
 
 function genId() {
-  // Try to use crypto.randomUUID if available
-  if (typeof crypto !== "undefined" && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-
-  // Fallback to timestamp + random number
-  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+  return generateId();
 }
 
 const toastTimeouts = new Map<string, ReturnType<typeof setTimeout>>();

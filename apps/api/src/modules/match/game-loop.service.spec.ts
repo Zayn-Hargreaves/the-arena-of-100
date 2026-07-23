@@ -1339,6 +1339,7 @@ describe("GameLoopService", () => {
       );
       (matchService.getStateMachine as any) = vi.fn().mockResolvedValue(null);
       (matchService.finishMatch as any) = vi.fn().mockResolvedValue(null);
+      const matchCommand = createMockMatchCommand();
       const svc = new GameLoopService(
         matchService,
         questionService,
@@ -1346,11 +1347,14 @@ describe("GameLoopService", () => {
         createMockPrismaService() as any,
         new LobbyCountdownService(roomService, redis),
         ownership as any,
-        createMockMatchCommand() as any,
+        matchCommand as any,
       );
 
       await svc.forceFinishMatchForDisband("m9", "r9");
       expect(ownership.release).toHaveBeenCalledWith("m9");
+      // B4b: disband path must clean match:cmd + match:applied (no stopRoomRuntime).
+      expect(matchCommand.deregisterMatch).toHaveBeenCalledWith("m9");
+      expect(matchCommand.disposeStream).toHaveBeenCalledWith("m9");
     });
 
     it("logs and continues launch rollback when release throws after a successful acquire", async () => {

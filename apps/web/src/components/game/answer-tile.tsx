@@ -12,8 +12,7 @@ export interface AnswerTileProps {
   className?: string;
 }
 
-const assertNever = (value: never): never => {
-  void value;
+const assertNever = (_value: never): never => {
   throw new Error("Unhandled answer tile variant");
 };
 
@@ -34,6 +33,19 @@ const getVariantStyles = (variant: AnswerTileProps["variant"] = "default") => {
   }
 };
 
+const getBadgeStyles = (variant: AnswerTileProps["variant"] = "default") => {
+  switch (variant) {
+    case "correct":
+      return "bg-white text-candy-mint";
+    case "incorrect":
+      return "bg-white text-candy-red";
+    case "selected":
+      return "bg-white text-candy-pink";
+    default:
+      return "bg-candy-cloud text-candy-ink";
+  }
+};
+
 export const AnswerTile: React.FC<AnswerTileProps> = ({
   option,
   content,
@@ -46,22 +58,15 @@ export const AnswerTile: React.FC<AnswerTileProps> = ({
   const currentVariant = disabled ? "disabled" : variant;
 
   return (
-    <div
+    <button
+      type="button"
       onClick={isInteractive ? onClick : undefined}
+      disabled={!isInteractive}
       className={cn(
         "w-full select-none outline-none focus:outline-none transition-all duration-150 active:translate-y-[2px]",
         !isInteractive && "active:translate-y-0",
         className,
       )}
-      role="button"
-      tabIndex={isInteractive ? 0 : -1}
-      aria-disabled={disabled || variant === "disabled"}
-      onKeyDown={(e) => {
-        if (isInteractive && onClick && (e.key === "Enter" || e.key === " ")) {
-          e.preventDefault();
-          onClick();
-        }
-      }}
     >
       <div
         className={cn(
@@ -73,13 +78,7 @@ export const AnswerTile: React.FC<AnswerTileProps> = ({
         <div
           className={cn(
             "flex items-center justify-center w-10 h-10 rounded-xl font-display font-black text-lg border-[2.5px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42] transition-all duration-300 shrink-0",
-            currentVariant === "correct"
-              ? "bg-white text-candy-mint"
-              : currentVariant === "incorrect"
-                ? "bg-white text-candy-red"
-                : currentVariant === "selected"
-                  ? "bg-white text-candy-pink"
-                  : "bg-candy-cloud text-candy-ink",
+            getBadgeStyles(currentVariant),
           )}
         >
           {option}
@@ -90,7 +89,7 @@ export const AnswerTile: React.FC<AnswerTileProps> = ({
           {content}
         </div>
       </div>
-    </div>
+    </button>
   );
 };
 

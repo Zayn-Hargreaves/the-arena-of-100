@@ -18,6 +18,15 @@ export interface PlayerGridProps {
   className?: string;
 }
 
+const avatarStatusMap: Record<
+  Player["status"],
+  "online" | "eliminated" | "offline"
+> = {
+  active: "online",
+  eliminated: "eliminated",
+  offline: "offline",
+};
+
 export const PlayerGrid: React.FC<PlayerGridProps> = ({
   players,
   maxPlayers = 100,
@@ -46,6 +55,8 @@ export const PlayerGrid: React.FC<PlayerGridProps> = ({
           );
         }
 
+        const avatarStatus = avatarStatusMap[slot.status];
+
         return (
           <div
             key={slot.id}
@@ -59,13 +70,7 @@ export const PlayerGrid: React.FC<PlayerGridProps> = ({
             <Avatar
               size="xs"
               fallback={slot.name}
-              status={
-                slot.status === "active"
-                  ? "online"
-                  : slot.status === "eliminated"
-                    ? "eliminated"
-                    : "offline"
-              }
+              status={avatarStatus}
               className={cn(
                 "w-full h-full rounded-full",
                 slot.status === "eliminated" && "grayscale",
@@ -82,11 +87,16 @@ export const PlayerGrid: React.FC<PlayerGridProps> = ({
 export const PlayerGridSkeleton: React.FC<{ maxPlayers?: number }> = ({
   maxPlayers = 100,
 }) => {
+  const skeletonSlots = Array.from(
+    { length: maxPlayers },
+    (_, index) => `player-grid-skeleton-${index}`,
+  );
+
   return (
     <div className="grid grid-cols-10 gap-2">
-      {Array.from({ length: maxPlayers }).map((_, index) => (
+      {skeletonSlots.map((id) => (
         <Skeleton
-          key={index}
+          key={id}
           className="aspect-square rounded-full bg-candy-cloud"
         />
       ))}

@@ -41,7 +41,7 @@ const glyphPaths: Record<MiniGlyphProps["variant"], React.ReactNode> = {
   ),
 };
 
-export function MiniGlyph({ variant, className }: MiniGlyphProps) {
+export function MiniGlyph({ variant, className }: Readonly<MiniGlyphProps>) {
   return (
     <svg
       viewBox="0 0 24 24"

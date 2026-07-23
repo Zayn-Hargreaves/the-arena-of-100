@@ -180,6 +180,36 @@ describe("MatchOwnershipService recovery (B3b)", () => {
     expect(service.isOwner("m1")).toBe(false);
   });
 
+  it("transient renewLease throw (pre-resume) schedules retry and preserves ownership", async () => {
+    // Acquire succeeds, hydrate succeeds, but pre-resume renewLease throws.
+    redis.renewLease.mockRejectedValueOnce(new Error("redis blip"));
+
+    await (service as any).attemptRecovery("m1", server);
+
+    expect(recovery.resumeMatchLoop).not.toHaveBeenCalled();
+    expect(redis.finalizeMatchTombstone).not.toHaveBeenCalled();
+    // Lease retained + retry scheduled (same contract as hydrate failure).
+    expect(service.isOwner("m1")).toBe(true);
+    expect((service as any).retries.has("m1")).toBe(true);
+  });
+
+  it("transient renewLease throw (retained-lease re-verify) schedules retry and preserves ownership", async () => {
+    // Seed an already-owned entry so attemptRecovery takes the re-verify branch.
+    (service as any).owned.set("m1", {
+      roomId: "room-1",
+      fence: 5,
+      leaseValue: "node-a:5",
+    });
+    redis.renewLease.mockRejectedValueOnce(new Error("redis blip"));
+
+    await (service as any).attemptRecovery("m1", server);
+
+    expect(recovery.resumeMatchLoop).not.toHaveBeenCalled();
+    expect(redis.finalizeMatchTombstone).not.toHaveBeenCalled();
+    expect(service.isOwner("m1")).toBe(true);
+    expect((service as any).retries.has("m1")).toBe(true);
+  });
+
   // ---- boot recovery scan -------------------------------------
 
   it("boot: buffers ONLY the matchId before the server is wired (no acquire/hydrate)", async () => {
@@ -317,12 +347,14 @@ describe("MatchOwnershipService recovery (B3b)", () => {
     await expect(service.requeueMatch("m1", true)).resolves.toBe("REQUEUED");
 
     expect(redis.requeueDeadLetter).toHaveBeenCalledWith(
-      "match:tombstone:m1",
-      "match:state:m1",
-      "match:owner:m1",
-      "match:fence:m1",
-      "match:active",
-      "match:recovery:dead-letter",
+      {
+        tombstoneKey: "match:tombstone:m1",
+        stateKey: "match:state:m1",
+        ownerKey: "match:owner:m1",
+        fenceKey: "match:fence:m1",
+        indexKey: "match:active",
+        deadLetterSet: "match:recovery:dead-letter",
+      },
       "m1",
       { force: true },
     );

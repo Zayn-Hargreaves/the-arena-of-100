@@ -49,7 +49,7 @@ const TOMBSTONE_REASONS = new Set<TombstoneReason>([
  * must NOT be used — both accept signs/whitespace/decimals/exponents.
  */
 export function isValidFinalizedFence(raw: string): boolean {
-  if (!/^[1-9][0-9]*$/.test(raw)) return false;
+  if (!/^[1-9]\d*$/.test(raw)) return false;
   const n = Number(raw);
   return Number.isSafeInteger(n) && n >= 1;
 }

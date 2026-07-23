@@ -1,4 +1,9 @@
-import { GAME_CONFIG, ServerEvent, getRoomChannel } from "@arena/shared";
+import {
+  GAME_CONFIG,
+  ServerEvent,
+  getPlayerChannel,
+  getRoomChannel,
+} from "@arena/shared";
 import type { Server } from "socket.io";
 
 interface MatchStateLike {
@@ -7,21 +12,28 @@ interface MatchStateLike {
 }
 
 /**
- * B4b: the owner's canonical ANSWER_RESULT. Emitted to the room channel (so the
- * Redis adapter delivers it cross-node to the submitter, whose socket may be on
- * a different node) ONLY after the fenced authoritative apply landed. Carries
- * userId + submissionId so the submitter's client can match it to its pending
- * submission; other clients ignore a result that is not theirs.
+ * B4b: the owner's canonical ANSWER_RESULT. Emitted to the SUBMITTER-ONLY
+ * `player:${userId}` channel so per-answer correctness stays private to the
+ * submitter — the room channel MUST NOT carry it, because every connected
+ * client and spectator in the room would otherwise see every other player's
+ * `isCorrect` in real time. Cross-node delivery is handled by the Socket.io
+ * Redis adapter: each authenticated socket is joined to its own
+ * `player:${userId}` channel by `AuthHandler.handleAuthenticate`, so the
+ * owner can deliver to a submitter whose socket is on a different node.
+ *
+ * The payload still carries `userId` + `submissionId` so the submitter's
+ * client can match it to its pending submission. Other clients never
+ * receive this event at all.
  */
 export function emitAnswerResult(
   server: Server,
-  roomId: string,
+  _roomId: string,
   matchId: string,
   userId: string,
   result: { submissionId: string; isCorrect: boolean; responseTimeMs: number },
   roundNo: number,
 ) {
-  const channel = getRoomChannel(roomId);
+  const channel = getPlayerChannel(userId);
   server.to(channel).emit(ServerEvent.ANSWER_RESULT, {
     matchId,
     userId,
@@ -123,11 +135,14 @@ export function emitPlayerEliminated(ctx: PlayerEliminatedReason) {
   // WRONG_ANSWER: submitted but incorrect.
   // AFK: no answer while still connected (idle / didn't press).
   // TIMEOUT: no answer and already offline (disconnect mid-round).
-  const reason = answeredThisRound
-    ? "WRONG_ANSWER"
-    : wasOnline
-      ? "AFK"
-      : "TIMEOUT";
+  let reason: "WRONG_ANSWER" | "AFK" | "TIMEOUT";
+  if (answeredThisRound) {
+    reason = "WRONG_ANSWER";
+  } else if (wasOnline) {
+    reason = "AFK";
+  } else {
+    reason = "TIMEOUT";
+  }
   server.to(channel).emit(ServerEvent.PLAYER_ELIMINATED, {
     matchId,
     roundNo: state.currentRoundNo,

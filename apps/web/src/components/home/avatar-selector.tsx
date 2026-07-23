@@ -18,10 +18,10 @@ export function AvatarSelector({
   isAnimating,
   onPrevious,
   onNext,
-}: AvatarSelectorProps) {
+}: Readonly<AvatarSelectorProps>) {
   const t = useTranslations("settings.avatar");
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
     if (e.key === "ArrowLeft") {
       e.preventDefault();
       onPrevious();
@@ -37,16 +37,11 @@ export function AvatarSelector({
         {t("selectAvatar")}
       </label>
 
-      <div
-        className="flex justify-center items-center gap-6"
-        onKeyDown={handleKeyDown}
-        tabIndex={0}
-        role="group"
-        aria-label={t("avatarNavigation")}
-      >
+      <div className="flex justify-center items-center gap-6">
         <button
           type="button"
           onClick={onPrevious}
+          onKeyDown={handleKeyDown}
           className="w-12 h-12 bg-candy-yellow border-4 border-candy-ink rounded-2xl flex items-center justify-center shadow-[3px_3px_0_0_#2B2D42] active:translate-y-[2px] active:shadow-[1px_1px_0_0_#2B2D42] hover:-translate-y-[2px] hover:shadow-[3px_5px_0_0_#2B2D42] transition-all"
           aria-label={t("previous")}
         >
@@ -93,6 +88,7 @@ export function AvatarSelector({
         <button
           type="button"
           onClick={onNext}
+          onKeyDown={handleKeyDown}
           className="w-12 h-12 bg-candy-yellow border-4 border-candy-ink rounded-2xl flex items-center justify-center shadow-[3px_3px_0_0_#2B2D42] active:translate-y-[2px] active:shadow-[1px_1px_0_0_#2B2D42] hover:-translate-y-[2px] hover:shadow-[3px_5px_0_0_#2B2D42] transition-all"
           aria-label={t("next")}
         >

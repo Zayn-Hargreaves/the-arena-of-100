@@ -7,7 +7,7 @@ import {
   CMD_DEAD_LETTER_SET,
   type CommandEnvelope,
   type SubmitAnswerBody,
-  type CommandOutcome,
+  type CommandDispatcher,
 } from "./match-command.service";
 import type { RedisService } from "../redis/redis.service";
 import type { MatchService } from "./match.service";
@@ -75,6 +75,7 @@ describe("MatchCommandService (B4a)", () => {
       xautoclaim: vi.fn().mockResolvedValue({ nextCursor: "0-0", claimed: [] }),
       xdelStream: vi.fn().mockResolvedValue(undefined),
       sadd: vi.fn().mockResolvedValue(1),
+      sismember: vi.fn().mockResolvedValue(false),
       set: vi.fn().mockResolvedValue(undefined),
     };
     matchService = {
@@ -115,9 +116,7 @@ describe("MatchCommandService (B4a)", () => {
   });
 
   it("apply dispatches with the current owner snapshot when still owner", async () => {
-    const dispatcher = vi
-      .fn<CommandDispatcherArgs, Promise<CommandOutcome>>()
-      .mockResolvedValue("APPLIED");
+    const dispatcher = vi.fn<CommandDispatcher>().mockResolvedValue("APPLIED");
     service.setDispatcher(dispatcher);
 
     await expect(service.applySubmitAnswer(submitEnv(), server)).resolves.toBe(
@@ -158,6 +157,121 @@ describe("MatchCommandService (B4a)", () => {
     );
 
     expect(redis.xack).not.toHaveBeenCalled();
+  });
+
+  it("processEntry XACKs a player_disconnect entry when the side effect returns APPLIED", async () => {
+    // B5: the disconnect side effect reports the underlying persist outcome.
+    // On APPLIED (and on the pre-condition NOOP) the entry is XACKed.
+    service.setSideEffects({
+      publishAnswerResult: vi.fn(),
+      checkEarlyTermination: vi.fn().mockResolvedValue(undefined),
+      handlePlayerDisconnect: vi.fn().mockResolvedValue("APPLIED"),
+    });
+
+    const env = {
+      eventId: "evt-dc-1",
+      schemaVersion: 1,
+      matchId: "m1",
+      emittedByNodeId: "node-b",
+      emittedAt: 1000,
+      body: { type: "player_disconnect", userId: "p1" },
+    };
+
+    await service.processEntry(
+      "m1",
+      { id: "9-0", data: JSON.stringify(env) },
+      server,
+    );
+
+    expect(redis.xack).toHaveBeenCalledWith("match:cmd:m1", OWNER_GROUP, "9-0");
+  });
+
+  it("processEntry leaves a player_disconnect entry pending when the side effect returns RETRY (lease lost)", async () => {
+    // B5 hardening (symmetric with submit_answer): a non-APPLIED outcome from
+    // the runner (RETRY/BLIND) MUST be mapped to "RETRY" by the side effect so
+    // the entry stays pending and the new owner re-evaluates. Without this,
+    // the entry would be XACKed and the disconnect silently dropped.
+    service.setSideEffects({
+      publishAnswerResult: vi.fn(),
+      checkEarlyTermination: vi.fn().mockResolvedValue(undefined),
+      handlePlayerDisconnect: vi.fn().mockResolvedValue("RETRY"),
+    });
+
+    const env = {
+      eventId: "evt-dc-2",
+      schemaVersion: 1,
+      matchId: "m1",
+      emittedByNodeId: "node-b",
+      emittedAt: 1000,
+      body: { type: "player_disconnect", userId: "p1" },
+    };
+
+    await service.processEntry(
+      "m1",
+      { id: "9-1", data: JSON.stringify(env) },
+      server,
+    );
+
+    expect(redis.xack).not.toHaveBeenCalled();
+    // RETRY must NOT mark the eventId applied — next owner reprocesses.
+    expect(redis.sadd).not.toHaveBeenCalledWith("match:applied:m1", "evt-dc-2");
+  });
+
+  it("processEntry acks a redelivered player_disconnect without re-invoking the side effect", async () => {
+    // eventId already in match:applied → ackable no-op (no second PLAYER_LEFT).
+    redis.sismember.mockResolvedValue(true);
+    const handlePlayerDisconnect = vi.fn().mockResolvedValue("APPLIED");
+    service.setSideEffects({
+      publishAnswerResult: vi.fn(),
+      checkEarlyTermination: vi.fn().mockResolvedValue(undefined),
+      handlePlayerDisconnect,
+    });
+
+    const env = {
+      eventId: "evt-dc-dup",
+      schemaVersion: 1,
+      matchId: "m1",
+      emittedByNodeId: "node-b",
+      emittedAt: 1000,
+      body: { type: "player_disconnect", userId: "p1" },
+    };
+
+    await service.processEntry(
+      "m1",
+      { id: "9-2", data: JSON.stringify(env) },
+      server,
+    );
+
+    expect(handlePlayerDisconnect).not.toHaveBeenCalled();
+    expect(redis.xack).toHaveBeenCalledWith("match:cmd:m1", OWNER_GROUP, "9-2");
+  });
+
+  it("processEntry records eventId after a successful player_disconnect apply", async () => {
+    const handlePlayerDisconnect = vi.fn().mockResolvedValue("APPLIED");
+    service.setSideEffects({
+      publishAnswerResult: vi.fn(),
+      checkEarlyTermination: vi.fn().mockResolvedValue(undefined),
+      handlePlayerDisconnect,
+    });
+
+    const env = {
+      eventId: "evt-dc-3",
+      schemaVersion: 1,
+      matchId: "m1",
+      emittedByNodeId: "node-b",
+      emittedAt: 1000,
+      body: { type: "player_disconnect", userId: "p1" },
+    };
+
+    await service.processEntry(
+      "m1",
+      { id: "9-3", data: JSON.stringify(env) },
+      server,
+    );
+
+    expect(handlePlayerDisconnect).toHaveBeenCalledOnce();
+    expect(redis.sadd).toHaveBeenCalledWith("match:applied:m1", "evt-dc-3");
+    expect(redis.xack).toHaveBeenCalledWith("match:cmd:m1", OWNER_GROUP, "9-3");
   });
 
   it("processEntry dead-letters an invalid entry, then XACKs + XDELs it", async () => {
@@ -305,17 +419,90 @@ describe("MatchCommandService (B4a)", () => {
       expect(sideEffects.publishAnswerResult).not.toHaveBeenCalled();
     });
 
-    it("DUPLICATE_SUBMISSION: replaying the same submissionId is an ackable no-op with no side effects", async () => {
+    it("same submissionId (incomplete prior attempt): heals via recoverDuplicateEvent before ack", async () => {
       const answers = new Map([
         ["p1", { submissionId: "sub-1", isCorrect: true, responseTimeMs: 500 }],
       ]);
-      matchService.getStateMachine.mockResolvedValue(machine(answers));
+      const sm = machine(answers);
+      matchService.getStateMachine.mockResolvedValue(sm);
+
+      // eventId not in applied (sadd may have failed on the first attempt), but
+      // the answer is already in SM → route through recover, not a silent no-op.
+      await expect(
+        service.applyAnswerAuthoritative(submitEnv(), owner, server),
+      ).resolves.toBe("DUPLICATE_EVENT");
+
+      expect(sm.submitAnswer).not.toHaveBeenCalled();
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+      expect(sideEffects.publishAnswerResult).toHaveBeenCalled();
+      expect(sideEffects.checkEarlyTermination).toHaveBeenCalledWith(
+        "m1",
+        "r1",
+        server,
+      );
+    });
+
+    it("APPLIED: sadd failure after side effects still returns APPLIED; redelivery heals via DUPLICATE_EVENT", async () => {
+      const answers = new Map<string, unknown>();
+      const sm = machine(answers);
+      matchService.getStateMachine.mockResolvedValue(sm);
+      // First call: sadd rejects → return APPLIED without a durable marker.
+      redis.sadd = vi.fn().mockRejectedValue(new Error("sadd boom"));
 
       await expect(
         service.applyAnswerAuthoritative(submitEnv(), owner, server),
-      ).resolves.toBe("DUPLICATE_SUBMISSION");
+      ).resolves.toBe("APPLIED");
 
+      expect(sideEffects.publishAnswerResult).toHaveBeenCalledTimes(1);
+      expect(sideEffects.checkEarlyTermination).toHaveBeenCalledTimes(1);
+
+      // Second call (redelivery with the same envelope): sadd now succeeds and
+      // the answer is already in SM (same submissionId) → recoverDuplicateEvent
+      // re-publishes the canonical answer result, not submitAnswer.
+      redis.sadd = vi.fn().mockResolvedValue(1);
+      answers.set("p1", {
+        submissionId: "sub-1",
+        isCorrect: true,
+        responseTimeMs: 500,
+      });
+      sideEffects.publishAnswerResult.mockClear();
+      sideEffects.checkEarlyTermination.mockClear();
+      sm.submitAnswer.mockClear();
+      matchService.persistStateMachine.mockClear();
+
+      await expect(
+        service.applyAnswerAuthoritative(submitEnv(), owner, server),
+      ).resolves.toBe("DUPLICATE_EVENT");
+
+      expect(sm.submitAnswer).not.toHaveBeenCalled();
       expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+      // Recovery republishes the canonical result idempotently.
+      expect(sideEffects.publishAnswerResult).toHaveBeenCalledTimes(1);
+      expect(sideEffects.checkEarlyTermination).toHaveBeenCalledTimes(1);
+    });
+
+    it("recoverDuplicateEvent returns RETRY (no publish) when the lease is lost mid-recovery", async () => {
+      const answers = new Map([
+        ["p1", { submissionId: "sub-1", isCorrect: true, responseTimeMs: 500 }],
+      ]);
+      const sm = machine(answers);
+      matchService.getStateMachine.mockResolvedValue(sm);
+
+      // Outer apply() fence: owner alive. Recovery entry fence: owner alive.
+      // Recovery pre-publish fence: lease taken over by another node → must
+      // abort, not broadcast.
+      ownership.currentFence
+        .mockReturnValueOnce({ fence: 5, leaseValue: "node-a:5" })
+        .mockReturnValueOnce({ fence: 5, leaseValue: "node-a:5" })
+        .mockReturnValueOnce(null);
+
+      await expect(
+        service.applySubmitAnswer(submitEnv(), server),
+      ).resolves.toBe("RETRY");
+
+      expect(ownership.currentFence.mock.calls.length).toBeGreaterThanOrEqual(
+        3,
+      );
       expect(sideEffects.publishAnswerResult).not.toHaveBeenCalled();
       expect(sideEffects.checkEarlyTermination).not.toHaveBeenCalled();
     });
@@ -347,10 +534,3 @@ describe("MatchCommandService (B4a)", () => {
     });
   });
 });
-
-// Helper type alias for the dispatcher mock signature above.
-type CommandDispatcherArgs = [
-  CommandEnvelope,
-  { fence: number; leaseValue: string },
-  Server,
-];

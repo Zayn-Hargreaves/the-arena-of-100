@@ -599,7 +599,7 @@ describe("AuthHandler", () => {
       vi.mocked(matchService.getStateMachine).mockResolvedValue(
         mockStateMachine as any,
       );
-      vi.mocked(matchService.persistStateMachine).mockResolvedValue();
+      vi.mocked(matchService.persistStateMachine).mockResolvedValue("APPLIED");
 
       await handler.handleAuthenticate(client, { token: "t" });
 
@@ -672,16 +672,16 @@ describe("AuthHandler", () => {
 
         await handler.handleAuthenticate(client, { token: "t" });
 
-        // The socket is joined to BOTH room channels. join() is
-        // called twice (once per room) — we don't assume the order
-        // in this assertion to keep the test resilient to internal
-        // reordering.
+        // The socket is joined to BOTH room channels, AND to its
+        // per-player `player:${userId}` channel (B4b — submitter-private
+        // destination for ANSWER_RESULT). join() is called three times.
         const joinedChannels = (client.join as any).mock.calls.map(
           (call: unknown[]) => call[0],
         );
         expect(joinedChannels).toContain("room:r1");
         expect(joinedChannels).toContain("room:r2");
-        expect(joinedChannels).toHaveLength(2);
+        expect(joinedChannels).toContain("player:u1");
+        expect(joinedChannels).toHaveLength(3);
 
         // C3 + presence fix: updatePresence is called for EVERY
         // rejoined room, not just the most recent. The sweeper
@@ -820,7 +820,13 @@ describe("AuthHandler", () => {
 
         await handler.handleAuthenticate(client, { token: "t" });
 
-        expect(client.join).not.toHaveBeenCalled();
+        // B4b: the per-player `player:${userId}` channel is always joined on
+        // auth (submitter-private ANSWER_RESULT destination). Room channels
+        // are NOT joined when the user has no active rooms.
+        expect(client.join).toHaveBeenCalledWith("player:u1");
+        expect(client.join).not.toHaveBeenCalledWith(
+          expect.stringMatching(/^room:/),
+        );
         expect(client.emit).not.toHaveBeenCalledWith(
           ServerEvent.ROOM_JOINED,
           expect.anything(),

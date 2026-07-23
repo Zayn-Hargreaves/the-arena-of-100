@@ -12,7 +12,7 @@ export function DashboardSectionTitle({
   title,
   glyph,
   className,
-}: DashboardSectionTitleProps) {
+}: Readonly<DashboardSectionTitleProps>) {
   return (
     <h3
       className={cn(

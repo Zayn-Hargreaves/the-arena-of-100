@@ -43,7 +43,16 @@ export interface XPendingEntry {
   readonly id: string;
   readonly consumer: string;
   readonly idleMs: number;
-  readonly deliveries: number;
+  readonly deliveryCount: number;
+}
+
+export interface RequeueDeadLetterKeys {
+  tombstoneKey: string;
+  stateKey: string;
+  ownerKey: string;
+  fenceKey: string;
+  indexKey: string;
+  deadLetterSet: string;
 }
 
 @Injectable()
@@ -57,6 +66,17 @@ export class RedisService implements OnModuleDestroy {
   // dispatch listener is registered ONCE per connection, before any subscribe
   // resolves, so no message can be missed right after SUBSCRIBE is confirmed.
   private subscriber: Redis | null = null;
+  // Pool of dedicated connections for blocking XREADGROUP. Concurrent match
+  // polls must not share one connection (ioredis serializes commands on a
+  // single socket). MAX covers idle + in-use; excess polls wait in a queue.
+  private readonly blockingReaderPool: Redis[] = [];
+  private readonly blockingReadersInUse = new Set<Redis>();
+  private readonly blockingReaderWaiters: Array<{
+    resolve: (reader: Redis | null) => void;
+    onAbort?: () => void;
+  }> = [];
+  private blockingReadersShuttingDown = false;
+  private static readonly BLOCKING_READER_POOL_MAX = 16;
   private readonly handlers = new Map<string, MessageHandler[]>();
   // Per-channel serialization: subscribe/unsubscribe for the same channel run
   // through a promise chain so a final unsubscribe and a fresh subscribe can
@@ -71,7 +91,7 @@ export class RedisService implements OnModuleDestroy {
   private readonly inFlight = new Set<OpMarker>();
   private static readonly RECONCILE_RETRIES = 3;
 
-  constructor(private configService: ConfigService) {
+  constructor(private readonly configService: ConfigService) {
     const redisUrl = this.configService.get<string>(
       "REDIS_URL",
       "redis://localhost:6379",
@@ -96,6 +116,26 @@ export class RedisService implements OnModuleDestroy {
   }
 
   async onModuleDestroy() {
+    this.blockingReadersShuttingDown = true;
+    // Unblock waiters so pending acquire() does not hang past teardown.
+    while (this.blockingReaderWaiters.length > 0) {
+      const waiter = this.blockingReaderWaiters.shift()!;
+      waiter.resolve(null);
+    }
+    // Close every allocated reader (idle + currently blocked). Prefer
+    // disconnect() so sockets mid-XREADGROUP BLOCK drop immediately.
+    const allocated = [
+      ...this.blockingReaderPool.splice(0),
+      ...this.blockingReadersInUse,
+    ];
+    this.blockingReadersInUse.clear();
+    for (const reader of allocated) {
+      try {
+        reader.disconnect();
+      } catch {
+        // best-effort
+      }
+    }
     if (this.subscriber) {
       await this.subscriber.quit().catch(() => undefined);
       this.subscriber = null;
@@ -634,12 +674,7 @@ return 'FINALIZED'`;
   // The finalizedFence grammar is validated in-Lua identically to
   // isValidFinalizedFence (see match-ownership.store.ts).
   async requeueDeadLetter(
-    tombstoneKey: string,
-    stateKey: string,
-    ownerKey: string,
-    fenceKey: string,
-    indexKey: string,
-    deadLetterSet: string,
+    keys: RequeueDeadLetterKeys,
     member: string,
     opts: { force: boolean },
   ): Promise<
@@ -650,6 +685,14 @@ return 'FINALIZED'`;
     | "NO_STATE"
     | "CONFLICT"
   > {
+    const {
+      tombstoneKey,
+      stateKey,
+      ownerKey,
+      fenceKey,
+      indexKey,
+      deadLetterSet,
+    } = keys;
     const script = `
 -- Gate 1: reason
 local tomb = redis.call('GET', KEYS[1])
@@ -750,20 +793,152 @@ return 'REQUEUED'`;
     blockMs: number,
     signal?: AbortSignal,
   ): Promise<StreamEntry[]> {
-    if (signal?.aborted) return [];
-    const reply = (await this.client.xreadgroup(
-      "GROUP",
-      group,
-      consumer,
-      "COUNT",
-      count,
-      "BLOCK",
-      blockMs,
-      "STREAMS",
-      stream,
-      ">",
-    )) as [string, [string, string[]][]][] | null;
-    return RedisService.parseStreamReply(reply, stream);
+    if (signal?.aborted || this.blockingReadersShuttingDown) return [];
+    // Blocking read MUST use a dedicated connection (same pattern as the
+    // pub/sub subscriber). Concurrent polls take distinct pool entries so
+    // multi-match owners do not serialize on one blocked socket. When the
+    // global max is reached, excess polls wait for a release.
+    const reader = await this.acquireBlockingReader(signal);
+    if (!reader) return [];
+    let failed = false;
+    try {
+      const reply = (await reader.xreadgroup(
+        "GROUP",
+        group,
+        consumer,
+        "COUNT",
+        count,
+        "BLOCK",
+        blockMs,
+        "STREAMS",
+        stream,
+        ">",
+      )) as [string, [string, string[]][]][] | null;
+      return RedisService.parseStreamReply(reply, stream);
+    } catch {
+      // disconnect()/shutdown mid-BLOCK, or socket error (e.g. NOGROUP) —
+      // discard the reader so the next poll mints a fresh duplicate instead
+      // of reusing a broken connection. Treat as empty so ownership loss /
+      // module destroy does not surface as an unhandled throw.
+      failed = true;
+      this.discardBlockingReader(reader);
+      return [];
+    } finally {
+      if (!failed) this.releaseBlockingReader(reader);
+    }
+  }
+
+  /**
+   * Acquire a blocking reader. Idle first; mint only while idle+in-use is
+   * below MAX; otherwise wait until a reader is released (or abort/shutdown).
+   * Returns null when the request is cancelled or the service is tearing down.
+   */
+  private acquireBlockingReader(signal?: AbortSignal): Promise<Redis | null> {
+    if (this.blockingReadersShuttingDown || signal?.aborted) {
+      return Promise.resolve(null);
+    }
+    const idle = this.blockingReaderPool.pop();
+    if (idle) {
+      this.blockingReadersInUse.add(idle);
+      return Promise.resolve(idle);
+    }
+    if (
+      this.blockingReadersInUse.size < RedisService.BLOCKING_READER_POOL_MAX
+    ) {
+      const minted = this.client.duplicate();
+      // Log-only error listener so a mid-BLOCK socket error on a fresh
+      // duplicate does not surface as an unhandled EventEmitter warning. The
+      // minted instance is added to blockingReadersInUse exactly once, after
+      // the listener is attached, preserving the idle+in-use ≤ MAX invariant.
+      minted.on("error", (err) => {
+        this.logger.warn(
+          `blocking reader error (mid-XREADGROUP): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      });
+      this.blockingReadersInUse.add(minted);
+      return Promise.resolve(minted);
+    }
+    return new Promise<Redis | null>((resolve) => {
+      let settled = false;
+      const settle = (reader: Redis | null) => {
+        if (settled) return;
+        settled = true;
+        if (signal && onAbort) {
+          signal.removeEventListener("abort", onAbort);
+        }
+        resolve(reader);
+      };
+      const onAbort = () => {
+        const idx = this.blockingReaderWaiters.indexOf(waiter);
+        if (idx !== -1) this.blockingReaderWaiters.splice(idx, 1);
+        settle(null);
+      };
+      const waiter: {
+        resolve: (reader: Redis | null) => void;
+        onAbort?: () => void;
+      } = {
+        resolve: (reader) => settle(reader),
+        onAbort,
+      };
+      this.blockingReaderWaiters.push(waiter);
+      if (signal) {
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    });
+  }
+
+  /**
+   * Return a reader: hand off to a waiting poller if any; otherwise re-pool
+   * (when under max and not shutting down) or close. Never re-pools after
+   * teardown starts.
+   */
+  private releaseBlockingReader(reader: Redis): void {
+    this.blockingReadersInUse.delete(reader);
+    if (this.blockingReadersShuttingDown) {
+      try {
+        reader.disconnect();
+      } catch {
+        // best-effort
+      }
+      return;
+    }
+    const waiter = this.blockingReaderWaiters.shift();
+    if (waiter) {
+      this.blockingReadersInUse.add(reader);
+      waiter.resolve(reader);
+      return;
+    }
+    if (
+      this.blockingReaderPool.length < RedisService.BLOCKING_READER_POOL_MAX
+    ) {
+      this.blockingReaderPool.push(reader);
+      return;
+    }
+    try {
+      reader.disconnect();
+    } catch {
+      void reader.quit().catch(() => undefined);
+    }
+  }
+
+  /**
+   * Remove a reader from in-use and close it. Used when the reader's last
+   * XREADGROUP failed (e.g. NOGROUP or socket error) so a broken connection
+   * is never re-pooled for the next poll.
+   */
+  private discardBlockingReader(reader: Redis): void {
+    this.blockingReadersInUse.delete(reader);
+    try {
+      reader.disconnect();
+    } catch {
+      void reader.quit().catch(() => undefined);
+    }
   }
 
   /** Ack processed entries; returns the number actually acknowledged. */
@@ -866,7 +1041,7 @@ return 'REQUEUED'`;
       id: String(id),
       consumer: String(consumer),
       idleMs: Number(idleMs) || 0,
-      deliveries: Number(deliveries) || 0,
+      deliveryCount: Number(deliveries) || 0,
     }));
   }
 
@@ -1172,7 +1347,7 @@ return 'REQUEUED'`;
         // Isolate every handler: a synchronous throw (or a rejected promise
         // from an async handler) must not stop dispatch to the remaining
         // handlers on the channel. Each failure is logged and swallowed.
-        for (const h of [...list]) {
+        for (const h of list) {
           try {
             const result = h(msg) as unknown;
             if (

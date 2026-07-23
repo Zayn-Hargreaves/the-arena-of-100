@@ -14,6 +14,8 @@ type SubscriberMock = {
   unsubscribe: ReturnType<typeof vi.fn>;
   disconnect: ReturnType<typeof vi.fn>;
   quit: ReturnType<typeof vi.fn>;
+  /** Also used as the blocking-reader connection from client.duplicate(). */
+  xreadgroup: ReturnType<typeof vi.fn>;
   emit: (channel: string, message: string) => void;
 };
 
@@ -57,6 +59,8 @@ function makeSubscriber(): SubscriberMock {
     unsubscribe: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn(),
     quit: vi.fn().mockResolvedValue("OK"),
+    // Also used as the blocking-reader connection from client.duplicate().
+    xreadgroup: vi.fn().mockResolvedValue(null),
     emit: (channel: string, message: string) =>
       messageListener?.(channel, message),
   };
@@ -633,8 +637,8 @@ describe("RedisService", () => {
       expect(args).toContain("data");
     });
 
-    it("xreadgroup parses [[stream,[[id,[field,value]]]]] into StreamEntry[]", async () => {
-      client.xreadgroup.mockResolvedValueOnce([
+    it("xreadgroup uses a dedicated duplicate() connection, not the shared client", async () => {
+      subscriber.xreadgroup.mockResolvedValueOnce([
         [
           "match:cmd:m1",
           [
@@ -650,10 +654,232 @@ describe("RedisService", () => {
         16,
         1000,
       );
+      expect(client.duplicate).toHaveBeenCalled();
+      expect(subscriber.xreadgroup).toHaveBeenCalled();
+      expect(client.xreadgroup).not.toHaveBeenCalled();
       expect(entries).toEqual([
         { id: "1-0", data: '{"a":1}' },
         { id: "2-0", data: '{"b":2}' },
       ]);
+    });
+
+    it("xreadgroup reuses a pooled blocking-reader connection across sequential calls", async () => {
+      subscriber.xreadgroup.mockResolvedValue(null);
+      await service.xreadgroup("owners", "node-a", "match:cmd:m1", 16, 1000);
+      await service.xreadgroup("owners", "node-a", "match:cmd:m1", 16, 1000);
+      // Sequential: first call mints, second reuses from the pool.
+      expect(client.duplicate).toHaveBeenCalledTimes(1);
+      expect(subscriber.xreadgroup).toHaveBeenCalledTimes(2);
+    });
+
+    it("xreadgroup allocates distinct readers for concurrent in-flight polls", async () => {
+      // Two overlapping xreadgroup calls must not share one blocked socket.
+      let resolveFirst: (v: null) => void;
+      const firstBlocked = new Promise<null>((r) => {
+        resolveFirst = r;
+      });
+      const readerA = {
+        xreadgroup: vi.fn().mockReturnValueOnce(firstBlocked),
+        quit: vi.fn().mockResolvedValue("OK"),
+        disconnect: vi.fn(),
+        on: vi.fn(),
+      };
+      const readerB = {
+        xreadgroup: vi.fn().mockResolvedValueOnce(null),
+        quit: vi.fn().mockResolvedValue("OK"),
+        disconnect: vi.fn(),
+        on: vi.fn(),
+      };
+      client.duplicate
+        .mockReturnValueOnce(readerA as unknown as Redis)
+        .mockReturnValueOnce(readerB as unknown as Redis);
+
+      const p1 = service.xreadgroup(
+        "owners",
+        "node-a",
+        "match:cmd:m1",
+        16,
+        1000,
+      );
+      // Let p1 acquire its reader before p2 starts.
+      await Promise.resolve();
+      const p2 = service.xreadgroup(
+        "owners",
+        "node-a",
+        "match:cmd:m2",
+        16,
+        1000,
+      );
+      await p2;
+      resolveFirst!(null);
+      await p1;
+
+      expect(client.duplicate).toHaveBeenCalledTimes(2);
+      expect(readerA.xreadgroup).toHaveBeenCalledTimes(1);
+      expect(readerB.xreadgroup).toHaveBeenCalledTimes(1);
+    });
+
+    it("xreadgroup attaches a log-only error listener on each minted reader", async () => {
+      const warnSpy = vi.spyOn(
+        (service as unknown as { logger: Logger }).logger,
+        "warn",
+      );
+      const reader = {
+        xreadgroup: vi.fn().mockResolvedValue(null),
+        quit: vi.fn().mockResolvedValue("OK"),
+        disconnect: vi.fn(),
+        on: vi.fn(),
+      };
+      client.duplicate.mockReturnValueOnce(reader as unknown as Redis);
+
+      await service.xreadgroup("owners", "node-a", "match:cmd:m1", 16, 1000);
+
+      // minted reader gets an error listener before being added to in-use.
+      const errorCall = (reader.on as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c) => c[0] === "error",
+      );
+      expect(errorCall).toBeDefined();
+      // Invoking the listener with an error must log it (no throw, no unhandled).
+      errorCall![1](new Error("mid-block socket error"));
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("blocking reader error"),
+      );
+    });
+
+    it("xreadgroup NOGROUP on minted reader returns [] and discards the reader (no re-pool)", async () => {
+      const reader = {
+        xreadgroup: vi
+          .fn()
+          .mockRejectedValueOnce(
+            new Error(
+              "NOGROUP No such key 'match:cmd:m1' or consumer group 'owners'",
+            ),
+          ),
+        quit: vi.fn().mockResolvedValue("OK"),
+        disconnect: vi.fn(),
+        on: vi.fn(),
+      };
+      client.duplicate.mockReturnValueOnce(reader as unknown as Redis);
+
+      // Failure/retry signal to the caller: empty entries (matches pollOnce
+      // soft-fail contract).
+      await expect(
+        service.xreadgroup("owners", "node-a", "match:cmd:m1", 16, 1000),
+      ).resolves.toEqual([]);
+
+      // Rejected reader is removed from the in-use pool and never re-pooled.
+      const inUse = (service as unknown as { blockingReadersInUse: Set<Redis> })
+        .blockingReadersInUse;
+      const pool = (service as unknown as { blockingReaderPool: Redis[] })
+        .blockingReaderPool;
+      expect(inUse.has(reader as unknown as Redis)).toBe(false);
+      expect(pool).not.toContain(reader as unknown as Redis);
+      expect(reader.disconnect).toHaveBeenCalled();
+
+      // A subsequent xreadgroup must mint a fresh reader instead of reusing
+      // the discarded one.
+      const freshReader = {
+        xreadgroup: vi.fn().mockResolvedValue(null),
+        quit: vi.fn().mockResolvedValue("OK"),
+        disconnect: vi.fn(),
+        on: vi.fn(),
+      };
+      client.duplicate.mockReturnValueOnce(freshReader as unknown as Redis);
+      await service.xreadgroup("owners", "node-a", "match:cmd:m1", 16, 1000);
+      expect(client.duplicate).toHaveBeenCalledTimes(2);
+    });
+
+    it("xreadgroup does not mint a 17th reader while 16 are in use; waits for release", async () => {
+      const max = 16;
+      const resolvers: Array<(v: null) => void> = [];
+      const readers = Array.from({ length: max }, (_, i) => {
+        let resolveBlocked: (v: null) => void;
+        const blocked = new Promise<null>((r) => {
+          resolveBlocked = r;
+        });
+        resolvers.push((v) => resolveBlocked!(v));
+        return {
+          xreadgroup: vi
+            .fn()
+            .mockImplementationOnce(() => blocked)
+            // Second call (handoff to waiting 17th poll) resolves immediately.
+            .mockResolvedValueOnce(null),
+          quit: vi.fn().mockResolvedValue("OK"),
+          disconnect: vi.fn(),
+          on: vi.fn(),
+          id: i,
+        };
+      });
+      for (const r of readers) {
+        client.duplicate.mockReturnValueOnce(r as unknown as Redis);
+      }
+
+      const inFlight = readers.map((_, i) =>
+        service.xreadgroup("owners", "node-a", `match:cmd:m${i}`, 16, 1000),
+      );
+      // Drain microtasks so all 16 acquire paths complete.
+      for (let i = 0; i < max + 2; i++) await Promise.resolve();
+
+      expect(client.duplicate).toHaveBeenCalledTimes(max);
+
+      // 17th poll must wait — no extra duplicate until a reader is released.
+      const p17 = service.xreadgroup(
+        "owners",
+        "node-a",
+        "match:cmd:m17",
+        16,
+        1000,
+      );
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+
+      expect(client.duplicate).toHaveBeenCalledTimes(max);
+
+      // Free one in-use reader; the waiter reuses it (still no 17th mint).
+      resolvers[0]!(null);
+      await inFlight[0];
+      await p17;
+
+      expect(client.duplicate).toHaveBeenCalledTimes(max);
+      expect(readers[0]!.xreadgroup).toHaveBeenCalledTimes(2);
+
+      for (let i = 1; i < max; i++) resolvers[i]!(null);
+      await Promise.all(inFlight.slice(1));
+    });
+
+    it("onModuleDestroy closes in-use blocking readers mid-poll and does not re-pool", async () => {
+      let resolveBlocked: (v: null) => void;
+      const blocked = new Promise<null>((r) => {
+        resolveBlocked = r;
+      });
+      const reader = {
+        xreadgroup: vi.fn().mockReturnValueOnce(blocked),
+        quit: vi.fn().mockResolvedValue("OK"),
+        disconnect: vi.fn(),
+        on: vi.fn(),
+      };
+      client.duplicate.mockReturnValueOnce(reader as unknown as Redis);
+
+      const poll = service.xreadgroup(
+        "owners",
+        "node-a",
+        "match:cmd:m1",
+        16,
+        1000,
+      );
+      await Promise.resolve();
+      expect(reader.xreadgroup).toHaveBeenCalledTimes(1);
+
+      await service.onModuleDestroy();
+
+      expect(reader.disconnect).toHaveBeenCalled();
+      // Settle the blocked read so the poll's finally/release path runs.
+      resolveBlocked!(null);
+      await poll;
+
+      // Release after shutdown must not push the reader back into the idle pool.
+      const pool = (service as unknown as { blockingReaderPool: Redis[] })
+        .blockingReaderPool;
+      expect(pool).toHaveLength(0);
     });
 
     it("xreadgroup short-circuits to [] when the signal is already aborted", async () => {
@@ -669,10 +895,11 @@ describe("RedisService", () => {
       );
       expect(entries).toEqual([]);
       expect(client.xreadgroup).not.toHaveBeenCalled();
+      expect(subscriber.xreadgroup).not.toHaveBeenCalled();
     });
 
     it("xreadgroup returns [] on a null reply (no new entries)", async () => {
-      client.xreadgroup.mockResolvedValueOnce(null);
+      subscriber.xreadgroup.mockResolvedValueOnce(null);
       await expect(
         service.xreadgroup("owners", "node-a", "match:cmd:m1", 16, 1000),
       ).resolves.toEqual([]);
@@ -738,7 +965,7 @@ describe("RedisService", () => {
         minIdleMs: 30000,
       });
       expect(detail).toEqual([
-        { id: "1-0", consumer: "node-a", idleMs: 45000, deliveries: 2 },
+        { id: "1-0", consumer: "node-a", idleMs: 45000, deliveryCount: 2 },
       ]);
       const args = client.xpending.mock.calls[0] as unknown[];
       expect(args).toContain("IDLE");
@@ -893,12 +1120,14 @@ describe("RedisService", () => {
         client.eval.mockResolvedValueOnce(outcome);
         await expect(
           service.requeueDeadLetter(
-            "match:tombstone:m1",
-            "match:state:m1",
-            "match:owner:m1",
-            "match:fence:m1",
-            "match:active",
-            "match:recovery:dead-letter",
+            {
+              tombstoneKey: "match:tombstone:m1",
+              stateKey: "match:state:m1",
+              ownerKey: "match:owner:m1",
+              fenceKey: "match:fence:m1",
+              indexKey: "match:active",
+              deadLetterSet: "match:recovery:dead-letter",
+            },
             "m1",
             { force: true },
           ),
@@ -913,9 +1142,18 @@ describe("RedisService", () => {
     it("requeueDeadLetter throws on an unexpected Lua reply", async () => {
       client.eval.mockResolvedValueOnce("???");
       await expect(
-        service.requeueDeadLetter("t", "s", "o", "f", "a", "d", "m1", {
-          force: false,
-        }),
+        service.requeueDeadLetter(
+          {
+            tombstoneKey: "t",
+            stateKey: "s",
+            ownerKey: "o",
+            fenceKey: "f",
+            indexKey: "a",
+            deadLetterSet: "d",
+          },
+          "m1",
+          { force: false },
+        ),
       ).rejects.toThrow(/unexpected Lua reply/);
     });
   });

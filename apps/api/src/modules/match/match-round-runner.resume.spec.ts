@@ -63,6 +63,7 @@ describe("MatchRoundRunner.resumeMatchLoop (B3a)", () => {
   let questionService: QuestionService;
   let roomService: RoomService;
   let ownership: MatchOwnershipService;
+  let disposeCommandStream: ReturnType<typeof vi.fn>;
   let mockServer: Server;
 
   afterEach(() => {
@@ -91,6 +92,8 @@ describe("MatchRoundRunner.resumeMatchLoop (B3a)", () => {
       release: vi.fn().mockResolvedValue(undefined),
     } as unknown as MatchOwnershipService;
 
+    disposeCommandStream = vi.fn().mockResolvedValue(undefined);
+
     mockServer = {
       to: vi.fn().mockReturnValue({ emit: vi.fn() }),
     } as unknown as Server;
@@ -100,6 +103,7 @@ describe("MatchRoundRunner.resumeMatchLoop (B3a)", () => {
       questionService,
       roomService,
       ownership,
+      disposeCommandStream,
     );
   });
 
@@ -204,9 +208,46 @@ describe("MatchRoundRunner.resumeMatchLoop (B3a)", () => {
 
     expect(ownership.release).toHaveBeenCalledWith("match-1");
     expect((runner as any).timers.hasTimers("match-1")).toBe(false);
+    // B4b: terminal resume drops match:cmd / match:applied consumers + keys.
+    expect(disposeCommandStream).toHaveBeenCalledWith("match-1");
     expect(executeRoundSpy).not.toHaveBeenCalled();
     expect(endRoundSpy).not.toHaveBeenCalled();
     expect(checkMatchEndSpy).not.toHaveBeenCalled();
+  });
+
+  it("unexpected status (CREATED): disposes command stream without arming timers", async () => {
+    // CREATED is a non-timed status → default branch (no phase timer).
+    const sm = fakeStateMachine({ status: MatchStatus.CREATED });
+    const executeRoundSpy = vi
+      .spyOn(runner as any, "executeRound")
+      .mockResolvedValue(undefined);
+
+    await runner.resumeMatchLoop("match-1", sm, "room-1", mockServer);
+
+    expect(disposeCommandStream).toHaveBeenCalledWith("match-1");
+    expect(ownership.release).toHaveBeenCalledWith("match-1");
+    expect(executeRoundSpy).not.toHaveBeenCalled();
+    expect((runner as any).timers.hasTimers("match-1")).toBe(false);
+    // Used-question set was init'd then cleared via disposeMatch.
+    expect((runner as any).timers.hasUsedQuestions("match-1")).toBe(false);
+  });
+
+  it("unexpected status: disposeCommandStream rejection still releases ownership via finally", async () => {
+    const sm = fakeStateMachine({ status: MatchStatus.CREATED });
+    (runner as any).timers.initUsedQuestions("match-1");
+    // disposeCommandStream rejects; ownership.release MUST still run.
+    disposeCommandStream.mockRejectedValueOnce(new Error("dispose boom"));
+
+    await expect(
+      runner.resumeMatchLoop("match-1", sm, "room-1", mockServer),
+    ).rejects.toThrow("dispose boom");
+
+    expect(disposeCommandStream).toHaveBeenCalledWith("match-1");
+    expect(ownership.release).toHaveBeenCalledWith("match-1");
+    // disposeMatch was called before the failing dispose, so used-questions
+    // and timers are cleared regardless of the dispose failure.
+    expect((runner as any).timers.hasTimers("match-1")).toBe(false);
+    expect((runner as any).timers.hasUsedQuestions("match-1")).toBe(false);
   });
 
   it("F2: rebuilds the used-question set from the ROUND_STARTED event log", async () => {

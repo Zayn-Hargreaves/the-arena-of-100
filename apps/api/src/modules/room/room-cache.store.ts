@@ -173,7 +173,7 @@ export class RoomCacheStore {
           error instanceof Error ? error.message : String(error)
         }`,
       );
-      return NaN;
+      return Number.NaN;
     }
   }
 
@@ -195,7 +195,7 @@ export class RoomCacheStore {
           error instanceof Error ? error.message : String(error)
         }`,
       );
-      return NaN;
+      return Number.NaN;
     }
   }
 }

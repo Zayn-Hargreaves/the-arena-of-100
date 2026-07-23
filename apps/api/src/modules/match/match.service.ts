@@ -303,7 +303,7 @@ export class MatchService {
     // RETRY forever, stranding the restored owner.
     const cached = this.revisions.get(matchId);
     const expectedRevision =
-      cached && cached.fence === snapshot.fence
+      cached?.fence === snapshot.fence
         ? cached.revision
         : await this.readPersistedRevision(matchId);
     const nextRevision = expectedRevision + 1;
@@ -525,9 +525,10 @@ export class MatchService {
     this.revisions.delete(matchId);
     this.persistChains.delete(matchId);
 
-    this.logger.log(
-      `Match finished: ${matchId}${winnerId ? `, winner: ${winnerId}` : " (admin termination, no winner)"}`,
-    );
+    const winnerDetails = winnerId
+      ? `, winner: ${winnerId}`
+      : " (admin termination, no winner)";
+    this.logger.log(`Match finished: ${matchId}${winnerDetails}`);
     return match;
   }
 

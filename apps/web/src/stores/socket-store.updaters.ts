@@ -103,7 +103,7 @@ export function applyPlayerJoinedState(
   state: SocketState,
   data: RoomPlayerJoinedPayload,
 ): Partial<SocketState> | SocketState {
-  if (!state.room || state.room.id !== data.roomId) {
+  if (state.room?.id !== data.roomId) {
     return state;
   }
 
@@ -142,7 +142,7 @@ export function applyPlayerLeftState(
   state: SocketState,
   data: RoomPlayerLeftPayload,
 ): Partial<SocketState> | SocketState {
-  if (!state.room || state.room.id !== data.roomId) {
+  if (state.room?.id !== data.roomId) {
     return state;
   }
 
@@ -160,7 +160,7 @@ export function applyRoomStatusUpdatedState(
   state: SocketState,
   data: RoomStatusUpdatedPayload,
 ): Partial<SocketState> | SocketState {
-  if (!state.room || state.room.id !== data.roomId) {
+  if (state.room?.id !== data.roomId) {
     return state;
   }
 
@@ -183,7 +183,7 @@ export function applyRoomCountdownStartedState(
   state: SocketState,
   data: RoomCountdownStartedPayload,
 ): Partial<SocketState> | SocketState {
-  if (!state.room || state.room.id !== data.roomId) {
+  if (state.room?.id !== data.roomId) {
     return state;
   }
 
@@ -200,7 +200,7 @@ export function applyRoomCountdownCancelledState(
   state: SocketState,
   data: RoomCountdownCancelledPayload,
 ): Partial<SocketState> | SocketState {
-  if (!state.room || state.room.id !== data.roomId) {
+  if (state.room?.id !== data.roomId) {
     return state;
   }
 
@@ -217,7 +217,7 @@ export function applyRoomPresenceUpdatedState(
   state: SocketState,
   data: RoomPresenceUpdatedPayload,
 ): Partial<SocketState> | SocketState {
-  if (!state.room || state.room.id !== data.roomId) {
+  if (state.room?.id !== data.roomId) {
     return state;
   }
 
@@ -334,8 +334,17 @@ export function applyRoundStartedState(
 
 export function applyRoundEndedState(
   state: SocketState,
-  data: RoundEndedPayload,
-  priorForThisRound: LastAnswerResult | null,
+  data:
+    | RoundEndedPayload
+    | {
+        matchId: string;
+        roundNo: number;
+        correctAnswer: string;
+        eliminatedPlayerIds: string[];
+        survivingCount?: number;
+        survivingPlayerIds?: string[];
+      },
+  priorForThisRound: LastAnswerResult | null = null,
 ): Partial<SocketState> {
   // Guard: ignore stale round events from a previous match after
   // reconnect or room switch. Prioritize `state.room?.currentMatchId`
@@ -356,6 +365,11 @@ export function applyRoundEndedState(
       ? { ...player, status: PlayerStatus.ELIMINATED }
       : player,
   );
+
+  const survivingCount =
+    "survivingCount" in data && typeof data.survivingCount === "number"
+      ? data.survivingCount
+      : (data.survivingPlayerIds?.length ?? null);
 
   return {
     match: currentMatch
@@ -385,7 +399,7 @@ export function applyRoundEndedState(
       }),
       correctAnswer: data.correctAnswer,
     },
-    remainingCount: data.survivingPlayerIds.length,
+    remainingCount: survivingCount,
     pendingAnswer:
       state.pendingAnswer?.matchId === data.matchId &&
       state.pendingAnswer.roundNo === data.roundNo
@@ -445,6 +459,7 @@ export function applyMatchFinishedState(
           ...currentMatch,
           id: data.matchId,
           status: MatchStatus.FINISHED,
+          roundEndTime: null,
         }
       : {
           id: data.matchId,
@@ -508,6 +523,85 @@ export function applySnapshotState(
   };
 }
 
+type ReplayAccumulator = {
+  match: NonNullable<SocketState["match"]>;
+  room: SocketState["room"];
+  remainingCount: SocketState["remainingCount"];
+  lastAnswerResult: SocketState["lastAnswerResult"];
+  pendingAnswer: SocketState["pendingAnswer"];
+};
+
+type ReplayEvent = Extract<
+  ReturnType<typeof ReplayEventSchema.safeParse>,
+  { success: true }
+>["data"];
+
+function foldReplayEvent(
+  acc: ReplayAccumulator,
+  event: ReplayEvent,
+  matchId: string,
+): ReplayAccumulator {
+  const synthState = {
+    room: acc.room,
+    match: acc.match,
+    remainingCount: acc.remainingCount,
+    lastAnswerResult: acc.lastAnswerResult,
+    pendingAnswer: acc.pendingAnswer,
+  } as SocketState;
+
+  switch (event.type) {
+    case "STATE_TRANSITION":
+      return { ...acc, match: { ...acc.match, status: event.payload.to } };
+    case "ROUND_STARTED": {
+      const res = applyRoundStartedState(synthState, {
+        matchId,
+        roundNo: event.payload.roundNo,
+        question: event.payload.question,
+        startedAt: Date.now(),
+        endsAt: event.payload.endsAt,
+      });
+      return { ...acc, ...res } as ReplayAccumulator;
+    }
+    case "ROUND_EVALUATED": {
+      const res = applyRoundEndedState(
+        synthState,
+        {
+          matchId,
+          roundNo: event.payload.roundNo,
+          correctAnswer: event.payload.correctAnswer,
+          eliminatedPlayerIds: event.payload.eliminatedIds,
+          survivingCount: event.payload.survivingCount,
+        },
+        acc.lastAnswerResult,
+      );
+      return { ...acc, ...res } as ReplayAccumulator;
+    }
+    case "MATCH_FINISHED": {
+      const res = applyMatchFinishedState(synthState, {
+        matchId,
+        winnerId: event.payload.winnerId ?? "",
+        totalRounds: event.payload.totalRounds ?? 0,
+        finishedAt: Date.now(),
+      });
+      return { ...acc, ...res } as ReplayAccumulator;
+    }
+    default:
+      return acc;
+  }
+}
+
+function computeIsEliminated(
+  userId: string | null,
+  match: NonNullable<SocketState["match"]>,
+  fallback: boolean,
+): boolean {
+  if (!userId) return fallback;
+  return (
+    match.players.find((p) => p.id === userId)?.status ===
+    PlayerStatus.ELIMINATED
+  );
+}
+
 // Plan D — delta replay. Fold an EVENT_BATCH onto the current match,
 // event by event in seqNo order, so the resulting state equals what a
 // continuously connected client would hold (each case mirrors the
@@ -525,18 +619,20 @@ export function applyEventBatchState(
   // Match guard (mirrors the live round updaters): ignore a batch for a
   // stale or different match.
   const activeMatchId = state.room?.currentMatchId ?? state.match?.id ?? null;
-  if (activeMatchId === null || activeMatchId !== data.matchId) return {};
+  if (!activeMatchId || activeMatchId !== data.matchId) return {};
 
   // A delta applies onto the live match only. Without a base match for
   // this id there is nothing to fold onto (the question/timer cannot be
   // rebuilt from summary events) — the caller must full-hydrate.
   if (state.match?.id !== data.matchId) return {};
 
-  let match = state.match;
-  let room = state.room;
-  let remainingCount = state.remainingCount;
-  let lastAnswerResult = state.lastAnswerResult;
-  let pendingAnswer = state.pendingAnswer;
+  let current: ReplayAccumulator = {
+    match: state.match,
+    room: state.room,
+    remainingCount: state.remainingCount,
+    lastAnswerResult: state.lastAnswerResult,
+    pendingAnswer: state.pendingAnswer,
+  };
   let cursor = state.lastSeenSeqNo;
 
   for (const rawEvent of data.events) {
@@ -549,102 +645,22 @@ export function applyEventBatchState(
       type: rawEvent.type,
       payload: rawEvent.payload,
     });
-    if (!parsed.success) continue;
-
-    const event = parsed.data;
-    switch (event.type) {
-      case "STATE_TRANSITION":
-        match = { ...match, status: event.payload.to };
-        break;
-      case "ROUND_STARTED":
-        match = {
-          ...match,
-          status: MatchStatus.ROUND_ACTIVE,
-          currentRoundNo: event.payload.roundNo,
-          currentQuestion: event.payload.question,
-          roundEndTime: event.payload.endsAt,
-        };
-        // Mirror live applyRoundStartedState: a new round opens with a
-        // clean answer panel — the previous round's result and any
-        // pending submission are no longer relevant.
-        lastAnswerResult = null;
-        pendingAnswer = null;
-        break;
-      case "ROUND_EVALUATED": {
-        const eliminated = new Set(event.payload.eliminatedIds);
-        match = {
-          ...match,
-          status: MatchStatus.ROUND_RESULT,
-          players: match.players.map((player) =>
-            eliminated.has(player.id)
-              ? { ...player, status: PlayerStatus.ELIMINATED }
-              : player,
-          ),
-          roundEndTime: null,
-        };
-        remainingCount = event.payload.survivingCount;
-        // Mirror live applyRoundEndedState: the per-player
-        // isCorrect/responseTimeMs aren't in the replay payload, but
-        // `correctAnswer` is — populate it so the result panel can
-        // reveal the answer during a delta hydrate.
-        lastAnswerResult = {
-          matchId: data.matchId,
-          roundNo: event.payload.roundNo,
-          correctAnswer: event.payload.correctAnswer,
-        };
-        // Mirror live applyRoundEndedState: clear pendingAnswer only
-        // when it belongs to the round that just resolved. A pending
-        // answer from an earlier round (out-of-order delivery) is
-        // preserved so the client can still resolve it on reconnect.
-        if (
-          pendingAnswer?.matchId === data.matchId &&
-          pendingAnswer.roundNo === event.payload.roundNo
-        ) {
-          pendingAnswer = null;
-        }
-        break;
-      }
-      case "MATCH_FINISHED":
-        match = { ...match, status: MatchStatus.FINISHED, roundEndTime: null };
-        // Mirror live applyMatchFinishedState: flip the room channel
-        // status to FINISHED so the lobby / leave-flow observes the
-        // match end even when the finish arrives via delta replay.
-        if (room) {
-          room = {
-            ...room,
-            status: RoomStatus.FINISHED,
-            countdownEndsAt: null,
-          };
-        }
-        break;
-      // No-op on match state (cursor still advances above):
-      //  - ANSWER_SUBMITTED / TIE_BREAK: peers' submissions and the
-      //    internal tie-break do not change the rendered match (mirrors
-      //    live play).
-      //  - PLAYER_DISCONNECTED / PLAYER_RECONNECTED: presence lives on
-      //    `room.players`, not `match.players` — live play never updates
-      //    match-roster `isOnline` either. A full SNAPSHOT refreshes
-      //    presence; the delta deliberately leaves it untouched so a
-      //    reconnecting client matches a continuously connected one.
-      default:
-        break;
+    if (parsed.success) {
+      current = foldReplayEvent(current, parsed.data, data.matchId);
     }
   }
 
   // Recompute self-elimination from the resulting roster (mirrors
   // applySnapshotState) so the watch-only overlay + answer lock are
   // correct after the delta.
-  const selfEliminated = state.userId
-    ? match.players.find((p) => p.id === state.userId)?.status ===
-      PlayerStatus.ELIMINATED
-    : state.isEliminated;
+  const selfEliminated = computeIsEliminated(
+    state.userId,
+    current.match,
+    state.isEliminated,
+  );
 
   return {
-    match,
-    room,
-    remainingCount,
-    lastAnswerResult,
-    pendingAnswer,
+    ...current,
     isEliminated: selfEliminated,
     lastSeenSeqNo: cursor,
   };

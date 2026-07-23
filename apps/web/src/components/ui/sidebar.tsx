@@ -56,13 +56,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return () => window.removeEventListener("keydown", handleEscape);
   }, [mobileOpen]);
 
-  // Close mobile menu when clicking outside (on the backdrop)
-  const handleBackdropClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) {
-      setMobileOpen(false);
-    }
-  };
-
   return (
     <>
       {/* --- DESKTOP SIDEBAR --- */}
@@ -226,11 +219,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* --- MOBILE NAV OVERLAY --- */}
       {mobileOpen && (
-        <div
-          className="md:hidden fixed inset-0 top-16 z-40 flex flex-col p-6 animate-fade-in border-t-4 border-candy-ink select-none"
-          onClick={handleBackdropClick}
-          role="dialog"
-          aria-modal="true"
+        <dialog
+          open
+          className="md:hidden fixed inset-0 top-16 z-40 flex flex-col p-6 animate-fade-in border-t-4 border-candy-ink select-none w-full h-[calc(100vh-4rem)] max-w-none max-h-none m-0 bg-white"
           aria-label="Mobile navigation menu"
         >
           <nav className="flex-1 space-y-3">
@@ -274,7 +265,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </p>
             </div>
           </div>
-        </div>
+        </dialog>
       )}
     </>
   );

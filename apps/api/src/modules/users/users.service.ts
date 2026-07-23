@@ -14,14 +14,49 @@ import type { HistoryItem, HistoryQuery, StatsResponse } from "./dto";
 
 const FINISHED = MatchStatus.FINISHED;
 
+type NullableNumeric = string | number | null;
+type NullableBigNumeric = string | number | bigint | null;
+
 interface ResponseAggRow {
-  avg_response_ms: string | number | null;
-  accuracy: string | number | null;
-  total_correct: string | number | bigint | null;
+  avg_response_ms: NullableNumeric;
+  accuracy: NullableNumeric;
+  total_correct: NullableBigNumeric;
 }
 
 interface SurvivalAggRow {
-  survival_rate: string | number | null;
+  survival_rate: NullableNumeric;
+}
+
+function parseBigIntToSafeNumber(value: bigint): number {
+  const max = BigInt(Number.MAX_SAFE_INTEGER);
+  const min = BigInt(Number.MIN_SAFE_INTEGER);
+  if (value > max) return Number.MAX_SAFE_INTEGER;
+  if (value < min) return Number.MIN_SAFE_INTEGER;
+  return Number(value);
+}
+
+function parseObjectToSafeNumber(value: object): number {
+  const v = value as {
+    toNumber?: () => number;
+    valueOf?: () => unknown;
+    toString?: () => string;
+  };
+  if (typeof v.toNumber === "function") {
+    const n = v.toNumber();
+    return Number.isFinite(n) ? n : 0;
+  }
+  if (typeof v.valueOf === "function") {
+    const n = Number(v.valueOf());
+    return Number.isFinite(n) ? n : 0;
+  }
+  if (
+    typeof v.toString === "function" &&
+    v.toString !== Object.prototype.toString
+  ) {
+    const n = Number(v.toString());
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
 }
 
 function toSafeNumber(value: unknown): number {
@@ -30,30 +65,25 @@ function toSafeNumber(value: unknown): number {
     return Number.isFinite(value) ? value : 0;
   }
   if (typeof value === "bigint") {
-    const max = BigInt(Number.MAX_SAFE_INTEGER);
-    const min = BigInt(Number.MIN_SAFE_INTEGER);
-    const clamped = value > max ? max : value < min ? min : value;
-    return Number(clamped);
+    return parseBigIntToSafeNumber(value);
   }
   if (typeof value === "string") {
     const n = Number(value);
     return Number.isFinite(n) ? n : 0;
   }
-  // Prisma Decimal (or any object exposing toNumber / valueOf / toString).
   if (typeof value === "object") {
-    const v = value as { toNumber?: () => number; valueOf?: () => unknown };
-    if (typeof v.toNumber === "function") {
-      const n = v.toNumber();
-      return Number.isFinite(n) ? n : 0;
-    }
-    if (typeof v.valueOf === "function") {
-      const n = Number(v.valueOf());
-      return Number.isFinite(n) ? n : 0;
-    }
-    const n = Number(String(value));
-    return Number.isFinite(n) ? n : 0;
+    return parseObjectToSafeNumber(value);
   }
   return 0;
+}
+
+function getHistoryItemStatus(
+  winnerId: string | null,
+  userId: string,
+): HistoryItem["status"] {
+  if (winnerId === userId) return "WON";
+  if (winnerId != null) return "ELIMINATED";
+  return "ABANDONED";
 }
 
 @Injectable()
@@ -221,8 +251,7 @@ export class UsersService {
               Math.round((endedAt.getTime() - startedAt.getTime()) / 1000),
             )
           : 0;
-      const status: HistoryItem["status"] =
-        m.winnerId === userId ? "WON" : m.winnerId ? "ELIMINATED" : "ABANDONED";
+      const status = getHistoryItemStatus(m.winnerId, userId);
       return {
         matchId: m.id,
         playedAt: (endedAt ?? m.createdAt).toISOString(),

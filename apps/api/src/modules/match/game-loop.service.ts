@@ -22,10 +22,8 @@ import {
   emitWaitingRoomState,
 } from "./game-loop.helpers";
 import { emitAnswerResult } from "./game-loop.events";
-import { LOBBY_COUNTDOWN_INDEX_KEY } from "./game-loop.countdown-store";
 
 // Re-export for backwards compatibility with existing spec imports.
-export const COUNTDOWN_INDEX_KEY = LOBBY_COUNTDOWN_INDEX_KEY;
 
 /**
  * Authoritative finish result for `forceFinishMatchForDisband`. Returned to
@@ -82,6 +80,10 @@ export class GameLoopService {
       questionService,
       roomService,
       matchOwnership,
+      async (matchId) => {
+        this.matchCommand.deregisterMatch(matchId);
+        await this.matchCommand.disposeStream(matchId);
+      },
     );
     // B4b: wire the fenced side effects the authoritative answer apply runs
     // after a successful persist (canonical ANSWER_RESULT + early termination).
@@ -100,15 +102,26 @@ export class GameLoopService {
       // B5: player_disconnect forwarded from a non-owner presence leader. The
       // owner is the single writer; roomId is resolved from authoritative state
       // inside handlePlayerDisconnect, never from the command payload.
+      //
+      // Symmetric with submit_answer (applyAnswerAuthoritative): a non-APPLIED
+      // outcome from the runner means the fenced persist did NOT land on the
+      // canonical writer (lease lost / BLIND), so we MUST return "RETRY" to
+      // leave the stream entry pending. Without this, the entry would be XACKed
+      // and the disconnect silently dropped. eventId dedup in
+      // applyDisconnectAuthoritative covers redelivery after a successful apply.
       handlePlayerDisconnect: async (env, _owner, server) => {
         if (env.body.type !== "player_disconnect") return "APPLIED";
         try {
-          await this.roundRunner.handlePlayerDisconnect(
+          const outcome = await this.roundRunner.handlePlayerDisconnect(
             env.matchId,
             env.body.userId,
             server,
           );
-          return "APPLIED";
+          if (outcome === "APPLIED" || outcome === "NOOP") return "APPLIED";
+          this.logger.warn(
+            `handlePlayerDisconnect non-canonical outcome ${outcome} for ${env.matchId}/${env.body.userId} (RETRY, entry stays pending)`,
+          );
+          return "RETRY";
         } catch (err) {
           this.logger.warn(
             `handlePlayerDisconnect apply failed for ${env.matchId}/${env.body.userId} (RETRY): ${
@@ -169,7 +182,65 @@ export class GameLoopService {
     options: { isAutoStart: boolean },
   ) {
     const room = await this.roomService.getRoom(roomId);
+    await this.validateRoomForLaunch(room, roomId, server, options.isAutoStart);
 
+    let match:
+      | Awaited<ReturnType<typeof this.matchService.createMatch>>
+      | undefined = undefined;
+    let ownershipAcquired = false;
+
+    try {
+      await this.acquireRoomLaunchLock(roomId);
+
+      emitRoomStatusUpdated(server, {
+        roomId,
+        roomStatus: RoomStatus.STARTING,
+        currentMatchId: room.currentMatchId ?? null,
+        updatedAt: Date.now(),
+      });
+
+      match = await this.matchService.createMatch(roomId);
+
+      emitMatchStarting(
+        server,
+        roomId,
+        match.id,
+        GAME_CONFIG.COUNTDOWN_DURATION_MS / 1000,
+      );
+
+      const acquired = await this.matchOwnership.acquireOnLaunch(
+        match.id,
+        roomId,
+      );
+      if (!acquired) {
+        throw new Error(
+          `launchRoomMatch: could not acquire owner lease for match ${match.id} (room ${roomId}); aborting launch`,
+        );
+      }
+      ownershipAcquired = true;
+
+      await this.matchCommand.registerMatch(match.id, server);
+      await this.roundRunner.startMatchLoop(match.id, roomId, server);
+
+      return match;
+    } catch (error) {
+      await this.handleLaunchError(
+        error,
+        roomId,
+        server,
+        match,
+        ownershipAcquired,
+      );
+      throw error;
+    }
+  }
+
+  private async validateRoomForLaunch(
+    room: Awaited<ReturnType<typeof this.roomService.getRoom>>,
+    roomId: string,
+    server: Server,
+    isAutoStart: boolean,
+  ): Promise<void> {
     if (
       room.status !== RoomStatus.WAITING &&
       room.status !== RoomStatus.COUNTDOWN
@@ -184,7 +255,7 @@ export class GameLoopService {
         await this.roomService.updateRoomStatus(roomId, RoomStatus.WAITING);
       }
 
-      if (options.isAutoStart) {
+      if (isAutoStart) {
         emitWaitingRoomState(
           roomId,
           server,
@@ -195,254 +266,188 @@ export class GameLoopService {
 
       throw new RoomError(ErrorCode.NOT_ENOUGH_PLAYERS);
     }
+  }
 
-    let match:
-      | Awaited<ReturnType<typeof this.matchService.createMatch>>
-      | undefined = undefined;
-    // B2c: track whether we claimed the owner lease so the rollback below can
-    // release it (and stop the heartbeat renewing it) when the loop fails to
-    // start AFTER acquisition.
-    let ownershipAcquired = false;
-    try {
-      // B3 fix: atomic guard against the double-launch race.
-      //
-      // The previous flow was: re-fetch room (no lock) → check
-      // status → `updateRoomStatus(STARTING)` (no lock) → call
-      // `matchService.createMatch`. The same `launchRoomMatch`
-      // is reachable from three independent paths — the public
-      // auto-start timer, the host force-start, and the
-      // `onModuleInit` recovery for expired countdowns. Two of
-      // them firing for the same roomId at the same time could
-      // both pass the status check, both call `updateRoomStatus`
-      // (idempotent so no error), and both call `createMatch` →
-      // two Match rows, two `MatchPlayer.createMany`, an
-      // orphan `match:state:*` Redis key, and a corrupted
-      // `currentMatchId` (the second `room.update` overwrites
-      // the first).
-      //
-      // We close the race with the same `SELECT ... FOR UPDATE`
-      // pattern that `RoomService.joinRoom` uses:
-      //
-      //   1. Open a Prisma transaction.
-      //   2. Acquire a row-level lock on the Room.
-      //   3. Re-check status (must be WAITING or COUNTDOWN) and
-      //      `currentMatchId IS NULL` under the lock. A second
-      //      caller that has been blocked on the lock will see
-      //      either the already-set status (STARTING/IN_GAME)
-      //      or the already-set `currentMatchId` and abort.
-      //   4. Set `Room.status = STARTING` inside the transaction
-      //      so a third caller (which could arrive between
-      //      commit and `createMatch`) fails the status check.
-      //   5. Commit, then call `matchService.createMatch` outside
-      //      the transaction. `createMatch` writes `currentMatchId`
-      //      in its own internal transaction; because we set
-      //      `status = STARTING` first, any other caller that
-      //      beats `createMatch` to its own FOR UPDATE will fail
-      //      the status check.
-      //
-      // We do NOT set `currentMatchId` here because we don't have
-      // the `match.id` yet — `createMatch` owns that field. Setting
-      // `status = STARTING` is sufficient to make the race window
-      // observable to concurrent callers.
-      await this.prisma.$transaction(async (tx) => {
-        const lockedRoom = await tx.$queryRaw<
-          Array<{ id: string; status: string; currentMatchId: string | null }>
-        >`
-          SELECT id, status, "currentMatchId"
-          FROM "rooms"
-          WHERE id = ${roomId}
-          FOR UPDATE
-        `;
-        if (lockedRoom.length === 0) {
-          // Room was deleted between the outer read and the
-          // in-transaction lock acquisition. Treat as
-          // not-found so the caller gets a typed error.
-          throw new RoomError(ErrorCode.ROOM_NOT_FOUND);
-        }
-        const locked = lockedRoom[0];
-        if (
-          locked.status !== RoomStatus.WAITING &&
-          locked.status !== RoomStatus.COUNTDOWN
-        ) {
-          throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
-        }
-        if (locked.currentMatchId !== null) {
-          // A previous launch already set currentMatchId. Even
-          // though `status` may still be WAITING (race window),
-          // the lock holder is the canonical truth. Abort.
-          throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
-        }
-        await tx.room.update({
-          where: { id: roomId },
-          data: { status: RoomStatus.STARTING },
-        });
+  private async acquireRoomLaunchLock(roomId: string): Promise<void> {
+    // B3 fix: atomic guard against the double-launch race.
+    //
+    // The previous flow was: re-fetch room (no lock) → check
+    // status → `updateRoomStatus(STARTING)` (no lock) → call
+    // `matchService.createMatch`. The same `launchRoomMatch`
+    // is reachable from three independent paths — the public
+    // auto-start timer, the host force-start, and the
+    // `onModuleInit` recovery for expired countdowns. Two of
+    // them firing for the same roomId at the same time could
+    // both pass the status check, both call `updateRoomStatus`
+    // (idempotent so no error), and both call `createMatch` →
+    // two Match rows, two `MatchPlayer.createMany`, an
+    // orphan `match:state:*` Redis key, and a corrupted
+    // `currentMatchId` (the second `room.update` overwrites
+    // the first).
+    //
+    // We close the race with the same `SELECT ... FOR UPDATE`
+    // pattern that `RoomService.joinRoom` uses:
+    //
+    //   1. Open a Prisma transaction.
+    //   2. Acquire a row-level lock on the Room.
+    //   3. Re-check status (must be WAITING or COUNTDOWN) and
+    //      `currentMatchId IS NULL` under the lock. A second
+    //      caller that has been blocked on the lock will see
+    //      either the already-set status (STARTING/IN_GAME)
+    //      or the already-set `currentMatchId` and abort.
+    //   4. Set `Room.status = STARTING` inside the transaction
+    //      so a third caller (which could arrive between
+    //      commit and `createMatch`) fails the status check.
+    //   5. Commit, then call `matchService.createMatch` outside
+    //      the transaction. `createMatch` writes `currentMatchId`
+    //      in its own internal transaction; because we set
+    //      `status = STARTING` first, any other caller that
+    //      beats `createMatch` to its own FOR UPDATE will fail
+    //      the status check.
+    //
+    // We do NOT set `currentMatchId` here because we don't have
+    // the `match.id` yet — `createMatch` owns that field. Setting
+    // `status = STARTING` is sufficient to make the race window
+    // observable to concurrent callers.
+    await this.prisma.$transaction(async (tx) => {
+      const lockedRoom = await tx.$queryRaw<
+        Array<{ id: string; status: string; currentMatchId: string | null }>
+      >`
+        SELECT id, status, "currentMatchId"
+        FROM "rooms"
+        WHERE id = ${roomId}
+        FOR UPDATE
+      `;
+      if (lockedRoom.length === 0) {
+        // Room was deleted between the outer read and the
+        // in-transaction lock acquisition. Treat as
+        // not-found so the caller gets a typed error.
+        throw new RoomError(ErrorCode.ROOM_NOT_FOUND);
+      }
+      const locked = lockedRoom[0];
+      if (
+        locked.status !== RoomStatus.WAITING &&
+        locked.status !== RoomStatus.COUNTDOWN
+      ) {
+        throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
+      }
+      if (locked.currentMatchId !== null) {
+        // A previous launch already set currentMatchId. Even
+        // though `status` may still be WAITING (race window),
+        // the lock holder is the canonical truth. Abort.
+        throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
+      }
+      await tx.room.update({
+        where: { id: roomId },
+        data: { status: RoomStatus.STARTING },
       });
+    });
+  }
 
+  private isRaceLostError(error: unknown): boolean {
+    return error instanceof RoomError
+      ? error.code === ErrorCode.ROOM_ALREADY_STARTED
+      : (error as Record<string, unknown>)?.code ===
+          ErrorCode.ROOM_ALREADY_STARTED;
+  }
+
+  private isRoomNotFoundError(error: unknown): boolean {
+    return error instanceof RoomError
+      ? error.code === ErrorCode.ROOM_NOT_FOUND
+      : (error as Record<string, unknown>)?.code === ErrorCode.ROOM_NOT_FOUND ||
+          (error as Record<string, unknown>)?.message ===
+            ErrorCode.ROOM_NOT_FOUND;
+  }
+
+  private async handleLaunchError(
+    error: unknown,
+    roomId: string,
+    server: Server,
+    match:
+      | Awaited<ReturnType<typeof this.matchService.createMatch>>
+      | undefined,
+    ownershipAcquired: boolean,
+  ): Promise<never> {
+    if (this.isRaceLostError(error)) {
+      this.logger.warn(
+        `B3 race-lost: launchRoomMatch for room ${roomId} aborted because another thread won the launch. The winning thread's state (STARTING/IN_GAME) is preserved.`,
+      );
+      throw error;
+    }
+
+    if (this.isRoomNotFoundError(error)) {
+      this.logger.warn(
+        `Room ${roomId} not found during launch. Skipping revert/broadcast.`,
+      );
+      throw error;
+    }
+
+    this.logger.error(
+      `Launch failed for room ${roomId}: ${error instanceof Error ? error.message : String(error)}`,
+      error instanceof Error ? error.stack : undefined,
+    );
+
+    if (match) {
+      await this.cleanupOrphanedMatch(match, roomId, ownershipAcquired);
+    }
+
+    await this.revertRoomStatusToWaiting(roomId, server);
+    throw error;
+  }
+
+  private async cleanupOrphanedMatch(
+    match: { id: string },
+    roomId: string,
+    ownershipAcquired: boolean,
+  ): Promise<void> {
+    if (ownershipAcquired) {
+      this.roundRunner.cancelMatchLoop(match.id);
+      // Consumer đã được register sau khi acquire lease; dọn stream + dedup set
+      // để nhánh launch-fail không để lại poll mồ côi và key rác trên Redis.
+      this.matchCommand.deregisterMatch(match.id);
+      await this.matchCommand.disposeStream(match.id);
+      try {
+        await this.matchOwnership.release(match.id);
+      } catch (releaseError) {
+        this.logger.error(
+          `Failed to release owner lease for match ${match.id} during launch rollback.`,
+          releaseError instanceof Error ? releaseError.stack : undefined,
+        );
+      }
+    }
+
+    try {
+      this.logger.warn(
+        `Deleting orphaned match ${match.id} for room ${roomId}`,
+      );
+      await this.prisma.match.delete({
+        where: { id: match.id },
+      });
+    } catch (cleanupError) {
+      this.logger.error(
+        `Failed to delete orphaned match ${match.id}:`,
+        cleanupError,
+      );
+    }
+  }
+
+  private async revertRoomStatusToWaiting(
+    roomId: string,
+    server: Server,
+  ): Promise<void> {
+    try {
+      await this.roomService.updateRoomStatus(roomId, RoomStatus.WAITING, null);
       emitRoomStatusUpdated(server, {
         roomId,
-        roomStatus: RoomStatus.STARTING,
-        currentMatchId: room.currentMatchId ?? null,
+        roomStatus: RoomStatus.WAITING,
+        currentMatchId: null,
         updatedAt: Date.now(),
       });
-
-      // `createMatch` opens its own internal transaction. If it
-      // throws AFTER its `match.create` succeeds but before its
-      // `room.update` completes, we end up with an orphan Match
-      // row pointing at a room that is still STARTING with no
-      // currentMatchId. We clean up explicitly: delete the
-      // orphan Match row (this is the only side effect of
-      // `createMatch` we own from here) and revert the Room
-      // status back to WAITING so a recovery sweep can retry.
-      //
-      // Race-fix: if the failure is `ROOM_ALREADY_STARTED`, the
-      // B3 transaction guard has already determined that another
-      // thread validly acquired the room lock and is mid-launch.
-      // Our room may already be in `STARTING` / `IN_GAME` state
-      // from that thread's transaction commit. Unconditionally
-      // overwriting that with `WAITING` + emitting
-      // `ROOM_STATUS_UPDATED {WAITING}` would corrupt the
-      // winning thread's state. The fix: detect the race-lost
-      // error and skip the revert + emit entirely. The losing
-      // thread only propagates the error so the caller sees the
-      // "launch failed because someone else got there first"
-      // outcome without us silently destroying the winner's
-      // progress.
-      match = await this.matchService.createMatch(roomId);
-
-      emitMatchStarting(
-        server,
-        roomId,
-        match.id,
-        GAME_CONFIG.COUNTDOWN_DURATION_MS / 1000,
-      );
-
-      // B2b: claim the owner lease before driving the loop. If another node
-      // owns it (or a leftover lease survives), DO NOT start the loop — that
-      // would break the single-owner invariant. acquireOnLaunch has already
-      // reconciled ownership; route a failure into the generic launch
-      // rollback below (clears currentMatchId / reverts room status).
-      const acquired = await this.matchOwnership.acquireOnLaunch(
-        match.id,
-        roomId,
-      );
-      if (!acquired) {
-        throw new Error(
-          `launchRoomMatch: could not acquire owner lease for match ${match.id} (room ${roomId}); aborting launch`,
-        );
-      }
-      ownershipAcquired = true;
-
-      // B4b: register the owner command channel consumer so SUBMIT_ANSWER
-      // envelopes forwarded from any node are drained + applied here.
-      await this.matchCommand.registerMatch(match.id, server);
-
-      await this.roundRunner.startMatchLoop(match.id, roomId, server);
-      return match;
-    } catch (error) {
-      // Rollback on error. We DO NOT touch `currentMatchId` here
-      // because we did not set it in the transaction (B3 fix);
-      // only the status needs to revert. The `createMatch` path
-      // may have set `currentMatchId` if it succeeded mid-error;
-      // the cleanup branch above handles that before we get here.
-      //
-      // Race-fix: same guard as the inner `createError` catch.
-      // The B3 transaction throws `ROOM_ALREADY_STARTED` when
-      // the lock holder sees a non-WAITING/COUNTDOWN status or a
-      // non-null `currentMatchId` (i.e. another thread won the
-      // launch). At that point the room is already in
-      // `STARTING` (or `IN_GAME`) state from the winning thread.
-      // Reverting it to `WAITING` + broadcasting that revert
-      // would clobber the winner's progress and confuse every
-      // spectator/player connected to the room channel. We
-      // detect the race-lost error and skip both the revert
-      // and the emit, only propagating the original error to
-      // the caller (which can be admin tooling, the host
-      // force-start handler, or the auto-start timer).
-      const isRaceLost =
-        error instanceof RoomError
-          ? error.code === ErrorCode.ROOM_ALREADY_STARTED
-          : (error as Record<string, unknown>)?.code ===
-            ErrorCode.ROOM_ALREADY_STARTED;
-      if (isRaceLost) {
-        this.logger.warn(
-          `B3 race-lost: launchRoomMatch for room ${roomId} aborted because another thread won the launch. The winning thread's state (STARTING/IN_GAME) is preserved.`,
-        );
-        throw error;
-      }
-
-      const isRoomNotFound =
-        error instanceof RoomError
-          ? error.code === ErrorCode.ROOM_NOT_FOUND
-          : (error as Record<string, unknown>)?.code ===
-              ErrorCode.ROOM_NOT_FOUND ||
-            (error as Record<string, unknown>)?.message ===
-              ErrorCode.ROOM_NOT_FOUND;
-      if (isRoomNotFound) {
-        this.logger.warn(
-          `Room ${roomId} not found during launch. Skipping revert/broadcast.`,
-        );
-        throw error;
-      }
-
+    } catch (revertError) {
       this.logger.error(
-        `Launch failed for room ${roomId}: ${error instanceof Error ? error.message : String(error)}`,
-        error instanceof Error ? error.stack : undefined,
+        `Failed to revert Room ${roomId} status to WAITING after launch failure.`,
+        revertError instanceof Error ? revertError.stack : undefined,
       );
-
-      // Clean up orphaned match in DB if created
-      if (match) {
-        // B2c: if we acquired the owner lease before the loop failed to start,
-        // tear that ownership down BEFORE deleting the match row. Cancel this
-        // match's timers (so the heartbeat stops renewing / relinquishing a
-        // match we are aborting) and release the lease + match:active index —
-        // otherwise the lease lingers until its TTL and recovery could adopt a
-        // match we are deleting. Failures that occurred BEFORE acquisition skip
-        // this (ownershipAcquired stays false), preserving prior rollback.
-        if (ownershipAcquired) {
-          this.roundRunner.cancelMatchLoop(match.id);
-          try {
-            await this.matchOwnership.release(match.id);
-          } catch (releaseError) {
-            this.logger.error(
-              `Failed to release owner lease for match ${match.id} during launch rollback.`,
-              releaseError instanceof Error ? releaseError.stack : undefined,
-            );
-          }
-        }
-        try {
-          this.logger.warn(
-            `Deleting orphaned match ${match.id} for room ${roomId}`,
-          );
-          await this.prisma.match.delete({
-            where: { id: match.id },
-          });
-        } catch (cleanupError) {
-          this.logger.error(
-            `Failed to delete orphaned match ${match.id}:`,
-            cleanupError,
-          );
-        }
-      }
-
-      try {
-        await this.roomService.updateRoomStatus(
-          roomId,
-          RoomStatus.WAITING,
-          null,
-        );
-        emitRoomStatusUpdated(server, {
-          roomId,
-          roomStatus: RoomStatus.WAITING,
-          currentMatchId: null,
-          updatedAt: Date.now(),
-        });
-      } catch (revertError) {
-        this.logger.error(
-          `Failed to revert Room ${roomId} status to WAITING after launch failure.`,
-          revertError instanceof Error ? revertError.stack : undefined,
-        );
-      }
-      throw error;
     }
   }
 
@@ -499,11 +504,15 @@ export class GameLoopService {
       // race ahead and disband the room while the finish transaction is
       // still persisting. Return null: the in-flight natural finish
       // already broadcast its own MATCH_FINISHED, so the caller MUST NOT
-      // re-emit.
+      // re-emit. Natural finish also disposes the command stream.
       await this.roundRunner.awaitFinish(matchId);
       this.logger.log(
         `forceFinishMatchForDisband: match ${matchId} awaited in-flight finish`,
       );
+      // Defence-in-depth: natural finish should have cleaned the stream; if it
+      // aborted early (lease lost) we still drop any residual keys here.
+      this.matchCommand.deregisterMatch(matchId);
+      await this.matchCommand.disposeStream(matchId);
       return null;
     }
 
@@ -542,6 +551,10 @@ export class GameLoopService {
         roomId,
         true,
       );
+      // B4b: stop the command consumer + drop match:cmd / match:applied. Disband
+      // does not go through stopRoomRuntime, so this path must clean them itself.
+      this.matchCommand.deregisterMatch(matchId);
+      await this.matchCommand.disposeStream(matchId);
       // Idempotent no-op (count: 0 in finishMatch): a prior finish
       // already won the race. Return null so the caller skips its
       // emission — the prior caller already broadcast MATCH_FINISHED.
@@ -604,7 +617,11 @@ export class GameLoopService {
     userId: string,
     server: Server,
   ): Promise<void> {
-    return this.roundRunner.handlePlayerDisconnect(matchId, userId, server);
+    // B5: the owner-local path; the outcome is informational only — the
+    // command-stream wrapper is the only consumer that needs the value to
+    // decide XACK vs RETRY. We discard it here because the public contract
+    // is fire-and-forget from `PresenceService.routeInGameDisconnect`.
+    await this.roundRunner.handlePlayerDisconnect(matchId, userId, server);
   }
 
   async handleMatchPlayerLeft(
@@ -631,3 +648,5 @@ export class GameLoopService {
     return this.roundRunner.checkEarlyTermination(matchId, roomId, server);
   }
 }
+
+export { LOBBY_COUNTDOWN_INDEX_KEY as COUNTDOWN_INDEX_KEY } from "./game-loop.countdown-store";

@@ -10,7 +10,7 @@ interface AppProvidersProps {
   children: React.ReactNode;
 }
 
-export function AppProviders({ children }: AppProvidersProps) {
+export function AppProviders({ children }: Readonly<AppProvidersProps>) {
   const [queryClient] = React.useState(createQueryClient);
 
   return (

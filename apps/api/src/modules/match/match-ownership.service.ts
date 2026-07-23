@@ -166,6 +166,25 @@ export class MatchOwnershipService implements OnModuleInit, OnModuleDestroy {
    * so the caller only ever sees the boolean and rolls back the launch state.
    */
   async acquireOnLaunch(matchId: string, roomId: string): Promise<boolean> {
+    const acquired = await this.tryAcquireLaunchLease(matchId);
+    if (!acquired) return false;
+
+    const result = await this.indexActiveAndRevalidate(
+      matchId,
+      roomId,
+      acquired,
+    );
+    if (result === true) return true;
+    if (result === "LOST_LEASE") return false;
+
+    await this.compensateLaunchFailure(matchId, acquired.leaseValue);
+    this.owned.delete(matchId);
+    return false;
+  }
+
+  private async tryAcquireLaunchLease(
+    matchId: string,
+  ): Promise<{ fence: number; leaseValue: string } | null> {
     let acquired: { fence: number; leaseValue: string } | null | "TERMINAL";
     try {
       // B3b: route through the tombstone-aware acquisition so a launch can never
@@ -188,18 +207,24 @@ export class MatchOwnershipService implements OnModuleInit, OnModuleDestroy {
         }`,
       );
       await this.recoveryHandoff(matchId);
-      return false;
+      return null;
     }
 
     if (acquired === "TERMINAL") {
       this.logger.error(
         `acquireOnLaunch: match ${matchId} is tombstoned (finalized); refusing launch`,
       );
-      return false;
+      return null;
     }
-    if (!acquired) return false; // lease already held by another node
-    const { fence, leaseValue } = acquired;
+    return acquired;
+  }
 
+  private async indexActiveAndRevalidate(
+    matchId: string,
+    roomId: string,
+    acquired: { fence: number; leaseValue: string },
+  ): Promise<boolean | "LOST_LEASE"> {
+    const { fence, leaseValue } = acquired;
     // Index into match:active, then revalidate the lease. A match absent from
     // the index is invisible to recovery, so retry a bounded number of times;
     // do NOT record local ownership until the lease is confirmed still ours.
@@ -215,7 +240,7 @@ export class MatchOwnershipService implements OnModuleInit, OnModuleDestroy {
           this.logger.warn(
             `acquireOnLaunch: lease for ${matchId} no longer held after active-index write`,
           );
-          return false;
+          return "LOST_LEASE";
         }
         this.owned.set(matchId, { roomId, fence, leaseValue });
         return true;
@@ -227,7 +252,13 @@ export class MatchOwnershipService implements OnModuleInit, OnModuleDestroy {
         );
       }
     }
+    return false;
+  }
 
+  private async compensateLaunchFailure(
+    matchId: string,
+    leaseValue: string,
+  ): Promise<void> {
     // Retry-exhaustion compensation: a prior attempt may have SADD'd the match
     // into match:active before renewLease failed, so release the lease AND the
     // index entry ATOMICALLY (releaseLeaseAndIndex) — a lease-only release would
@@ -259,8 +290,6 @@ export class MatchOwnershipService implements OnModuleInit, OnModuleDestroy {
       // the orphan sweep adopts the match once our un-released lease TTL lapses.
       await this.recoveryHandoff(matchId);
     }
-    this.owned.delete(matchId);
-    return false;
   }
 
   getOwnedMatchIds(): string[] {
@@ -639,64 +668,124 @@ export class MatchOwnershipService implements OnModuleInit, OnModuleDestroy {
     matchId: string,
     server: Server,
   ): Promise<void> {
-    if (this.recovering.has(matchId)) return;
-    if (!this.recovery) return;
+    if (this.recovering.has(matchId) || !this.recovery) return;
     this.recovering.add(matchId);
     try {
-      let entry = this.owned.get(matchId);
+      const leaseResult = await this.ensureRecoveryLease(matchId, server);
+      if (leaseResult === "STOP" || leaseResult === "RETRY") return;
+      const entry = leaseResult;
 
-      // Acquire (first attempt) or re-verify the retained lease (retry).
-      if (entry) {
-        const held = await this.redis.renewLease(
-          ownerKey(matchId),
-          entry.leaseValue,
-          LEASE_TTL_SEC,
-        );
-        if (!held) {
-          const reacquired = await this.acquireForRecovery(matchId);
-          if (reacquired === "abort") {
-            this.owned.delete(matchId);
-            this.clearRecoveryRetry(matchId);
-            return;
-          }
-          entry = this.owned.get(matchId);
-        }
-      } else {
-        const acquired = await this.acquireForRecovery(matchId);
-        if (acquired === "abort") {
-          this.clearRecoveryRetry(matchId);
-          return;
-        }
-        if (acquired === "held") return; // live owner; leave in match:active
-        entry = this.owned.get(matchId);
-      }
-      if (!entry) return;
-
-      // Hydrate the canonical state. A recoverable Redis/hydrate failure keeps
-      // the lease (heartbeat renews it) and retries; it must NOT clean the index.
-      let sm: MatchStateMachine | undefined;
-      try {
-        sm = await this.recovery.getStateMachine(matchId);
-      } catch (err) {
-        this.logger.warn(
-          `attemptRecovery: hydrate failed for ${matchId} (retrying, match:active preserved): ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-        this.scheduleRecoveryRetry(matchId, server);
-        return;
-      }
-
-      // Final revalidation: canonical state gone/unparseable → finalize cleaned.
-      if (!sm) {
+      const smResult = await this.hydrateRecoveryState(matchId, server);
+      if (smResult === "RETRY") return;
+      if (!smResult) {
         await this.finalizeTerminal(matchId, "cleaned");
         return;
       }
+      const sm = smResult;
 
-      // Revalidate ownership immediately before recording + resuming.
-      const stillOwner = await this.redis.renewLease(
+      const revalid = await this.revalidateOwnershipBeforeResume(
+        matchId,
+        entry.leaseValue,
+        server,
+      );
+      if (revalid !== true) return;
+
+      await this.resumeRecoveryLoop(matchId, sm, entry, server);
+    } finally {
+      this.recovering.delete(matchId);
+    }
+  }
+
+  private async ensureRecoveryLease(
+    matchId: string,
+    server: Server,
+  ): Promise<OwnedEntry | "STOP" | "RETRY"> {
+    const entry = this.owned.get(matchId);
+    if (entry) {
+      return this.reverifyOwnedRecoveryLease(matchId, entry, server);
+    }
+    return this.acquireNewRecoveryLease(matchId);
+  }
+
+  private async reverifyOwnedRecoveryLease(
+    matchId: string,
+    entry: OwnedEntry,
+    server: Server,
+  ): Promise<OwnedEntry | "STOP" | "RETRY"> {
+    try {
+      const held = await this.redis.renewLease(
         ownerKey(matchId),
         entry.leaseValue,
+        LEASE_TTL_SEC,
+      );
+      if (!held) {
+        const reacquired = await this.acquireForRecovery(matchId);
+        if (reacquired === "abort") {
+          this.owned.delete(matchId);
+          this.clearRecoveryRetry(matchId);
+          return "STOP";
+        }
+        if (reacquired === "held") {
+          // Node khác đã giữ lease; bỏ entry stale, để match:active cho owner mới.
+          this.owned.delete(matchId);
+          return "STOP";
+        }
+        return this.owned.get(matchId) ?? "STOP";
+      }
+      return entry;
+    } catch (err) {
+      // Transient Redis error: keep match:active + owned, retry later.
+      this.logger.warn(
+        `attemptRecovery: renewLease (re-verify) failed for ${matchId} (retrying, match:active preserved): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      this.scheduleRecoveryRetry(matchId, server);
+      return "RETRY";
+    }
+  }
+
+  private async acquireNewRecoveryLease(
+    matchId: string,
+  ): Promise<OwnedEntry | "STOP"> {
+    const acquired = await this.acquireForRecovery(matchId);
+    if (acquired === "abort") {
+      this.clearRecoveryRetry(matchId);
+      return "STOP";
+    }
+    if (acquired === "held") return "STOP"; // live owner; leave in match:active
+    return this.owned.get(matchId) ?? "STOP";
+  }
+
+  private async hydrateRecoveryState(
+    matchId: string,
+    server: Server,
+  ): Promise<MatchStateMachine | "RETRY" | undefined> {
+    // Hydrate the canonical state. A recoverable Redis/hydrate failure keeps
+    // the lease (heartbeat renews it) and retries; it must NOT clean the index.
+    try {
+      return await this.recovery!.getStateMachine(matchId);
+    } catch (err) {
+      this.logger.warn(
+        `attemptRecovery: hydrate failed for ${matchId} (retrying, match:active preserved): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      this.scheduleRecoveryRetry(matchId, server);
+      return "RETRY";
+    }
+  }
+
+  private async revalidateOwnershipBeforeResume(
+    matchId: string,
+    leaseValue: string,
+    server: Server,
+  ): Promise<boolean | "RETRY"> {
+    // Revalidate ownership immediately before recording + resuming.
+    try {
+      const stillOwner = await this.redis.renewLease(
+        ownerKey(matchId),
+        leaseValue,
         LEASE_TTL_SEC,
       );
       if (!stillOwner) {
@@ -704,32 +793,47 @@ export class MatchOwnershipService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(
           `attemptRecovery: lost lease for ${matchId} before resume; preserving match:active for the new owner`,
         );
-        return;
+        return false;
       }
+      return true;
+    } catch (err) {
+      // Transient Redis error: keep match:active + owned, retry later.
+      this.logger.warn(
+        `attemptRecovery: renewLease (pre-resume) failed for ${matchId} (retrying, match:active preserved): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      this.scheduleRecoveryRetry(matchId, server);
+      return "RETRY";
+    }
+  }
 
-      const roomId =
-        sm.getState().roomId ||
-        (await this.recovery.getRoomIdByMatchId(matchId)) ||
-        "";
-      this.owned.set(matchId, {
-        roomId,
-        fence: entry.fence,
-        leaseValue: entry.leaseValue,
-      });
+  private async resumeRecoveryLoop(
+    matchId: string,
+    sm: MatchStateMachine,
+    entry: OwnedEntry,
+    server: Server,
+  ): Promise<void> {
+    const roomId =
+      sm.getState().roomId ||
+      (await this.recovery!.getRoomIdByMatchId(matchId)) ||
+      "";
+    this.owned.set(matchId, {
+      roomId,
+      fence: entry.fence,
+      leaseValue: entry.leaseValue,
+    });
 
-      try {
-        await this.recovery.resumeMatchLoop(matchId, sm, roomId, server);
-        this.clearRecoveryRetry(matchId);
-      } catch (err) {
-        this.logger.warn(
-          `attemptRecovery: resumeMatchLoop threw for ${matchId} (scheduling retry): ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-        this.scheduleRecoveryRetry(matchId, server);
-      }
-    } finally {
-      this.recovering.delete(matchId);
+    try {
+      await this.recovery!.resumeMatchLoop(matchId, sm, roomId, server);
+      this.clearRecoveryRetry(matchId);
+    } catch (err) {
+      this.logger.warn(
+        `attemptRecovery: resumeMatchLoop threw for ${matchId} (scheduling retry): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      this.scheduleRecoveryRetry(matchId, server);
     }
   }
 
@@ -893,12 +997,14 @@ export class MatchOwnershipService implements OnModuleInit, OnModuleDestroy {
     | "CONFLICT"
   > {
     return this.redis.requeueDeadLetter(
-      tombstoneKey(matchId),
-      stateKey(matchId),
-      ownerKey(matchId),
-      fenceKey(matchId),
-      ACTIVE_SET,
-      DEAD_LETTER_SET,
+      {
+        tombstoneKey: tombstoneKey(matchId),
+        stateKey: stateKey(matchId),
+        ownerKey: ownerKey(matchId),
+        fenceKey: fenceKey(matchId),
+        indexKey: ACTIVE_SET,
+        deadLetterSet: DEAD_LETTER_SET,
+      },
       matchId,
       { force },
     );

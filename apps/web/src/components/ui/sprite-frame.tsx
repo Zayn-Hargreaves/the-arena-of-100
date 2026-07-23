@@ -21,7 +21,7 @@ export function SpriteFrame({
   frameClassName,
   skeletonSize = "72px",
   row = 0,
-}: SpriteFrameProps) {
+}: Readonly<SpriteFrameProps>) {
   return (
     <div
       className={cn(

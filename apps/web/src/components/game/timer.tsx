@@ -33,6 +33,17 @@ export const Timer: React.FC<TimerProps> = ({
 
   const isCircular = Math.abs(size - height) < 10;
 
+  let strokeColorClass = "text-candy-mint";
+  let progressBgClass = "bg-candy-mint";
+
+  if (isDanger) {
+    strokeColorClass = "text-candy-red";
+    progressBgClass = "bg-candy-red";
+  } else if (isWarning) {
+    strokeColorClass = "text-candy-yellow";
+    progressBgClass = "bg-candy-yellow";
+  }
+
   if (isCircular) {
     // Render an extremely premium circular 3D dial!
     return (
@@ -62,14 +73,7 @@ export const Timer: React.FC<TimerProps> = ({
             d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
           />
           <path
-            className={cn(
-              "transition-all duration-100",
-              isDanger
-                ? "text-candy-red"
-                : isWarning
-                  ? "text-candy-yellow"
-                  : "text-candy-mint",
-            )}
+            className={cn("transition-all duration-100", strokeColorClass)}
             strokeDasharray={`${percentage}, 100`}
             strokeWidth="4"
             strokeLinecap="round"
@@ -114,11 +118,7 @@ export const Timer: React.FC<TimerProps> = ({
       <div
         className={cn(
           "absolute left-0 top-0 bottom-0 rounded-full transition-all duration-100",
-          isDanger
-            ? "bg-candy-red"
-            : isWarning
-              ? "bg-candy-yellow"
-              : "bg-candy-mint",
+          progressBgClass,
         )}
         style={{
           width: `${percentage}%`,

@@ -1366,13 +1366,15 @@ describe("MatchRoundRunner", () => {
       vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
       const loggerWarnSpy = vi.spyOn((runner as any).logger, "warn");
 
-      await runner.handlePlayerDisconnect(
+      const outcome = await runner.handlePlayerDisconnect(
         "match-nonexistent",
         "p1",
         mockServer,
       );
 
       expect(loggerWarnSpy).not.toHaveBeenCalled();
+      // B5 hardening: return "NOOP" so the command-stream wrapper acks.
+      expect(outcome).toBe("NOOP");
     });
 
     it("should return early in checkEarlyTermination if stateMachine is not found", async () => {
@@ -1690,12 +1692,19 @@ describe("MatchRoundRunner", () => {
   describe("B2c fail-closed fencing branches", () => {
     const makeRunner = (
       ownershipOverrides: Record<string, unknown> = {},
+      disposeCommandStream?: (matchId: string) => Promise<void>,
     ): MatchRoundRunner =>
-      new MatchRoundRunner(matchService, questionService, roomService, {
-        assertOwnership: vi.fn().mockResolvedValue(true),
-        release: vi.fn().mockResolvedValue(undefined),
-        ...ownershipOverrides,
-      } as unknown as import("./match-ownership.service").MatchOwnershipService);
+      new MatchRoundRunner(
+        matchService,
+        questionService,
+        roomService,
+        {
+          assertOwnership: vi.fn().mockResolvedValue(true),
+          release: vi.fn().mockResolvedValue(undefined),
+          ...ownershipOverrides,
+        } as unknown as import("./match-ownership.service").MatchOwnershipService,
+        disposeCommandStream,
+      );
 
     const armActiveRound = () => {
       stateMachine.transition(MatchStatus.COUNTDOWN);
@@ -1920,7 +1929,8 @@ describe("MatchRoundRunner", () => {
       const emitSpy = vi.fn();
       (mockServer.to as any).mockReturnValue({ emit: emitSpy });
       const release = vi.fn().mockResolvedValue(undefined);
-      const runner2 = makeRunner({ release });
+      const disposeCommandStream = vi.fn().mockResolvedValue(undefined);
+      const runner2 = makeRunner({ release }, disposeCommandStream);
 
       stateMachine.transition(MatchStatus.COUNTDOWN);
       stateMachine.transition(MatchStatus.ROUND_ACTIVE);
@@ -1935,14 +1945,20 @@ describe("MatchRoundRunner", () => {
         expect.objectContaining({ matchId: "match-1" }),
       );
       expect(release).toHaveBeenCalledWith("match-1");
+      // B4b: natural finish drops match:cmd + match:applied.
+      expect(disposeCommandStream).toHaveBeenCalledWith("match-1");
     });
 
-    it("handlePlayerDisconnect: a non-APPLIED persist skips the disconnect broadcast", async () => {
+    it("handlePlayerDisconnect: a non-APPLIED persist skips the disconnect broadcast and propagates the outcome", async () => {
+      // B5 hardening: the runner now returns the underlying persist outcome so
+      // the command-stream wrapper can decide XACK vs RETRY. A non-APPLIED
+      // outcome here means the lease was lost mid-apply; the wrapper MUST map
+      // this to "RETRY" so the entry stays pending for the new owner.
       const emitSpy = vi.fn();
       (mockServer.to as any).mockReturnValue({ emit: emitSpy });
       vi.mocked(matchService.persistStateMachine).mockResolvedValue("RETRY");
 
-      await runner.handlePlayerDisconnect(
+      const outcome = await runner.handlePlayerDisconnect(
         "match-1",
         "p1",
         mockServer as unknown as Server,
@@ -1950,6 +1966,76 @@ describe("MatchRoundRunner", () => {
 
       expect(matchService.persistStateMachine).toHaveBeenCalled();
       expect(emitSpy).not.toHaveBeenCalled();
+      expect(outcome).toBe("RETRY");
+    });
+
+    it("handlePlayerDisconnect: BLIND persist outcome is also propagated (no broadcast)", async () => {
+      // Symmetric coverage for the BLIND branch — same XACK-vs-RETRY contract.
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+      vi.mocked(matchService.persistStateMachine).mockResolvedValue("BLIND");
+
+      const outcome = await runner.handlePlayerDisconnect(
+        "match-1",
+        "p1",
+        mockServer as unknown as Server,
+      );
+
+      expect(emitSpy).not.toHaveBeenCalled();
+      expect(outcome).toBe("BLIND");
+    });
+
+    it("handlePlayerDisconnect: APPLIED persist returns 'APPLIED' after the broadcast", async () => {
+      // Symmetric coverage for the happy path.
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+      vi.mocked(matchService.persistStateMachine).mockResolvedValue("APPLIED");
+
+      const outcome = await runner.handlePlayerDisconnect(
+        "match-1",
+        "p1",
+        mockServer as unknown as Server,
+      );
+
+      expect(emitSpy).toHaveBeenCalledWith(
+        ServerEvent.PLAYER_LEFT,
+        expect.objectContaining({
+          roomId: "room-1",
+          playerId: "p1",
+          reason: "DISCONNECTED",
+        }),
+      );
+      expect(outcome).toBe("APPLIED");
+    });
+
+    it("handlePlayerDisconnect: missing state machine returns 'NOOP' (ackable)", async () => {
+      // Pre-conditions failed → no persist attempted → caller can XACK.
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(undefined);
+
+      const outcome = await runner.handlePlayerDisconnect(
+        "match-nonexistent",
+        "p1",
+        mockServer as unknown as Server,
+      );
+
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+      expect(outcome).toBe("NOOP");
+    });
+
+    it("handlePlayerDisconnect: unknown player returns 'NOOP' (ackable)", async () => {
+      // Same as the missing-SM case: nothing to persist, ackable no-op.
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+      const outcome = await runner.handlePlayerDisconnect(
+        "match-1",
+        "non-existent-player",
+        mockServer as unknown as Server,
+      );
+
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+      expect(emitSpy).not.toHaveBeenCalled();
+      expect(outcome).toBe("NOOP");
     });
   });
 
