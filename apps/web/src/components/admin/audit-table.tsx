@@ -13,7 +13,7 @@ import type { Locale } from "@/i18n/routing";
 const KNOWN_EVENT_TYPE_SET = new Set<string>(KNOWN_AUDIT_EVENT_TYPES);
 
 interface AuditTableProps {
-  readonly events: AuditEvent[];
+  readonly events: readonly AuditEvent[];
   /**
    * True until the first response arrives. Must be `isPending`-style
    * semantics (stays true while the query is disabled with no cached

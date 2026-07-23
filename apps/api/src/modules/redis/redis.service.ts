@@ -76,6 +76,8 @@ export class RedisService implements OnModuleDestroy {
     onAbort?: () => void;
   }> = [];
   private blockingReadersShuttingDown = false;
+  /** Last observed waiter depth used to warn only on 0→non-empty transitions. */
+  private lastBlockingReaderWaiters = 0;
   private static readonly BLOCKING_READER_POOL_MAX = 16;
   private readonly handlers = new Map<string, MessageHandler[]>();
   // Per-channel serialization: subscribe/unsubscribe for the same channel run
@@ -122,6 +124,7 @@ export class RedisService implements OnModuleDestroy {
       const waiter = this.blockingReaderWaiters.shift()!;
       waiter.resolve(null);
     }
+    this.lastBlockingReaderWaiters = 0;
     // Close every allocated reader (idle + currently blocked). Prefer
     // disconnect() so sockets mid-XREADGROUP BLOCK drop immediately.
     const allocated = [
@@ -873,6 +876,7 @@ return 'REQUEUED'`;
       const onAbort = () => {
         const idx = this.blockingReaderWaiters.indexOf(waiter);
         if (idx !== -1) this.blockingReaderWaiters.splice(idx, 1);
+        this.lastBlockingReaderWaiters = this.blockingReaderWaiters.length;
         settle(null);
       };
       const waiter: {
@@ -883,6 +887,14 @@ return 'REQUEUED'`;
         onAbort,
       };
       this.blockingReaderWaiters.push(waiter);
+      const depth = this.blockingReaderWaiters.length;
+      // Warn once when the queue becomes non-empty (0→N), not on every enqueue.
+      if (this.lastBlockingReaderWaiters === 0 && depth > 0) {
+        this.logger.warn(
+          `blocking reader pool saturated (waiters=${depth}, max=${RedisService.BLOCKING_READER_POOL_MAX})`,
+        );
+      }
+      this.lastBlockingReaderWaiters = depth;
       if (signal) {
         if (signal.aborted) {
           onAbort();
@@ -910,6 +922,7 @@ return 'REQUEUED'`;
     }
     const waiter = this.blockingReaderWaiters.shift();
     if (waiter) {
+      this.lastBlockingReaderWaiters = this.blockingReaderWaiters.length;
       this.blockingReadersInUse.add(reader);
       waiter.resolve(reader);
       return;

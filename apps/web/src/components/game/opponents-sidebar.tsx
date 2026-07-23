@@ -54,9 +54,10 @@ export const OpponentsSidebar: React.FC<OpponentsSidebarProps> = ({
     if (id === userId) {
       return selfAvatar;
     }
-    const hash = name
-      .split("")
-      .reduce((acc, char) => acc + (char.codePointAt(0) ?? 0), 0);
+    const hash = Array.from(name).reduce(
+      (acc, char) => acc + (char.codePointAt(0) ?? 0),
+      0,
+    );
     const index = hash % avatars.length;
     const avatar = avatars[index];
     // Normalize avatar data to ensure consistent shape

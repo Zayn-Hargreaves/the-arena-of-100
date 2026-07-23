@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useTranslations } from "next-intl";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import { useSocketStore } from "@/stores/socket-store";
 import { useRouter } from "@/i18n/routing";
@@ -8,6 +9,8 @@ import { ROOM_CATEGORY_OPTIONS, type RoomCategory } from "@arena/shared";
 import { Sparkles, Globe, Lock, ShieldAlert, Cpu, Timer } from "lucide-react";
 
 export default function CreateRoomPage() {
+  const t = useTranslations("createRoomPage");
+  const tCategory = useTranslations("profile.roomCategory");
   const router = useRouter();
   const { createRoom } = useSocketStore();
   const [roomType, setRoomType] = useState<"PUBLIC" | "PRIVATE">("PUBLIC");
@@ -30,9 +33,7 @@ export default function CreateRoomPage() {
       router.push(`/lobby/${roomCode}`);
     } catch (err: unknown) {
       const message =
-        err instanceof Error
-          ? err.message
-          : "Không thể tạo phòng. Vui lòng thử lại.";
+        err instanceof Error ? err.message : t("createErrorFallback");
       setCreateError(message);
     } finally {
       setIsCreating(false);
@@ -45,10 +46,10 @@ export default function CreateRoomPage() {
         {/* Header */}
         <div className="flex flex-col gap-2 text-center md:text-left">
           <h1 className="font-display font-black text-3xl md:text-4xl text-candy-ink tracking-wider uppercase drop-shadow-[0_4px_0_rgba(0,0,0,0.1)]">
-            Thiết Lập Đấu Trường
+            {t("title")}
           </h1>
           <p className="font-sans text-sm font-bold text-candy-ink/75 tracking-wide">
-            Cấu hình các thông số phòng thi đấu sinh tử của riêng bạn
+            {t("subtitle")}
           </p>
         </div>
 
@@ -56,9 +57,9 @@ export default function CreateRoomPage() {
         <div className="jelly-card p-6 md:p-8 space-y-8 rounded-3xl border-[3.5px] border-candy-ink bg-white shadow-[8px_8px_0_0_#2B2D42] transition-all hover:translate-y-[-4px] hover:shadow-[12px_12px_0_0_#2B2D42]">
           {/* Room Visibility Type */}
           <div className="space-y-4">
-            <label className="block font-display font-black text-base text-candy-ink uppercase tracking-wider">
-              Chế Độ Hiển Thị
-            </label>
+            <span className="block font-display font-black text-base text-candy-ink uppercase tracking-wider">
+              {t("visibilityLabel")}
+            </span>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <button
                 type="button"
@@ -76,10 +77,10 @@ export default function CreateRoomPage() {
                 </div>
                 <div>
                   <h4 className="font-display font-black text-sm uppercase tracking-wide">
-                    Công Khai (Public)
+                    {t("publicTitle")}
                   </h4>
                   <p className="text-xs font-medium opacity-80 mt-0.5">
-                    Bất kỳ ai cũng có thể tìm thấy và tham gia.
+                    {t("publicDesc")}
                   </p>
                 </div>
               </button>
@@ -100,10 +101,10 @@ export default function CreateRoomPage() {
                 </div>
                 <div>
                   <h4 className="font-display font-black text-sm uppercase tracking-wide">
-                    Bảo Mật (Private)
+                    {t("privateTitle")}
                   </h4>
                   <p className="text-xs font-medium opacity-80 mt-0.5">
-                    Chỉ tham gia được thông qua mã mời trực tiếp.
+                    {t("privateDesc")}
                   </p>
                 </div>
               </button>
@@ -113,26 +114,26 @@ export default function CreateRoomPage() {
           {/* Time Limit Picker */}
           <div className="space-y-4">
             <div className="flex justify-between items-center">
-              <label className="font-display font-black text-base text-candy-ink uppercase tracking-wider flex items-center gap-2">
+              <span className="font-display font-black text-base text-candy-ink uppercase tracking-wider flex items-center gap-2">
                 <Timer className="w-5 h-5 text-candy-pink stroke-[2.5]" />
-                Thời Gian Suy Nghĩ
-              </label>
+                {t("timeLimitLabel")}
+              </span>
               <span className="font-display font-black text-lg text-candy-pink border-2 border-candy-ink bg-white px-2.5 py-0.5 rounded-lg shadow-[2px_2px_0_0_#2B2D42]">
-                {timeLimit} giây
+                {t("seconds", { seconds: timeLimit })}
               </span>
             </div>
             <div className="flex gap-3">
-              {[10, 15, 20, 30].map((t) => (
+              {[10, 15, 20, 30].map((time) => (
                 <button
-                  key={t}
-                  onClick={() => setTimeLimit(t)}
+                  key={time}
+                  onClick={() => setTimeLimit(time)}
                   className={`flex-1 py-3 rounded-2xl border-[3px] border-candy-ink font-display font-black text-sm transition-all duration-150 shadow-[3px_3px_0_0_#2B2D42] outline-none focus:outline-none ${
-                    timeLimit === t
+                    timeLimit === time
                       ? "bg-candy-yellow text-candy-ink translate-y-[-2px] shadow-[5px_5px_0_0_#2B2D42]"
                       : "bg-white text-candy-ink hover:translate-y-[-1px] hover:shadow-[4px_4px_0_0_#2B2D42] active:translate-y-[2px] active:shadow-[1px_1px_0_0_#2B2D42]"
                   }`}
                 >
-                  {t}s
+                  {t("secondsShort", { seconds: time })}
                 </button>
               ))}
             </div>
@@ -140,9 +141,9 @@ export default function CreateRoomPage() {
 
           {/* Category Selector */}
           <div className="space-y-4">
-            <label className="block font-display font-black text-base text-candy-ink uppercase tracking-wider">
-              Chủ Đề Câu Hỏi
-            </label>
+            <span className="block font-display font-black text-base text-candy-ink uppercase tracking-wider">
+              {t("categoryLabel")}
+            </span>
             <div className="flex flex-wrap gap-3">
               {ROOM_CATEGORY_OPTIONS.map((cat) => (
                 <button
@@ -154,7 +155,7 @@ export default function CreateRoomPage() {
                       : "bg-white text-candy-ink hover:translate-y-[-1px] hover:shadow-[4px_4px_0_0_#2B2D42] active:translate-y-[2px] active:shadow-[1px_1px_0_0_#2B2D42]"
                   }`}
                 >
-                  {cat.label}
+                  {tCategory(cat.value)}
                 </button>
               ))}
             </div>
@@ -163,12 +164,12 @@ export default function CreateRoomPage() {
           {/* Max Players Counter */}
           <div className="space-y-4">
             <div className="flex justify-between items-center">
-              <label className="font-display font-black text-base text-candy-ink uppercase tracking-wider flex items-center gap-2">
+              <span className="font-display font-black text-base text-candy-ink uppercase tracking-wider flex items-center gap-2">
                 <Cpu className="w-5 h-5 text-candy-blue stroke-[2.5]" />
-                Giới Hạn Đối Thủ
-              </label>
+                {t("maxPlayersLabel")}
+              </span>
               <span className="font-display font-black text-lg text-candy-blue border-2 border-candy-ink bg-white px-2.5 py-0.5 rounded-lg shadow-[2px_2px_0_0_#2B2D42]">
-                {maxPlayers} Người
+                {t("playersCount", { count: maxPlayers })}
               </span>
             </div>
             <div className="flex gap-3">
@@ -192,10 +193,8 @@ export default function CreateRoomPage() {
           <div className="flex gap-3 p-4 bg-[#FFF8E7] border-[3px] border-candy-ink rounded-2xl shadow-[4px_4px_0_0_#2B2D42]">
             <ShieldAlert className="w-5 h-5 shrink-0 text-candy-red mt-0.5 stroke-[2.5]" />
             <p className="text-xs font-semibold leading-relaxed text-candy-ink">
-              <strong>Lưu ý:</strong> Một khi phòng đấu được khởi tạo, bạn sẽ là
-              Chủ Phòng (Host) chịu trách nhiệm nhấn nút bắt đầu khi đủ người
-              chơi. Trận đấu sinh tử sẽ ngay lập tức loại bỏ bất kỳ ai chọn sai
-              hoặc hết thời gian!
+              <strong>{t("warningNoticeTitle")}</strong>{" "}
+              {t("warningNoticeBody")}
             </p>
           </div>
 
@@ -212,7 +211,7 @@ export default function CreateRoomPage() {
               className="w-full h-14 bg-candy-mint text-candy-ink border-[3.5px] border-candy-ink shadow-[6px_6px_0_0_#2B2D42] rounded-2xl hover:translate-y-[-2px] hover:shadow-[8px_8px_0_0_#2B2D42] active:translate-y-[4px] active:shadow-[2px_2px_0_0_#2B2D42] transition-all font-display font-black text-base uppercase tracking-widest flex items-center justify-center cursor-pointer select-none disabled:cursor-not-allowed disabled:opacity-60 disabled:translate-y-0 disabled:shadow-[3px_3px_0_0_#2B2D42]"
             >
               <Sparkles className="w-5 h-5 mr-2 animate-pulse stroke-[2.5]" />
-              {isCreating ? "Đang tạo phòng..." : "Khởi Chạy Đấu Trường"}
+              {isCreating ? t("creating") : t("submit")}
             </button>
           </div>
         </div>

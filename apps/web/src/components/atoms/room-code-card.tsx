@@ -44,7 +44,9 @@ export const RoomCodeCard: React.FC<RoomCodeCardProps> = ({ roomCode }) => {
         } catch (err) {
           console.error("Fallback copy failed", err);
         } finally {
-          textarea.remove();
+          if (textarea.parentNode) {
+            textarea.parentNode.removeChild(textarea);
+          }
         }
       }
     } catch (err) {

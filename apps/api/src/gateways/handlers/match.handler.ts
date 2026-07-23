@@ -11,11 +11,13 @@ import {
   RoomError,
   ERROR_MESSAGES,
 } from "@arena/shared";
-import { randomUUID } from "node:crypto";
 import { RoomService } from "../../modules/room/room.service";
 import { MatchService } from "../../modules/match/match.service";
 import { GameLoopService } from "../../modules/match/game-loop.service";
-import { MatchCommandService } from "../../modules/match/match-command.service";
+import {
+  MatchCommandService,
+  makeCommandEnvelope,
+} from "../../modules/match/match-command.service";
 import { ClusterService } from "../../modules/cluster/cluster.service";
 import { BaseHandler } from "./base.handler";
 
@@ -118,20 +120,19 @@ export class MatchHandler extends BaseHandler {
         // authoritative apply and emits the canonical ANSWER_RESULT (delivered
         // cross-node via the Redis adapter). A non-owner never emits an
         // optimistic result the owner could later contradict.
-        await this.matchCommand.forward({
-          eventId: randomUUID(),
-          schemaVersion: 1,
-          matchId: payload.matchId,
-          emittedByNodeId: this.cluster.nodeId,
-          emittedAt: Date.now(),
-          body: {
-            type: "submit_answer",
-            userId,
-            answer: payload.answer,
-            submissionId: payload.submissionId,
-            clientTs: Date.now(),
-          },
-        });
+        await this.matchCommand.forward(
+          makeCommandEnvelope({
+            matchId: payload.matchId,
+            emittedByNodeId: this.cluster.nodeId,
+            body: {
+              type: "submit_answer",
+              userId,
+              answer: payload.answer,
+              submissionId: payload.submissionId,
+              clientTs: Date.now(),
+            },
+          }),
+        );
 
         this.logger.log(
           `Answer forwarded to owner channel: ${userId} (match ${payload.matchId})`,

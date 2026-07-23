@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/routing";
 import { cn } from "@/lib/utils";
@@ -30,6 +30,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const resolvedNickname = nickname.trim();
   const displayName = resolvedNickname || t("guestName");
   const subtitleKey = resolvedNickname ? "playerRole" : "guestRole";
@@ -54,6 +55,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
     };
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
+  }, [mobileOpen]);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (mobileOpen && !dialog.open) {
+      if (typeof dialog.showModal === "function") {
+        dialog.showModal();
+      }
+    } else if (!mobileOpen && dialog.open) {
+      if (typeof dialog.close === "function") {
+        dialog.close();
+      }
+    }
   }, [mobileOpen]);
 
   return (
@@ -219,11 +234,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* --- MOBILE NAV OVERLAY --- */}
       {mobileOpen && (
+        /* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/click-events-have-key-events */
         <dialog
-          open
-          className="md:hidden fixed inset-0 top-16 z-40 flex flex-col p-6 animate-fade-in border-t-4 border-candy-ink select-none w-full h-[calc(100vh-4rem)] max-w-none max-h-none m-0 bg-white"
+          ref={dialogRef}
+          aria-modal="true"
           aria-label="Mobile navigation menu"
+          className="md:hidden fixed inset-0 top-16 z-40 flex flex-col p-6 animate-fade-in border-t-4 border-candy-ink select-none w-full h-[calc(100vh-4rem)] max-w-none max-h-none m-0 bg-white"
+          onClick={(e) => {
+            if (e.target === dialogRef.current) {
+              setMobileOpen(false);
+            }
+          }}
+          onClose={() => setMobileOpen(false)}
         >
+          <button
+            type="button"
+            aria-hidden="true"
+            tabIndex={-1}
+            onClick={() => setMobileOpen(false)}
+            className="absolute inset-0 -z-10 cursor-default"
+          />
           <nav className="flex-1 space-y-3">
             {navItems.map((item) => {
               const Icon = item.icon;

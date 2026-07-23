@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import React from "react";
+import { vi } from "vitest";
 
 // jsdom doesn't implement matchMedia — used by some Tailwind responsive helpers.
 if (typeof window !== "undefined" && !window.matchMedia) {
@@ -16,6 +17,21 @@ if (typeof window !== "undefined" && !window.matchMedia) {
       dispatchEvent: () => false,
     }),
   });
+}
+
+// jsdom doesn't implement HTMLDialogElement.prototype.showModal and close.
+if (typeof HTMLDialogElement !== "undefined") {
+  HTMLDialogElement.prototype.showModal =
+    HTMLDialogElement.prototype.showModal ||
+    function (this: HTMLDialogElement) {
+      this.setAttribute("open", "");
+    };
+  HTMLDialogElement.prototype.close =
+    HTMLDialogElement.prototype.close ||
+    function (this: HTMLDialogElement) {
+      this.removeAttribute("open");
+      this.dispatchEvent(new Event("close"));
+    };
 }
 
 // next-intl useTranslations hook — return a function that mirrors the key path.

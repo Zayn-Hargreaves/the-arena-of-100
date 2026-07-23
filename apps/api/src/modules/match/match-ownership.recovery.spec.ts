@@ -372,4 +372,286 @@ describe("MatchOwnershipService recovery (B3b)", () => {
       await expect(service.requeueMatch("m1")).resolves.toBe(outcome);
     }
   });
+
+  // ============================================================
+  // Edge branches: finalizeTerminal outcomes + orphanSweep top-level
+  // failures + recoverOnBoot failure + reacquired ownership in
+  // reverifyOwnedRecoveryLease.
+  // ============================================================
+  describe("finalizeTerminal + edge matrix", () => {
+    it("STALE: a newer lease took over; preserve match:active and drop owned without releasing", async () => {
+      (service as any).owned.set("m1", {
+        roomId: "room-1",
+        fence: 5,
+        leaseValue: "node-a:5",
+      });
+      redis.finalizeMatchTombstone.mockResolvedValueOnce("STALE");
+
+      await (service as any).finalizeTerminal("m1", "cleaned");
+
+      expect(redis.releaseLease).not.toHaveBeenCalled();
+      expect(service.isOwner("m1")).toBe(false);
+    });
+
+    it("finalize throws: drops owned, preserves match:active, clears retry, logs at error", async () => {
+      (service as any).owned.set("m1", {
+        roomId: "room-1",
+        fence: 5,
+        leaseValue: "node-a:5",
+      });
+      (service as any).retries.set("m1", { count: 1, timer: null });
+      redis.finalizeMatchTombstone.mockRejectedValueOnce(new Error("boom"));
+      const errorSpy = vi.spyOn(
+        (service as unknown as { logger: Logger }).logger,
+        "error",
+      );
+
+      await (service as any).finalizeTerminal("m1", "dead-letter");
+
+      expect(redis.releaseLease).not.toHaveBeenCalled();
+      expect(service.isOwner("m1")).toBe(false);
+      expect((service as any).retries.has("m1")).toBe(false);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("finalize threw for m1"),
+      );
+    });
+
+    it("finalize with no owned entry: clears retry and returns (no throw)", async () => {
+      (service as any).retries.set("m1", { count: 1, timer: null });
+      await (service as any).finalizeTerminal("m1", "cleaned");
+      expect(redis.finalizeMatchTombstone).not.toHaveBeenCalled();
+      expect((service as any).retries.has("m1")).toBe(false);
+    });
+
+    it("acquireForRecovery throw: returns 'held' (leave match:active for another tick)", async () => {
+      redis.acquireMatchLease.mockRejectedValueOnce(new Error("acquire boom"));
+      const outcome = await (service as any).acquireForRecovery("m1");
+      expect(outcome).toBe("held");
+      expect((service as any).owned.has("m1")).toBe(false);
+    });
+
+    it("acquireForRecovery TERMINAL: best-effort removeActiveIfTombstoned before aborting", async () => {
+      redis.acquireMatchLease.mockResolvedValueOnce("TERMINAL");
+      const outcome = await (service as any).acquireForRecovery("m1");
+      expect(outcome).toBe("abort");
+      expect(redis.removeActiveIfTombstoned).toHaveBeenCalledWith(
+        "match:tombstone:m1",
+        "match:active",
+        "m1",
+      );
+    });
+
+    it("acquireForRecovery TERMINAL + tombstone cleanup throws: still aborts (warn logged)", async () => {
+      redis.acquireMatchLease.mockResolvedValueOnce("TERMINAL");
+      redis.removeActiveIfTombstoned.mockRejectedValueOnce(
+        new Error("srem boom"),
+      );
+      const warnSpy = vi.spyOn(
+        (service as unknown as { logger: Logger }).logger,
+        "warn",
+      );
+      const outcome = await (service as any).acquireForRecovery("m1");
+      expect(outcome).toBe("abort");
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("tombstoned index cleanup failed"),
+      );
+    });
+  });
+
+  describe("reverifyOwnedRecoveryLease branches", () => {
+    it("lost lease + reacquire returns 'held' (foreign owner): drops owned + STOP", async () => {
+      (service as any).owned.set("m1", {
+        roomId: "room-1",
+        fence: 5,
+        leaseValue: "node-a:5",
+      });
+      redis.renewLease.mockResolvedValueOnce(false);
+      redis.acquireMatchLease.mockResolvedValueOnce(null); // live owner
+
+      const out = await (service as any).reverifyOwnedRecoveryLease(
+        "m1",
+        (service as any).owned.get("m1"),
+        server,
+      );
+      expect(out).toBe("STOP");
+      expect(service.isOwner("m1")).toBe(false);
+    });
+
+    it("lost lease + reacquire returns 'abort' (tombstoned): drops owned, clears retry, STOP", async () => {
+      (service as any).owned.set("m1", {
+        roomId: "room-1",
+        fence: 5,
+        leaseValue: "node-a:5",
+      });
+      (service as any).retries.set("m1", { count: 2, timer: null });
+      redis.renewLease.mockResolvedValueOnce(false);
+      redis.acquireMatchLease.mockResolvedValueOnce("TERMINAL");
+
+      const out = await (service as any).reverifyOwnedRecoveryLease(
+        "m1",
+        (service as any).owned.get("m1"),
+        server,
+      );
+      expect(out).toBe("STOP");
+      expect(service.isOwner("m1")).toBe(false);
+      expect((service as any).retries.has("m1")).toBe(false);
+    });
+
+    it("renewLease throws: schedules retry and returns 'RETRY' (transient — preserve match:active)", async () => {
+      (service as any).owned.set("m1", {
+        roomId: "room-1",
+        fence: 5,
+        leaseValue: "node-a:5",
+      });
+      redis.renewLease.mockRejectedValueOnce(new Error("transient"));
+      const warnSpy = vi.spyOn(
+        (service as unknown as { logger: Logger }).logger,
+        "warn",
+      );
+
+      const out = await (service as any).reverifyOwnedRecoveryLease(
+        "m1",
+        (service as any).owned.get("m1"),
+        server,
+      );
+      expect(out).toBe("RETRY");
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("re-verify) failed"),
+      );
+      // retry scheduled, but match:active is preserved.
+      expect((service as any).retries.has("m1")).toBe(true);
+    });
+  });
+
+  describe("resumeRecoveryLoop fallback roomId via getRoomIdByMatchId", () => {
+    it("uses the recovery fallback when the SM has an empty roomId", async () => {
+      const sm = makeSm(""); // no roomId on SM
+      recovery.getStateMachine.mockResolvedValueOnce(sm);
+      recovery.getRoomIdByMatchId.mockResolvedValueOnce("fallback-room");
+
+      (service as any).owned.set("m1", {
+        roomId: "",
+        fence: 5,
+        leaseValue: "node-a:5",
+      });
+
+      await (service as any).resumeRecoveryLoop(
+        "m1",
+        sm,
+        {
+          roomId: "",
+          fence: 5,
+          leaseValue: "node-a:5",
+        },
+        server,
+      );
+
+      expect(recovery.getRoomIdByMatchId).toHaveBeenCalledWith("m1");
+      expect(recovery.resumeMatchLoop).toHaveBeenCalledWith(
+        "m1",
+        sm,
+        "fallback-room",
+        server,
+      );
+    });
+
+    it("resumeMatchLoop throws: schedule a retry", async () => {
+      recovery.resumeMatchLoop.mockRejectedValueOnce(new Error("resume boom"));
+      const warnSpy = vi.spyOn(
+        (service as unknown as { logger: Logger }).logger,
+        "warn",
+      );
+      const sm = makeSm();
+      (service as any).owned.set("m1", {
+        roomId: "room-1",
+        fence: 5,
+        leaseValue: "node-a:5",
+      });
+
+      await (service as any).resumeRecoveryLoop(
+        "m1",
+        sm,
+        {
+          roomId: "room-1",
+          fence: 5,
+          leaseValue: "node-a:5",
+        },
+        server,
+      );
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("resumeMatchLoop threw"),
+      );
+      expect((service as any).retries.has("m1")).toBe(true);
+    });
+  });
+
+  describe("orphanSweep + recoverOnBoot top-level failures", () => {
+    it("orphanSweep: listActiveMatchIds throw is caught and logged", async () => {
+      // listActiveMatchIds is exported from match-ownership.store; the
+      // service imports it directly. Stub it via the service's redis
+      // by making the underlying call fail. We do this by making
+      // the helper's underlying smembers throw.
+      redis.smembers.mockRejectedValueOnce(new Error("list boom"));
+      service.setServer(server);
+      const errorSpy = vi.spyOn(
+        (service as unknown as { logger: Logger }).logger,
+        "error",
+      );
+
+      await service.orphanSweep();
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("orphanSweep failed"),
+      );
+      // isSweeping cleared in finally.
+      expect((service as any).isSweeping).toBe(false);
+    });
+
+    it("recoverOnBoot: listActiveMatchIds throw is caught, logs, and returns early", async () => {
+      redis.smembers.mockRejectedValueOnce(new Error("list boom"));
+      const errorSpy = vi.spyOn(
+        (service as unknown as { logger: Logger }).logger,
+        "error",
+      );
+      await (service as any).recoverOnBoot();
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("listActiveMatchIds failed"),
+      );
+    });
+  });
+
+  describe("drainPendingRecovery drains all buffered ids", () => {
+    it("emits an attemptRecovery for every buffered id when setServer is called", async () => {
+      // No server wired yet, so 3 ids get buffered in pendingRecovery.
+      redis.smembers.mockResolvedValue(["m1", "m2", "m3"]);
+      redis.removeActiveIfStateAbsent.mockResolvedValue("PRESENT");
+      // Recover all three.
+      await (service as any).recoverOnBoot();
+      expect((service as any).pendingRecovery.length).toBe(3);
+      expect(recovery.resumeMatchLoop).not.toHaveBeenCalled();
+
+      // Wire the server → drains all three.
+      service.setServer(server);
+      // resolve all three acquireMatchLease calls.
+      await vi.waitFor(() =>
+        expect(recovery.resumeMatchLoop).toHaveBeenCalledTimes(3),
+      );
+      expect((service as any).pendingRecovery.length).toBe(0);
+    });
+  });
+
+  describe("currentFence + getOwnershipSnapshot public surface", () => {
+    it("currentFence returns the fence for an owned match, null otherwise", () => {
+      expect((service as any).currentFence("m1")).toBeNull();
+      (service as any).owned.set("m1", {
+        roomId: "r1",
+        fence: 7,
+        leaseValue: "node-a:7",
+      });
+      expect((service as any).currentFence("m1")).toEqual({
+        fence: 7,
+        leaseValue: "node-a:7",
+      });
+    });
+  });
 });

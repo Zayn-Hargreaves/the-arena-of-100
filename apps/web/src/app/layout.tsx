@@ -31,9 +31,9 @@ const monoFont = JetBrains_Mono({
 
 export default async function RootLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   const locale = await getLocale();
 
   return (

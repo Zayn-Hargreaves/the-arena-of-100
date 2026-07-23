@@ -45,7 +45,10 @@ function parseObjectToSafeNumber(value: object): number {
     const n = v.toNumber();
     return Number.isFinite(n) ? n : 0;
   }
-  if (typeof v.valueOf === "function") {
+  if (
+    Object.prototype.hasOwnProperty.call(value, "valueOf") &&
+    typeof v.valueOf === "function"
+  ) {
     const n = Number(v.valueOf());
     return Number.isFinite(n) ? n : 0;
   }

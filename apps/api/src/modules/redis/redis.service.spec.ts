@@ -925,6 +925,17 @@ describe("RedisService", () => {
       await expect(service.xgroupCreate("s", "g")).rejects.toThrow("boom");
     });
 
+    it("xdelStream deletes the whole stream via DEL", async () => {
+      client.del.mockResolvedValueOnce(1);
+      await expect(service.xdelStream("match:cmd:m1")).resolves.toBeUndefined();
+      expect(client.del).toHaveBeenCalledWith("match:cmd:m1");
+    });
+
+    it("xdelStream propagates DEL failures", async () => {
+      client.del.mockRejectedValueOnce(new Error("boom"));
+      await expect(service.xdelStream("match:cmd:m1")).rejects.toThrow("boom");
+    });
+
     it("xautoclaim returns { nextCursor, claimed } and terminates the loop at 0-0", async () => {
       client.xautoclaim.mockResolvedValueOnce([
         "0-0",

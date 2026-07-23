@@ -37,7 +37,11 @@ export function AvatarSelector({
         {t("selectAvatar")}
       </label>
 
-      <div className="flex justify-center items-center gap-6">
+      <div
+        role="group"
+        aria-label={t("selectAvatar")}
+        className="flex justify-center items-center gap-6"
+      >
         <button
           type="button"
           onClick={onPrevious}

@@ -54,7 +54,7 @@ export const AnswerTile: React.FC<AnswerTileProps> = ({
   disabled = false,
   className = "",
 }) => {
-  const isInteractive = variant !== "disabled" && !disabled;
+  const isInteractive = variant !== "disabled" && !disabled && Boolean(onClick);
   const currentVariant = disabled ? "disabled" : variant;
 
   return (
@@ -63,32 +63,32 @@ export const AnswerTile: React.FC<AnswerTileProps> = ({
       onClick={isInteractive ? onClick : undefined}
       disabled={!isInteractive}
       className={cn(
-        "w-full select-none outline-none focus:outline-none transition-all duration-150 active:translate-y-[2px]",
+        "w-full select-none outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-candy-yellow transition-all duration-150 active:translate-y-[2px]",
         !isInteractive && "active:translate-y-0",
         className,
       )}
     >
-      <div
+      <span
         className={cn(
           "flex items-center gap-4 p-4 min-h-[72px] transition-all duration-300 rounded-2xl border-[3.5px]",
           getVariantStyles(currentVariant),
         )}
       >
         {/* Dynamic Option Badge */}
-        <div
+        <span
           className={cn(
             "flex items-center justify-center w-10 h-10 rounded-xl font-display font-black text-lg border-[2.5px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42] transition-all duration-300 shrink-0",
             getBadgeStyles(currentVariant),
           )}
         >
           {option}
-        </div>
+        </span>
 
         {/* Answer Text Content */}
-        <div className="flex-1 font-sans font-bold text-base text-left tracking-wide leading-relaxed">
+        <span className="flex-1 font-sans font-bold text-base text-left tracking-wide leading-relaxed">
           {content}
-        </div>
-      </div>
+        </span>
+      </span>
     </button>
   );
 };

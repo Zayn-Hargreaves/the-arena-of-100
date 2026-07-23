@@ -284,6 +284,37 @@
     }
   },
   "settings": {
+    "title": "SYSTEM SETTINGS",
+    "subtitle": "Customize audio, graphics, and control shortcuts for your arena",
+    "sound": {
+      "title": "Sound Settings",
+      "sfx": "Sound Effects (SFX)",
+      "bgm": "Background Music (BGM)",
+      "on": "ON",
+      "off": "OFF"
+    },
+    "controls": {
+      "title": "Control Shortcuts",
+      "quickAnswersTitle": "Shortcut Answers",
+      "quickAnswersDesc": "Press keys 1, 2, 3, 4 corresponding to options A, B, C, D",
+      "enabled": "ENABLED",
+      "disabled": "DISABLED"
+    },
+    "graphics": {
+      "title": "Graphics Settings (UI/UX)",
+      "glowTitle": "Neon Glow Intensity",
+      "intensityNormal": "Normal",
+      "intensityHigh": "High",
+      "intensityExtreme": "Extreme",
+      "scanlines": "CRT Scanlines",
+      "particles": "Tech Grids",
+      "on": "ON",
+      "off": "OFF",
+      "show": "SHOW",
+      "hide": "HIDE"
+    },
+    "saveButton": "Save Customization",
+    "saveSuccess": "Configuration settings saved to browser storage!",
     "avatar": {
       "title": "AVATAR",
       "subtitle": "Choose the character that represents you in the arena.",
@@ -377,5 +408,25 @@
       "toastTitle": "Joined as a spectator",
       "toastDescription": "You are watching an in-progress match. Answer submission is disabled."
     }
+  },
+  "createRoomPage": {
+    "title": "Arena Setup",
+    "subtitle": "Configure your own survival battle royale room parameters",
+    "visibilityLabel": "Visibility Mode",
+    "publicTitle": "Public",
+    "publicDesc": "Anyone can find and join.",
+    "privateTitle": "Private",
+    "privateDesc": "Joinable only via direct room code.",
+    "timeLimitLabel": "Thinking Time",
+    "seconds": "{seconds} seconds",
+    "secondsShort": "{seconds}s",
+    "categoryLabel": "Question Topic",
+    "maxPlayersLabel": "Player Limit",
+    "playersCount": "{count} Players",
+    "warningNoticeTitle": "Notice:",
+    "warningNoticeBody": "Once the room is created, you will be the Host responsible for starting the match when players are ready. Survival battle will instantly eliminate anyone who answers incorrectly or runs out of time!",
+    "createErrorFallback": "Failed to create room. Please try again.",
+    "creating": "Creating room...",
+    "submit": "Launch Arena"
   }
 }

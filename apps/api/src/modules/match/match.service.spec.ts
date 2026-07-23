@@ -1059,6 +1059,51 @@ describe("MatchService", () => {
         ]),
       ).rejects.toThrow("write conflict");
     });
+
+    it("treats a concurrent P2002 unique-constraint violation as an idempotent no-op", async () => {
+      // A second caller (e.g. the persist-retry loop in
+      // `MatchRoundRunner.endRound`) committed the round between our
+      // pre-check and create. The defensive catch in `saveRoundAndAnswers`
+      // should resolve with the existing round row instead of throwing.
+      const { Prisma } = await import("@prisma/client");
+      const p2002 = new Prisma.PrismaClientKnownRequestError(
+        "Unique constraint failed on the fields: (`matchId`,`roundNo`)",
+        { code: "P2002", clientVersion: "test" },
+      );
+      vi.mocked(prisma.$transaction).mockRejectedValueOnce(p2002);
+      vi.mocked(prisma.matchRound.findUnique).mockResolvedValue({
+        id: "round-prior",
+      } as any);
+
+      const round = await service.saveRoundAndAnswers("m1", 1, "q1", [
+        { userId: "u1", answer: "A", isCorrect: true, responseTimeMs: 100 },
+      ]);
+
+      expect(round).toEqual({ id: "round-prior" });
+      expect(prisma.matchRound.findUnique).toHaveBeenCalledWith({
+        where: { matchId_roundNo: { matchId: "m1", roundNo: 1 } },
+      });
+    });
+
+    it("rethrows a P2002 unique-constraint violation when no prior round row is found", async () => {
+      // Defensive: if Prisma reports P2002 but the follow-up
+      // findUnique returns null (e.g. someone deleted the row between
+      // the failed create and the recovery probe), we surface the
+      // original error rather than silently succeeding.
+      const { Prisma } = await import("@prisma/client");
+      const p2002 = new Prisma.PrismaClientKnownRequestError(
+        "Unique constraint failed on the fields: (`matchId`,`roundNo`)",
+        { code: "P2002", clientVersion: "test" },
+      );
+      vi.mocked(prisma.$transaction).mockRejectedValueOnce(p2002);
+      vi.mocked(prisma.matchRound.findUnique).mockResolvedValue(null);
+
+      await expect(
+        service.saveRoundAndAnswers("m1", 1, "q1", [
+          { userId: "u1", answer: "A", isCorrect: true, responseTimeMs: 100 },
+        ]),
+      ).rejects.toBe(p2002);
+    });
   });
 
   // ============================================================

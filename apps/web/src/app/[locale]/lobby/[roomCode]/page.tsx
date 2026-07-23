@@ -22,7 +22,58 @@ interface LobbyPageProps {
   params: Promise<{ roomCode: string }>;
 }
 
-export default function LobbyPage({ params }: LobbyPageProps) {
+// -- Helpers extracted to reduce Cognitive Complexity of LobbyPage -------
+
+type TranslatorFn = (
+  key: string,
+  values?: Record<string, string | number | Date>,
+) => string;
+
+function getRoomStatusMessage(
+  roomStatus: RoomStatus | undefined,
+  countdownRemainingSeconds: number | null,
+  isPrivateRoom: boolean,
+  playersCount: number,
+  tStatus: TranslatorFn,
+): string {
+  if (roomStatus === RoomStatus.COUNTDOWN) {
+    return tStatus("countdown", { seconds: countdownRemainingSeconds ?? 0 });
+  }
+  if (roomStatus === RoomStatus.STARTING) {
+    return tStatus("starting");
+  }
+  if (roomStatus === RoomStatus.IN_GAME) {
+    return tStatus("inGame");
+  }
+  if (isPrivateRoom) {
+    return playersCount < 2
+      ? tStatus("privateNeedPlayers")
+      : tStatus("privateCanStart");
+  }
+  return playersCount < 2
+    ? tStatus("publicNeedPlayers")
+    : tStatus("publicCanStart");
+}
+
+function getConnectionStatusText(
+  joinError: string | null | undefined,
+  displayJoinError: string,
+  joining: boolean,
+  isConnected: boolean,
+  roomStatusMessage: string,
+  t: TranslatorFn,
+): string {
+  if (joinError) {
+    return t("joinError", {
+      message: displayJoinError,
+    });
+  }
+  if (joining) return t("joining");
+  if (isConnected) return roomStatusMessage;
+  return t("reconnecting");
+}
+
+export default function LobbyPage({ params }: Readonly<LobbyPageProps>) {
   const { roomCode } = use(params);
   const router = useRouter();
   const { toast } = useToast();
@@ -189,20 +240,13 @@ export default function LobbyPage({ params }: LobbyPageProps) {
       ? t("joinFailedFallback")
       : joinError;
 
-  const roomStatusMessage =
-    roomStatus === RoomStatus.COUNTDOWN
-      ? tStatus("countdown", { seconds: countdownRemainingSeconds })
-      : roomStatus === RoomStatus.STARTING
-        ? tStatus("starting")
-        : roomStatus === RoomStatus.IN_GAME
-          ? tStatus("inGame")
-          : isPrivateRoom
-            ? playersList.length < 2
-              ? tStatus("privateNeedPlayers")
-              : tStatus("privateCanStart")
-            : playersList.length < 2
-              ? tStatus("publicNeedPlayers")
-              : tStatus("publicCanStart");
+  const roomStatusMessage = getRoomStatusMessage(
+    roomStatus,
+    countdownRemainingSeconds,
+    isPrivateRoom,
+    playersList.length,
+    tStatus,
+  );
 
   return (
     <AppShellLayout>
@@ -288,15 +332,14 @@ export default function LobbyPage({ params }: LobbyPageProps) {
                   className={`w-3 h-3 rounded-full border border-candy-ink ${isConnected ? "bg-candy-mint animate-pulse" : "bg-candy-red animate-ping"}`}
                 />
                 <span className="font-sans font-bold text-candy-ink/70">
-                  {joinError
-                    ? t("joinError", {
-                        message: displayJoinError ?? t("joinFailedFallback"),
-                      })
-                    : joining
-                      ? t("joining")
-                      : isConnected
-                        ? roomStatusMessage
-                        : t("reconnecting")}
+                  {getConnectionStatusText(
+                    joinError,
+                    displayJoinError,
+                    joining,
+                    isConnected,
+                    roomStatusMessage,
+                    t,
+                  )}
                 </span>
               </div>
 
