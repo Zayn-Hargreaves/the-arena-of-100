@@ -17,8 +17,10 @@
 //     distribution sample, and must never be averaged into socketCount
 //     data. Same for transport/parse errors (`poll_errors`).
 //
-// Distribution assertion: sockets must land on >= MIN_NODES distinct
-// nodes (default 2) during the run, proving cross-node placement.
+// Distribution assertion: in at least one sample round, sockets must
+// land on >= MIN_NODES distinct nodes (default 2), proving concurrent
+// cross-node placement. PASS also requires zero auth/poll errors and
+// coverage of every configured probe URL.
 //
 // CLI usage:
 //   node load-test/scripts/poll-distribution.mjs \
@@ -30,7 +32,7 @@
 // Writes:
 //   - <out-name>-distribution.jsonl   one {ts, nodeId, socketCount} per sample
 //   - <out-name>-distribution.summary.json   per-node split + assertion result
-// Exit code: 0 when the >= MIN_NODES assertion holds, 1 otherwise.
+// Exit code: 0 when the assertion holds, 1 otherwise, 2 for config/fatal.
 // ============================================================
 
 import http from "node:http";
@@ -89,6 +91,34 @@ function parseDuration(s) {
 
 function nowTag() {
   return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+function isPositiveInt(n) {
+  return Number.isInteger(n) && n > 0;
+}
+
+// Validate CLI config before creating any artifacts.
+if (NODES.length === 0) {
+  console.error("[distribution] --nodes must list at least one URL");
+  process.exit(2);
+}
+if (!isPositiveInt(INTERVAL_MS)) {
+  console.error(
+    `[distribution] --interval must be a positive integer (ms), got: ${args.interval ?? "1000"}`,
+  );
+  process.exit(2);
+}
+if (!isPositiveInt(MIN_NODES)) {
+  console.error(
+    `[distribution] --min-nodes must be a positive integer, got: ${args["min-nodes"] ?? "2"}`,
+  );
+  process.exit(2);
+}
+if (MIN_NODES > NODES.length) {
+  console.error(
+    `[distribution] --min-nodes (${MIN_NODES}) cannot exceed node count (${NODES.length})`,
+  );
+  process.exit(2);
 }
 
 // ----- admin token (never logged / persisted) -----
@@ -162,9 +192,28 @@ const jsonlPath = path.join(OUT_DIR, `${OUT_NAME}-distribution.jsonl`);
 const summaryPath = path.join(OUT_DIR, `${OUT_NAME}-distribution.summary.json`);
 const jsonlStream = fs.createWriteStream(jsonlPath, { flags: "w" });
 
+// Convert async write failures into main()'s controlled exit-2 path.
+let resolveJsonlDone;
+let rejectJsonlDone;
+const jsonlDone = new Promise((resolve, reject) => {
+  resolveJsonlDone = resolve;
+  rejectJsonlDone = reject;
+});
+jsonlStream.once("error", (err) => {
+  rejectJsonlDone(err);
+});
+jsonlStream.once("close", () => {
+  resolveJsonlDone();
+});
+
 // nodeId -> aggregate; keyed by the node's SELF-REPORTED nodeId (not the
 // probe URL), so a rename/relabel can't split one node into two buckets.
 const perNode = new Map();
+// Per-round snapshots for concurrent-spread assertion + peak-round split.
+// Each entry: { ts, nodes: [{ nodeId, socketCount }] }
+const roundSnapshots = [];
+// Probe URL that produced at least one successful sample.
+const coveredUrls = new Set();
 let authFailures = 0;
 let pollErrors = 0;
 let samples = 0;
@@ -204,39 +253,77 @@ async function pollNode(nodeUrl) {
     // sample. NOTE: never echo the error object; it could carry the URL
     // but must never carry the token (it doesn't, but stay defensive).
     pollErrors += 1;
-    return;
+    return null;
   }
   if (res.status === 401 || res.status === 403) {
     // Auth problem, not distribution data. Never write the token.
     authFailures += 1;
-    return;
+    return null;
   }
   if (res.status !== 200) {
     pollErrors += 1;
-    return;
+    return null;
   }
   let nodeId = null;
   let socketCount = null;
   try {
-    // The API wraps responses in { success, message, data }.
-    const body = JSON.parse(res.body).data;
+    // Production wraps via TransformInterceptor ({ success, message, data }).
+    // Integration inject / some proxies may return the payload at the root.
+    const parsed = JSON.parse(res.body);
+    const body =
+      parsed && typeof parsed === "object" && parsed.data != null
+        ? parsed.data
+        : parsed;
     nodeId = body && body.nodeId;
     socketCount = body && body.socketCount;
   } catch (_err) {
     pollErrors += 1;
-    return;
+    return null;
   }
   if (typeof nodeId !== "string" || !Number.isFinite(socketCount)) {
     pollErrors += 1;
-    return;
+    return null;
   }
   recordNode(nodeId, socketCount, ts);
+  coveredUrls.add(nodeUrl);
+  return { nodeId, socketCount, ts, nodeUrl };
 }
 
 async function sampleOnce() {
   // Poll every node concurrently so the row shares a near-identical wall
   // clock — the distribution chart compares nodes at the same instant.
-  await Promise.all(NODES.map((n) => pollNode(n)));
+  const results = await Promise.all(NODES.map((n) => pollNode(n)));
+  const nodes = [];
+  let roundTs = null;
+  for (const r of results) {
+    if (!r) continue;
+    if (!roundTs) roundTs = r.ts;
+    nodes.push({ nodeId: r.nodeId, socketCount: r.socketCount });
+  }
+  if (nodes.length > 0) {
+    roundSnapshots.push({ ts: roundTs, nodes });
+  }
+}
+
+function pickPeakRound(snapshots) {
+  let best = null;
+  let bestTotal = -1;
+  let bestSpread = -1;
+  for (const snap of snapshots) {
+    const total = snap.nodes.reduce((s, n) => s + n.socketCount, 0);
+    const spread = snap.nodes.filter((n) => n.socketCount > 0).length;
+    // Align with maxConcurrentNodesWithSockets: highest spread first,
+    // then total sockets, then first-seen order.
+    if (
+      spread > bestSpread ||
+      (spread === bestSpread && total > bestTotal)
+    ) {
+      best = snap;
+      bestTotal = total;
+      bestSpread = spread;
+    }
+  }
+  return best;
 }
 
 function buildSummary() {
@@ -249,19 +336,49 @@ function buildSummary() {
   }));
   nodes.sort((a, b) => a.nodeId.localeCompare(b.nodeId));
 
-  // A node "carried load" if it ever held a socket. The >= MIN_NODES
-  // assertion is what proves cross-node placement.
-  const nodesWithSockets = nodes.filter((n) => n.peakSockets > 0);
-  const spread = nodesWithSockets.length;
-  const assertionPassed = spread >= MIN_NODES;
+  // Concurrent spread: max over rounds of how many nodes held sockets
+  // in the SAME sample (not independent lifetime peaks).
+  let maxConcurrentNodesWithSockets = 0;
+  for (const snap of roundSnapshots) {
+    const spread = snap.nodes.filter((n) => n.socketCount > 0).length;
+    if (spread > maxConcurrentNodesWithSockets) {
+      maxConcurrentNodesWithSockets = spread;
+    }
+  }
 
-  const totalPeak = nodes.reduce((s, n) => s + n.peakSockets, 0);
-  const split = nodes.map((n) => ({
-    nodeId: n.nodeId,
-    peakSockets: n.peakSockets,
-    peakSharePct:
-      totalPeak > 0 ? Number(((n.peakSockets / totalPeak) * 100).toFixed(1)) : 0,
-  }));
+  const peakRound = pickPeakRound(roundSnapshots);
+  const peakRoundNodes = peakRound ? peakRound.nodes : [];
+  const totalPeakRound = peakRoundNodes.reduce(
+    (s, n) => s + n.socketCount,
+    0,
+  );
+  // peakSplit / peakSharePct from one snapshot (the peak round), not
+  // each node's independent lifetime peakSockets.
+  const splitMap = new Map(
+    peakRoundNodes.map((n) => [n.nodeId, n.socketCount]),
+  );
+  // Include every node ever seen so the summary still lists them at 0
+  // if they were quiet during the peak round.
+  for (const n of nodes) {
+    if (!splitMap.has(n.nodeId)) splitMap.set(n.nodeId, 0);
+  }
+  const split = [...splitMap.entries()]
+    .map(([nodeId, sockets]) => ({
+      nodeId,
+      peakSockets: sockets,
+      peakSharePct:
+        totalPeakRound > 0
+          ? Number(((sockets / totalPeakRound) * 100).toFixed(1))
+          : 0,
+    }))
+    .sort((a, b) => a.nodeId.localeCompare(b.nodeId));
+
+  const allUrlsCovered = NODES.every((u) => coveredUrls.has(u));
+  const assertionPassed =
+    maxConcurrentNodesWithSockets >= MIN_NODES &&
+    authFailures === 0 &&
+    pollErrors === 0 &&
+    allUrlsCovered;
 
   return {
     outName: OUT_NAME,
@@ -274,13 +391,19 @@ function buildSummary() {
     pollErrors,
     minNodes: MIN_NODES,
     distinctNodesSeen: nodes.length,
-    nodesWithSockets: spread,
+    nodesWithSockets: maxConcurrentNodesWithSockets,
+    coveredUrls: [...coveredUrls],
+    expectedNodeCount: NODES.length,
+    allUrlsCovered,
     assertion: {
-      rule: `sockets landed on >= ${MIN_NODES} nodes`,
+      rule:
+        `in one sample round sockets on >= ${MIN_NODES} nodes, ` +
+        `authFailures=0, pollErrors=0, all ${NODES.length} probe URLs covered`,
       passed: assertionPassed,
     },
     perNode: nodes,
     peakSplit: split,
+    peakRoundTs: peakRound ? peakRound.ts : null,
     jsonl: jsonlPath,
   };
 }
@@ -295,7 +418,7 @@ async function main() {
   }
 
   jsonlStream.end();
-  await new Promise((r) => jsonlStream.on("close", r));
+  await jsonlDone;
 
   const summary = buildSummary();
   fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
@@ -306,12 +429,13 @@ async function main() {
   console.log(
     `[distribution] ${summary.assertion.passed ? "PASS" : "FAIL"} — ` +
       `${summary.nodesWithSockets}/${summary.distinctNodesSeen} nodes carried sockets ` +
-      `(min=${MIN_NODES}); peak split: ${splitStr}`,
+      `in one round (min=${MIN_NODES}); peak-round split: ${splitStr}`,
   );
-  if (authFailures > 0 || pollErrors > 0) {
+  if (authFailures > 0 || pollErrors > 0 || !summary.allUrlsCovered) {
     console.log(
       `[distribution] harness health: auth_failures=${authFailures} poll_errors=${pollErrors} ` +
-        `(excluded from distribution data)`,
+        `urls_covered=${summary.coveredUrls.length}/${NODES.length} ` +
+        `(excluded from distribution data when failed)`,
     );
   }
   console.log(

@@ -25,53 +25,71 @@ load actually spreads across the cluster. Blast radius: load-test harness only �
    for p in 3011 3012 3013; do curl -fsS http://localhost:$p/api/v1/health >/dev/null && echo "api $p ok"; done
    ```
 
-2. **Run the standard scenario against the LB** (no scenario edits — `API_URL` is parameterized).
-   Commit-tag the artifacts per the `load-test/README.md` convention
-   `load-test/results/<scenario>-<commit>-<ts>.json`:
+2. **Start monitors + distribution poller, then run k6** (background sampling must cover
+   the full scenario wall time — monitors 6m / poller 4m). Commit-tag artifacts per the
+   `load-test/README.md` convention `load-test/results/<scenario>-<commit>-<ts>.json`:
 
    ```bash
    COMMIT=$(git rev-parse --short HEAD); TS=$(date +%Y%m%dT%H%M%S)
-   k6 run -e API_URL=http://localhost:8080 \
-     --summary-export=load-test/results/multi-fullmatch-$COMMIT-$TS.json \
-     load-test/scenarios/full-match.js
-   ```
-
-3. **Per-node monitoring** — one `sample-monitoring.mjs` per node against its DIRECT port
-   (distinct `--out-name`), plus one for Redis. Gives per-node CPU/RSS + `match:state:*`:
-
-   ```bash
+   MONITOR_PIDS=()
    for n in 1:3011 2:3012 3:3013; do
      id=${n%%:*}; port=${n##*:}
      node load-test/scripts/sample-monitoring.mjs --scenario multi-fullmatch \
        --duration 6m --api-url http://localhost:$port \
        --out-dir load-test/results --out-name multi-fullmatch-$COMMIT-$TS.node-$id &
+     MONITOR_PIDS+=($!)
    done
-   ```
 
-4. **Distribution poller** — proves sockets land on ≥ 2 nodes (cross-node placement). Reads the
-   ADMIN-protected `GET /api/v1/health/cluster` on each direct port and records
-   `{ts, nodeId, socketCount}` per sample. The ADMIN JWT is supplied via env
-   `CLUSTER_HEALTH_ADMIN_JWT` (or minted locally from `--jwt-secret`) and is **never** written
-   into any artifact/log; 401/403 land in a separate `auth_failures` counter, never in socket
-   data. D1's sockets-per-node chart reads the `-distribution.jsonl`:
-
-   ```bash
    node load-test/scripts/poll-distribution.mjs \
      --nodes http://localhost:3011,http://localhost:3012,http://localhost:3013 \
      --duration 4m --interval 1000 \
-     --out-dir load-test/results --out-name multi-fullmatch-$COMMIT-$TS
-   # exit 0 iff sockets landed on >= 2 nodes; writes ...-distribution.{jsonl,summary.json}
+     --out-dir load-test/results --out-name multi-fullmatch-$COMMIT-$TS &
+   POLL_PID=$!
+   # exit 0 iff sockets landed on >= 2 nodes in one sample round (plus harness health);
+   # writes ...-distribution.{jsonl,summary.json}
+
+    ORCH_STATUS=0
+
+    k6 run -e API_URL=http://localhost:8080 \
+      --summary-export=load-test/results/multi-fullmatch-$COMMIT-$TS.json \
+      load-test/scenarios/full-match.js
+    K6_STATUS=$?
+    if [ "$K6_STATUS" -eq 0 ]; then
+      echo "[orchestrate] k6: PASS (exit 0)"
+    else
+      echo "[orchestrate] k6: FAIL (exit $K6_STATUS)"
+      ORCH_STATUS=1
+    fi
+
+    if wait "$POLL_PID"; then
+      echo "[orchestrate] distribution poller: PASS (exit 0)"
+    else
+      echo "[orchestrate] distribution poller: FAIL (exit $?)"
+      ORCH_STATUS=1
+    fi
+
+    for pid in "${MONITOR_PIDS[@]}"; do
+      if wait "$pid"; then
+        echo "[orchestrate] monitor pid $pid: PASS (exit 0)"
+      else
+        echo "[orchestrate] monitor pid $pid: FAIL (exit $?)"
+        ORCH_STATUS=1
+      fi
+    done
+
+    exit "$ORCH_STATUS"
    ```
 
-5. **Capture** for the Stage D table: answer p50/p95/p99, disconnect rate, messages/sec,
+3. **Capture** for the Stage D table: answer p50/p95/p99, disconnect rate, messages/sec,
    per-node CPU/RSS, socket distribution. Raw artifacts stay in `load-test/results/`.
 
 ## Pass / done
 
 - Multi-node run completes green (`app_error_rate` excludes benign rejections — see the
-  load-test README); the distribution poller exits 0 (sockets on ≥ 2 nodes); latency is
-  comparable to the single-node baseline (some Redis adapter pub/sub overhead is expected —
-  quantify it against the "before" column).
+  load-test README); the distribution poller exits 0 (sockets on ≥ 2 nodes in one sample
+  round; auth/poll errors = 0; all probe URLs covered); latency is comparable to the
+  single-node baseline (some Redis adapter pub/sub overhead is expected — quantify it
+  against the "before" column).
 - Numbers recorded for the D1 before/after table; every figure traces back to a
   `load-test/results/` artifact.
 
@@ -82,4 +100,4 @@ load actually spreads across the cluster. Blast radius: load-test harness only �
 | `multi-fullmatch-<commit>-<ts>.json`                      | before/after table, throughput, answer p95/p99, disconnect |
 | `multi-fullmatch-<commit>-<ts>.node-{1,2,3}.cpu.jsonl`    | per-node CPU/RSS chart                                     |
 | `multi-fullmatch-<commit>-<ts>-distribution.jsonl`        | sockets-per-node-over-time chart                           |
-| `multi-fullmatch-<commit>-<ts>-distribution.summary.json` | per-node peak split + ≥2-node assertion                    |
+| `multi-fullmatch-<commit>-<ts>-distribution.summary.json` | peak-round split + concurrent ≥2-node assertion            |
