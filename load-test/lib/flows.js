@@ -19,6 +19,7 @@ import { ClientEvent, ServerEvent } from "./protocol.js";
 import { config } from "../config.js";
 import * as M from "./metrics.js";
 import { reportVuReady } from "./readiness.js";
+import { createReconnectController, buildFlowReconnect } from "./reconnect.js";
 
 const COORDINATOR_URL = __ENV.COORDINATOR_URL || null;
 const READINESS_RUN_ID = __ENV.READINESS_RUN_ID || null;
@@ -78,11 +79,19 @@ function wireCommon(client) {
 // later never surfaces an error to anyone, so a retried-and-recovered
 // attempt shouldn't trip ws_connect_errors thresholds either. Errors on
 // the FINAL attempt (and all post-handshake disconnects) still count.
-function createAndWireClient({ countConnectErrors = true, wsBase } = {}) {
+function createAndWireClient({
+  countConnectErrors = true,
+  wsBase,
+  onLifecycleClose,
+} = {}) {
   let connectErrorLogged = false;
 
   const client = createSocketIOClient(wsBase || config.wsBase, {
     onClose: (intentional, detail) => {
+      // C2: notify the reconnect controller of EVERY close (intentional
+      // aborts the loop; unexpected may start one). Runs before the metric
+      // bookkeeping below and is a no-op when no controller is wired.
+      if (onLifecycleClose) onLifecycleClose(intentional, detail);
       if (!intentional) {
         if (client && client.handshakeCompleted) {
           M.wsUnexpectedDisconnect.add(1);
@@ -222,6 +231,117 @@ async function connectWithRetry({ token, roomCode, vu, wire, wsBase }) {
   return null;
 }
 
+// C2: drive a role's socket with reconnect. On a non-intentional close, the
+// generation-token controller (lib/reconnect.js) reconnects with capped
+// backoff — new handshake -> re-JOIN_ROOM -> REQUEST_SNAPSHOT resync — and
+// records reconnect_ms / reconnect_success. Only used when config.reconnect
+// is on (the failover scenario); the steady-state path above is untouched.
+//
+// `wire` re-attaches the flow's event handlers to every fresh client;
+// getRoomId/getMatchId/getLastSeq read the flow's live cursor state (matchId
+// + lastSeenSeqNo drive the mid-match resync).
+async function runReconnectingFlow({
+  token,
+  roomCode,
+  vu,
+  wsBase,
+  lifetimeMs,
+  wire,
+  getRoomId,
+  getMatchId,
+  getLastSeq,
+}) {
+  let currentClient = null;
+
+  // One connect→AUTHENTICATE→JOIN_ROOM→REQUEST_SNAPSHOT against a fresh
+  // socket. `onClose` (supplied by buildFlowReconnect / the primary bootstrap)
+  // is wired to the controller so this socket's closes are generation-tagged.
+  const connectAndJoin = async ({ onClose }) => {
+    // An internal shutdown (failed handshake here) must NOT reach the
+    // controller as an intentional close, or a dead attempt would abort the
+    // loop that is still trying to recover. Gate the lifecycle callback and
+    // drop it before closing the socket ourselves.
+    let notifyController = true;
+    const client = createAndWireClient({
+      countConnectErrors: false,
+      wsBase,
+      onLifecycleClose: (intentional) => {
+        if (notifyController) onClose(intentional);
+      },
+    });
+    wire(client);
+    const ok = await handshake(client, token, roomCode, vu);
+    if (!ok) {
+      notifyController = false;
+      client.close();
+      return null;
+    }
+    // Mid-match resync: ask for events newer than our cursor (a fresh
+    // hydrate sends 0; the server replies SNAPSHOT or EVENT_BATCH delta).
+    const mid = getMatchId();
+    if (mid) {
+      client.emit(ClientEvent.REQUEST_SNAPSHOT, {
+        matchId: mid,
+        lastSeenSeqNo: getLastSeq(),
+      });
+    }
+    // NOTE: `currentClient` is NOT set here — a reconnect attempt may still be
+    // superseded/discarded by buildFlowReconnect. Only validated, live clients
+    // are published, via onControllerReady below (and the primary path).
+    return client;
+  };
+
+  const { reconnectAttempt, bind } = buildFlowReconnect({
+    connectAndJoin,
+    // Published only for a validated, non-superseded reconnect client, so the
+    // heartbeat/teardown reference never points at a socket that got discarded.
+    onControllerReady: (client) => {
+      currentClient = client;
+    },
+  });
+  const controller = createReconnectController({
+    reconnectAttempt,
+    recordReconnectMs: (v) => M.reconnectMs.add(v),
+    recordReconnectResult: (v) => M.reconnectSuccess.add(v),
+    backoff: config.reconnectBackoff,
+    log: (m) => console.log(`reconnect(vu=${vu}): ${m}`),
+  });
+  bind(controller);
+
+  // Primary connection: attribute its closes to the primary generation.
+  const primaryGen = controller.registerPrimary();
+  const primary = await connectAndJoin({
+    onClose: (intentional) => controller.handleClose(primaryGen, intentional),
+  });
+  if (primary) {
+    // Only a successful connect becomes the live socket reference.
+    currentClient = primary;
+  } else {
+    M.setupErrors.add(1);
+    M.appErrorRate.add(true);
+    // Treat a failed initial connect as an outage so the backoff loop tries
+    // to bring the socket up (the node may just be mid-restart).
+    controller.handleClose(primaryGen, false);
+  }
+
+  // Heartbeat targets whichever socket is currently live (it changes across
+  // reconnects), mirroring the steady-state 10s cadence.
+  const hb = setInterval(() => {
+    const c = currentClient;
+    const roomId = getRoomId();
+    if (c && c.connected && roomId) {
+      c.emit(ClientEvent.HEARTBEAT, { roomId, sentAt: Date.now() });
+    }
+  }, 10000);
+
+  await sleepMs(lifetimeMs);
+  clearInterval(hb);
+  // Intentional teardown: dispose() aborts any in-flight reconnect so a
+  // late retry never re-joins after the VU meant to leave.
+  controller.dispose();
+  if (currentClient) currentClient.close();
+}
+
 // A registered player: joins before the match starts, answers each round.
 export async function playerFlow({
   token,
@@ -234,10 +354,27 @@ export async function playerFlow({
   const pending = {}; // submissionId -> sentAt (ms)
   let matchId = null;
   let roomId = null;
+  let lastSeq = 0; // delta-replay cursor for REQUEST_SNAPSHOT on reconnect
   let finished = false;
   let eliminated = false;
 
+  // Track the highest event seqNo we've applied so a reconnect can resync
+  // with a tight delta instead of a full snapshot.
+  const noteSeq = (p) => {
+    if (!p) return;
+    if (Number.isFinite(p.lastEventSeqNo)) {
+      lastSeq = Math.max(lastSeq, p.lastEventSeqNo);
+    }
+    if (Array.isArray(p.events)) {
+      for (const e of p.events) {
+        if (e && Number.isFinite(e.seqNo)) lastSeq = Math.max(lastSeq, e.seqNo);
+      }
+    }
+  };
+
   const wire = (client) => {
+    client.on(ServerEvent.SNAPSHOT, noteSeq);
+    client.on(ServerEvent.EVENT_BATCH, noteSeq);
     client.on(ServerEvent.ROOM_JOINED, (p) => {
       if (p && p.roomId) roomId = p.roomId;
     });
@@ -286,6 +423,21 @@ export async function playerFlow({
       }
     });
   };
+
+  if (config.reconnect) {
+    await runReconnectingFlow({
+      token,
+      roomCode,
+      vu,
+      wsBase,
+      lifetimeMs,
+      wire,
+      getRoomId: () => roomId,
+      getMatchId: () => matchId,
+      getLastSeq: () => lastSeq,
+    });
+    return;
+  }
 
   const client = await connectWithRetry({ token, roomCode, vu, wire, wsBase });
   if (!client) return;
@@ -350,14 +502,48 @@ export async function spectatorFlow({
   wsBase,
 }) {
   let roomId = null;
+  let matchId = null;
+  let lastSeq = 0;
+
+  const noteSeq = (p) => {
+    if (!p) return;
+    if (Number.isFinite(p.lastEventSeqNo)) {
+      lastSeq = Math.max(lastSeq, p.lastEventSeqNo);
+    }
+    if (Array.isArray(p.events)) {
+      for (const e of p.events) {
+        if (e && Number.isFinite(e.seqNo)) lastSeq = Math.max(lastSeq, e.seqNo);
+      }
+    }
+  };
 
   const wire = (client) => {
+    client.on(ServerEvent.SNAPSHOT, noteSeq);
+    client.on(ServerEvent.EVENT_BATCH, noteSeq);
     client.on(ServerEvent.ROOM_JOINED, (p) => {
       if (p && p.roomId) roomId = p.roomId;
+    });
+    client.on(ServerEvent.MATCH_STARTED, (p) => {
+      if (p && p.matchId) matchId = p.matchId;
     });
     client.on(ServerEvent.ROUND_STARTED, () => M.roundStarted.add(1));
     client.on(ServerEvent.MATCH_FINISHED, () => M.matchFinished.add(1));
   };
+
+  if (config.reconnect) {
+    await runReconnectingFlow({
+      token,
+      roomCode,
+      vu,
+      wsBase,
+      lifetimeMs,
+      wire,
+      getRoomId: () => roomId,
+      getMatchId: () => matchId,
+      getLastSeq: () => lastSeq,
+    });
+    return;
+  }
 
   const client = await connectWithRetry({ token, roomCode, vu, wire, wsBase });
   if (!client) return;

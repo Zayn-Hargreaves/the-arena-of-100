@@ -35,3 +35,10 @@ export const handshakeRetries = new Counter("ws_handshake_retries");
 // App-level error rate: false on each successful handshake step, true on
 // each failure. Threshold target is config.errorRateMax (Plan A: < 1%).
 export const appErrorRate = new Rate("app_error_rate");
+
+// C2 reconnect (failover scenario only). One sample per unexpected-close
+// outage: reconnectMs = time from the unexpected close to ROOM_JOINED again
+// (success only); reconnectSuccess = fraction of outages that recovered
+// within the backoff budget. C3's verdict reads these off the k6 summary.
+export const reconnectMs = new Trend("reconnect_ms", true);
+export const reconnectSuccess = new Rate("reconnect_success");
