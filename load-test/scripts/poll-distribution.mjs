@@ -199,8 +199,9 @@ const jsonlDone = new Promise((resolve, reject) => {
   resolveJsonlDone = resolve;
   rejectJsonlDone = reject;
 });
-jsonlStream.once("error", (err) => {
+jsonlStream.on("error", (err) => {
   rejectJsonlDone(err);
+  stopping = true;
 });
 jsonlStream.once("close", () => {
   resolveJsonlDone();
