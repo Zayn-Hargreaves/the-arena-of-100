@@ -30,32 +30,101 @@ function isFiniteNumber(v) {
   return typeof v === "number" && Number.isFinite(v);
 }
 
-// Canonicalize raw ROUND_STARTED observations: many clients/log lines
-// re-observe one broadcast, so for each eventId keep exactly ONE entry with
-// the SMALLEST observed t (the first observation), then order the sequence by
-// that canonical t. Deterministic regardless of arrival order or how many
-// clients re-observed each event.
-export function dedupeRoundEvents(raw) {
-  const byId = new Map();
-  for (const ev of raw || []) {
-    if (!ev || typeof ev.eventId !== "string" || !isFiniteNumber(ev.t)) {
-      continue; // malformed observation — dropped, never counted as a round
-    }
-    const prev = byId.get(ev.eventId);
-    if (prev === undefined || ev.t < prev.t) {
-      byId.set(ev.eventId, {
-        t: ev.t,
-        eventId: ev.eventId,
-        roundIndex: ev.roundIndex,
-        fence: ev.fence,
-      });
-    }
+// A round observation is usable ONLY when it carries all four pieces of
+// evidence as the right types: a string eventId, and finite numeric t,
+// roundIndex, and fence. A missing/typeless roundIndex or fence is a
+// missing-evidence artifact — dropping it is correct, because feeding it into
+// the oracle would fabricate a `round_regression` (roundIndex undefined never
+// increases) or `unknown_fence` (fence undefined ∉ knownFences) violation the
+// timeline never actually exhibited.
+function isValidRoundEvent(ev) {
+  return (
+    ev &&
+    typeof ev.eventId === "string" &&
+    isFiniteNumber(ev.t) &&
+    isFiniteNumber(ev.roundIndex) &&
+    isFiniteNumber(ev.fence)
+  );
+}
+
+// The canonical observation for a set of same-eventId records: the one with the
+// SMALLEST observed t (the first observation); ties keep the first in iteration
+// order. Shared by dedupeRoundEvents and detectRoundConflicts so both agree on
+// exactly which observation is "the" canonical one.
+function pickCanonical(evs) {
+  let canonical = null;
+  for (const ev of evs) {
+    if (canonical === null || ev.t < canonical.t) canonical = ev;
   }
-  return [...byId.values()].sort((a, b) => {
+  return canonical;
+}
+
+// Canonicalize raw ROUND_STARTED observations: many clients/log lines
+// re-observe one broadcast, so for each eventId keep exactly ONE entry (see
+// pickCanonical — smallest observed t), then order the sequence by that
+// canonical t. Deterministic regardless of arrival order or how many clients
+// re-observed each event. Malformed observations (see isValidRoundEvent) are
+// dropped, never counted as a round.
+export function dedupeRoundEvents(raw) {
+  const groups = new Map();
+  for (const ev of raw || []) {
+    if (!isValidRoundEvent(ev)) continue;
+    if (!groups.has(ev.eventId)) groups.set(ev.eventId, []);
+    groups.get(ev.eventId).push(ev);
+  }
+  const canonical = [];
+  for (const evs of groups.values()) {
+    const c = pickCanonical(evs);
+    canonical.push({
+      t: c.t,
+      eventId: c.eventId,
+      roundIndex: c.roundIndex,
+      fence: c.fence,
+    });
+  }
+  return canonical.sort((a, b) => {
     if (a.t !== b.t) return a.t - b.t;
     // Stable tiebreak so equal-t canonical entries order deterministically.
     return a.eventId < b.eventId ? -1 : a.eventId > b.eventId ? 1 : 0;
   });
+}
+
+// Zombie-writer detection. dedupeRoundEvents collapses each eventId to its
+// earliest observation — which SILENTLY discards a later duplicate that
+// disagrees on roundIndex or fence (exactly the fingerprint of a stale/killed
+// owner re-emitting a round under an old fence). This scans the valid raw
+// observations and, for every eventId whose observations do NOT all agree on
+// (roundIndex, fence), records the divergent payload(s) so the oracle can
+// report the split-brain instead of hiding it behind the smallest-t canonical.
+export function detectRoundConflicts(raw) {
+  const groups = new Map();
+  for (const ev of raw || []) {
+    if (!isValidRoundEvent(ev)) continue;
+    if (!groups.has(ev.eventId)) groups.set(ev.eventId, []);
+    groups.get(ev.eventId).push(ev);
+  }
+  const conflicts = [];
+  for (const [eventId, evs] of groups) {
+    const canonical = pickCanonical(evs);
+    const conflicting = evs
+      .filter(
+        (e) =>
+          e.roundIndex !== canonical.roundIndex || e.fence !== canonical.fence,
+      )
+      .map((e) => ({ roundIndex: e.roundIndex, fence: e.fence, t: e.t }));
+    if (conflicting.length > 0) {
+      conflicts.push({
+        eventId,
+        canonical: {
+          roundIndex: canonical.roundIndex,
+          fence: canonical.fence,
+          t: canonical.t,
+        },
+        conflicting,
+      });
+    }
+  }
+  return conflicts;
 }
 
 // First post-kill round event emitted under the NEW owner's fence. The fence
@@ -71,8 +140,22 @@ export function deriveRecovery(canonicalEvents, tKill, ownerAfterFence) {
 }
 
 // Split-brain oracle over the canonical (deduped, t-ordered) sequence.
-export function runOracle(canonicalEvents, { tKill, ownerBefore, ownerAfter }) {
+// `conflicts` (from detectRoundConflicts) are same-eventId observations that
+// disagreed on roundIndex/fence — surfaced here as zombie_writer_conflict so a
+// stale-owner re-emission is never hidden by dedupe keeping only the earliest t.
+export function runOracle(
+  canonicalEvents,
+  { tKill, ownerBefore, ownerAfter, conflicts = [] },
+) {
   const violations = [];
+  for (const c of conflicts) {
+    violations.push({
+      code: "zombie_writer_conflict",
+      eventId: c.eventId,
+      canonical: c.canonical,
+      conflicting: c.conflicting,
+    });
+  }
   const knownFences = new Set([ownerBefore.fence, ownerAfter.fence]);
 
   let prevRound = null;
@@ -163,6 +246,18 @@ export function evaluateFailover(artifact) {
   const ownerBefore = artifact.owner_before || {};
   const ownerAfter = artifact.owner_after || {};
 
+  // Reject non-finite threshold OVERRIDES up front. A NaN override silently
+  // survives the spread above and would make every bounded comparison
+  // (p95 <= NaN, timeToRecover <= NaN, rate >= NaN) evaluate false — a false
+  // FAIL. Treat it as an invalid artifact instead of comparing against NaN.
+  if (artifact.thresholds && typeof artifact.thresholds === "object") {
+    for (const key of Object.keys(DEFAULT_THRESHOLDS)) {
+      if (key in artifact.thresholds && !isFiniteNumber(artifact.thresholds[key])) {
+        fail("invalid_artifact", `threshold ${key} is not a finite number`);
+      }
+    }
+  }
+
   // ---- Step 0: timeline sanity (all present, finite, non-zero where req'd) ----
   const tStart = artifact.t_start;
   const tMatch = artifact.t_match_started;
@@ -247,7 +342,8 @@ export function evaluateFailover(artifact) {
   }
 
   // ---- Recovery oracle (split-brain) ----
-  const oracle = runOracle(canonical, { tKill, ownerBefore, ownerAfter });
+  const conflicts = detectRoundConflicts(artifact.round_events);
+  const oracle = runOracle(canonical, { tKill, ownerBefore, ownerAfter, conflicts });
   if (!oracle.passed) {
     fail(
       "duplicate_round_check",
@@ -282,9 +378,9 @@ export function evaluateFailover(artifact) {
       `owner_after.fence(${ownerAfter.fence}) not > owner_before.fence(${ownerBefore.fence})`,
     );
   }
-  if (!(tFlip > tKill)) {
-    fail("flip_not_after_kill", `t_owner_flip(${tFlip}) not > t_kill(${tKill})`);
-  }
+  // NOTE: no t_owner_flip > t_kill check here — Step 0 already fails
+  // `invalid_artifact` on `!(tKill < tFlip)` and returns before this point, so
+  // such a check could never execute. The criteria list stays honest.
 
   // ---- answer latency spike (bounded, not a stall) ----
   const p95 = artifact.answer_p95_failover_ms;

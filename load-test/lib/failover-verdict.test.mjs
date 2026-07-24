@@ -161,6 +161,77 @@ describe("reconnect coverage gate", () => {
     expect(r.verdict).toBe(VERDICT.FAIL);
     expect(codes(r)).toContain("reconnect_rate");
   });
+
+  it("stays FAIL when a coverage gap coexists with another failure, still surfacing reconnect_coverage", () => {
+    const a = baseArtifact();
+    a.match_finished = false; // a genuine FAIL criterion
+    a.reconnect = { successes: 0, unexpected_closes: 0, rate: 1.0, p95_ms: 0 }; // + coverage gap
+    const r = evaluateFailover(a);
+    expect(r.verdict).toBe(VERDICT.FAIL);
+    expect(codes(r)).toContain("match_not_finished");
+    expect(codes(r)).toContain("reconnect_coverage");
+  });
+
+  it("INCONCLUSIVE when unexpected_closes is positive but below a min>1 floor", () => {
+    const a = baseArtifact();
+    a.thresholds = { ...a.thresholds, min_unexpected_closes: 5 };
+    a.reconnect = { successes: 2, unexpected_closes: 2, rate: 1.0, p95_ms: 100 };
+    const r = evaluateFailover(a);
+    expect(r.verdict).toBe(VERDICT.INCONCLUSIVE);
+    expect(codes(r)).toEqual(["reconnect_coverage"]);
+  });
+});
+
+describe("evidence validation + zombie-writer conflicts", () => {
+  it("drops observations with non-numeric roundIndex or fence (missing evidence, no false violations)", () => {
+    const a = baseArtifact();
+    a.round_events = [
+      { t: 5000, eventId: "e1", roundIndex: 1, fence: 7 },
+      { t: 8000, eventId: "e2", roundIndex: "two", fence: 7 }, // bad roundIndex
+      { t: 9000, eventId: "e2b", roundIndex: 2, fence: "eight" }, // bad fence
+      { t: 16000, eventId: "e3", roundIndex: 3, fence: 8 },
+    ];
+    const canon = dedupeRoundEvents(a.round_events);
+    expect(canon.map((e) => e.eventId)).toEqual(["e1", "e3"]); // malformed dropped
+    const r = evaluateFailover(a);
+    expect(r.verdict).toBe(VERDICT.PASS); // no fabricated regression/unknown_fence
+  });
+
+  it("FAILs a zombie-writer conflict: same eventId re-observed under a different fence", () => {
+    const a = baseArtifact();
+    a.round_events = [
+      { t: 5000, eventId: "e1", roundIndex: 1, fence: 7 },
+      { t: 16000, eventId: "e3", roundIndex: 3, fence: 8 },
+      { t: 16500, eventId: "e3", roundIndex: 3, fence: 7 }, // stale owner re-emits r3
+      { t: 18000, eventId: "e4", roundIndex: 4, fence: 8 },
+    ];
+    const r = evaluateFailover(a);
+    expect(r.verdict).toBe(VERDICT.FAIL);
+    expect(codes(r)).toContain("duplicate_round_check");
+    expect(r.oracle.violations.map((v) => v.code)).toContain(
+      "zombie_writer_conflict",
+    );
+  });
+
+  it("rejects a non-finite threshold override as an invalid artifact", () => {
+    const a = baseArtifact();
+    a.thresholds = { ...a.thresholds, time_to_recover_max_ms: NaN };
+    const r = evaluateFailover(a);
+    expect(r.verdict).toBe(VERDICT.FAIL);
+    expect(codes(r)).toContain("invalid_artifact");
+  });
+});
+
+describe("recovery derivation guards", () => {
+  it("skips all recovery derivation when owner_after.fence is non-finite", () => {
+    const a = baseArtifact();
+    a.owner_after = { nodeId: "api-3", fence: null };
+    const r = evaluateFailover(a);
+    expect(r.derived.tRecoverDerived).toBeNull();
+    expect(r.derived.timeToRecoverMs).toBeNull();
+    expect(r.verdict).toBe(VERDICT.FAIL);
+    expect(codes(r)).toContain("fence_not_higher");
+  });
 });
 
 describe("split-brain + threshold FAILs", () => {

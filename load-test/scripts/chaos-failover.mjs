@@ -46,7 +46,12 @@ import http from "node:http";
 import https from "node:https";
 import nodeCrypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { evaluateFailover, VERDICT } from "../lib/failover-verdict.mjs";
+import {
+  evaluateFailover,
+  VERDICT,
+  dedupeRoundEvents,
+  deriveRecovery,
+} from "../lib/failover-verdict.mjs";
 
 const execFileP = promisify(execFile);
 const apiNodeModules = path.resolve(
@@ -59,13 +64,28 @@ const { default: Redis } = await import(
 
 // ---- args + single clock ----
 
+// Scan argv sequentially (NOT in fixed pairs) so a standalone boolean flag
+// (e.g. --allow-dev-jwt-secret) doesn't swallow the following option as its
+// value. Supports both `--key value` and `--key=value`; a flag with no value
+// (end of argv, or immediately followed by another --flag) becomes boolean true.
 function parseArgs(argv) {
   const out = {};
-  for (let i = 2; i < argv.length; i += 2) {
-    const k = argv[i];
-    const v = argv[i + 1];
-    if (!k || !k.startsWith("--")) continue;
-    out[k.slice(2)] = v;
+  for (let i = 2; i < argv.length; i++) {
+    const tok = argv[i];
+    if (!tok || !tok.startsWith("--")) continue;
+    const body = tok.slice(2);
+    const eq = body.indexOf("=");
+    if (eq >= 0) {
+      out[body.slice(0, eq)] = body.slice(eq + 1);
+      continue;
+    }
+    const next = argv[i + 1];
+    if (next !== undefined && !next.startsWith("--")) {
+      out[body] = next;
+      i++; // consume the value
+    } else {
+      out[body] = true; // standalone boolean flag
+    }
   }
   return out;
 }
@@ -82,20 +102,62 @@ const NODES = String(
 const SCENARIO = args.scenario || "load-test/scenarios/failover-match.js";
 const KILL_AT_ROUND = Number.parseInt(args["kill-at-round"] || "3", 10);
 const KILL_MODE = args["kill-mode"] === "stop" ? "stop" : "kill"; // SIGKILL default
-const STEADY_P95 = Number.parseFloat(args["steady-p95"] || "NaN");
+// Verdict thresholds. All must be finite positive numbers — a NaN here reaches
+// the oracle and makes it compare against NaN (see failover-verdict.mjs), which
+// is a silent false FAIL. --steady-p95 is REQUIRED: without a steady-state
+// baseline the answer-p95 spike gate has nothing to multiply, so we refuse to
+// run rather than default it to 0 and fabricate a verdict.
+const STEADY_P95 = Number.parseFloat(args["steady-p95"] ?? "");
+const ANSWER_P95_MULT = Number.parseFloat(args["answer-p95-mult"] || "5");
+const RECOVER_MAX_MS = Number.parseInt(args["recover-max-ms"] || "20000", 10);
+const RECONNECT_MIN = Number.parseFloat(args["reconnect-min"] || "0.99");
+const MIN_CLOSES = Number.parseInt(args["min-closes"] || "1", 10);
+for (const [name, val, required] of [
+  ["--steady-p95", STEADY_P95, true],
+  ["--answer-p95-mult", ANSWER_P95_MULT, false],
+  ["--recover-max-ms", RECOVER_MAX_MS, false],
+  ["--reconnect-min", RECONNECT_MIN, false],
+  ["--min-closes", MIN_CLOSES, false],
+]) {
+  if (!Number.isFinite(val) || val <= 0) {
+    fatal(
+      required
+        ? `${name} is required and must be a finite positive number (got ${val})`
+        : `${name} must be a finite positive number (got ${val})`,
+    );
+  }
+}
 const REDIS_URL = args["redis-url"] || "redis://localhost:6379";
 const OUT_DIR = args["out-dir"] || "load-test/results";
 const COMMIT = args.commit || "dev";
-// ADMIN-token signing secret. A pre-minted CLUSTER_HEALTH_ADMIN_JWT (below)
-// needs no secret at all. Otherwise resolve the secret from an explicit
-// --jwt-secret, then the container-injected JWT_SECRET env (the SAME value the
-// API nodes are started with — set in every real/CI environment), and only as a
-// LAST resort the well-known local-dev literal. The literal is NEVER the secret
-// in a properly configured environment; it exists purely for a local docker
-// default run and is flagged (usingDevJwtSecret) so we can warn loudly.
+// ADMIN-token signing secret. A pre-minted CLUSTER_HEALTH_ADMIN_JWT needs no
+// secret at all. Otherwise the secret MUST be supplied explicitly — via
+// --jwt-secret or the container-injected JWT_SECRET env (the SAME value the API
+// nodes run with). There is NO silent fallback: minting an ADMIN token from a
+// hard-coded literal is a credential-in-source hazard, so the well-known
+// local-dev secret is used ONLY when --allow-dev-jwt-secret is passed to opt in.
+// With no source and no opt-in we refuse to mint or send any ADMIN token.
 const DEV_JWT_SECRET = "arena-100-secret-key";
-const JWT_SECRET =
-  args["jwt-secret"] || process.env.JWT_SECRET || DEV_JWT_SECRET;
+const preMintedAdminToken = process.env.CLUSTER_HEALTH_ADMIN_JWT || null;
+const explicitJwtSecret = args["jwt-secret"] || process.env.JWT_SECRET || null;
+// Opt-in ONLY on a truthy value: bare `--allow-dev-jwt-secret` (boolean true)
+// or `--allow-dev-jwt-secret=true|1|yes`. An explicit `=false|0|no` must NOT
+// enable the hard-coded dev secret just because the key is present.
+const allowDevRaw = args["allow-dev-jwt-secret"];
+const allowDevJwtSecret =
+  allowDevRaw === true ||
+  (typeof allowDevRaw === "string" && /^(true|1|yes)$/i.test(allowDevRaw));
+let JWT_SECRET = explicitJwtSecret;
+if (!preMintedAdminToken && !explicitJwtSecret) {
+  if (!allowDevJwtSecret) {
+    fatal(
+      "no ADMIN token source: provide a pre-minted CLUSTER_HEALTH_ADMIN_JWT, or a " +
+        "signing secret via --jwt-secret / JWT_SECRET env. For a local docker cluster " +
+        "on the default secret, pass --allow-dev-jwt-secret to opt in explicitly.",
+    );
+  }
+  JWT_SECRET = DEV_JWT_SECRET; // explicit local-dev opt-in only
+}
 const POLL_MS = Number.parseInt(args["poll-ms"] || "500", 10);
 const OWNER_POLL_MS = Number.parseInt(args["owner-poll-ms"] || "1000", 10);
 const RECOVER_TIMEOUT_MS = Number.parseInt(
@@ -109,6 +171,17 @@ const MATCH_FINISH_TIMEOUT_MS = Number.parseInt(
   args["match-finish-timeout-ms"] || "300000",
   10,
 );
+// How long 3b waits for the match to reach the kill round (its OWN deadline,
+// not the match-find deadline). If the match finishes or never reaches the kill
+// round in this window the run is INCONCLUSIVE, not a mis-timed kill.
+const KILL_ROUND_TIMEOUT_MS = Number.parseInt(
+  args["kill-round-timeout-ms"] || "120000",
+  10,
+);
+// How long to wait for k6 to exit so its summary export exists. MUST cover the
+// whole scenario (ramp + HOLD + teardown); the failover scenario HOLDs 6m by
+// default, so this defaults well above that. Raise it (or lower HOLD) together.
+const K6_WAIT_MS = Number.parseInt(args["k6-wait-ms"] || "600000", 10);
 
 // The single monotonic clock. t_start == 0 by definition.
 const t0 = performance.now();
@@ -141,13 +214,10 @@ function mintAdminToken(secret) {
     .digest("base64url");
   return `${data}.${sig}`;
 }
-const adminToken =
-  process.env.CLUSTER_HEALTH_ADMIN_JWT || mintAdminToken(JWT_SECRET);
-// True only when we fell all the way back to the built-in dev literal to mint
-// the token — i.e. no pre-minted token and no injected secret. Real/CI runs
-// (JWT_SECRET env or --jwt-secret / CLUSTER_HEALTH_ADMIN_JWT) never trip this.
-const usingDevJwtSecret =
-  !process.env.CLUSTER_HEALTH_ADMIN_JWT && JWT_SECRET === DEV_JWT_SECRET;
+const adminToken = preMintedAdminToken || mintAdminToken(JWT_SECRET);
+// True only when the operator explicitly opted into the built-in dev literal
+// (--allow-dev-jwt-secret) to mint the token. Real/CI runs never trip this.
+const usingDevJwtSecret = !preMintedAdminToken && JWT_SECRET === DEV_JWT_SECRET;
 let authFailures = 0;
 
 function request(urlStr, opts = {}) {
@@ -313,6 +383,13 @@ async function dockerKill(container, mode) {
 const children = [];
 function spawnChild(cmd, argv, opts = {}) {
   const child = spawn(cmd, argv, { stdio: ["ignore", "pipe", "pipe"], ...opts });
+  // A spawn failure (e.g. ENOENT: binary not on PATH) emits 'error'. With no
+  // listener that becomes an uncaught EventEmitter exception that crashes the
+  // orchestrator with no artifact. Always attach one; callers that need to
+  // react (k6) add their own listener too.
+  child.on("error", (e) => {
+    log(`child '${cmd}' failed: ${e.code || ""} ${e.message}`.trim());
+  });
   children.push(child);
   return child;
 }
@@ -335,10 +412,10 @@ process.on("SIGINT", () => {
 async function main() {
   if (usingDevJwtSecret) {
     log(
-      "WARN: minting the ADMIN /health/cluster token with the built-in LOCAL-DEV secret " +
-        "(no CLUSTER_HEALTH_ADMIN_JWT, JWT_SECRET env, or --jwt-secret provided). " +
-        "This is safe ONLY against a local docker cluster started with the same default. " +
-        "For any shared/CI/prod cluster, inject the real secret via JWT_SECRET or pass a pre-minted CLUSTER_HEALTH_ADMIN_JWT.",
+      "WARN: --allow-dev-jwt-secret is set — minting the ADMIN /health/cluster token " +
+        "with the built-in LOCAL-DEV secret. This is safe ONLY against a local docker " +
+        "cluster started with the same default. For any shared/CI/prod cluster, inject " +
+        "the real secret via JWT_SECRET or pass a pre-minted CLUSTER_HEALTH_ADMIN_JWT.",
     );
   }
   fs.mkdirSync(OUT_DIR, { recursive: true });
@@ -379,10 +456,19 @@ async function main() {
   );
   let k6Done = false;
   let k6Exit = null;
+  let k6SpawnError = null;
   k6.on("exit", (code) => {
     k6Done = true;
     k6Exit = code;
     log(`k6 exited code=${code}`);
+  });
+  // k6 failing to spawn (e.g. k6 not installed) must not hang the wait loop for
+  // the full K6_WAIT_MS: mark it done and remember the reason so step 7 aborts.
+  k6.on("error", (e) => {
+    k6Done = true;
+    k6Exit = k6Exit ?? -1;
+    k6SpawnError = e.message;
+    log(`k6 spawn error: ${e.message}`);
   });
   k6.stdout.on("data", (d) => process.stdout.write(`[k6] ${d}`));
   k6.stderr.on("data", (d) => process.stderr.write(`[k6] ${d}`));
@@ -402,12 +488,17 @@ async function main() {
 
   function recordRound(roundNo, owner) {
     if (roundNo == null || seenRound.has(roundNo)) return;
+    // A round event is evidence ONLY with the fence that emitted it — a
+    // null-fence entry is missing evidence the verdict would drop anyway. Do
+    // NOT mark the round seen yet: a later poll that observes ownership can
+    // still record this round once a valid fence is available.
+    if (!owner || !Number.isFinite(owner.fence)) return;
     seenRound.add(roundNo);
     roundEvents.push({
       t: T(),
       eventId: `${matchId}:r${roundNo}`,
       roundIndex: roundNo,
-      fence: owner ? owner.fence : null,
+      fence: owner.fence,
     });
   }
 
@@ -432,34 +523,62 @@ async function main() {
   }
   if (!matchId) fatal("no live IN_GAME match observed within the window");
 
-  // 3b. Poll the round index until we reach the kill round.
+  // 3b. Poll the round index until we reach the kill round, on this phase's OWN
+  // deadline (NOT the match-find deadline, which 3a already partly consumed).
+  // Reaching KILL_AT_ROUND is the only outcome that lets us kill; the match
+  // finishing first, or the deadline expiring, is an INCONCLUSIVE run — never a
+  // kill at the wrong round.
   log(`polling rounds until round >= ${KILL_AT_ROUND} to kill the owner`);
-  while (Date.now() < findDeadline && !k6Done) {
+  const killRoundDeadline = Date.now() + KILL_ROUND_TIMEOUT_MS;
+  let reachedKillRound = false;
+  while (Date.now() < killRoundDeadline && !k6Done) {
     const { state: st, owner } = await readMatchSnapshot(matchId);
     if (st) recordRound(st.currentRoundNo, owner);
-    if (st && st.currentRoundNo >= KILL_AT_ROUND) break;
-    if (st && st.status === "FINISHED") break;
+    if (st && st.status === "FINISHED") {
+      aborted = `match ${matchId} FINISHED before reaching kill round ${KILL_AT_ROUND}`;
+      break;
+    }
+    if (st && st.currentRoundNo >= KILL_AT_ROUND) {
+      reachedKillRound = true;
+      break;
+    }
     await sleep(POLL_MS);
   }
+  if (!reachedKillRound && !aborted) {
+    aborted = k6Done
+      ? `k6 ended before reaching kill round ${KILL_AT_ROUND}`
+      : `kill round ${KILL_AT_ROUND} not reached within ${KILL_ROUND_TIMEOUT_MS}ms`;
+  }
 
-  // 4. Owner just before the kill.
-  ownerBefore = (await readOwner(matchId)) || ownerBefore;
-  if (!ownerBefore) fatal(`no match:owner for ${matchId} at kill time`);
+  // 4 + 5. Resolve, verify, and kill the owner — ONLY if 3b reached the kill
+  // round. Any abort above skips the kill entirely (tKill stays null).
+  if (!aborted) {
+    ownerBefore = (await readOwner(matchId)) || ownerBefore;
+    if (!ownerBefore) fatal(`no match:owner for ${matchId} at kill time`);
 
-  // Cross-check /health/cluster.ownedMatches and resolve the container.
-  const ownerNode = topo.find((n) => n.nodeId === ownerBefore.nodeId);
-  if (!ownerNode || !ownerNode.container) {
-    aborted = `cannot resolve container for owner nodeId=${ownerBefore.nodeId}`;
-  } else {
-    // 5. VERIFY the resolved container still reports the owner nodeId, THEN kill.
-    const verify = await clusterHealth(ownerNode.url);
-    if (!verify || verify.nodeId !== ownerBefore.nodeId) {
-      aborted = `container ${ownerNode.container} reports nodeId=${verify?.nodeId}, expected ${ownerBefore.nodeId} — aborting (bystander safety)`;
+    // Cross-check /health/cluster.ownedMatches and resolve the container.
+    const ownerNode = topo.find((n) => n.nodeId === ownerBefore.nodeId);
+    if (!ownerNode || !ownerNode.container) {
+      aborted = `cannot resolve container for owner nodeId=${ownerBefore.nodeId}`;
     } else {
-      log(`killing owner container ${ownerNode.container} (nodeId=${ownerBefore.nodeId}, mode=${KILL_MODE})`);
-      await dockerKill(ownerNode.container, KILL_MODE);
-      tKill = T();
-      killedContainer = ownerNode.container;
+      // VERIFY the resolved container still reports the owner nodeId, THEN kill.
+      const verify = await clusterHealth(ownerNode.url);
+      if (!verify || verify.nodeId !== ownerBefore.nodeId) {
+        aborted = `container ${ownerNode.container} reports nodeId=${verify?.nodeId}, expected ${ownerBefore.nodeId} — aborting (bystander safety)`;
+      } else {
+        log(`killing owner container ${ownerNode.container} (nodeId=${ownerBefore.nodeId}, mode=${KILL_MODE})`);
+        // A rejected docker kill (daemon down, container already gone, docker
+        // not on PATH) must become an INCONCLUSIVE abort, not an uncaught
+        // rejection that escapes to main().catch with no artifact. tKill /
+        // killedContainer are assigned ONLY after the kill actually succeeds.
+        try {
+          await dockerKill(ownerNode.container, KILL_MODE);
+          tKill = T();
+          killedContainer = ownerNode.container;
+        } catch (e) {
+          aborted = `docker ${KILL_MODE} ${ownerNode.container} failed: ${e.message}`;
+        }
+      }
     }
   }
 
@@ -467,10 +586,25 @@ async function main() {
     log(`ABORT (harness error, not a FAIL): ${aborted}`);
   }
 
-  // 6. Measure recovery: keep observing rounds + watch for the owner flip.
-  const aliveAfter = topo
-    .filter((n) => n.container !== killedContainer && n.nodeId)
-    .map((n) => n.nodeId);
+  // 6. Measure recovery. First establish which nodes are alive AFTER the kill by
+  // RE-PROBING them now, not by trusting nodeIds captured during startup
+  // topology discovery — a node whose startup health failed, or that has since
+  // gone unreachable, must not be silently counted alive or dead. Any survivor
+  // we cannot resolve (transport error or ADMIN auth failure, which
+  // clusterHealth() counts) makes the run INCONCLUSIVE: we cannot establish
+  // liveness, so we stop short of the owner_not_alive verdict rather than record
+  // the failure only in _meta.
+  const aliveAfter = [];
+  for (const n of topo) {
+    if (n.container === killedContainer) continue; // the node we just killed
+    const health = await clusterHealth(n.url);
+    if (health && health.nodeId) {
+      aliveAfter.push(health.nodeId);
+    } else if (!aborted) {
+      aborted = `cannot confirm survivor ${n.url} liveness post-kill (auth or transport failure)`;
+      log(`ABORT (harness error, not a FAIL): ${aborted}`);
+    }
+  }
 
   if (tKill != null) {
     // Phase A — RECOVER_TIMEOUT_MS bounds ONLY owner recovery + new-fence
@@ -535,10 +669,20 @@ async function main() {
   }
 
   // 7. Wait for k6 to finish, then read the summary for reconnect + answer p95.
-  log(`waiting for k6 to finish for the summary export`);
-  const k6Deadline = Date.now() + 5 * 60 * 1000;
+  // The deadline MUST cover the whole scenario (K6_WAIT_MS defaults well above
+  // the 6m HOLD); if k6 outlives it we have no complete summary, so the run is
+  // INCONCLUSIVE rather than silently reporting partial reconnect data.
+  log(`waiting for k6 to finish for the summary export (<= ${K6_WAIT_MS}ms)`);
+  const k6Deadline = Date.now() + K6_WAIT_MS;
   while (!k6Done && Date.now() < k6Deadline) await sleep(1000);
   killChildren();
+  if (k6SpawnError && !aborted) {
+    aborted = `k6 failed to spawn (${k6SpawnError}) — no reconnect/answer data`;
+    log(`ABORT (harness error, not a FAIL): ${aborted}`);
+  } else if (!k6Done && !aborted) {
+    aborted = `k6 did not finish before deadline (${K6_WAIT_MS}ms) — summary incomplete`;
+    log(`ABORT (harness error, not a FAIL): ${aborted}`);
+  }
 
   let reconnect = { successes: 0, unexpected_closes: 0, rate: 1.0, p95_ms: 0 };
   let answerP95 = null;
@@ -568,40 +712,48 @@ async function main() {
     }
   }
 
-  // 8. Assemble the artifact (single-clock timestamps throughout).
-  const tRecoverEvent =
-    ownerAfter != null
-      ? roundEvents.find((e) => e.t > (tKill ?? Infinity) && e.fence === ownerAfter.fence)
-      : null;
+  // 8. Assemble the artifact (single-clock timestamps throughout). Derive
+  // recovery with the SAME canonical helpers the oracle uses (dedupe by eventId,
+  // then first post-kill event carrying owner_after.fence) so the recorded
+  // t_recover / time_to_recover_ms are byte-identical to what evaluateFailover
+  // recomputes — no parallel find() that could disagree and trip invalid_artifact.
+  const canonicalEvents = dedupeRoundEvents(roundEvents);
+  const recovery =
+    ownerAfter != null && tKill != null
+      ? deriveRecovery(canonicalEvents, tKill, ownerAfter.fence)
+      : { tRecoverDerived: null };
+  const tRecoverDerived = recovery.tRecoverDerived;
 
   const artifact = {
     t_start: 0,
     t_match_started: tMatchStarted ?? 0,
     t_kill: tKill ?? 0,
     t_owner_flip: tOwnerFlip ?? 0,
-    t_recover: tRecoverEvent ? tRecoverEvent.t : 0,
-    time_to_recover_ms: tRecoverEvent && tKill != null ? tRecoverEvent.t - tKill : 0,
+    t_recover: tRecoverDerived ?? 0,
+    time_to_recover_ms:
+      tRecoverDerived != null && tKill != null ? tRecoverDerived - tKill : 0,
     owner_before: ownerBefore || { nodeId: null, fence: null },
     owner_after: ownerAfter || { nodeId: null, fence: null },
     nodes_alive_after: aliveAfter,
-    rounds_before: roundEvents.filter((e) => tKill != null && e.t <= tKill).length,
-    rounds_after: roundEvents.filter((e) => tKill != null && e.t > tKill).length,
+    rounds_before: canonicalEvents.filter((e) => tKill != null && e.t <= tKill).length,
+    rounds_after: canonicalEvents.filter((e) => tKill != null && e.t > tKill).length,
     round_events: roundEvents,
     duplicate_round_check: { passed: true, deduped_event_count: roundEvents.length, violations: [] },
     match_finished: matchFinished,
     answer_p95_failover_ms: answerP95 ?? 0,
-    steady_state_p95_ms: Number.isFinite(STEADY_P95) ? STEADY_P95 : 0,
+    steady_state_p95_ms: STEADY_P95, // validated finite > 0 at startup
     reconnect: {
       successes: reconnect.successes,
       unexpected_closes: reconnect.unexpected_closes,
       rate: reconnect.rate,
       p95_ms: reconnect.p95_ms,
     },
+    // All validated finite > 0 at startup, so the oracle never sees NaN.
     thresholds: {
-      answer_p95_multiplier_max: Number.parseFloat(args["answer-p95-mult"] || "5"),
-      time_to_recover_max_ms: Number.parseInt(args["recover-max-ms"] || "20000", 10),
-      reconnect_success_min: Number.parseFloat(args["reconnect-min"] || "0.99"),
-      min_unexpected_closes: Number.parseInt(args["min-closes"] || "1", 10),
+      answer_p95_multiplier_max: ANSWER_P95_MULT,
+      time_to_recover_max_ms: RECOVER_MAX_MS,
+      reconnect_success_min: RECONNECT_MIN,
+      min_unexpected_closes: MIN_CLOSES,
     },
     // Harness metadata (not read by the verdict).
     _meta: {

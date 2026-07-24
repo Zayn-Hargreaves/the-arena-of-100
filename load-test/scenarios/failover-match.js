@@ -40,6 +40,11 @@ const SPECTATORS = intEnv("SPECTATORS", 20);
 const RAMP_UP = strEnv("RAMP_UP", "20s");
 // Longer than full-match so the match is still live when the orchestrator
 // kills the owner ~40-50% through its rounds.
+//
+// NOTE: the chaos orchestrator (scripts/chaos-failover.mjs) waits up to its
+// --k6-wait-ms (default 10m) for this run to finish before reading the summary.
+// If you raise HOLD/RAMP_UP past that window, raise --k6-wait-ms to match, or
+// the orchestrator will abort the run INCONCLUSIVE with an incomplete summary.
 const HOLD = strEnv("HOLD", "6m");
 const SPEC_RAMP_UP = strEnv("SPEC_RAMP_UP", "15s");
 
