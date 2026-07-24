@@ -68,4 +68,21 @@ export const config = {
     const parsed = Number.parseFloat(raw);
     return Number.isFinite(parsed) ? parsed : 0.01;
   })(),
+
+  // C2 client reconnect (default OFF so the steady-state scenarios are
+  // unaffected). Enabled for the failover scenario: on a non-intentional
+  // close, player/spectator flows reconnect (new handshake -> re-JOIN ->
+  // REQUEST_SNAPSHOT resync) and record reconnect_ms / reconnect_success.
+  reconnect: (() => {
+    const raw = strEnv("RECONNECT", "0").toLowerCase();
+    return raw === "1" || raw === "true" || raw === "on";
+  })(),
+  // Capped exponential backoff for the reconnect loop (200ms -> 2s,
+  // max ~10 attempts / 30s), overridable per run.
+  reconnectBackoff: {
+    baseMs: intEnv("RECONNECT_BASE_MS", 200),
+    maxMs: intEnv("RECONNECT_MAX_MS", 2000),
+    maxAttempts: intEnv("RECONNECT_MAX_ATTEMPTS", 10),
+    budgetMs: intEnv("RECONNECT_BUDGET_MS", 30000),
+  },
 };
