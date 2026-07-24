@@ -20,9 +20,12 @@
 // in client-sourced observations later stays safe.
 //
 // Requires: docker (compose multi up), a running k6, Redis reachable, and an
-// ADMIN JWT for /health/cluster (env CLUSTER_HEALTH_ADMIN_JWT or minted from
-// --jwt-secret). The ADMIN token is NEVER written into artifacts/logs; 401/403
-// are counted as harness auth failures, not health data.
+// ADMIN JWT for /health/cluster — supplied pre-minted via env
+// CLUSTER_HEALTH_ADMIN_JWT, or minted here from the signing secret resolved as
+// --jwt-secret > JWT_SECRET env > local-dev default (the default is for local
+// docker runs only and triggers a loud warning). The ADMIN token is NEVER
+// written into artifacts/logs; 401/403 are counted as harness auth failures,
+// not health data.
 //
 // CLI:
 //   node load-test/scripts/chaos-failover.mjs \
@@ -83,11 +86,27 @@ const STEADY_P95 = Number.parseFloat(args["steady-p95"] || "NaN");
 const REDIS_URL = args["redis-url"] || "redis://localhost:6379";
 const OUT_DIR = args["out-dir"] || "load-test/results";
 const COMMIT = args.commit || "dev";
-const JWT_SECRET = args["jwt-secret"] || "arena-100-secret-key";
+// ADMIN-token signing secret. A pre-minted CLUSTER_HEALTH_ADMIN_JWT (below)
+// needs no secret at all. Otherwise resolve the secret from an explicit
+// --jwt-secret, then the container-injected JWT_SECRET env (the SAME value the
+// API nodes are started with — set in every real/CI environment), and only as a
+// LAST resort the well-known local-dev literal. The literal is NEVER the secret
+// in a properly configured environment; it exists purely for a local docker
+// default run and is flagged (usingDevJwtSecret) so we can warn loudly.
+const DEV_JWT_SECRET = "arena-100-secret-key";
+const JWT_SECRET =
+  args["jwt-secret"] || process.env.JWT_SECRET || DEV_JWT_SECRET;
 const POLL_MS = Number.parseInt(args["poll-ms"] || "500", 10);
 const OWNER_POLL_MS = Number.parseInt(args["owner-poll-ms"] || "1000", 10);
 const RECOVER_TIMEOUT_MS = Number.parseInt(
   args["recover-timeout-ms"] || "60000",
+  10,
+);
+// The recover window above only bounds owner recovery + new-fence progress; a
+// correct match can legitimately run far longer, so match-finish detection gets
+// its own, longer deadline aligned with the scenario/k6 run duration.
+const MATCH_FINISH_TIMEOUT_MS = Number.parseInt(
+  args["match-finish-timeout-ms"] || "300000",
   10,
 );
 
@@ -124,6 +143,11 @@ function mintAdminToken(secret) {
 }
 const adminToken =
   process.env.CLUSTER_HEALTH_ADMIN_JWT || mintAdminToken(JWT_SECRET);
+// True only when we fell all the way back to the built-in dev literal to mint
+// the token — i.e. no pre-minted token and no injected secret. Real/CI runs
+// (JWT_SECRET env or --jwt-secret / CLUSTER_HEALTH_ADMIN_JWT) never trip this.
+const usingDevJwtSecret =
+  !process.env.CLUSTER_HEALTH_ADMIN_JWT && JWT_SECRET === DEV_JWT_SECRET;
 let authFailures = 0;
 
 function request(urlStr, opts = {}) {
@@ -195,16 +219,34 @@ async function scanStateKeys() {
 
 const ROUND_STATES = new Set(["ROUND_ACTIVE", "ROUND_EVALUATING", "ROUND_RESULT"]);
 
-async function readMatchState(matchId) {
-  const blob = await redis.get(`match:state:${matchId}`);
-  if (!blob) return null;
-  try {
-    const parsed = JSON.parse(blob);
-    const st = parsed.state || {};
-    return { status: st.status, currentRoundNo: st.currentRoundNo };
-  } catch (_e) {
-    return null;
+// Atomically read `match:state:<id>` and `match:owner:<id>` in ONE round-trip
+// (MGET) so a recorded round's fence comes from the SAME snapshot as its round
+// index — never a stale fence from a separate poll or an owner fallback.
+async function readMatchSnapshot(matchId) {
+  const [stateBlob, ownerRaw] = await redis.mget(
+    `match:state:${matchId}`,
+    `match:owner:${matchId}`,
+  );
+  let state = null;
+  if (stateBlob) {
+    try {
+      const parsed = JSON.parse(stateBlob);
+      const st = parsed.state || {};
+      state = { status: st.status, currentRoundNo: st.currentRoundNo };
+    } catch (_e) {
+      state = null;
+    }
   }
+  let owner = null;
+  if (ownerRaw) {
+    const idx = ownerRaw.lastIndexOf(":");
+    if (idx >= 0) {
+      const nodeId = ownerRaw.slice(0, idx);
+      const fence = Number.parseInt(ownerRaw.slice(idx + 1), 10);
+      if (nodeId && Number.isFinite(fence)) owner = { nodeId, fence };
+    }
+  }
+  return { state, owner };
 }
 
 // `match:owner:<id>` = "<nodeId>:<fence>".
@@ -291,6 +333,14 @@ process.on("SIGINT", () => {
 // ---- main orchestration ----
 
 async function main() {
+  if (usingDevJwtSecret) {
+    log(
+      "WARN: minting the ADMIN /health/cluster token with the built-in LOCAL-DEV secret " +
+        "(no CLUSTER_HEALTH_ADMIN_JWT, JWT_SECRET env, or --jwt-secret provided). " +
+        "This is safe ONLY against a local docker cluster started with the same default. " +
+        "For any shared/CI/prod cluster, inject the real secret via JWT_SECRET or pass a pre-minted CLUSTER_HEALTH_ADMIN_JWT.",
+    );
+  }
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const base = `failover-${COMMIT}-${ts}`;
@@ -368,13 +418,13 @@ async function main() {
     const keys = await scanStateKeys();
     for (const key of keys) {
       const id = key.replace(/^match:state:/, "");
-      const st = await readMatchState(id);
+      const { state: st, owner } = await readMatchSnapshot(id);
       if (st && ROUND_STATES.has(st.status)) {
         matchId = id;
         tMatchStarted = T();
-        ownerBefore = await readOwner(id);
-        recordRound(st.currentRoundNo, ownerBefore);
-        log(`live match ${id} @ round ${st.currentRoundNo}, owner=${ownerBefore?.nodeId}:${ownerBefore?.fence}`);
+        ownerBefore = owner;
+        recordRound(st.currentRoundNo, owner);
+        log(`live match ${id} @ round ${st.currentRoundNo}, owner=${owner?.nodeId}:${owner?.fence}`);
         break;
       }
     }
@@ -385,9 +435,8 @@ async function main() {
   // 3b. Poll the round index until we reach the kill round.
   log(`polling rounds until round >= ${KILL_AT_ROUND} to kill the owner`);
   while (Date.now() < findDeadline && !k6Done) {
-    const st = await readMatchState(matchId);
-    const owner = await readOwner(matchId);
-    if (st) recordRound(st.currentRoundNo, owner || ownerBefore);
+    const { state: st, owner } = await readMatchSnapshot(matchId);
+    if (st) recordRound(st.currentRoundNo, owner);
     if (st && st.currentRoundNo >= KILL_AT_ROUND) break;
     if (st && st.status === "FINISHED") break;
     await sleep(POLL_MS);
@@ -424,12 +473,14 @@ async function main() {
     .map((n) => n.nodeId);
 
   if (tKill != null) {
+    // Phase A — RECOVER_TIMEOUT_MS bounds ONLY owner recovery + new-fence
+    // progress: within this window we expect the lease to flip to a new
+    // (nodeId, higher fence) and post-kill rounds to advance.
     const recoverDeadline = Date.now() + RECOVER_TIMEOUT_MS;
     let lastOwnerPoll = 0;
     while (Date.now() < recoverDeadline) {
-      const st = await readMatchState(matchId);
-      const owner = await readOwner(matchId);
-      if (st) recordRound(st.currentRoundNo, owner || ownerBefore);
+      const { state: st, owner } = await readMatchSnapshot(matchId);
+      if (st) recordRound(st.currentRoundNo, owner);
 
       // Periodic owner poll: t_owner_flip = first time the lease moved to a
       // new (nodeId, higher fence) AFTER the kill. This may LAG the first
@@ -456,6 +507,30 @@ async function main() {
         break;
       }
       await sleep(POLL_MS);
+    }
+
+    // Phase B — match COMPLETION is not bounded by the recovery window: a
+    // healthy match can run far longer than RECOVER_TIMEOUT_MS. If it hasn't
+    // reached a terminal state yet, keep polling for FINISHED / cleanup on a
+    // longer, run-aligned deadline so a slow-but-correct match isn't recorded
+    // as unfinished. Owner-flip detection stays in Phase A only.
+    if (!matchFinished) {
+      const finishDeadline = Date.now() + MATCH_FINISH_TIMEOUT_MS;
+      while (Date.now() < finishDeadline) {
+        const { state: st, owner } = await readMatchSnapshot(matchId);
+        if (st) recordRound(st.currentRoundNo, owner);
+        if (st && st.status === "FINISHED") {
+          matchFinished = true;
+          break;
+        }
+        if (!st) {
+          matchFinished = roundEvents.some(
+            (e) => e.t > tKill && ownerAfter && e.fence === ownerAfter.fence,
+          );
+          break;
+        }
+        await sleep(POLL_MS);
+      }
     }
   }
 
@@ -564,7 +639,8 @@ async function main() {
   log(`wrote ${artifactPath}`);
 
   await redis.quit();
-  // PASS -> 0, INCONCLUSIVE -> 3, FAIL/abort -> 1.
+  // PASS -> 0; INCONCLUSIVE (including a harness abort, which forces the
+  // verdict to INCONCLUSIVE above) -> 3; only a real FAIL verdict -> 1.
   process.exit(
     artifact.verdict === VERDICT.PASS ? 0 : artifact.verdict === VERDICT.INCONCLUSIVE ? 3 : 1,
   );
