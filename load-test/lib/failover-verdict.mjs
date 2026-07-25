@@ -48,30 +48,54 @@ function isValidRoundEvent(ev) {
 }
 
 // The canonical observation for a set of same-eventId records: the one with the
-// SMALLEST observed t (the first observation); ties keep the first in iteration
-// order. Shared by dedupeRoundEvents and detectRoundConflicts so both agree on
-// exactly which observation is "the" canonical one.
+// SMALLEST observed t (the first observation). Ties break on (roundIndex, fence)
+// so the canonical is deterministic across callers regardless of iteration
+// order or the order in which two observations with the same t were recorded
+// (e.g. a redis poll and a socketio broadcast stamping the same monotonic
+// instant). Shared by dedupeRoundEvents and detectRoundConflicts so both agree
+// on exactly which observation is "the" canonical one.
 function pickCanonical(evs) {
   let canonical = null;
   for (const ev of evs) {
-    if (canonical === null || ev.t < canonical.t) canonical = ev;
+    if (
+      canonical === null ||
+      ev.t < canonical.t ||
+      (ev.t === canonical.t && ev.roundIndex < canonical.roundIndex) ||
+      (ev.t === canonical.t &&
+        ev.roundIndex === canonical.roundIndex &&
+        ev.fence < canonical.fence)
+    ) {
+      canonical = ev;
+    }
   }
   return canonical;
 }
 
-// Canonicalize raw ROUND_STARTED observations: many clients/log lines
-// re-observe one broadcast, so for each eventId keep exactly ONE entry (see
-// pickCanonical — smallest observed t), then order the sequence by that
-// canonical t. Deterministic regardless of arrival order or how many clients
-// re-observed each event. Malformed observations (see isValidRoundEvent) are
-// dropped, never counted as a round.
-export function dedupeRoundEvents(raw) {
+// Shared by dedupeRoundEvents and detectRoundConflicts: iterate raw round
+// observations, drop malformed entries (see isValidRoundEvent — missing-typeless
+// evidence is NEVER counted as a round), and group the survivors by eventId.
+// The returned Map preserves insertion order so callers sort/iterate
+// deterministically; both callers rely on pickCanonical above to pick the
+// per-group canonical with stable tie-breakers.
+function groupValidRoundEvents(raw) {
   const groups = new Map();
   for (const ev of raw || []) {
     if (!isValidRoundEvent(ev)) continue;
     if (!groups.has(ev.eventId)) groups.set(ev.eventId, []);
     groups.get(ev.eventId).push(ev);
   }
+  return groups;
+}
+
+// Canonicalize raw ROUND_STARTED observations: many clients/log lines
+// re-observe one broadcast, so for each eventId keep exactly ONE entry (see
+// pickCanonical — smallest observed t, with stable roundIndex/fence
+// tie-breakers), then order the sequence by that canonical t. Deterministic
+// regardless of arrival order or how many clients re-observed each event.
+// Malformed observations (see isValidRoundEvent) are dropped, never counted as
+// a round.
+export function dedupeRoundEvents(raw) {
+  const groups = groupValidRoundEvents(raw);
   const canonical = [];
   for (const evs of groups.values()) {
     const c = pickCanonical(evs);
@@ -97,12 +121,7 @@ export function dedupeRoundEvents(raw) {
 // (roundIndex, fence), records the divergent payload(s) so the oracle can
 // report the split-brain instead of hiding it behind the smallest-t canonical.
 export function detectRoundConflicts(raw) {
-  const groups = new Map();
-  for (const ev of raw || []) {
-    if (!isValidRoundEvent(ev)) continue;
-    if (!groups.has(ev.eventId)) groups.set(ev.eventId, []);
-    groups.get(ev.eventId).push(ev);
-  }
+  const groups = groupValidRoundEvents(raw);
   const conflicts = [];
   for (const [eventId, evs] of groups) {
     const canonical = pickCanonical(evs);
@@ -233,6 +252,26 @@ const DEFAULT_THRESHOLDS = {
   min_unexpected_closes: 1,
 };
 
+// Per-key value-range rules for threshold overrides. Mirrors the CLI-side
+// validation in chaos-failover.mjs so an artifact built by a misconfigured
+// harness fails the oracle the same way the CLI would. `min` is the smallest
+// valid value (strict — `0` is rejected because the comment block above
+// requires "positive" thresholds/multipliers); `max` is inclusive; `integer:
+// true` rejects fractional counts (e.g. `min_unexpected_closes: 0.5`). A NaN
+// or missing override is rejected by the non-finite check below — these rules
+// only apply to finite values.
+const THRESHOLD_RULES = {
+  // A multiplier of 0 forces every p95 above it to be a FAIL; a non-positive
+  // multiplier is meaningless.
+  answer_p95_multiplier_max: { min: 0.000001, max: Infinity, integer: false },
+  time_to_recover_max_ms: { min: 0.000001, max: Infinity, integer: false },
+  // A reconnect success rate must be in (0, 1]. 0 means "every reconnect
+  // failure is fine" (a vacuous PASS) and > 1 is meaningless.
+  reconnect_success_min: { min: 0.000001, max: 1, integer: false },
+  // A count of closes must be a positive integer.
+  min_unexpected_closes: { min: 1, max: Infinity, integer: true },
+};
+
 // Evaluate a *.failover.json artifact. Returns
 //   { verdict, reasons: [{code, detail}], derived: {...}, oracle: {...} }
 // `reasons` is the list of UNSATISFIED criteria (empty on PASS). A single
@@ -242,7 +281,29 @@ export function evaluateFailover(artifact) {
   const reasons = [];
   const fail = (code, detail) => reasons.push({ code, detail });
 
-  const th = { ...DEFAULT_THRESHOLDS, ...(artifact.thresholds || {}) };
+  // Validate artifact.thresholds is a plain object and capture the overrides
+  // in a LOCAL. We intentionally do NOT mutate the caller's `artifact` object
+  // — callers may reuse the same artifact for audit, re-evaluation, or for
+  // serializing the raw input alongside our verdict. If the field is missing
+  // or invalid, thresholdOverrides stays undefined and the spread + the
+  // validation loops below fall back to DEFAULT_THRESHOLDS unchanged. The
+  // caller still sees their original `artifact.thresholds` field after
+  // evaluateFailover returns, intact for audit.
+  let thresholdOverrides;
+  if (artifact.thresholds !== undefined) {
+    const isPlainObject =
+      artifact.thresholds !== null &&
+      typeof artifact.thresholds === "object" &&
+      !Array.isArray(artifact.thresholds) &&
+      Object.getPrototypeOf(artifact.thresholds) === Object.prototype;
+    if (isPlainObject) {
+      thresholdOverrides = artifact.thresholds;
+    } else {
+      fail("invalid_artifact", "thresholds must be a plain object");
+    }
+  }
+
+  const th = { ...DEFAULT_THRESHOLDS, ...(thresholdOverrides || {}) };
   const ownerBefore = artifact.owner_before || {};
   const ownerAfter = artifact.owner_after || {};
 
@@ -250,10 +311,39 @@ export function evaluateFailover(artifact) {
   // survives the spread above and would make every bounded comparison
   // (p95 <= NaN, timeToRecover <= NaN, rate >= NaN) evaluate false — a false
   // FAIL. Treat it as an invalid artifact instead of comparing against NaN.
-  if (artifact.thresholds && typeof artifact.thresholds === "object") {
+  // Also reject UNKNOWN override keys: the spread brings them into `th` and
+  // no criterion ever reads them, so a typo (`min_unexpectd_closes`) would
+  // otherwise be silently accepted instead of failing the run.
+  if (thresholdOverrides) {
     for (const key of Object.keys(DEFAULT_THRESHOLDS)) {
-      if (key in artifact.thresholds && !isFiniteNumber(artifact.thresholds[key])) {
+      if (key in thresholdOverrides && !isFiniteNumber(thresholdOverrides[key])) {
         fail("invalid_artifact", `threshold ${key} is not a finite number`);
+      }
+    }
+    const known = new Set(Object.keys(DEFAULT_THRESHOLDS));
+    for (const key of Object.keys(thresholdOverrides)) {
+      if (!known.has(key)) {
+        fail("invalid_artifact", `unknown threshold key ${key}`);
+      }
+    }
+    // CLI-equivalent value ranges: a negative multiplier, a reconnect rate
+    // above 1, or a non-integer min_unexpected_closes would silently pass the
+    // non-finite check above and reach the runtime comparison, where a rate
+    // > 1 always satisfies the threshold (false PASS) and a non-integer
+    // count could never satisfy `>=` against a real count. Reject them here
+    // so the run reports invalid_artifact instead of fabricating a verdict.
+    for (const [key, rule] of Object.entries(THRESHOLD_RULES)) {
+      if (!(key in thresholdOverrides)) continue;
+      const v = thresholdOverrides[key];
+      if (!isFiniteNumber(v)) continue; // already reported above
+      if (rule.integer && !Number.isInteger(v)) {
+        fail("invalid_artifact", `threshold ${key} must be an integer (got ${v})`);
+        continue;
+      }
+      if (v < rule.min) {
+        fail("invalid_artifact", `threshold ${key} must be >= ${rule.min} (got ${v})`);
+      } else if (v > rule.max) {
+        fail("invalid_artifact", `threshold ${key} must be <= ${rule.max} (got ${v})`);
       }
     }
   }
@@ -298,7 +388,18 @@ export function evaluateFailover(artifact) {
   }
 
   // ---- Derive recovery from evidence (fence), not the recorded field ----
-  const canonical = dedupeRoundEvents(artifact.round_events);
+  // A non-array round_events (string, object, number) would throw inside
+  // groupValidRoundEvents on `ev.eventId` access — the throw escapes
+  // evaluateFailover with no recorded reason. Validate up front and feed the
+  // helpers an empty array so the rest of the function still produces its
+  // normal {derived, oracle, verdict} shape.
+  const roundEvents = Array.isArray(artifact.round_events)
+    ? artifact.round_events
+    : null;
+  if (roundEvents === null) {
+    fail("invalid_artifact", "round_events must be an array");
+  }
+  const canonical = dedupeRoundEvents(roundEvents || []);
   let tRecoverDerived = null;
   let timeToRecover = null;
   if (timelineOk && isFiniteNumber(ownerAfter.fence)) {
@@ -342,7 +443,7 @@ export function evaluateFailover(artifact) {
   }
 
   // ---- Recovery oracle (split-brain) ----
-  const conflicts = detectRoundConflicts(artifact.round_events);
+  const conflicts = detectRoundConflicts(roundEvents || []);
   const oracle = runOracle(canonical, { tKill, ownerBefore, ownerAfter, conflicts });
   if (!oracle.passed) {
     fail(

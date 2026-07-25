@@ -102,31 +102,33 @@ const NODES = String(
 const SCENARIO = args.scenario || "load-test/scenarios/failover-match.js";
 const KILL_AT_ROUND = Number.parseInt(args["kill-at-round"] || "3", 10);
 const KILL_MODE = args["kill-mode"] === "stop" ? "stop" : "kill"; // SIGKILL default
+// Strict numeric coercion for CLI args. parseInt/parseFloat silently drop
+// trailing junk ("5000ms" -> 5000, "1.2oops" -> 1.2); a missing value uses
+// the supplied default. Returns the raw arg unchanged when it is the boolean
+// `true` produced by parseArgs for a bare --flag (so the validator's
+// !Number.isFinite check catches it as a type error rather than coercing
+// `true` to NaN silently). Anything else goes through Number(raw), which
+// returns NaN for trailing characters — the validator rejects NaN. Empty
+// strings intentionally fall through to Number("") = 0 so the validator
+// rejects them as a non-positive value rather than silently applying the
+// default — the operator typed an empty value, that should be a loud error.
+function parseStrict(raw, def) {
+  if (raw === undefined || raw === null) return def;
+  if (raw === true) return raw; // bare --flag, validator will reject
+  return Number(raw);
+}
 // Verdict thresholds. All must be finite positive numbers — a NaN here reaches
 // the oracle and makes it compare against NaN (see failover-verdict.mjs), which
 // is a silent false FAIL. --steady-p95 is REQUIRED: without a steady-state
 // baseline the answer-p95 spike gate has nothing to multiply, so we refuse to
 // run rather than default it to 0 and fabricate a verdict.
-const STEADY_P95 = Number.parseFloat(args["steady-p95"] ?? "");
-const ANSWER_P95_MULT = Number.parseFloat(args["answer-p95-mult"] || "5");
-const RECOVER_MAX_MS = Number.parseInt(args["recover-max-ms"] || "20000", 10);
-const RECONNECT_MIN = Number.parseFloat(args["reconnect-min"] || "0.99");
-const MIN_CLOSES = Number.parseInt(args["min-closes"] || "1", 10);
-for (const [name, val, required] of [
-  ["--steady-p95", STEADY_P95, true],
-  ["--answer-p95-mult", ANSWER_P95_MULT, false],
-  ["--recover-max-ms", RECOVER_MAX_MS, false],
-  ["--reconnect-min", RECONNECT_MIN, false],
-  ["--min-closes", MIN_CLOSES, false],
-]) {
-  if (!Number.isFinite(val) || val <= 0) {
-    fatal(
-      required
-        ? `${name} is required and must be a finite positive number (got ${val})`
-        : `${name} must be a finite positive number (got ${val})`,
-    );
-  }
-}
+const STEADY_P95 = parseStrict(args["steady-p95"], Number.NaN);
+const ANSWER_P95_MULT = parseStrict(args["answer-p95-mult"], 5);
+const RECOVER_MAX_MS = parseStrict(args["recover-max-ms"], 20000);
+const RECONNECT_MIN = parseStrict(args["reconnect-min"], 0.99);
+// --min-closes is a COUNT of closes; it must be a finite positive integer. The
+// validator below enforces `Number.isInteger` via the per-row `integer` flag.
+const MIN_CLOSES = parseStrict(args["min-closes"], 1);
 const REDIS_URL = args["redis-url"] || "redis://localhost:6379";
 const OUT_DIR = args["out-dir"] || "load-test/results";
 const COMMIT = args.commit || "dev";
@@ -158,30 +160,55 @@ if (!preMintedAdminToken && !explicitJwtSecret) {
   }
   JWT_SECRET = DEV_JWT_SECRET; // explicit local-dev opt-in only
 }
-const POLL_MS = Number.parseInt(args["poll-ms"] || "500", 10);
-const OWNER_POLL_MS = Number.parseInt(args["owner-poll-ms"] || "1000", 10);
-const RECOVER_TIMEOUT_MS = Number.parseInt(
-  args["recover-timeout-ms"] || "60000",
-  10,
-);
+const POLL_MS = parseStrict(args["poll-ms"], 500);
+const OWNER_POLL_MS = parseStrict(args["owner-poll-ms"], 1000);
+const RECOVER_TIMEOUT_MS = parseStrict(args["recover-timeout-ms"], 60000);
 // The recover window above only bounds owner recovery + new-fence progress; a
 // correct match can legitimately run far longer, so match-finish detection gets
 // its own, longer deadline aligned with the scenario/k6 run duration.
-const MATCH_FINISH_TIMEOUT_MS = Number.parseInt(
-  args["match-finish-timeout-ms"] || "300000",
-  10,
-);
+const MATCH_FINISH_TIMEOUT_MS = parseStrict(args["match-finish-timeout-ms"], 300000);
 // How long 3b waits for the match to reach the kill round (its OWN deadline,
 // not the match-find deadline). If the match finishes or never reaches the kill
 // round in this window the run is INCONCLUSIVE, not a mis-timed kill.
-const KILL_ROUND_TIMEOUT_MS = Number.parseInt(
-  args["kill-round-timeout-ms"] || "120000",
-  10,
-);
+const KILL_ROUND_TIMEOUT_MS = parseStrict(args["kill-round-timeout-ms"], 120000);
 // How long to wait for k6 to exit so its summary export exists. MUST cover the
 // whole scenario (ramp + HOLD + teardown); the failover scenario HOLDs 6m by
 // default, so this defaults well above that. Raise it (or lower HOLD) together.
-const K6_WAIT_MS = Number.parseInt(args["k6-wait-ms"] || "600000", 10);
+const K6_WAIT_MS = parseStrict(args["k6-wait-ms"], 600000);
+
+// Validate every numeric threshold/timeout up front. A NaN/0/negative here
+// (e.g. `--kill-round-timeout-ms=abc`) silently becomes an immediate-aborted
+// or inconclusive run with a useless "within NaNms" error message — the
+// FAIL/skip path stays, but the operator gets no signal that the run was
+// misconfigured. Use the SAME shape the threshold validation in
+// failover-verdict.mjs uses: reject missing, boolean, NaN, non-finite, or
+// non-positive values BEFORE any orchestration work, so the CLI fails loudly.
+// A per-row `integer` flag additionally requires `Number.isInteger` — used
+// for --min-closes (a count, not a rate).
+for (const [name, val, required, integer] of [
+  ["--steady-p95", STEADY_P95, true, false],
+  ["--answer-p95-mult", ANSWER_P95_MULT, false, false],
+  ["--recover-max-ms", RECOVER_MAX_MS, false, false],
+  ["--reconnect-min", RECONNECT_MIN, false, false],
+  ["--min-closes", MIN_CLOSES, false, true],
+  ["--poll-ms", POLL_MS, false, false],
+  ["--owner-poll-ms", OWNER_POLL_MS, false, false],
+  ["--recover-timeout-ms", RECOVER_TIMEOUT_MS, false, false],
+  ["--match-finish-timeout-ms", MATCH_FINISH_TIMEOUT_MS, false, false],
+  ["--kill-round-timeout-ms", KILL_ROUND_TIMEOUT_MS, false, false],
+  ["--k6-wait-ms", K6_WAIT_MS, false, false],
+]) {
+  if (typeof val !== "number" || !Number.isFinite(val) || val <= 0) {
+    fatal(
+      required
+        ? `${name} is required and must be a finite positive number (got ${val})`
+        : `${name} must be a finite positive number (got ${val})`,
+    );
+  }
+  if (integer && !Number.isInteger(val)) {
+    fatal(`${name} must be a positive integer (got ${val})`);
+  }
+}
 
 // The single monotonic clock. t_start == 0 by definition.
 const t0 = performance.now();
@@ -596,7 +623,7 @@ async function main() {
   // the failure only in _meta.
   const aliveAfter = [];
   for (const n of topo) {
-    if (n.container === killedContainer) continue; // the node we just killed
+    if (killedContainer != null && n.container === killedContainer) continue; // the node we just killed
     const health = await clusterHealth(n.url);
     if (health && health.nodeId) {
       aliveAfter.push(health.nodeId);
@@ -738,9 +765,14 @@ async function main() {
     rounds_before: canonicalEvents.filter((e) => tKill != null && e.t <= tKill).length,
     rounds_after: canonicalEvents.filter((e) => tKill != null && e.t > tKill).length,
     round_events: roundEvents,
-    duplicate_round_check: { passed: true, deduped_event_count: roundEvents.length, violations: [] },
+    duplicate_round_check: { passed: null, deduped_event_count: null, violations: [] },
     match_finished: matchFinished,
-    answer_p95_failover_ms: answerP95 ?? 0,
+    // Preserve missing-data signals. Defaulting to 0 makes the oracle treat a
+    // missing p95 as a finite measurement (0 <= limit) and SKIP the
+    // answer_p95_missing code path — a misconfigured run would look like a
+    // healthy one. Carry null through so failover-verdict.mjs can emit
+    // answer_p95_missing.
+    answer_p95_failover_ms: answerP95,
     steady_state_p95_ms: STEADY_P95, // validated finite > 0 at startup
     reconnect: {
       successes: reconnect.successes,
@@ -767,6 +799,12 @@ async function main() {
   };
 
   // 9. Run the pure verdict + fill duplicate_round_check from the oracle.
+  // The placeholder is explicitly UNAVAILABLE (not `passed: true` and not a
+  // raw roundEvents.length): when the oracle is null (the `invalid_artifact`
+  // early-return) we leave the placeholder as-is so consumers see a
+  // consistent "check unavailable" signal alongside the invalid oracle,
+  // instead of a fake PASS-suggestion with a count that was never validated
+  // by the oracle.
   const result = evaluateFailover(artifact);
   if (result.oracle) {
     artifact.duplicate_round_check = {
