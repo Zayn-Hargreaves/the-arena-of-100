@@ -52,6 +52,7 @@ import {
   dedupeRoundEvents,
   deriveRecovery,
 } from "../lib/failover-verdict.mjs";
+import { validateCliThresholds } from "../lib/chaos-failover-cli.mjs";
 
 const execFileP = promisify(execFile);
 const apiNodeModules = path.resolve(
@@ -184,31 +185,33 @@ const K6_WAIT_MS = parseStrict(args["k6-wait-ms"], 600000);
 // failover-verdict.mjs uses: reject missing, boolean, NaN, non-finite, or
 // non-positive values BEFORE any orchestration work, so the CLI fails loudly.
 // A per-row `integer` flag additionally requires `Number.isInteger` — used
-// for --min-closes (a count, not a rate).
-for (const [name, val, required, integer] of [
-  ["--steady-p95", STEADY_P95, true, false],
-  ["--answer-p95-mult", ANSWER_P95_MULT, false, false],
-  ["--recover-max-ms", RECOVER_MAX_MS, false, false],
-  ["--reconnect-min", RECONNECT_MIN, false, false],
-  ["--min-closes", MIN_CLOSES, false, true],
-  ["--poll-ms", POLL_MS, false, false],
-  ["--owner-poll-ms", OWNER_POLL_MS, false, false],
-  ["--recover-timeout-ms", RECOVER_TIMEOUT_MS, false, false],
-  ["--match-finish-timeout-ms", MATCH_FINISH_TIMEOUT_MS, false, false],
-  ["--kill-round-timeout-ms", KILL_ROUND_TIMEOUT_MS, false, false],
-  ["--k6-wait-ms", K6_WAIT_MS, false, false],
-]) {
-  if (typeof val !== "number" || !Number.isFinite(val) || val <= 0) {
-    fatal(
-      required
-        ? `${name} is required and must be a finite positive number (got ${val})`
-        : `${name} must be a finite positive number (got ${val})`,
-    );
-  }
-  if (integer && !Number.isInteger(val)) {
-    fatal(`${name} must be a positive integer (got ${val})`);
-  }
-}
+// for --min-closes (a count, not a rate). A per-row `max` adds an inclusive
+// upper bound — used for --reconnect-min (a rate, so values > 1 are
+// meaningless and would only be caught later by the oracle as
+// invalid_artifact). The check order (positive → integer → max) is
+// deliberate: an operator who types `--reconnect-min=-1.5` sees the
+// positive-number error first, since that's the more fundamental invariant.
+// `Infinity` means "no upper bound" so the existing rows stay valid.
+//
+// The validation logic itself lives in ../lib/chaos-failover-cli.mjs so the
+// test suite can assert these cases (positive-before-max, inclusive bound,
+// integer requirement) without importing this script — which
+// unconditionally loads ioredis and connects to Redis at module load.
+const cliRows = [
+  ["--steady-p95", STEADY_P95, true, false, Infinity],
+  ["--answer-p95-mult", ANSWER_P95_MULT, false, false, Infinity],
+  ["--recover-max-ms", RECOVER_MAX_MS, false, false, Infinity],
+  ["--reconnect-min", RECONNECT_MIN, false, false, 1],
+  ["--min-closes", MIN_CLOSES, false, true, Infinity],
+  ["--poll-ms", POLL_MS, false, false, Infinity],
+  ["--owner-poll-ms", OWNER_POLL_MS, false, false, Infinity],
+  ["--recover-timeout-ms", RECOVER_TIMEOUT_MS, false, false, Infinity],
+  ["--match-finish-timeout-ms", MATCH_FINISH_TIMEOUT_MS, false, false, Infinity],
+  ["--kill-round-timeout-ms", KILL_ROUND_TIMEOUT_MS, false, false, Infinity],
+  ["--k6-wait-ms", K6_WAIT_MS, false, false, Infinity],
+];
+const cliReasons = validateCliThresholds(cliRows);
+if (cliReasons.length > 0) fatal(cliReasons[0]);
 
 // The single monotonic clock. t_start == 0 by definition.
 const t0 = performance.now();
