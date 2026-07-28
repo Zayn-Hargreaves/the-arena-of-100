@@ -1,0 +1,288 @@
+{
+  "metrics": {
+    "http_req_failed": {
+      "passes": 0,
+      "fails": 45268,
+      "value": 0
+    },
+    "answers_submitted": {
+      "count": 1466,
+      "rate": 6.950526052146853
+    },
+    "setup_flow_errors": {
+      "count": 0,
+      "rate": 0,
+      "thresholds": {
+        "count<10": false
+      }
+    },
+    "app_error_rate": {
+      "passes": 0,
+      "fails": 3184,
+      "thresholds": {
+        "rate<0.01": false
+      },
+      "value": 0
+    },
+    "http_req_connecting": {
+      "avg": 0.006109351727489625,
+      "min": 0,
+      "med": 0,
+      "max": 12.573383,
+      "p(90)": 0,
+      "p(95)": 0
+    },
+    "http_req_blocked": {
+      "avg": 0.014997858001237126,
+      "min": 0.001556,
+      "med": 0.0055595,
+      "max": 12.665469,
+      "p(90)": 0.010447900000000008,
+      "p(95)": 0.019824650000000003
+    },
+    "round_started_received": {
+      "rate": 24.73458009143938,
+      "count": 5217
+    },
+    "vus_max": {
+      "value": 1600,
+      "min": 1600,
+      "max": 1600
+    },
+    "ws_handshake_retries": {
+      "count": 1,
+      "rate": 0.004741150103783665
+    },
+    "http_req_sending": {
+      "p(95)": 0.03737795000000001,
+      "avg": 0.018812516258725855,
+      "min": 0.004747,
+      "med": 0.014077,
+      "max": 10.033789,
+      "p(90)": 0.028400300000000003
+    },
+    "iteration_duration": {
+      "avg": 210452.33781424997,
+      "min": 210386.563736,
+      "med": 210451.41340750002,
+      "max": 210542.205852,
+      "p(90)": 210515.18146350002,
+      "p(95)": 210528.33189225002
+    },
+    "iterations": {
+      "count": 16,
+      "rate": 0.07585840166053864
+    },
+    "match_finished_received": {
+      "count": 1180,
+      "rate": 5.594557122464725
+    },
+    "data_sent": {
+      "count": 7140941,
+      "rate": 33856.27316326303
+    },
+    "ws_connect_errors": {
+      "rate": 0,
+      "count": 0,
+      "thresholds": {
+        "count<5": false
+      }
+    },
+    "ws_connecting": {
+      "p(95)": 795.117148,
+      "avg": 172.0472482123672,
+      "min": 0.487027,
+      "med": 6.286676,
+      "max": 960.937498,
+      "p(90)": 668.313016
+    },
+    "answer_result_latency_ms": {
+      "avg": 167.67803547066848,
+      "min": 3,
+      "med": 172,
+      "max": 413,
+      "p(90)": 332.5,
+      "p(95)": 356,
+      "thresholds": {
+        "p(95)<1000": false,
+        "p(99)<2500": false
+      }
+    },
+    "ws_messages_received": {
+      "count": 170755,
+      "rate": 809.5750859715797
+    },
+    "http_req_tls_handshaking": {
+      "p(90)": 0,
+      "p(95)": 0,
+      "avg": 0,
+      "min": 0,
+      "med": 0,
+      "max": 0
+    },
+    "ws_connected": {
+      "rate": 7.590581316157648,
+      "count": 1601
+    },
+    "ws_connect_success": {
+      "count": 1600,
+      "rate": 7.585840166053864
+    },
+    "ws_sessions": {
+      "count": 1601,
+      "rate": 7.590581316157648
+    },
+    "vus": {
+      "value": 16,
+      "min": 16,
+      "max": 1600
+    },
+    "http_req_receiving": {
+      "p(90)": 0.11573000000000003,
+      "p(95)": 0.14265585000000003,
+      "avg": 0.08526098553061749,
+      "min": 0.022977,
+      "med": 0.070158,
+      "max": 6.201409
+    },
+    "data_received": {
+      "count": 705623063,
+      "rate": 3345464.8583745975
+    },
+    "ws_session_duration": {
+      "avg": 200720.3643937059,
+      "min": 45013.311769,
+      "med": 210440.411914,
+      "max": 210541.913693,
+      "p(90)": 210513.1906154,
+      "p(95)": 210527.147969
+    },
+    "ws_msgs_sent": {
+      "count": 19396,
+      "rate": 91.95934741298797
+    },
+    "http_req_duration{expected_response:true}": {
+      "med": 29.6830105,
+      "max": 974.327393,
+      "p(90)": 107.81250030000001,
+      "p(95)": 179.53035665000004,
+      "avg": 51.72358195924283,
+      "min": 0.517436
+    },
+    "http_req_duration": {
+      "min": 0.517436,
+      "med": 29.6830105,
+      "max": 974.327393,
+      "p(90)": 107.81250030000001,
+      "p(95)": 179.53035665000004,
+      "avg": 51.72358195924283
+    },
+    "http_req_waiting": {
+      "min": 0.469218,
+      "med": 29.5825575,
+      "max": 974.220868,
+      "p(90)": 107.66052430000002,
+      "p(95)": 179.3798767,
+      "avg": 51.619508457453755
+    },
+    "http_reqs": {
+      "count": 45268,
+      "rate": 214.62238289807894
+    },
+    "ws_msgs_received": {
+      "count": 177503,
+      "rate": 841.5683668719118
+    }
+  },
+  "setup_data": {
+    "rooms": [
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Y3l1aGYwMDAwMDFtc2VoMGw3cGJhIiwidXNlcm5hbWUiOiJsdF9tcmhfMF82MTM4MzQ0OCIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyNTE2MSwiZXhwIjoxNzg1MzExNTYxfQ.hZrN6SLPCgOK0LERv1JMBoPU9HJUzwuvtaNrKbNNawM",
+        "roomCode": "5GB2DB",
+        "roomId": "cms4cyuij000001p17p9fcc37"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Y3l1azAwMDAwMDFxZzdvdjZubXhtIiwidXNlcm5hbWUiOiJsdF9tcmhfMV82MTQ3NzkwNiIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyNTE2MSwiZXhwIjoxNzg1MzExNTYxfQ.YYfIHJbK05PlfSvFWZhTwEiJcv-uB7aRb66QSy7wOQY",
+        "roomCode": "BNBP3S",
+        "roomId": "cms4cyukd000101msptdnt1tz"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Y3l1bDAwMDAyMDFwMXJjanE5MTk4IiwidXNlcm5hbWUiOiJsdF9tcmhfMl82MTU0MDc1NiIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyNTE2MSwiZXhwIjoxNzg1MzExNTYxfQ.n-wVf6_q3Oj7ZDHpenD5wyADu_hrmeZeMjQxalPHDos",
+        "roomCode": "CBFMT3",
+        "roomId": "cms4cyulb000101qg42r7vxic"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Y3l1bGwwMDAzMDFtczF1cGhvYnR3IiwidXNlcm5hbWUiOiJsdF9tcmhfM182MTU3MzcwIiwicm9sZSI6IkdVRVNUIiwiaWF0IjoxNzg1MjI1MTYxLCJleHAiOjE3ODUzMTE1NjF9.8w6WJn75f9-jrJpWajKN_rX8GKnNd3EHqX4JWsxYdgM",
+        "roomCode": "VK3WMQ",
+        "roomId": "cms4cyulr000301p1r0ax0gn8"
+      },
+      {
+        "roomCode": "UTYUFB",
+        "roomId": "cms4cyum6000401ms5050j7lp",
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Y3l1bHowMDAzMDFxZzJoZTRlNmtyIiwidXNlcm5hbWUiOiJsdF9tcmhfNF82MTU4ODQzNyIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyNTE2MSwiZXhwIjoxNzg1MzExNTYxfQ.HB7SeRHsCZddLCAMc0JNzM37h-MTpDT6VACMz89Nbsg"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Y3l1bWYwMDA1MDFwMTczZGc2bG1uIiwidXNlcm5hbWUiOiJsdF9tcmhfNV82MTYwMjU1Iiwicm9sZSI6IkdVRVNUIiwiaWF0IjoxNzg1MjI1MTYxLCJleHAiOjE3ODUzMTE1NjF9.BmzjRHdW5DFjVdwRvSpppAcDFPikshmLn2UIRRcGToE",
+        "roomCode": "QB6WU3",
+        "roomId": "cms4cyuml000401qgyl13gfng"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Y3l1bXUwMDA2MDFtc3E1eG50cXZzIiwidXNlcm5hbWUiOiJsdF9tcmhfNl82MTYxODUyNSIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyNTE2MSwiZXhwIjoxNzg1MzExNTYxfQ.3CwwhFdwRT87ukoPkL9Emqd6iPJ7cBAShvVA34qbEUY",
+        "roomCode": "43C45W",
+        "roomId": "cms4cyun1000601p1j2xe7q0o"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Y3l1bjkwMDA2MDFxZzh1aDhzYmM3IiwidXNlcm5hbWUiOiJsdF9tcmhfN182MTYzNDQzNCIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyNTE2MSwiZXhwIjoxNzg1MzExNTYxfQ.5sncf3fZ4oDpAQcS7bFnpR7xu4ixS_gxtVsm2w1EC-0",
+        "roomCode": "55U6PT",
+        "roomId": "cms4cyunf000701msokcgnn3g"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Y3l1bm0wMDA4MDFwMWt5b2tuM3Q4IiwidXNlcm5hbWUiOiJsdF9tcmhfOF82MTY0Nzc4MSIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyNTE2MSwiZXhwIjoxNzg1MzExNTYxfQ.uQjKqbZQCxWruI-RgkThecf3FI8B-jAMpXYFbfR6xq0",
+        "roomCode": "DW4GGE",
+        "roomId": "cms4cyuns000701qg9n87q2s7"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Y3l1bzEwMDA5MDFtc293YzF5bDJ5IiwidXNlcm5hbWUiOiJsdF9tcmhfOV82MTY2MTE3NyIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyNTE2MSwiZXhwIjoxNzg1MzExNTYxfQ.K1s1K8YuM6uWkeVav5G24VWcmNdBwUvGbMKSt22qFiA",
+        "roomCode": "WEURGR",
+        "roomId": "cms4cyuo6000901p1zeiqx7p5"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Y3l1b2YwMDA5MDFxZ2JyNXNia2lpIiwidXNlcm5hbWUiOiJsdF9tcmhfMTBfNjE2NzYxNCIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyNTE2MSwiZXhwIjoxNzg1MzExNTYxfQ.__00-OXnbS42KTdQ1hBQ9AE_Nuljo7fMKn49deuOoF4",
+        "roomCode": "B5BXRU",
+        "roomId": "cms4cyuol000a01mser24n7pw"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Y3l1b3QwMDBiMDFwMTVsNGdlaGh4IiwidXNlcm5hbWUiOiJsdF9tcmhfMTFfNjE2ODkyMzciLCJyb2xlIjoiR1VFU1QiLCJpYXQiOjE3ODUyMjUxNjEsImV4cCI6MTc4NTMxMTU2MX0.JdFoZHHKcdSanYFJ54X6IoOloFb92eLPcBkZu6bohBk",
+        "roomCode": "XVG2DX",
+        "roomId": "cms4cyuoy000a01qgdcldjzwc"
+      },
+      {
+        "roomCode": "6EFKMM",
+        "roomId": "cms4cyupd000c01p136rj03tq",
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Y3l1cDcwMDBjMDFtc2l1cGJpdDg3IiwidXNlcm5hbWUiOiJsdF9tcmhfMTJfNjE3MDM0MzUiLCJyb2xlIjoiR1VFU1QiLCJpYXQiOjE3ODUyMjUxNjEsImV4cCI6MTc4NTMxMTU2MX0.J-O636KCvfom9UMSekhnR_ZkPTvqBCmo0n_E4Dx_2ys"
+      },
+      {
+        "roomCode": "TQDUVA",
+        "roomId": "cms4cyups000d01msiyarpt2f",
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Y3l1cG0wMDBjMDFxZ3VpejFodDBxIiwidXNlcm5hbWUiOiJsdF9tcmhfMTNfNjE3MTg5NTUiLCJyb2xlIjoiR1VFU1QiLCJpYXQiOjE3ODUyMjUxNjEsImV4cCI6MTc4NTMxMTU2MX0.mK9m3sbZuwEIpAUh-9is3cgFPRPZB5qWtJqZkI1DZHs"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Y3l1cTAwMDBlMDFwMXRrbXB4dTE0IiwidXNlcm5hbWUiOiJsdF9tcmhfMTRfNjE3MzIxNTgiLCJyb2xlIjoiR1VFU1QiLCJpYXQiOjE3ODUyMjUxNjEsImV4cCI6MTc4NTMxMTU2MX0.6LAKNqbwfVhI1J2sNrZu9BecFTjmjr27tqy2zDIwbzI",
+        "roomCode": "3S4PGY",
+        "roomId": "cms4cyuq5000d01qgnu2wbnva"
+      },
+      {
+        "roomId": "cms4cyuqi000f01p1xu8gv86d",
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Y3l1cWQwMDBmMDFtczh0azRlYzZuIiwidXNlcm5hbWUiOiJsdF9tcmhfMTVfNjE3NDY2MzUiLCJyb2xlIjoiR1VFU1QiLCJpYXQiOjE3ODUyMjUxNjEsImV4cCI6MTc4NTMxMTU2MX0.0B-2uFsY_G77KX0uuF0B4DRLkFJpCkzKUk6rpeeQVn8",
+        "roomCode": "54GY69"
+      }
+    ]
+  },
+  "root_group": {
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": {},
+    "checks": {}
+  }
+}

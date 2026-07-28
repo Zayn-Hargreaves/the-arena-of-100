@@ -16,29 +16,34 @@
 import http from "k6/http";
 import { sleep } from "k6";
 
-function getActiveCsrfToken(httpBase) {
-  const jar = http.cookieJar();
-  const cookies = jar.cookiesForURL(httpBase);
-  const val = cookies.csrf_token;
-  return val && val.length > 0 ? val[0] : null;
-}
+const CSRF_COOKIE = "csrf_token";
 
-export function guestLogin(httpBase, username) {
-  const csrfRes = http.get(`${httpBase}/auth/csrf-token`, {
+// CsrfGuard is a stateless double-submit check: header `x-csrf-token`
+// must equal the `csrf_token` cookie. The server sets that cookie with
+// `Secure` whenever NODE_ENV=production (auth.controller.ts →
+// shouldUseSecureCookies), and k6's cookie jar will not replay a Secure
+// cookie over plain http — so against the production-mode docker cluster
+// on http://localhost:8080 the jar is always empty and every mutating
+// request 403s. Replay the cookie explicitly per request instead: the
+// endpoint returns the very same value it put in the cookie, so the
+// guard's header==cookie comparison still holds and nothing about the
+// server's cookie policy has to be weakened for the load test.
+function fetchCsrfToken(httpBase) {
+  const res = http.get(`${httpBase}/auth/csrf-token`, {
     tags: { name: "auth/csrf-token" },
   });
-
-  if (csrfRes.status !== 200) {
+  if (res.status !== 200) {
     return null;
   }
-
-  let csrfToken;
   try {
-    csrfToken = csrfRes.json().data?.csrfToken;
+    return res.json().data?.csrfToken || null;
   } catch (_e) {
     return null;
   }
+}
 
+export function guestLogin(httpBase, username) {
+  const csrfToken = fetchCsrfToken(httpBase);
   if (!csrfToken) {
     return null;
   }
@@ -51,6 +56,7 @@ export function guestLogin(httpBase, username) {
         "Content-Type": "application/json",
         "x-csrf-token": csrfToken,
       },
+      cookies: { [CSRF_COOKIE]: csrfToken },
       tags: { name: "auth/guest" },
     },
   );
@@ -83,7 +89,7 @@ export function guestLogin(httpBase, username) {
 // Create a PRIVATE room over REST as the host. Requires a Bearer token
 // (JwtAuthGuard is global). Returns { roomId, code } or null.
 export function createRoom(httpBase, hostToken, { maxPlayers, timeLimit }) {
-  const csrfToken = getActiveCsrfToken(httpBase);
+  const csrfToken = fetchCsrfToken(httpBase);
   if (!csrfToken) {
     return null;
   }
@@ -101,6 +107,7 @@ export function createRoom(httpBase, hostToken, { maxPlayers, timeLimit }) {
         Authorization: `Bearer ${hostToken}`,
         "x-csrf-token": csrfToken,
       },
+      cookies: { [CSRF_COOKIE]: csrfToken },
       tags: { name: "rooms/create" },
     },
   );

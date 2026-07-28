@@ -1,0 +1,284 @@
+{
+  "metrics": {
+    "ws_msgs_received": {
+      "count": 185459,
+      "rate": 514.3268091958989
+    },
+    "iteration_duration": {
+      "avg": 360294.71273599996,
+      "min": 360212.521723,
+      "med": 360292.173327,
+      "max": 360379.352913,
+      "p(90)": 360356.69654050004,
+      "p(95)": 360364.278393
+    },
+    "http_req_blocked": {
+      "min": 0.00156,
+      "med": 0.005529,
+      "max": 8.099574,
+      "p(90)": 0.010739099999999998,
+      "p(95)": 0.020347099999999993,
+      "avg": 0.013429871770124946
+    },
+    "ws_connected": {
+      "count": 1600,
+      "rate": 4.437222753888667
+    },
+    "data_sent": {
+      "count": 9174265,
+      "rate": 25442.660880127758
+    },
+    "iterations": {
+      "count": 16,
+      "rate": 0.04437222753888667
+    },
+    "ws_connect_success": {
+      "count": 1600,
+      "rate": 4.437222753888667
+    },
+    "round_started_received": {
+      "count": 4752,
+      "rate": 13.17855157904934
+    },
+    "http_req_sending": {
+      "p(90)": 0.028364199999999996,
+      "p(95)": 0.03677519999999998,
+      "avg": 0.018607654990129514,
+      "min": 0.004587,
+      "med": 0.0138415,
+      "max": 4.079196
+    },
+    "answer_result_latency_ms": {
+      "avg": 168.89200561009818,
+      "min": 2,
+      "med": 172,
+      "max": 409,
+      "p(90)": 330,
+      "p(95)": 356.75,
+      "thresholds": {
+        "p(95)<1000": false,
+        "p(99)<2500": false
+      }
+    },
+    "http_req_duration{expected_response:true}": {
+      "avg": 54.21296572386474,
+      "min": 0.548297,
+      "med": 18.217286,
+      "max": 2030.723199,
+      "p(90)": 113.73139329999994,
+      "p(95)": 225.0175139499991
+    },
+    "ws_sessions": {
+      "count": 1600,
+      "rate": 4.437222753888667
+    },
+    "setup_flow_errors": {
+      "count": 0,
+      "rate": 0,
+      "thresholds": {
+        "count<10": false
+      }
+    },
+    "data_received": {
+      "count": 710950397,
+      "rate": 1971653.299034113
+    },
+    "ws_connect_errors": {
+      "rate": 0,
+      "count": 0,
+      "thresholds": {
+        "count<5": false
+      }
+    },
+    "ws_connecting": {
+      "max": 489.04091,
+      "p(90)": 278.65125550000005,
+      "p(95)": 339.9720239,
+      "avg": 69.43689904624998,
+      "min": 0.526777,
+      "med": 3.531136
+    },
+    "ws_msgs_sent": {
+      "count": 49777,
+      "rate": 138.0447731376976
+    },
+    "ws_messages_received": {
+      "count": 170146,
+      "rate": 471.8598141769632
+    },
+    "app_error_rate": {
+      "passes": 0,
+      "fails": 3184,
+      "thresholds": {
+        "rate<0.01": false
+      },
+      "value": 0
+    },
+    "vus": {
+      "value": 16,
+      "min": 16,
+      "max": 1600
+    },
+    "match_finished_received": {
+      "count": 1600,
+      "rate": 4.437222753888667
+    },
+    "answers_submitted": {
+      "count": 1426,
+      "rate": 3.9546747794032746
+    },
+    "http_req_tls_handshaking": {
+      "avg": 0,
+      "min": 0,
+      "med": 0,
+      "max": 0,
+      "p(90)": 0,
+      "p(95)": 0
+    },
+    "http_reqs": {
+      "count": 45590,
+      "rate": 126.4331158436152
+    },
+    "http_req_duration": {
+      "p(95)": 225.0175139499991,
+      "avg": 54.21296572386474,
+      "min": 0.548297,
+      "med": 18.217286,
+      "max": 2030.723199,
+      "p(90)": 113.73139329999994
+    },
+    "ws_session_duration": {
+      "p(95)": 360364.0155635,
+      "avg": 360294.42186331254,
+      "min": 360212.304736,
+      "med": 360291.9226335,
+      "max": 360379.088417,
+      "p(90)": 360356.40214350005
+    },
+    "http_req_waiting": {
+      "p(95)": 224.93211584999915,
+      "avg": 54.10871263724466,
+      "min": 0.503979,
+      "med": 18.1206485,
+      "max": 2030.584063,
+      "p(90)": 113.55827479999996
+    },
+    "http_req_failed": {
+      "passes": 0,
+      "fails": 45590,
+      "value": 0
+    },
+    "http_req_connecting": {
+      "p(95)": 0,
+      "avg": 0.005043574928712441,
+      "min": 0,
+      "med": 0,
+      "max": 8.057958,
+      "p(90)": 0
+    },
+    "vus_max": {
+      "value": 1600,
+      "min": 1600,
+      "max": 1600
+    },
+    "http_req_receiving": {
+      "avg": 0.08564543162974304,
+      "min": 0.024375,
+      "med": 0.068791,
+      "max": 36.832012,
+      "p(90)": 0.11330319999999999,
+      "p(95)": 0.13996839999999997
+    }
+  },
+  "setup_data": {
+    "rooms": [
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2b2kwMGt6MDFwbndmbXpteTBvIiwidXNlcm5hbWUiOiJsdF9tcmhfMF85Nzc3NDE2NyIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.VT-a5MS1fJ83Mw96p_zLWCZH6PEgNxViS7YVYSGUrmk",
+        "roomCode": "RE5NB5",
+        "roomId": "cms4bk6oq00fs01nv74s3zw24"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cDIwMHAxMDFwZ3dqaGF1eGEyIiwidXNlcm5hbWUiOiJsdF9tcmhfMV85Nzc5MjMyNSIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.LfeU1ICJfBo_JCIlTFBKE9pZNRi-3MhX8Lw1XxWL1JE",
+        "roomCode": "Y4PQMX",
+        "roomId": "cms4bk6p700l001pnnb8bkmpm"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cGcwMGZ1MDFudnlhaHIzZjZ1IiwidXNlcm5hbWUiOiJsdF9tcmhfMl85NzgwOTQ0MiIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.8vu2CXX8SgH0HkHLTtVVYDBymOEW6WWqWfM_-9qlx6c",
+        "roomCode": "YSETJQ",
+        "roomId": "cms4bk6pl00p201pgcsg61bkq"
+      },
+      {
+        "roomId": "cms4bk6px00fv01nv84cov0u0",
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cHMwMGwyMDFwbmljZHl2YWR1IiwidXNlcm5hbWUiOiJsdF9tcmhfM185NzgyMjI1NSIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.Sw0b2SotL7-0bK6ayzwGiqy0rYGZnnDfu75fbdaWSuk",
+        "roomCode": "W2MHRY"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cTQwMHA0MDFwZ2FubnFlbzcwIiwidXNlcm5hbWUiOiJsdF9tcmhfNF85NzgzMzM1MSIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.7XzdrcxYEO2-J7Xj5b_knad3ueRItEIM-aeN899A-Y4",
+        "roomCode": "AMDDEN",
+        "roomId": "cms4bk6q900l301pni60nmhug"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cWcwMGZ4MDFudmNmMTFiaXBjIiwidXNlcm5hbWUiOiJsdF9tcmhfNV85Nzg0NTU0Iiwicm9sZSI6IkdVRVNUIiwiaWF0IjoxNzg1MjIyNzk3LCJleHAiOjE3ODUzMDkxOTd9.spis_EmvJNbVkN5Xp9S_LLPkuAedILljYIl_ufYmN6w",
+        "roomCode": "P4J7Z2",
+        "roomId": "cms4bk6ql00p501pgu52drknn"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cXIwMGw1MDFwbnR1NjFuY2F2IiwidXNlcm5hbWUiOiJsdF9tcmhfNl85Nzg1NzE3MyIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.G9KnGxr2ldqyLcRvEFJAoRh1tD-CPCr720m4yrN726E",
+        "roomCode": "M9CRRU",
+        "roomId": "cms4bk6qw00fy01nvcbqq12vq"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cjQwMHA3MDFwZ2prMnJxeWVvIiwidXNlcm5hbWUiOiJsdF9tcmhfN185Nzg2ODIwMyIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.BKuvmvXAr8S0mMGJAy-BO7CSQmYsyl0xw_4vHtbRfvY",
+        "roomCode": "QMVZ3K",
+        "roomId": "cms4bk6r800l601pnjanpg6jr"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cmYwMGcwMDFudnliYWNhcWg2IiwidXNlcm5hbWUiOiJsdF9tcmhfOF85Nzg4MDYwMCIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.SA042lib090p8J4RPOj_ichcA4CiuPc5vzNELMC1_Hs",
+        "roomCode": "TGCK9R",
+        "roomId": "cms4bk6rj00p801pgbe8717yy"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cnIwMGw4MDFwbnJ1YzZjcDBsIiwidXNlcm5hbWUiOiJsdF9tcmhfOV85Nzg5MjQ2NCIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.rBD_FTywxLPk5Eg4m5qkmGaW3JEznkNXyqALZ1gFHuc",
+        "roomCode": "BFB6Y2",
+        "roomId": "cms4bk6rv00g101nv6cdqcd16"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2czMwMHBhMDFwZzZ3cGY1Y2c4IiwidXNlcm5hbWUiOiJsdF9tcmhfMTBfOTc5MDM5OTMiLCJyb2xlIjoiR1VFU1QiLCJpYXQiOjE3ODUyMjI3OTcsImV4cCI6MTc4NTMwOTE5N30.8oircAkaeLAp9wXSiRv_o6i9XOOPKhoX8pPMXWm-YNU",
+        "roomCode": "BV5ZV7",
+        "roomId": "cms4bk6s700l901pnqs328tq8"
+      },
+      {
+        "roomCode": "ABRRHS",
+        "roomId": "cms4bk6sl00pb01pgrbrkc0l2",
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2c2YwMGczMDFudnQ2MWZqbmgyIiwidXNlcm5hbWUiOiJsdF9tcmhfMTFfOTc5MTY5MTQiLCJyb2xlIjoiR1VFU1QiLCJpYXQiOjE3ODUyMjI3OTcsImV4cCI6MTc4NTMwOTE5N30.xdQKNODL51VNXpac6IGUJ9TZtPucDQ6a5mkTlYkOMvA"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2c3MwMGxiMDFwbnV2ODNla2VzIiwidXNlcm5hbWUiOiJsdF9tcmhfMTJfOTc5MjkyNzciLCJyb2xlIjoiR1VFU1QiLCJpYXQiOjE3ODUyMjI3OTcsImV4cCI6MTc4NTMwOTE5N30.TS7rOqqnku3oll1mK453hMxn0MVgp7OtGN8GSTetses",
+        "roomCode": "ZSFYPJ",
+        "roomId": "cms4bk6sx00g401nvg770s8av"
+      },
+      {
+        "roomCode": "RTMNC3",
+        "roomId": "cms4bk6ta00lc01pn240gorsb",
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2dDUwMHBkMDFwZ3FzbWNueWM0IiwidXNlcm5hbWUiOiJsdF9tcmhfMTNfOTc5NDMyMDciLCJyb2xlIjoiR1VFU1QiLCJpYXQiOjE3ODUyMjI3OTcsImV4cCI6MTc4NTMwOTE5N30.gsihLghMxV2at0yZdAck-Idx-T92ixcvEVneFD0yBhU"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2dGgwMGc2MDFudm5pNTcxejVyIiwidXNlcm5hbWUiOiJsdF9tcmhfMTRfOTc5NTQxMCIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.ArAJOAy3JnTGw029Dg9rmMsSYVbfaR6Qb0l4ejouPtY",
+        "roomCode": "WSJ6J3",
+        "roomId": "cms4bk6tl00pe01pgltu3hg25"
+      },
+      {
+        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2dHQwMGxlMDFwbnZ5eGhwbm1zIiwidXNlcm5hbWUiOiJsdF9tcmhfMTVfOTc5NjYxMTEiLCJyb2xlIjoiR1VFU1QiLCJpYXQiOjE3ODUyMjI3OTcsImV4cCI6MTc4NTMwOTE5N30.AwrrCxxXvxYVBjdMibB-yT7Hzr0CxrJ_JuoiOUsWjeQ",
+        "roomCode": "ZFTU9E",
+        "roomId": "cms4bk6ty00g701nvg5z9hktk"
+      }
+    ]
+  },
+  "root_group": {
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": {},
+    "checks": {}
+  }
+}

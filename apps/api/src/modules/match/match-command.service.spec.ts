@@ -633,9 +633,7 @@ describe("MatchCommandService (B4a)", () => {
     it("returns early on an already-aborted signal (takeover short-circuit)", async () => {
       const ac = new AbortController();
       ac.abort();
-      await expect(
-        service.pollOnce("m1", server, ac.signal),
-      ).resolves.toBeUndefined();
+      await expect(service.pollOnce("m1", server, ac.signal)).resolves.toBe(0);
       expect(redis.xautoclaim).not.toHaveBeenCalled();
       expect(redis.xreadgroup).not.toHaveBeenCalled();
     });
@@ -648,7 +646,7 @@ describe("MatchCommandService (B4a)", () => {
         "warn",
       );
 
-      await expect(service.pollOnce("m1", server)).resolves.toBeUndefined();
+      await expect(service.pollOnce("m1", server)).resolves.toBe(0);
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining("pollOnce failed"),
       );
@@ -946,31 +944,22 @@ describe("MatchCommandService (B4a)", () => {
         claimed: [],
       });
 
-      // Track call order so we can abort after the FIRST entry's dispatch.
+      // Drive the abort from a standalone controller rather than a
+      // registration: registerMatch now starts the self-re-arming read loop
+      // immediately, and that loop would race this call for the one-shot
+      // xreadgroup mock. pollOnce's mid-loop short-circuit is what's under
+      // test here, and it only depends on the signal it is handed.
+      const ac = new AbortController();
       let firstEntryDone = false;
       service.setDispatcher(async () => {
         if (!firstEntryDone) {
           firstEntryDone = true;
-          const regs = (
-            service as unknown as {
-              registered: Map<string, { abort: AbortController }>;
-            }
-          ).registered;
-          regs.get("m-mid-abort")?.abort.abort();
+          ac.abort();
         }
         return "APPLIED";
       });
 
-      await service.registerMatch("m-mid-abort", server);
-
-      // pollOnce must receive the registration's abort signal so the
-      // mid-loop abort check (line 268) can short-circuit the second entry.
-      const regAbort = (
-        service as unknown as {
-          registered: Map<string, { abort: AbortController }>;
-        }
-      ).registered.get("m-mid-abort")!.abort;
-      await service.pollOnce("m-mid-abort", server, regAbort.signal);
+      await service.pollOnce("m-mid-abort", server, ac.signal);
 
       // First entry was acked; second entry MUST NOT have been processed.
       expect(redis.xack).toHaveBeenCalledTimes(1);
@@ -979,8 +968,6 @@ describe("MatchCommandService (B4a)", () => {
         OWNER_GROUP,
         "1-0",
       );
-      // Clean up so afterEach's onModuleDestroy is a no-op.
-      service.deregisterMatch("m-mid-abort");
     });
   });
 });

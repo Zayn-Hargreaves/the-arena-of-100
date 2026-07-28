@@ -19,7 +19,7 @@ Admin kill-switch append-only audit event **đã xong**.
 
 ## Latest Known Test Counts
 
-- API unit tests: **866/866** passed.
+- API unit tests: **1369/1369** passed (2026-07-28).
 - Game-core tests: **70/70**
 - Web tests: **31/31**
 - Shared tests: **3/3**
@@ -64,6 +64,35 @@ Run the relevant package tests before using these numbers in PR text.
 - **Track D — Replay contract (`lastSeenSeqNo` delta replay).** `getSnapshot` used to ignore its cursor and always full-hydrate. Now: monotonic `seqNo` on every event-log entry (persisted through Redis serialize/rehydrate, counter resumed from max to avoid collision); `getDelta`/`getHeadSeqNo`/`getFloorSeqNo` on `MatchStateMachine` (public `getSnapshot` signature unchanged). `MatchHandler.handleRequestSnapshot` emits an `EVENT_BATCH` delta when the client cursor is in `[floor, head]`, else a full `SNAPSHOT` (fallback: cursor 0 / older than retention / ahead of head). `ROUND_STARTED` event enriched with the client-safe question + `endsAt` (no `correctAnswer`) so a delta can rebuild the in-flight round. Client: `lastSeenSeqNo` tracked in socket store, `applyEventBatchState` folds events idempotently (mirrors live reducers → `delta == live-continuity`), `REQUEST_SNAPSHOT` sends the real cursor. Backward-compat: cursor 0 / old clients still get full `SNAPSHOT`. Reused the pre-provisioned `ServerEvent.EVENT_BATCH` + `EventBatchPayload` (added `matchId`). Cap on `lastSeenSeqNo` widened to `MAX_ROUNDS * MAX_PLAYERS * 2`.
 - **Deferred (needs Track C coordination):** `auth.handler.syncReconnection` still pushes a full `SNAPSHOT` on reconnect; making the reconnect push itself delta-aware is a follow-up.
 
+### 2026-07-28
+
+- **Multi-node k6 THẬT — cluster `docker:multi` lần đầu boot & đo được.** 3 blocker
+  phải sửa để cluster sống: `class-transformer` thiếu trong prod deps (cả 3 node
+  exit 1 — bug thật của prod image), throttler hardcode 100 req/60s/IP (→
+  env-tunable `THROTTLE_LIMIT`/`THROTTLE_TTL_MS`, default prod giữ nguyên), CSRF
+  cookie `Secure` dưới `NODE_ENV=production` mà k6 không replay qua http (→ harness
+  tự replay cookie, không hạ cookie policy).
+- **Nghẽn #1 tìm-sửa-verify: consumer command-stream timer-bound.**
+  `setInterval(250ms)` + `BATCH=16` → answer p95 1126ms @800 VU trong khi CPU 10%
+  (max 1217ms ≈ `ceil(69/16)×250ms`). Fix trong `MatchCommandService`: BATCH=128,
+  vòng đọc tự re-arm (setInterval chỉ còn là safety net), XAUTOCLAIM tách sang
+  cadence 5s. **p95 1126→201ms (−82%), CPU không đổi.** 1369/1369 unit tests.
+- **Nghẽn #2: pg pool default 10/node (không ai set).** Trần cứng 30 connection
+  cạn ở 1600 VU (backends 31/31 all-active) trong khi Postgres còn 3× dư. →
+  `DB_POOL_MAX` env (default 10 giữ nguyên), compose multi set 20/node +
+  `PG_MAX_CONNECTIONS` sweepable. Pool sweep + interleaved repeats: trần cứng là
+  thật, chênh latency giữa 20/32 là nhiễu (variance 146→1011ms cùng setting).
+- **Capacity envelope:** answer p95 **201@800 → 357@1600 → 669@3200** — tuyến
+  tính, 0 connect error mọi scale, socket chia đều 3 node, Redis adapter peak 59%.
+  Run 3200 "nén" fail p95 2.12s là **rig** (k6 chung máy + harness REST polling
+  qua nginx peak 529% làm cạn 12 core), không phải app — cùng 3200 giãn nhịp
+  storm → 669ms, không đổi code. Chi tiết + số cần thuộc: `career-assessment.md`
+  §2026-07-28; artifacts: `load-test/results/multi-*` + 2 sweep TSV.
+- Nghẽn đã định vị chưa sửa: 26% query là no-op `IN (NULL)` (Prisma nested read
+  trên set rỗng); `rooms.status` seq scan (sweep 6 lần/30s cả idle).
+- Chưa commit tại thời điểm ghi — 9 file (consumer fix + spec, package.json,
+  app.module, prisma.service, compose multi, load-test auth).
+
 ## What Is Done
 
 - Server-authoritative match loop.
@@ -83,19 +112,16 @@ Run the relevant package tests before using these numbers in PR text.
 
 ## What Is Not Done Yet
 
-- k6 load evidence for 100 concurrent WebSocket users. Harness is now
-  end-to-end Plan A compliant: `load-test/` (k6 scenarios +
-  runtime-metadata + readiness barrier via `scripts/coordinator.mjs`),
-  `scripts/sample-monitoring.mjs` for raw CPU/RSS + Redis JSONL with
-  redacted `REDIS_URL`, and `scripts/validate-results.mjs` for the
-  pass/fail report. `HealthController.monitoring` was extended with
-  `rssBytes` / `totalMemBytes` and the CPU convention was switched
-  to `% of 1 core` so the documented thresholds (≤ 80% peak, ≤ 70%
-  p95) are observable on multi-core hosts. Baseline numbers + P2
-  conclusion still pending a real run against a real Redis/Postgres
-  stack (see `load-test/README.md`).
-- **Distributed match runtime (Stage B + C harness) — implemented & tested;
-  multi-node measurement pending.** Stage B shipped horizontal scale +
+- Single-room Plan A baseline: the 100-user table + P2 (spectator transport
+  split) conclusion in `load-test/README.md` are still unfilled. This is the
+  only k6 evidence still missing — multi-node k6 at 800→3200 VU ran for real
+  on 2026-07-28 (see that milestone + `load-test/results/`). The Plan A
+  harness itself (scenarios, readiness barrier, `sample-monitoring.mjs`,
+  `validate-results.mjs`, `% of 1 core` CPU convention) has been ready
+  end-to-end since before that run.
+- **Distributed match runtime (Stage B + C harness) — implemented, tested,
+  and measured multi-node (k6, 2026-07-28); C3 chaos/failover RUN still
+  pending.** Stage B shipped horizontal scale +
   failover: Redis Socket.IO adapter (cross-node fan-out), fenced owner-lease
   (`match:owner:<id>` = `nodeId:fence`, 15s TTL + 5s heartbeat), boot/orphan
   takeover with `resumeMatchLoop` rebuilding timers from persisted
@@ -108,8 +134,10 @@ Run the relevant package tests before using these numbers in PR text.
   (`load-test/scripts/chaos-failover.mjs`, `load-test/lib/failover-verdict.mjs`,
   16 vitest cases). Architecture narrative + evidence plan:
   [`docs/architecture-distributed.md`](../docs/architecture-distributed.md).
-  Only the multi-node k6/chaos RUN (real numbers for the before/after table +
-  failover timeline) is outstanding — it needs the `docker:multi` cluster.
+  **2026-07-28: the multi-node k6 RUN is done** (800→3200 VU, see the
+  2026-07-28 milestone above + `load-test/results/`); still outstanding: the
+  C3 chaos/failover RUN (failover timeline numbers) and the single-room
+  100-user Plan A baseline table + P2 conclusion in `load-test/README.md`.
 - Server-side delta push on auth reconnect still full SNAPSHOT (`auth.handler.syncReconnection`). Client-driven delta after re-auth is shipped: socket store calls `REQUEST_SNAPSHOT(matchId, lastSeenSeqNo)` on `AUTHENTICATED` when match context survives disconnect.
 - Spectator transport split for scale.
 - Full WCAG / Playwright / rematch work.

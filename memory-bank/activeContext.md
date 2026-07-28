@@ -20,7 +20,8 @@
 - Admin kill-switch append-only audit event backend baseline is implemented (`appendAudit`, `eventLog.create`, `GET /admin/audit-events`).
 - `Room.maxPlayers` is already exposed through realtime room create/join payloads and consumed by the game UI.
 - `submitAnswer` now uses `submissionId` as a server-side idempotency key for duplicate retries in the same round.
-- Distributed match runtime is implemented (Stage B: Redis Socket.IO adapter, fenced owner-lease + failover, owner-single-writer answers, presence leader election) and the Stage C measurement harness + D1 architecture narrative are in place (`docs/architecture-distributed.md`). Outstanding: the multi-node k6/chaos RUN for real before/after + failover numbers (needs `docker:multi`).
+- Distributed match runtime is implemented (Stage B: Redis Socket.IO adapter, fenced owner-lease + failover, owner-single-writer answers, presence leader election) and the Stage C measurement harness + D1 architecture narrative are in place (`docs/architecture-distributed.md`).
+- **2026-07-28: multi-node k6 RUN done** — 800→3200 VU on the 3-node `docker:multi` cluster; two real bottlenecks found & fixed with numbers (consumer poll loop: answer p95 1126→201ms; pg pool default-10 ceiling → `DB_POOL_MAX`); capacity envelope linear 201/357/669ms p95 @ 800/1600/3200, 0 connect errors. Full story + interview prep: `career-assessment.md` §2026-07-28; raw: `load-test/results/`. Work NOT yet committed (9 files). Outstanding runs: C3 chaos/failover numbers; Plan A single-room 100-user baseline table (P2).
 
 ## Current Architectural Decisions
 
@@ -32,11 +33,11 @@
 
 ## Immediate Priority Queue
 
-1. Resolve docs/memory-bank consolidation cleanly.
-2. k6 load test for 100 concurrent WebSocket users.
-3. AFK docs + UX hardening.
-4. Admin audit panel UI (optional).
-5. Replay/delta contract follow-up behind `lastSeenSeqNo` if reconnect UX needs more than snapshot hydrate.
+1. Commit the 2026-07-28 perf work (2 groups: cluster-boot/config fixes + consumer-loop fix) with `load-test/results/` artifacts.
+2. Write the "Performance investigation" docs page (timeline → hypothesis → experiment → numbers) — this is the 5-minute system-design interview script.
+3. Interview prep: rehearse the 3 stories + probe answers in `career-assessment.md` §2026-07-28 (Redis SPOF answer is mandatory).
+4. Optional runs: C3 chaos/failover numbers on the new cluster; Plan A 100-user baseline table (P2 conclusion).
+5. Optional fixes (cheap, not urgent): Prisma `IN (NULL)` no-ops; `rooms.status` index; harness polling → WS-event wait (needed only to measure >3200).
 
 ## Open Product / Engineering Gaps
 

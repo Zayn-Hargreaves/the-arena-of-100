@@ -113,12 +113,40 @@ export const OWNER_GROUP = "owners";
 /** Min-idle before a pending entry is eligible for takeover (XAUTOCLAIM). */
 export const CLAIM_MIN_IDLE_MS = 30_000;
 const BLOCK_MS = 1_000;
-const BATCH = 16;
+/**
+ * Entries drained per XREADGROUP. Must be >= the per-room player cap: at
+ * ROUND_STARTED every surviving player answers within the same few ms, so a
+ * whole round's commands land in the stream as one burst. A batch smaller
+ * than the roster splits that burst across consecutive reads, and the last
+ * player's ANSWER_RESULT is delayed by every read in between.
+ */
+const BATCH = 128;
+/**
+ * Safety-net cadence only. The read loop re-arms itself as soon as an
+ * iteration completes (see schedulePoll), so this timer exists to restart a
+ * loop that bailed out early — it is NOT what drives steady-state reads.
+ */
 const POLL_INTERVAL_MS = 250;
+/**
+ * XAUTOCLAIM is the failover takeover path: it only matters once a dead
+ * owner's entries have gone CLAIM_MIN_IDLE_MS (30s) untouched. Running it
+ * before every read added a Redis round trip to the answer hot path for no
+ * benefit, so it gets its own much slower cadence.
+ */
+const CLAIM_INTERVAL_MS = 5_000;
+/**
+ * An iteration that returns faster than this consumed no blocking window —
+ * the reader pool was saturated, the signal aborted, or Redis errored.
+ * Re-arming on such an iteration would spin the event loop, so those fall
+ * back to the safety-net tick instead.
+ */
+const MIN_BLOCKING_ITERATION_MS = BLOCK_MS / 2;
 
 interface Registration {
   server: Server;
   abort: AbortController;
+  /** Epoch ms of the last XAUTOCLAIM sweep; 0 = never swept. */
+  lastClaimAt: number;
 }
 
 @Injectable()
@@ -182,7 +210,11 @@ export class MatchCommandService implements OnModuleDestroy {
       existing.server = server;
       return;
     }
-    this.registered.set(matchId, { server, abort: new AbortController() });
+    this.registered.set(matchId, {
+      server,
+      abort: new AbortController(),
+      lastClaimAt: 0,
+    });
     try {
       await this.redis.xgroupCreate(this.streamKey(matchId), OWNER_GROUP, {
         mkStream: true,
@@ -211,51 +243,104 @@ export class MatchCommandService implements OnModuleDestroy {
   }
 
   private ensurePolling(): void {
-    if (this.pollTimer) return;
-    this.pollTimer = setInterval(() => {
-      for (const [matchId, reg] of this.registered) {
-        if (this.inFlight.has(matchId)) continue;
-        this.inFlight.add(matchId);
-        void this.pollOnce(matchId, reg.server, reg.abort.signal).finally(() =>
-          this.inFlight.delete(matchId),
-        );
-      }
-    }, POLL_INTERVAL_MS);
+    if (this.pollTimer) {
+      this.dispatchPolls();
+      return;
+    }
+    this.pollTimer = setInterval(() => this.dispatchPolls(), POLL_INTERVAL_MS);
     this.pollTimer.unref?.();
+    // Start reading now instead of waiting out the first tick. setInterval
+    // does not fire at t=0, so deferring here charged the very first round of
+    // every match a full POLL_INTERVAL_MS before its answers were even read.
+    this.dispatchPolls();
+  }
+
+  private dispatchPolls(): void {
+    for (const [matchId, reg] of this.registered) {
+      this.schedulePoll(matchId, reg);
+    }
   }
 
   /**
-   * One poll iteration for a match: FIRST XAUTOCLAIM idle pending entries left
-   * by a dead owner's consumer (takeover — plain XREADGROUP ... > would miss
-   * them), then read new entries. Both are processed in stream order.
+   * Run one read iteration for a match and, on completion, immediately start
+   * the next one. XREADGROUP already blocks (BLOCK_MS), so this is a
+   * continuously-listening consumer rather than a busy loop — and, unlike a
+   * fixed-interval poll, it leaves no window in which nothing is attached to
+   * the stream. That window was the bulk of observed answer latency: commands
+   * sat in the stream waiting for a timer rather than for Redis or CPU.
+   *
+   * The reader is acquired and released inside each xreadgroup call, so a node
+   * owning more matches than BLOCKING_READER_POOL_MAX still round-robins
+   * through the pool instead of starving the matches that lost the race.
+   */
+  private schedulePoll(matchId: string, reg: Registration): void {
+    if (this.inFlight.has(matchId)) return;
+    if (reg.abort.signal.aborted) return;
+    if (this.registered.get(matchId) !== reg) return;
+
+    this.inFlight.add(matchId);
+    const startedAt = Date.now();
+    void this.pollOnce(matchId, reg.server, reg.abort.signal)
+      .then(
+        (processed) =>
+          processed > 0 || Date.now() - startedAt >= MIN_BLOCKING_ITERATION_MS,
+        () => false,
+      )
+      .then((rearm) => {
+        this.inFlight.delete(matchId);
+        if (rearm) this.schedulePoll(matchId, reg);
+      });
+  }
+
+  /**
+   * One read iteration for a match. XAUTOCLAIM (takeover of idle pending
+   * entries left by a dead owner's consumer — plain XREADGROUP ... > would
+   * miss them) runs at most every CLAIM_INTERVAL_MS; new entries are read on
+   * every iteration. Both are processed in stream order.
+   *
+   * Returns the number of entries processed, which schedulePoll uses to tell
+   * "did real work, come straight back" from "returned without ever blocking".
    */
   async pollOnce(
     matchId: string,
     server: Server,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<number> {
     const stream = this.streamKey(matchId);
+    let processed = 0;
     try {
-      // Takeover: reassign idle pending entries from failed consumers to us.
-      let cursor = "0-0";
-      do {
-        if (signal?.aborted) return;
-        const { nextCursor, claimed } = await this.redis.xautoclaim(
-          stream,
-          OWNER_GROUP,
-          this.consumer,
-          CLAIM_MIN_IDLE_MS,
-          cursor,
-          BATCH,
-        );
-        for (const entry of claimed) {
-          if (signal?.aborted) return;
-          await this.processEntry(matchId, entry, server);
-        }
-        cursor = nextCursor;
-      } while (cursor !== "0-0");
+      // Takeover is a failover path gated on CLAIM_MIN_IDLE_MS (30s), so it
+      // does not belong on the per-answer path. An unregistered match (direct
+      // pollOnce call) has no registration to rate-limit against — sweep it.
+      const reg = this.registered.get(matchId);
+      const now = Date.now();
+      if (!reg || now - reg.lastClaimAt >= CLAIM_INTERVAL_MS) {
+        let cursor = "0-0";
+        do {
+          if (signal?.aborted) return processed;
+          const { nextCursor, claimed } = await this.redis.xautoclaim(
+            stream,
+            OWNER_GROUP,
+            this.consumer,
+            CLAIM_MIN_IDLE_MS,
+            cursor,
+            BATCH,
+          );
+          for (const entry of claimed) {
+            if (signal?.aborted) return processed;
+            await this.processEntry(matchId, entry, server);
+            processed++;
+          }
+          cursor = nextCursor;
+        } while (cursor !== "0-0");
+        // Stamp only after the sweep COMPLETES: a Redis/processing error
+        // (caught below) or an abort mid-sweep must leave the timestamp
+        // unchanged so the next iteration retries the takeover instead of
+        // sitting out a full CLAIM_INTERVAL_MS with entries still pending.
+        if (reg) reg.lastClaimAt = now;
+      }
 
-      if (signal?.aborted) return;
+      if (signal?.aborted) return processed;
       const entries = await this.redis.xreadgroup(
         OWNER_GROUP,
         this.consumer,
@@ -265,8 +350,9 @@ export class MatchCommandService implements OnModuleDestroy {
         signal,
       );
       for (const entry of entries) {
-        if (signal?.aborted) return;
+        if (signal?.aborted) return processed;
         await this.processEntry(matchId, entry, server);
+        processed++;
       }
     } catch (err) {
       this.logger.warn(
@@ -275,6 +361,7 @@ export class MatchCommandService implements OnModuleDestroy {
         }`,
       );
     }
+    return processed;
   }
 
   /**

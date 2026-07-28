@@ -1,0 +1,69 @@
+{
+  "outName": "multi-1600-e48c7b4-20260728T141317",
+  "probedUrls": [
+    "http://localhost:3011",
+    "http://localhost:3012",
+    "http://localhost:3013"
+  ],
+  "durationMs": 240000,
+  "intervalMs": 1000,
+  "totalSamples": 717,
+  "authFailures": 0,
+  "pollErrors": 0,
+  "minNodes": 2,
+  "distinctNodesSeen": 3,
+  "nodesWithSockets": 3,
+  "coveredUrls": [
+    "http://localhost:3011",
+    "http://localhost:3012",
+    "http://localhost:3013"
+  ],
+  "expectedNodeCount": 3,
+  "allUrlsCovered": true,
+  "assertion": {
+    "rule": "in one sample round sockets on >= 2 nodes, authFailures=0, pollErrors=0, all 3 probe URLs covered",
+    "passed": true
+  },
+  "perNode": [
+    {
+      "nodeId": "api-1",
+      "samples": 239,
+      "peakSockets": 532,
+      "lastSockets": 5,
+      "avgSockets": 441.7489539748954
+    },
+    {
+      "nodeId": "api-2",
+      "samples": 239,
+      "peakSockets": 536,
+      "lastSockets": 7,
+      "avgSockets": 441.8661087866109
+    },
+    {
+      "nodeId": "api-3",
+      "samples": 239,
+      "peakSockets": 532,
+      "lastSockets": 4,
+      "avgSockets": 441.3765690376569
+    }
+  ],
+  "peakSplit": [
+    {
+      "nodeId": "api-1",
+      "peakSockets": 532,
+      "peakSharePct": 33.3
+    },
+    {
+      "nodeId": "api-2",
+      "peakSockets": 536,
+      "peakSharePct": 33.5
+    },
+    {
+      "nodeId": "api-3",
+      "peakSockets": 532,
+      "peakSharePct": 33.3
+    }
+  ],
+  "peakRoundTs": "2026-07-28T07:14:21.577Z",
+  "jsonl": "load-test/results/multi-1600-e48c7b4-20260728T141317-distribution.jsonl"
+}

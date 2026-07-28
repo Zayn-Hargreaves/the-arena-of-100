@@ -36,6 +36,15 @@ x-api-common: &api-common
     JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-24h}
     REFRESH_EXPIRES_IN: ${REFRESH_EXPIRES_IN:-604800}
     CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+    # The throttler keys on client IP. Every k6 VU shares the host's single
+    # source address (and nginx collapses them further), so the production
+    # 100 req/min ceiling would 429 the guest-login storm before the load
+    # test ever opens a socket. This is a load-test-only ceiling.
+    THROTTLE_LIMIT: ${THROTTLE_LIMIT:-100000}
+    THROTTLE_TTL_MS: ${THROTTLE_TTL_MS:-60000}
+    # Per-node Postgres pool. Cluster total = 3 x this, and it must stay under
+    # the postgres service's max_connections (below) minus reserved slots.
+    DB_POOL_MAX: ${DB_POOL_MAX:-10}
   depends_on:
     postgres: { condition: service_healthy }
     redis: { condition: service_healthy }
@@ -61,6 +70,17 @@ services:
       POSTGRES_USER: arena
       POSTGRES_PASSWORD: arena123
       POSTGRES_DB: arena_of_100
+    # max_connections is NOT reloadable — it needs a restart, so it lives here
+    # rather than in a runtime ALTER SYSTEM. Raised above the 100 default so a
+    # capacity sweep can find Postgres's own ceiling instead of stopping at an
+    # arbitrary config limit. Each backend is a process (~10MB + work_mem), so
+    # this trades RAM for connection headroom.
+    command:
+      - postgres
+      - -c
+      - max_connections=${PG_MAX_CONNECTIONS:-100}
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-128MB}
     ports:
       - "5442:5432" # distinct host port so it can coexist with the dev stack (:5432)
     healthcheck:
