@@ -288,7 +288,9 @@ export class MatchCommandService implements OnModuleDestroy {
       )
       .then((rearm) => {
         this.inFlight.delete(matchId);
-        if (rearm) this.schedulePoll(matchId, reg);
+        if (!rearm) return;
+        const current = this.registered.get(matchId);
+        if (current) this.schedulePoll(matchId, current);
       });
   }
 

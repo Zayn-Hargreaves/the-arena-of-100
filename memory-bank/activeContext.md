@@ -21,7 +21,7 @@
 - `Room.maxPlayers` is already exposed through realtime room create/join payloads and consumed by the game UI.
 - `submitAnswer` now uses `submissionId` as a server-side idempotency key for duplicate retries in the same round.
 - Distributed match runtime is implemented (Stage B: Redis Socket.IO adapter, fenced owner-lease + failover, owner-single-writer answers, presence leader election) and the Stage C measurement harness + D1 architecture narrative are in place (`docs/architecture-distributed.md`).
-- **2026-07-28: multi-node k6 RUN done** — 800→3200 VU on the 3-node `docker:multi` cluster; two real bottlenecks found & fixed with numbers (consumer poll loop: answer p95 1126→201ms; pg pool default-10 ceiling → `DB_POOL_MAX`); capacity envelope linear 201/357/669ms p95 @ 800/1600/3200, 0 connect errors. Full story + interview prep: `career-assessment.md` §2026-07-28; raw: `load-test/results/`. Work NOT yet committed (9 files). Outstanding runs: C3 chaos/failover numbers; Plan A single-room 100-user baseline table (P2).
+- **2026-07-28: multi-node k6 RUN done** — 800→3200 VU on the 3-node `docker:multi` cluster; two real bottlenecks found & fixed with numbers (consumer poll loop: answer p95 1126→201ms; pg pool default-10 ceiling → `DB_POOL_MAX`); capacity envelope linear 201/357/669ms p95 @ 800/1600/3200, 0 connect errors. Full story + interview prep: `career-assessment.md` §2026-07-28; raw: `load-test/results/` (note: 9 uncommitted files state applied at measurement time). Outstanding runs: C3 chaos/failover numbers; Plan A single-room 100-user baseline table (P2).
 
 ## Current Architectural Decisions
 

@@ -144,8 +144,8 @@ can be recomputed from (see [`load-test/README.md`](../load-test/README.md) §ar
   - **800 VU**: summary `load-test/results/multi-800-fix-e48c7b4-20260728T134159.json`, stats `load-test/results/multi-800-fix-e48c7b4-20260728T134159.dockerstats.psv`, dist `load-test/results/multi-800-fix-e48c7b4-20260728T134159-distribution.summary.json`
   - **1,600 VU**: summary `load-test/results/multi-1600-e48c7b4-20260728T141317.json`, stats `load-test/results/multi-1600-e48c7b4-20260728T141317.dockerstats.psv`, dist `load-test/results/multi-1600-e48c7b4-20260728T141317-distribution.summary.json`
   - **3,200 VU**: summary `load-test/results/multi-3200-e48c7b4-20260728T151011.json` (steady-state, excluding high-latency stress variant `multi-3200-slow-e48c7b4-20260728T152207.json`), stats `load-test/results/multi-3200-e48c7b4-20260728T151011.dockerstats.psv`, dist `load-test/results/multi-3200-e48c7b4-20260728T151011-distribution.summary.json`
-- Adapter pub/sub overhead = (after answer p95) − (before answer p95); expected small, quantified
-  from the two summary JSONs.
+- Total answer-p95 delta = (after answer p95) − (before answer p95); reflects combined impact of
+  increased concurrency load and multi-node adapter routing compared to single-node baseline.
 
 ### Sockets-per-node over time (distribution)
 
@@ -153,7 +153,7 @@ Source: `load-test/results/<run>-distribution.jsonl`, one `{ts, nodeId, socketCo
 (the C1 poller, `load-test/scripts/poll-distribution.mjs`). Plot `socketCount` vs `ts`, one series
 per `nodeId`. The `*-distribution.summary.json` records the ≥ 2-node assertion + per-node peak split.
 
-### Failover timeline (centerpiece)
+### Failover timeline (centerpiece) [Planned / Pending C3 artifact]
 
 Source: `load-test/results/failover-<commit>-<ts>.failover.json` (the C3 schema). Timeline:
 `t_match_started → t_kill → t_owner_flip → t_recover → MATCH_FINISHED`, with `time_to_recover_ms`

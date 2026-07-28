@@ -76,7 +76,7 @@ Run the relevant package tests before using these numbers in PR text.
   `setInterval(250ms)` + `BATCH=16` → answer p95 1126ms @800 VU trong khi CPU 10%
   (max 1217ms ≈ `ceil(69/16)×250ms`). Fix trong `MatchCommandService`: BATCH=128,
   vòng đọc tự re-arm (setInterval chỉ còn là safety net), XAUTOCLAIM tách sang
-  cadence 5s. **p95 1126→201ms (−82%), CPU không đổi.** 1369/1369 unit tests.
+  cadence 5s. **p95 1126→201ms (−82%), CPU không đổi.** 1375/1375 unit tests (verified 2026-07-28).
 - **Nghẽn #2: pg pool default 10/node (không ai set).** Trần cứng 30 connection
   cạn ở 1600 VU (backends 31/31 all-active) trong khi Postgres còn 3× dư. →
   `DB_POOL_MAX` env (default 10 giữ nguyên), compose multi set 20/node +
