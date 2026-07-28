@@ -39,6 +39,10 @@ arena-of-100/
 └── turbo.json        # Turborepo config
 ```
 
+## 🏗️ Architecture
+
+- **Distributed match runtime** (horizontal scale + failover): [`docs/architecture-distributed.md`](docs/architecture-distributed.md) — Redis Socket.IO adapter, fenced owner-lease, node-kill failover, and the load/chaos evidence plan.
+
 ## 🚀 Quick Start
 
 ### Prerequisites

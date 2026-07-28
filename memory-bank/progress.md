@@ -94,6 +94,22 @@ Run the relevant package tests before using these numbers in PR text.
   p95) are observable on multi-core hosts. Baseline numbers + P2
   conclusion still pending a real run against a real Redis/Postgres
   stack (see `load-test/README.md`).
+- **Distributed match runtime (Stage B + C harness) — implemented & tested;
+  multi-node measurement pending.** Stage B shipped horizontal scale +
+  failover: Redis Socket.IO adapter (cross-node fan-out), fenced owner-lease
+  (`match:owner:<id>` = `nodeId:fence`, 15s TTL + 5s heartbeat), boot/orphan
+  takeover with `resumeMatchLoop` rebuilding timers from persisted
+  `phaseEndsAt`, owner-single-writer answers via a Redis command stream, and
+  presence leader election — all with unit/integration specs (api suite
+  1242). Stage C measurement harness is complete: C1 distribution poller
+  (`load-test/scripts/poll-distribution.mjs`), C2 generation-token reconnect
+  wrapper (`load-test/lib/reconnect.js`, 5 vitest cases), C3 chaos
+  orchestrator + pure PASS/FAIL/INCONCLUSIVE verdict
+  (`load-test/scripts/chaos-failover.mjs`, `load-test/lib/failover-verdict.mjs`,
+  16 vitest cases). Architecture narrative + evidence plan:
+  [`docs/architecture-distributed.md`](../docs/architecture-distributed.md).
+  Only the multi-node k6/chaos RUN (real numbers for the before/after table +
+  failover timeline) is outstanding — it needs the `docker:multi` cluster.
 - Server-side delta push on auth reconnect still full SNAPSHOT (`auth.handler.syncReconnection`). Client-driven delta after re-auth is shipped: socket store calls `REQUEST_SNAPSHOT(matchId, lastSeenSeqNo)` on `AUTHENTICATED` when match context survives disconnect.
 - Spectator transport split for scale.
 - Full WCAG / Playwright / rematch work.
@@ -142,7 +158,11 @@ Run the relevant package tests before using these numbers in PR text.
 - Wrong answer or no answer before active round deadline => eliminated in that round.
 - Eliminated player remains connected as spectator/watch-only UI.
 - Drop-in late joiner for `IN_GAME` / `FINISHED` joins as `SPECTATOR`.
-- Monolith-first; distributed spectator infra is deferred until load evidence exists.
+- Monolith-first for product features; the **distributed match runtime is now
+  implemented** (Redis adapter + fenced owner-lease + failover, Stage B) and its
+  scale/failover is demonstrable via the Stage C harness — distribution is no
+  longer merely deferred, only the multi-node measurement run is outstanding.
+  Spectator SSE/transport split stays deferred until that run gives load evidence.
 - Command Pattern is not needed for current socket use cases.
 - Factory Pattern is currently only `createEvent()`; other factories are future seams.
 - Tie-break is deterministic but not Strategy Pattern yet.

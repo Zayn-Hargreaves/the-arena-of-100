@@ -20,6 +20,7 @@
 - Admin kill-switch append-only audit event backend baseline is implemented (`appendAudit`, `eventLog.create`, `GET /admin/audit-events`).
 - `Room.maxPlayers` is already exposed through realtime room create/join payloads and consumed by the game UI.
 - `submitAnswer` now uses `submissionId` as a server-side idempotency key for duplicate retries in the same round.
+- Distributed match runtime is implemented (Stage B: Redis Socket.IO adapter, fenced owner-lease + failover, owner-single-writer answers, presence leader election) and the Stage C measurement harness + D1 architecture narrative are in place (`docs/architecture-distributed.md`). Outstanding: the multi-node k6/chaos RUN for real before/after + failover numbers (needs `docker:multi`).
 
 ## Current Architectural Decisions
 

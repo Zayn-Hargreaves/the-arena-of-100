@@ -1,5 +1,6 @@
 # Arena of 100 - Project Status and Usecases
 
+> Cập nhật 2026-07-19: distributed match runtime (Stage B) implemented — Redis Socket.IO adapter, fenced owner-lease + failover, owner-single-writer answers, presence leader election — cùng Stage C measurement harness + D1 architecture narrative ([`docs/architecture-distributed.md`](architecture-distributed.md)). Còn lại: multi-node k6/chaos RUN cho số before/after + failover thật (cần `docker:multi`).
 > Cập nhật 2026-07-14: full suite re-verify trên `feat/replay-lastseen-delta` xanh ở 4 tier — 974/974 unit api + 103/103 unit game-core + 148/148 unit web + 11/11 api e2e. Track D replay delta + L3 seqNo cap verified (đã mark tại dòng 13).
 > Cập nhật 2026-07-13: dọn root docs (chuyển vào `docs/` + `docs/plans/`); Track D replay delta đã DONE trong branch `feat/replay-lastseen-delta`. L2 (gateway await handleDisconnect + dedup import) đã merge main từ trước; L3 (schema tightening) chia hai phần — `CLIENT_TIMESTAMP_MAX_OFFSET_MS = 5 * 60 * 1000` đã merge main, còn `lastSeenSeqNo.max(MAX_ROUNDS * MAX_PLAYERS * 2)` mới là branch-only (Track D).
 > Cập nhật 2026-06-18 dựa trên code + GitNexus + test run thực tế.
