@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import { MatchRoundRunner } from "./match-round-runner";
 import { MatchService } from "./match.service";
 import { QuestionService } from "../question/question.service";
@@ -2688,10 +2689,7 @@ describe("MatchRoundRunner", () => {
       vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(fakeSm);
 
       const warnSpy = vi
-        .spyOn(
-          (runner as unknown as { logger: { warn: typeof vi.fn } }).logger,
-          "warn",
-        )
+        .spyOn((runner as unknown as { logger: Logger }).logger, "warn")
         .mockImplementation(() => undefined);
 
       await (

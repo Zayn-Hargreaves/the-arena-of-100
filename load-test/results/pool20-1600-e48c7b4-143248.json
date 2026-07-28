@@ -1,0 +1,284 @@
+{
+  "root_group": {
+    "checks": {},
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": {}
+  },
+  "metrics": {
+    "http_req_duration": {
+      "avg": 41.76513444084609,
+      "min": 0.490339,
+      "med": 14.228916,
+      "max": 1193.873463,
+      "p(90)": 105.20240600000011,
+      "p(95)": 168.32133209999975
+    },
+    "ws_connected": {
+      "rate": 7.5302589118879135,
+      "count": 1600
+    },
+    "http_req_waiting": {
+      "avg": 41.65924977114525,
+      "min": 0.45344,
+      "med": 14.141798000000001,
+      "max": 1193.771204,
+      "p(90)": 105.00708530000006,
+      "p(95)": 168.20120249999994
+    },
+    "data_sent": {
+      "count": 7228873,
+      "rate": 34022.05333197245
+    },
+    "ws_connect_success": {
+      "rate": 7.5302589118879135,
+      "count": 1600
+    },
+    "ws_messages_received": {
+      "count": 169674,
+      "rate": 798.5557191347937
+    },
+    "data_received": {
+      "count": 717375329,
+      "rate": 3376263.7277317336
+    },
+    "http_req_connecting": {
+      "avg": 0.005445982269042357,
+      "min": 0,
+      "med": 0,
+      "max": 9.430439,
+      "p(90)": 0,
+      "p(95)": 0
+    },
+    "ws_msgs_received": {
+      "count": 176424,
+      "rate": 830.3239989193208
+    },
+    "http_req_receiving": {
+      "p(95)": 0.14647179999999999,
+      "avg": 0.08722765736766801,
+      "min": 0.023355,
+      "med": 0.069619,
+      "max": 8.460519,
+      "p(90)": 0.11703600000000008
+    },
+    "vus": {
+      "value": 16,
+      "min": 0,
+      "max": 1600
+    },
+    "ws_sessions": {
+      "count": 1600,
+      "rate": 7.5302589118879135
+    },
+    "http_req_sending": {
+      "avg": 0.01865701233363686,
+      "min": 0.004595,
+      "med": 0.013836,
+      "max": 12.722908,
+      "p(90)": 0.028296,
+      "p(95)": 0.03650704999999999
+    },
+    "http_req_blocked": {
+      "p(90)": 0.010785100000000013,
+      "p(95)": 0.019723749999999995,
+      "avg": 0.013654721810378375,
+      "min": 0.001579,
+      "med": 0.005495,
+      "max": 9.502329
+    },
+    "ws_session_duration": {
+      "p(95)": 210593.128039,
+      "avg": 210486.35073499996,
+      "min": 210393.070118,
+      "med": 210471.031595,
+      "max": 210615.320029,
+      "p(90)": 210583.95314599999
+    },
+    "http_req_duration{expected_response:true}": {
+      "p(90)": 105.20240600000011,
+      "p(95)": 168.32133209999975,
+      "avg": 41.76513444084609,
+      "min": 0.490339,
+      "med": 14.228916,
+      "max": 1193.873463
+    },
+    "setup_flow_errors": {
+      "count": 0,
+      "rate": 0,
+      "thresholds": {
+        "count<10": false
+      }
+    },
+    "vus_max": {
+      "max": 1600,
+      "value": 1600,
+      "min": 1600
+    },
+    "answers_submitted": {
+      "count": 1453,
+      "rate": 6.838416374358212
+    },
+    "ws_connecting": {
+      "p(90)": 689.7507628000001,
+      "p(95)": 810.4679516,
+      "avg": 181.767028819375,
+      "min": 0.50199,
+      "med": 3.4889605,
+      "max": 880.26911
+    },
+    "answer_result_latency_ms": {
+      "max": 431,
+      "p(90)": 344.79999999999995,
+      "p(95)": 369.39999999999986,
+      "avg": 163.22711631108052,
+      "min": 2,
+      "med": 136,
+      "thresholds": {
+        "p(95)<1000": false,
+        "p(99)<2500": false
+      }
+    },
+    "http_req_tls_handshaking": {
+      "med": 0,
+      "max": 0,
+      "p(90)": 0,
+      "p(95)": 0,
+      "avg": 0,
+      "min": 0
+    },
+    "app_error_rate": {
+      "passes": 0,
+      "fails": 3184,
+      "thresholds": {
+        "rate<0.01": false
+      },
+      "value": 0
+    },
+    "ws_msgs_sent": {
+      "count": 19388,
+      "rate": 91.24791236480179
+    },
+    "iteration_duration": {
+      "avg": 210486.663532625,
+      "min": 210393.447274,
+      "med": 210471.3240025,
+      "max": 210615.61788,
+      "p(90)": 210584.3232215,
+      "p(95)": 210593.41909275
+    },
+    "http_req_failed": {
+      "passes": 0,
+      "fails": 46134,
+      "value": 0
+    },
+    "match_finished_received": {
+      "count": 1141,
+      "rate": 5.3700158865400685
+    },
+    "round_started_received": {
+      "rate": 23.706196336987137,
+      "count": 5037
+    },
+    "ws_connect_errors": {
+      "count": 0,
+      "rate": 0,
+      "thresholds": {
+        "count<5": false
+      }
+    },
+    "iterations": {
+      "count": 16,
+      "rate": 0.07530258911887913
+    },
+    "http_reqs": {
+      "rate": 217.12560290064812,
+      "count": 46134
+    }
+  },
+  "setup_data": {
+    "rooms": [
+      {
+        "hostToken": "[REDACTED]",
+        "roomCode": "JGWB3P",
+        "roomId": "cms4c9iox000001qo360y9z3k"
+      },
+      {
+        "roomCode": "A7PS94",
+        "roomId": "cms4c9jn6000101qx8vxrrzaq",
+        "hostToken": "[REDACTED]"
+      },
+      {
+        "hostToken": "[REDACTED]",
+        "roomCode": "ADC99Z",
+        "roomId": "cms4c9jo6000101n1u0fvzxbw"
+      },
+      {
+        "roomCode": "K8735X",
+        "roomId": "cms4c9joo000301qorzjz5gt6",
+        "hostToken": "[REDACTED]"
+      },
+      {
+        "roomId": "cms4c9jp4000401qxwhhft4yf",
+        "hostToken": "[REDACTED]",
+        "roomCode": "QT5RPK"
+      },
+      {
+        "roomCode": "GB3R6A",
+        "roomId": "cms4c9jpm000401n1iupdgy4z",
+        "hostToken": "[REDACTED]"
+      },
+      {
+        "hostToken": "[REDACTED]",
+        "roomCode": "QM2A5S",
+        "roomId": "cms4c9jq1000601qo76if2oxe"
+      },
+      {
+        "hostToken": "[REDACTED]",
+        "roomCode": "7Y2NGC",
+        "roomId": "cms4c9jqf000701qxsqyk2ye5"
+      },
+      {
+        "hostToken": "[REDACTED]",
+        "roomCode": "4YNJ6P",
+        "roomId": "cms4c9jqr000701n1l6yadv25"
+      },
+      {
+        "hostToken": "[REDACTED]",
+        "roomCode": "MBFRRV",
+        "roomId": "cms4c9jr3000901qockjp105c"
+      },
+      {
+        "hostToken": "[REDACTED]",
+        "roomCode": "EWQHNB",
+        "roomId": "cms4c9jrf000a01qxi7mrbuic"
+      },
+      {
+        "hostToken": "[REDACTED]",
+        "roomCode": "G2ER36",
+        "roomId": "cms4c9jrr000a01n1f8bkw6mg"
+      },
+      {
+        "hostToken": "[REDACTED]",
+        "roomCode": "RTCHYB",
+        "roomId": "cms4c9js5000c01qoet33x930"
+      },
+      {
+        "hostToken": "[REDACTED]",
+        "roomCode": "4ATHGC",
+        "roomId": "cms4c9jsj000d01qxoabecbkz"
+      },
+      {
+        "roomId": "cms4c9jsv000d01n171ue7joq",
+        "hostToken": "[REDACTED]",
+        "roomCode": "NFDNAY"
+      },
+      {
+        "hostToken": "[REDACTED]",
+        "roomCode": "KPB8VY",
+        "roomId": "cms4c9jt8000f01qo51v0faam"
+      }
+    ]
+  }
+}

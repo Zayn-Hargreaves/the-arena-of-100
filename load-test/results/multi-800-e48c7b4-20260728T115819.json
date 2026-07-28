@@ -1,0 +1,224 @@
+{
+  "metrics": {
+    "ws_connect_success": {
+      "count": 800,
+      "rate": 0.8600964065124181
+    },
+    "setup_flow_errors": {
+      "count": 0,
+      "rate": 0,
+      "thresholds": {
+        "count<10": false
+      }
+    },
+    "ws_connected": {
+      "count": 800,
+      "rate": 0.8600964065124181
+    },
+    "vus": {
+      "min": 8,
+      "max": 800,
+      "value": 8
+    },
+    "answers_submitted": {
+      "count": 723,
+      "rate": 0.7773121273855979
+    },
+    "data_sent": {
+      "count": 4144717,
+      "rate": 4456.070247138663
+    },
+    "http_req_duration": {
+      "max": 242.735447,
+      "p(90)": 9.919391800000003,
+      "p(95)": 27.412028749999727,
+      "avg": 9.420700094757425,
+      "min": 0.525037,
+      "med": 3.6399565000000003
+    },
+    "ws_connecting": {
+      "med": 0.8760825,
+      "max": 220.773662,
+      "p(90)": 147.21623130000003,
+      "p(95)": 183.70185884999998,
+      "avg": 39.013992575,
+      "min": 0.516931
+    },
+    "http_req_waiting": {
+      "p(95)": 27.17216619999994,
+      "avg": 9.331128040825448,
+      "min": 0.485285,
+      "med": 3.5555440000000003,
+      "max": 242.624956,
+      "p(90)": 9.7651377
+    },
+    "answer_result_latency_ms": {
+      "min": 2,
+      "med": 435,
+      "max": 1217,
+      "p(90)": 947,
+      "p(95)": 1125.8,
+      "avg": 497.0926694329184,
+      "thresholds": {
+        "p(99)<2500": false,
+        "p(95)<1000": true
+      }
+    },
+    "http_req_blocked": {
+      "max": 9.742999,
+      "p(90)": 0.009272300000000002,
+      "p(95)": 0.02227159999999996,
+      "avg": 0.01371898549916347,
+      "min": 0.001533,
+      "med": 0.0044925
+    },
+    "ws_msgs_sent": {
+      "count": 26010,
+      "rate": 27.963884416734995
+    },
+    "http_req_receiving": {
+      "avg": 0.07368080914668126,
+      "min": 0.025365,
+      "med": 0.064296,
+      "max": 5.704247,
+      "p(90)": 0.10342380000000001,
+      "p(95)": 0.12079249999999997
+    },
+    "ws_connect_errors": {
+      "count": 0,
+      "rate": 0,
+      "thresholds": {
+        "count<5": false
+      }
+    },
+    "ws_messages_received": {
+      "count": 85683,
+      "rate": 92.1195504990044
+    },
+    "http_req_sending": {
+      "min": 0.004681,
+      "med": 0.011856,
+      "max": 6.826936,
+      "p(90)": 0.0248693,
+      "p(95)": 0.03256234999999999,
+      "avg": 0.015891244785275985
+    },
+    "http_req_failed": {
+      "passes": 0,
+      "fails": 17930,
+      "value": 0
+    },
+    "app_error_rate": {
+      "passes": 0,
+      "fails": 1592,
+      "thresholds": {
+        "rate<0.01": false
+      },
+      "value": 0
+    },
+    "match_finished_received": {
+      "count": 800,
+      "rate": 0.8600964065124181
+    },
+    "data_received": {
+      "count": 276364135,
+      "rate": 297124.749253016
+    },
+    "http_req_connecting": {
+      "max": 9.61401,
+      "p(90)": 0,
+      "p(95)": 0,
+      "avg": 0.006104688232013392,
+      "min": 0,
+      "med": 0
+    },
+    "http_req_tls_handshaking": {
+      "p(95)": 0,
+      "avg": 0,
+      "min": 0,
+      "med": 0,
+      "max": 0,
+      "p(90)": 0
+    },
+    "round_started_received": {
+      "count": 2475,
+      "rate": 2.6609232576477937
+    },
+    "http_reqs": {
+      "count": 17930,
+      "rate": 19.276910710959573
+    },
+    "ws_sessions": {
+      "count": 800,
+      "rate": 0.8600964065124181
+    },
+    "vus_max": {
+      "value": 800,
+      "min": 800,
+      "max": 800
+    },
+    "http_req_duration{expected_response:true}": {
+      "avg": 9.420700094757425,
+      "min": 0.525037,
+      "med": 3.6399565000000003,
+      "max": 242.735447,
+      "p(90)": 9.919391800000003,
+      "p(95)": 27.412028749999727
+    },
+    "ws_msgs_received": {
+      "count": 93765,
+      "rate": 100.8086744457961
+    }
+  },
+  "setup_data": {
+    "rooms": [
+      {
+        "hostToken": "[REDACTED]",
+        "roomCode": "GEGD6Q",
+        "roomId": "cms46qlxh000101npzb63f5bg"
+      },
+      {
+        "roomId": "cms46qly1004a01p6s9nhvvnc",
+        "hostToken": "[REDACTED]",
+        "roomCode": "X97VQN"
+      },
+      {
+        "hostToken": "[REDACTED]",
+        "roomCode": "7R96QQ",
+        "roomId": "cms46qlyh000701p9flriqwdj"
+      },
+      {
+        "hostToken": "[REDACTED]",
+        "roomCode": "KM6NTW",
+        "roomId": "cms46qlyv000401np40bvw86w"
+      },
+      {
+        "hostToken": "[REDACTED]",
+        "roomCode": "GBW6WV",
+        "roomId": "cms46qlz7004d01p69fa5olv9"
+      },
+      {
+        "hostToken": "[REDACTED]",
+        "roomCode": "MZJJH9",
+        "roomId": "cms46qlzl000a01p9ocbfgru7"
+      },
+      {
+        "hostToken": "[REDACTED]",
+        "roomCode": "A2NEM9",
+        "roomId": "cms46qlzx000701npy7pfw19j"
+      },
+      {
+        "roomCode": "DG4H34",
+        "roomId": "cms46qm0a004g01p6nrzwttkw",
+        "hostToken": "[REDACTED]"
+      }
+    ]
+  },
+  "root_group": {
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": {},
+    "checks": {}
+  }
+}

@@ -1,0 +1,7 @@
+pool_max	cluster_cap	http_p95_ms	http_max_ms	answer_p95_ms	pg_backends_peak	pg_active_peak	pg_lockwait_peak	pg_cpu_p95	api_cpu_p95	ws_conn_err	setup_err	app_err_rate	k6_exit
+20	60	152	823	399	61	58	41	159	121	0	0	0.0000	0
+10	30	225	815	356	31	17	2	139	127	0	0	0.0000	0
+32	96	180	974	356	97	87	70	162	125	0	0	0.0000	0
+32	96	354	940	529	97	14	0	157	125	0	0	0.0000	0
+20	60	1011	1249	451	61	23	6	172	133	0	0	0.0000	0
+10	30	146	721	341	31	10	0	151	128	0	0	0.0000	0

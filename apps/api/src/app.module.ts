@@ -26,6 +26,7 @@ import { JwtAuthGuard } from "./modules/auth/guards/jwt-auth.guard";
 import { RolesGuard } from "./modules/auth/guards/roles.guard";
 import { CsrfGuard } from "./modules/auth/guards/csrf.guard";
 import { ThrottlerGuard } from "@nestjs/throttler";
+import { positiveIntEnv } from "./common/config/env";
 
 @Module({
   imports: [
@@ -35,9 +36,18 @@ import { ThrottlerGuard } from "@nestjs/throttler";
       envFilePath: [".env.local", ".env"],
     }),
 
-    // Rate Limiting
+    // Rate Limiting. Env-tunable because the throttler keys on client IP:
+    // behind a load balancer every request arrives from the same upstream
+    // address, so a load-test cluster (hundreds of VUs on one host IP)
+    // needs a far higher ceiling than a public deployment. Defaults are
+    // the production values — override only in trusted environments.
     ThrottlerModule.forRoot({
-      throttlers: [{ ttl: 60000, limit: 100 }],
+      throttlers: [
+        {
+          ttl: positiveIntEnv(process.env.THROTTLE_TTL_MS, 60000),
+          limit: positiveIntEnv(process.env.THROTTLE_LIMIT, 100),
+        },
+      ],
     }),
 
     // Infrastructure
