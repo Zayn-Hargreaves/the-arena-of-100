@@ -8,6 +8,7 @@ import {
   type CommandEnvelope,
   type SubmitAnswerBody,
   type CommandDispatcher,
+  type CommandOutcome,
 } from "./match-command.service";
 import type { RedisService } from "../redis/redis.service";
 import type { MatchService } from "./match.service";
@@ -15,6 +16,18 @@ import type { MatchOwnershipService } from "./match-ownership.service";
 import type { ClusterService } from "../cluster/cluster.service";
 
 type RedisMock = Record<string, ReturnType<typeof vi.fn>>;
+
+type PrivateApplyService = {
+  apply(env: CommandEnvelope, server: Server): Promise<CommandOutcome>;
+};
+
+function applyPrivate(
+  svc: MatchCommandService,
+  env: CommandEnvelope,
+  server: Server,
+): Promise<CommandOutcome> {
+  return (svc as unknown as PrivateApplyService).apply(env, server);
+}
 
 function submitEnv(
   overrides: Partial<CommandEnvelope<SubmitAnswerBody>> = {},
@@ -345,6 +358,34 @@ describe("MatchCommandService (B4a)", () => {
     );
     // The claimed (previously-stranded) entry was processed + acked.
     expect(redis.xack).toHaveBeenCalledWith("match:cmd:m1", OWNER_GROUP, "7-0");
+  });
+
+  it("pollOnce does not stamp lastClaimAt if registration was deregistered mid-sweep", async () => {
+    const reg = { server, abort: new AbortController(), lastClaimAt: 0 };
+    (service as any).registered.set("m-dereg", reg);
+
+    redis.xautoclaim.mockImplementationOnce(async () => {
+      service.deregisterMatch("m-dereg");
+      return { nextCursor: "0-0", claimed: [] };
+    });
+
+    await service.pollOnce("m-dereg", server);
+    expect(reg.lastClaimAt).toBe(0);
+  });
+
+  it("pollOnce does not stamp lastClaimAt if the poll signal is independently aborted after the final empty XAUTOCLAIM page", async () => {
+    const reg = { server, abort: new AbortController(), lastClaimAt: 0 };
+    (service as any).registered.set("m-signal-abort", reg);
+    const pollAc = new AbortController();
+
+    redis.xautoclaim.mockImplementationOnce(async () => {
+      pollAc.abort();
+      return { nextCursor: "0-0", claimed: [] };
+    });
+
+    await service.pollOnce("m-signal-abort", server, pollAc.signal);
+    expect(reg.lastClaimAt).toBe(0);
+    expect(reg.abort.signal.aborted).toBe(false);
   });
 
   it("registerMatch creates the consumer group with MKSTREAM (idempotent)", async () => {
@@ -738,7 +779,7 @@ describe("MatchCommandService (B4a)", () => {
     });
 
     it("RETRY for player_disconnect when no disconnect side effect is wired (B5 not deployed yet)", async () => {
-      const env = {
+      const env: CommandEnvelope = {
         eventId: "evt-dc-1",
         schemaVersion: 1,
         matchId: "m1",
@@ -747,7 +788,7 @@ describe("MatchCommandService (B4a)", () => {
         body: { type: "player_disconnect" as const, userId: "p1" },
       };
       // No setSideEffects → no handlePlayerDisconnect → RETRY.
-      await expect(service.apply(env, server)).resolves.toBe("RETRY");
+      await expect(applyPrivate(service, env, server)).resolves.toBe("RETRY");
     });
   });
 
@@ -814,7 +855,9 @@ describe("MatchCommandService (B4a)", () => {
       const dispatcher = vi.fn().mockResolvedValue("APPLIED" as const);
       service.setDispatcher(dispatcher);
 
-      await expect(service.apply(submitEnv(), server)).resolves.toBe("APPLIED");
+      await expect(applyPrivate(service, submitEnv(), server)).resolves.toBe(
+        "APPLIED",
+      );
       expect(dispatcher).toHaveBeenCalledWith(
         submitEnv(),
         { fence: 5, leaseValue: "node-a:5" },
@@ -824,7 +867,7 @@ describe("MatchCommandService (B4a)", () => {
   });
 
   describe("applyDisconnectAuthoritative edges", () => {
-    const dcEnv = () => ({
+    const dcEnv = (): CommandEnvelope => ({
       eventId: "evt-dc-x",
       schemaVersion: 1,
       matchId: "m1",
@@ -843,7 +886,9 @@ describe("MatchCommandService (B4a)", () => {
       redis.sismember.mockResolvedValue(false);
       redis.sadd.mockRejectedValueOnce(new Error("sadd boom"));
 
-      await expect(service.apply(dcEnv(), server)).resolves.toBe("APPLIED");
+      await expect(applyPrivate(service, dcEnv(), server)).resolves.toBe(
+        "APPLIED",
+      );
       expect(redis.sadd).toHaveBeenCalledWith("match:applied:m1", "evt-dc-x");
     });
 
@@ -855,7 +900,9 @@ describe("MatchCommandService (B4a)", () => {
       });
       redis.sismember.mockRejectedValueOnce(new Error("boom"));
 
-      await expect(service.apply(dcEnv(), server)).resolves.toBe("RETRY");
+      await expect(applyPrivate(service, dcEnv(), server)).resolves.toBe(
+        "RETRY",
+      );
     });
   });
 
@@ -897,7 +944,7 @@ describe("MatchCommandService (B4a)", () => {
   describe("coverage gaps (B4a polling loop)", () => {
     it("ensurePolling iterates every registered match and dispatches a poll", async () => {
       vi.useFakeTimers();
-      const pollOnceSpy = vi.spyOn(service, "pollOnce").mockResolvedValue();
+      const pollOnceSpy = vi.spyOn(service, "pollOnce").mockResolvedValue(0);
 
       // Register two matches — polling loop iterates both.
       await service.registerMatch("m-a", server);

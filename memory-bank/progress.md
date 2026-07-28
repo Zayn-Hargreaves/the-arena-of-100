@@ -127,7 +127,7 @@ Run the relevant package tests before using these numbers in PR text.
   takeover with `resumeMatchLoop` rebuilding timers from persisted
   `phaseEndsAt`, owner-single-writer answers via a Redis command stream, and
   presence leader election — all with unit/integration specs (api suite
-  1242). Stage C measurement harness is complete: C1 distribution poller
+  1369/1369). Stage C measurement harness is complete: C1 distribution poller
   (`load-test/scripts/poll-distribution.mjs`), C2 generation-token reconnect
   wrapper (`load-test/lib/reconnect.js`, 5 vitest cases), C3 chaos
   orchestrator + pure PASS/FAIL/INCONCLUSIVE verdict
@@ -142,6 +142,48 @@ Run the relevant package tests before using these numbers in PR text.
 - Spectator transport split for scale.
 - Full WCAG / Playwright / rematch work.
 
+## Content Roadmap (chốt 2026-07-28)
+
+> Thứ tự theo **dependency + rủi ro scope + động lực**, không theo độ hoành tráng.
+> Cả 3 content đều đụng `MatchStateMachine`/match flow → mỗi phase bắt đầu bằng
+> `gitnexus_impact` (symbol CRITICAL) như quy trình repo.
+
+1. **Ban/pick draft phase** (~1-2 tuần) — làm ĐẦU TIÊN: scope tự khoanh vùng nhất
+   (N ban, M pick, lượt xen kẽ, timeout auto-pick), nâng cấp mọi trận hiện có
+   ngay (đánh vào gameplay "một màu"), và dạy cách thêm phase vào state machine
+   mà Gauntlet cần lại. Phase mới phải đi qua đúng bộ máy distributed: timer
+   rebuild từ `phaseEndsAt` khi failover, reconnect giữa draft hydrate qua
+   `lastSeenSeqNo`, pick cross-node qua command stream. **DoD bắt buộc:** chaos
+   test kill node giữa lượt ban → draft resume đúng lượt, đúng đồng hồ (harness
+   C3 có sẵn) — đây là câu chuyện phỏng vấn mới.
+2. **Elo + ranking — tách hai nửa:**
+   - **2a. Rating engine** (~vài ngày): tính/update Elo trong `finishMatch`
+     transaction, persist, hiện leaderboard + profile (rankings module có sẵn).
+     Không cần queue. Quick-win chen được bất kỳ lúc nào; cho trận đấu stakes.
+   - **2b. Matchmaking queue** (~1-2 tuần, SAU 2a): bài khó thật là atomic
+     pairing cross-node (chống double-match — dùng toolkit single-writer/lease
+     sẵn có). Queue không người = feature chết trong demo → cần rating tồn tại
+     trước cho flow "ranked queue → draft → match" có nghĩa; cân nhắc bot
+     backfill cho demo.
+3. **Roguelike "Gauntlet"** (~2-4 tuần, SAU CÙNG) — không phải vì kém hay mà vì
+   rủi ro scope cao nhất + nặng frontend nhất. **Điều kiện bắt đầu: scope-lock
+   một trang TRƯỚC dòng code đầu tiên** — một mode duy nhất (run theo party,
+   mỗi round một modifier, thua là hết run), 6-8 modifier chốt cứng, không
+   meta-progression ở v1. Ràng buộc kỹ thuật từ ngày đầu: modifier roll =
+   **seeded RNG server-side nằm TRONG event log**, không thì replay/reconnect
+   contract vỡ với mode mới.
+
+**Điểm dừng an toàn nếu có phỏng vấn trong ~1 tháng: sau 2a** — repo khi đó có
+failover numbers + draft phase + ranked stakes; queue/Gauntlet kể ở dạng design
+đang làm. Không ghi Phase 0 (nợ 2026-07-28) — đang được commit.
+
+**KHÔNG làm cho mục đích wow** (đã cân nhắc và loại 2026-07-28): CRDT (mâu thuẫn
+server-authoritative by design), physics/lockstep (sai thể loại game), hash-ring
+sharding (ownership per-match đã là shard theo match; thêm hash ring ở 32
+match/3 node là over-engineering). Nếu muốn thêm một bài systems-hard nữa thì đó
+là **Redis HA (Sentinel)** — biến câu probe "Redis chết thì sao?" thành running
+code — chứ không phải 3 món trên.
+
 ## Priority Queue
 
 ### P0 — Docs + Memory-Bank Consolidation
@@ -152,8 +194,8 @@ Run the relevant package tests before using these numbers in PR text.
 
 ### P1 — Near-Term Implementation
 
-1. **k6 Load Test**
-   - Measure baseline 100 concurrent WS behavior before making spectator-transport scale decisions.
+1. **k6 Load Test & Failover Verification**
+   - Multi-node k6 load test (800→3200 VU) completed. Pending: C3 chaos/failover RUN and Plan A single-room 100-user baseline.
 2. **AFK Docs + UX Hardening** — ✅ done (Track C, 2026-07-11)
    - Semantics verified across all 3 layers (state machine → round runner → UI); documented in `docs/afk-policy.md`.
    - No `MatchStateMachine` change (public API unchanged); FE now surfaces elimination reason (wrong / timeout) + reconnect snapshot hydrates spectator state.
@@ -170,7 +212,7 @@ Run the relevant package tests before using these numbers in PR text.
 
 ### P2 — Evidence / Scale
 
-1. k6 load test for 100 concurrent WebSocket users.
+1. Plan A single-room 100-user WebSocket load test baseline (points to the pending P1 #1 deliverable; next phase evaluation for spectator transport decisions).
 2. Decide spectator SSE / transport split based on measured load, not speculation.
 
 ### P3 — Post-MVP / UX Closeout

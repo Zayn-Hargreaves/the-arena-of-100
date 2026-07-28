@@ -626,8 +626,8 @@ describe("MatchOwnershipService (B2b)", () => {
       // listActiveMatchIds reads from redis.smembers — make it return two ids,
       // and make removeActiveIfStateAbsent throw for one of them.
       redis.smembers.mockResolvedValueOnce(["m-good", "m-bad"]);
-      redis.removeActiveIfStateAbsent
-        .mockResolvedValueOnce("PRESENT")
+      redis
+        .removeActiveIfStateAbsent!.mockResolvedValueOnce("PRESENT")
         .mockRejectedValueOnce(new Error("scan-boom"));
       // Wire server so recoverOnBoot dispatches recovery instead of buffering.
       (service as unknown as { server: unknown }).server = {

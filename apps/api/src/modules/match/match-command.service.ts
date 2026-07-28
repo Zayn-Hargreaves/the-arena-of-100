@@ -337,7 +337,14 @@ export class MatchCommandService implements OnModuleDestroy {
         // (caught below) or an abort mid-sweep must leave the timestamp
         // unchanged so the next iteration retries the takeover instead of
         // sitting out a full CLAIM_INTERVAL_MS with entries still pending.
-        if (reg) reg.lastClaimAt = now;
+        if (
+          reg &&
+          this.registered.get(matchId) === reg &&
+          !reg.abort.signal.aborted &&
+          !signal?.aborted
+        ) {
+          reg.lastClaimAt = Date.now();
+        }
       }
 
       if (signal?.aborted) return processed;

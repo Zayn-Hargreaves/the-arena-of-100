@@ -99,7 +99,7 @@ actually guarantees, layer by layer (each with its verifying artifact):
 
 | Layer                    | Guard                                                                                                                                                          | Where                                                                                                                                 | Verified by                                                                     |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Canonical state writes   | Every `match:state` write goes through the **fenced Lua CAS** in `persistStateMachine`; a stale fence returns a non-`APPLIED` outcome and the write is dropped | B2c persist path at the 3 mutating boundaries (`executeRound`/`endRound`/`checkMatchEnd`/`finishMatchLoopInner`) + the B4b apply path | B2c integration specs; B4b answer-path specs                                    |
+| Canonical state writes   | Every `match:state` write goes through the **fenced Lua CAS** in `persistStateMachine`; a stale fence returns a non-`APPLIED` outcome and the write is dropped | B2c persist path at the 4 mutating boundaries (`executeRound`/`endRound`/`checkMatchEnd`/`finishMatchLoopInner`) + the B4b apply path | B2c integration specs; B4b answer-path specs                                    |
 | Authoritative broadcasts | A Socket.IO emission of an authoritative event follows **only** an `APPLIED` CAS outcome / the fenced side-effect outbox                                       | B2c item 3; B4b `fencedSideEffects` (`publishAnswerResult`)                                                                           | B2c/B4b specs                                                                   |
 | Timer callbacks          | `assertOwnership` (renew-or-lose) gates `endRound` / `checkMatchEnd` / `finishMatchLoopInner`                                                                  | B2c                                                                                                                                   | B2c specs                                                                       |
 | Redis side effects       | Command-stream acks (B4a consume contract) and presence-leader mutations (B5 per-mutation CAS) validate their fence in the **same atomic op**                  | B4a, B5                                                                                                                               | B4a consume spec; B5 mid-sweep demotion test                                    |
@@ -129,18 +129,21 @@ can be recomputed from (see [`load-test/README.md`](../load-test/README.md) §ar
 
 ### Before / after
 
-| Metric                     | Single-node (before) | 3-node (after) | Source                                              |
-| -------------------------- | -------------------- | -------------- | --------------------------------------------------- |
-| Concurrent WS              | 100                  | _pending run_  | k6 summary                                          |
-| Answer p95                 | ≈ 28 ms              | _pending run_  | `answer_result_latency_ms.p(95)`                    |
-| Answer p99                 | _from baseline json_ | _pending run_  | `answer_result_latency_ms.p(99)`                    |
-| Messages/sec               | _from baseline json_ | _pending run_  | k6 `ws_messages_received` rate                      |
-| Unexpected disconnect rate | 0                    | _pending run_  | `ws_unexpected_disconnect` / `ws_connect_success`   |
-| Per-node CPU / RSS         | n/a                  | _pending run_  | `*.node-{1,2,3}.cpu.jsonl` (`cpuUsage`, `rssBytes`) |
-| Socket distribution        | n/a (1 node)         | ≥ 2 nodes      | `*-distribution.summary.json`                       |
+| Metric                     | Single-node (before) | 3-node (800 VU)                                         | 3-node (1600 VU)                                     | 3-node (3200 VU)                                     | Source                                            |
+| -------------------------- | -------------------- | ------------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------- |
+| Concurrent WS              | 100                  | 800                                                     | 1,600                                                | 3,200                                                | k6 summary                                        |
+| Answer p95                 | ≈ 28 ms              | 201 ms                                                  | 356.8 ms                                             | 669 ms                                               | `answer_result_latency_ms.p(95)`                  |
+| Answer p99                 | _from baseline json_ | n/a (not in summary)                                    | n/a (not in summary)                                 | n/a (not in summary)                                 | `answer_result_latency_ms.p(99)`                  |
+| Messages/sec               | _from baseline json_ | 247.7 /s                                                | 471.9 /s                                             | 868.8 /s                                             | k6 `ws_messages_received` rate                    |
+| Unexpected disconnect rate | 0                    | 0                                                       | 0                                                    | 0                                                    | `ws_unexpected_disconnect` / `ws_connect_success` |
+| Per-node CPU / RSS         | n/a                  | `multi-800-fix-e48c7b4-20260728T134159.dockerstats.psv` | `multi-1600-e48c7b4-20260728T141317.dockerstats.psv` | `multi-3200-e48c7b4-20260728T151011.dockerstats.psv` | `dockerstats.psv` (`CPUPerc`, `MemUsage`)         |
+| Socket distribution        | n/a (1 node)         | 3 nodes (34.4% / 32.6% / 33.0%)                         | 3 nodes (33.3% / 33.5% / 33.3%)                      | 3 nodes (33.4% / 33.7% / 32.9%)                      | `distribution.summary.json` (`peakSplit`)         |
 
-- **"before"** ← `load-test/results/full-match-<baseline-commit>-<ts>.json` (the
-  `full-match-ed0b4ae-*` set). **"after"** ← `load-test/results/multi-fullmatch-<commit>-<ts>.json`.
+- **"before"** ← `load-test/results/full-match-ed0b4ae-20260728T100000.json` (Plan A single-node 100-user baseline artifact).
+- **"after"** ← canonical summary JSON & matching metrics artifacts by target scale:
+  - **800 VU**: summary `load-test/results/multi-800-fix-e48c7b4-20260728T134159.json`, stats `load-test/results/multi-800-fix-e48c7b4-20260728T134159.dockerstats.psv`, dist `load-test/results/multi-800-fix-e48c7b4-20260728T134159-distribution.summary.json`
+  - **1,600 VU**: summary `load-test/results/multi-1600-e48c7b4-20260728T141317.json`, stats `load-test/results/multi-1600-e48c7b4-20260728T141317.dockerstats.psv`, dist `load-test/results/multi-1600-e48c7b4-20260728T141317-distribution.summary.json`
+  - **3,200 VU**: summary `load-test/results/multi-3200-e48c7b4-20260728T151011.json` (steady-state, excluding high-latency stress variant `multi-3200-slow-e48c7b4-20260728T152207.json`), stats `load-test/results/multi-3200-e48c7b4-20260728T151011.dockerstats.psv`, dist `load-test/results/multi-3200-e48c7b4-20260728T151011-distribution.summary.json`
 - Adapter pub/sub overhead = (after answer p95) − (before answer p95); expected small, quantified
   from the two summary JSONs.
 

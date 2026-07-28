@@ -38,6 +38,12 @@
 3. Interview prep: rehearse the 3 stories + probe answers in `career-assessment.md` §2026-07-28 (Redis SPOF answer is mandatory).
 4. Optional runs: C3 chaos/failover numbers on the new cluster; Plan A 100-user baseline table (P2 conclusion).
 5. Optional fixes (cheap, not urgent): Prisma `IN (NULL)` no-ops; `rooms.status` index; harness polling → WS-event wait (needed only to measure >3200).
+6. **Content roadmap chốt 2026-07-28** — sau khi trả nợ trên: Ban/pick draft
+   phase → Elo rating engine → Matchmaking queue → Roguelike "Gauntlet". Thứ
+   tự, DoD từng phase, scope-lock Gauntlet, và danh sách "không làm cho wow"
+   (CRDT/lockstep/hash-ring — thay bằng Redis HA nếu muốn thêm bài khó): xem
+   `progress.md` §Content Roadmap. Điểm dừng an toàn nếu interview gần: sau
+   Elo rating engine.
 
 ## Open Product / Engineering Gaps
 

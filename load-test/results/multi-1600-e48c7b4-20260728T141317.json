@@ -193,82 +193,82 @@
   "setup_data": {
     "rooms": [
       {
-        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2b2kwMGt6MDFwbndmbXpteTBvIiwidXNlcm5hbWUiOiJsdF9tcmhfMF85Nzc3NDE2NyIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.VT-a5MS1fJ83Mw96p_zLWCZH6PEgNxViS7YVYSGUrmk",
+        "hostToken": "[REDACTED]",
         "roomCode": "RE5NB5",
         "roomId": "cms4bk6oq00fs01nv74s3zw24"
       },
       {
-        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cDIwMHAxMDFwZ3dqaGF1eGEyIiwidXNlcm5hbWUiOiJsdF9tcmhfMV85Nzc5MjMyNSIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.LfeU1ICJfBo_JCIlTFBKE9pZNRi-3MhX8Lw1XxWL1JE",
+        "hostToken": "[REDACTED]",
         "roomCode": "Y4PQMX",
         "roomId": "cms4bk6p700l001pnnb8bkmpm"
       },
       {
-        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cGcwMGZ1MDFudnlhaHIzZjZ1IiwidXNlcm5hbWUiOiJsdF9tcmhfMl85NzgwOTQ0MiIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.8vu2CXX8SgH0HkHLTtVVYDBymOEW6WWqWfM_-9qlx6c",
+        "hostToken": "[REDACTED]",
         "roomCode": "YSETJQ",
         "roomId": "cms4bk6pl00p201pgcsg61bkq"
       },
       {
         "roomId": "cms4bk6px00fv01nv84cov0u0",
-        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cHMwMGwyMDFwbmljZHl2YWR1IiwidXNlcm5hbWUiOiJsdF9tcmhfM185NzgyMjI1NSIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.Sw0b2SotL7-0bK6ayzwGiqy0rYGZnnDfu75fbdaWSuk",
+        "hostToken": "[REDACTED]",
         "roomCode": "W2MHRY"
       },
       {
-        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cTQwMHA0MDFwZ2FubnFlbzcwIiwidXNlcm5hbWUiOiJsdF9tcmhfNF85NzgzMzM1MSIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.7XzdrcxYEO2-J7Xj5b_knad3ueRItEIM-aeN899A-Y4",
+        "hostToken": "[REDACTED]",
         "roomCode": "AMDDEN",
         "roomId": "cms4bk6q900l301pni60nmhug"
       },
       {
-        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cWcwMGZ4MDFudmNmMTFiaXBjIiwidXNlcm5hbWUiOiJsdF9tcmhfNV85Nzg0NTU0Iiwicm9sZSI6IkdVRVNUIiwiaWF0IjoxNzg1MjIyNzk3LCJleHAiOjE3ODUzMDkxOTd9.spis_EmvJNbVkN5Xp9S_LLPkuAedILljYIl_ufYmN6w",
+        "hostToken": "[REDACTED]",
         "roomCode": "P4J7Z2",
         "roomId": "cms4bk6ql00p501pgu52drknn"
       },
       {
-        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cXIwMGw1MDFwbnR1NjFuY2F2IiwidXNlcm5hbWUiOiJsdF9tcmhfNl85Nzg1NzE3MyIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.G9KnGxr2ldqyLcRvEFJAoRh1tD-CPCr720m4yrN726E",
+        "hostToken": "[REDACTED]",
         "roomCode": "M9CRRU",
         "roomId": "cms4bk6qw00fy01nvcbqq12vq"
       },
       {
-        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cjQwMHA3MDFwZ2prMnJxeWVvIiwidXNlcm5hbWUiOiJsdF9tcmhfN185Nzg2ODIwMyIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.BKuvmvXAr8S0mMGJAy-BO7CSQmYsyl0xw_4vHtbRfvY",
+        "hostToken": "[REDACTED]",
         "roomCode": "QMVZ3K",
         "roomId": "cms4bk6r800l601pnjanpg6jr"
       },
       {
-        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cmYwMGcwMDFudnliYWNhcWg2IiwidXNlcm5hbWUiOiJsdF9tcmhfOF85Nzg4MDYwMCIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.SA042lib090p8J4RPOj_ichcA4CiuPc5vzNELMC1_Hs",
+        "hostToken": "[REDACTED]",
         "roomCode": "TGCK9R",
         "roomId": "cms4bk6rj00p801pgbe8717yy"
       },
       {
-        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2cnIwMGw4MDFwbnJ1YzZjcDBsIiwidXNlcm5hbWUiOiJsdF9tcmhfOV85Nzg5MjQ2NCIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.rBD_FTywxLPk5Eg4m5qkmGaW3JEznkNXyqALZ1gFHuc",
+        "hostToken": "[REDACTED]",
         "roomCode": "BFB6Y2",
         "roomId": "cms4bk6rv00g101nv6cdqcd16"
       },
       {
-        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2czMwMHBhMDFwZzZ3cGY1Y2c4IiwidXNlcm5hbWUiOiJsdF9tcmhfMTBfOTc5MDM5OTMiLCJyb2xlIjoiR1VFU1QiLCJpYXQiOjE3ODUyMjI3OTcsImV4cCI6MTc4NTMwOTE5N30.8oircAkaeLAp9wXSiRv_o6i9XOOPKhoX8pPMXWm-YNU",
+        "hostToken": "[REDACTED]",
         "roomCode": "BV5ZV7",
         "roomId": "cms4bk6s700l901pnqs328tq8"
       },
       {
         "roomCode": "ABRRHS",
         "roomId": "cms4bk6sl00pb01pgrbrkc0l2",
-        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2c2YwMGczMDFudnQ2MWZqbmgyIiwidXNlcm5hbWUiOiJsdF9tcmhfMTFfOTc5MTY5MTQiLCJyb2xlIjoiR1VFU1QiLCJpYXQiOjE3ODUyMjI3OTcsImV4cCI6MTc4NTMwOTE5N30.xdQKNODL51VNXpac6IGUJ9TZtPucDQ6a5mkTlYkOMvA"
+        "hostToken": "[REDACTED]"
       },
       {
-        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2c3MwMGxiMDFwbnV2ODNla2VzIiwidXNlcm5hbWUiOiJsdF9tcmhfMTJfOTc5MjkyNzciLCJyb2xlIjoiR1VFU1QiLCJpYXQiOjE3ODUyMjI3OTcsImV4cCI6MTc4NTMwOTE5N30.TS7rOqqnku3oll1mK453hMxn0MVgp7OtGN8GSTetses",
+        "hostToken": "[REDACTED]",
         "roomCode": "ZSFYPJ",
         "roomId": "cms4bk6sx00g401nvg770s8av"
       },
       {
         "roomCode": "RTMNC3",
         "roomId": "cms4bk6ta00lc01pn240gorsb",
-        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2dDUwMHBkMDFwZ3FzbWNueWM0IiwidXNlcm5hbWUiOiJsdF9tcmhfMTNfOTc5NDMyMDciLCJyb2xlIjoiR1VFU1QiLCJpYXQiOjE3ODUyMjI3OTcsImV4cCI6MTc4NTMwOTE5N30.gsihLghMxV2at0yZdAck-Idx-T92ixcvEVneFD0yBhU"
+        "hostToken": "[REDACTED]"
       },
       {
-        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2dGgwMGc2MDFudm5pNTcxejVyIiwidXNlcm5hbWUiOiJsdF9tcmhfMTRfOTc5NTQxMCIsInJvbGUiOiJHVUVTVCIsImlhdCI6MTc4NTIyMjc5NywiZXhwIjoxNzg1MzA5MTk3fQ.ArAJOAy3JnTGw029Dg9rmMsSYVbfaR6Qb0l4ejouPtY",
+        "hostToken": "[REDACTED]",
         "roomCode": "WSJ6J3",
         "roomId": "cms4bk6tl00pe01pgltu3hg25"
       },
       {
-        "hostToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXM0Yms2dHQwMGxlMDFwbnZ5eGhwbm1zIiwidXNlcm5hbWUiOiJsdF9tcmhfMTVfOTc5NjYxMTEiLCJyb2xlIjoiR1VFU1QiLCJpYXQiOjE3ODUyMjI3OTcsImV4cCI6MTc4NTMwOTE5N30.AwrrCxxXvxYVBjdMibB-yT7Hzr0CxrJ_JuoiOUsWjeQ",
+        "hostToken": "[REDACTED]",
         "roomCode": "ZFTU9E",
         "roomId": "cms4bk6ty00g701nvg5z9hktk"
       }

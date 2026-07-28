@@ -84,10 +84,10 @@ Hai mục tiêu đòi hỏi đầu tư khác nhau.
 
 ### Các claim 2026-06-14 đã hết hạn
 
-- ~~"Chưa có k6 load test"~~ → 5 milestone run (800/800-fix/1600/3200/3200-slow) + 2 sweep TSV, artifacts đầy đủ.
-- ~~"Chưa từng chạy ở quy mô nó tuyên bố"~~ → **3200 socket / 32 match đồng thời** trên 1 máy 12-core, 0 connect error, 0 app error, scaling tuyến tính.
-- ~~"single-process là giới hạn"~~ → distributed runtime đã chạy thật: socket chia đều 3 node (33.3/33.5/33.3%), cross-node fan-out qua Redis adapter hoạt động dưới tải.
-- Mục (1) và (2) của "Nâng trần" coi như **DONE**. Mục (4) narrative: một nửa — còn thiếu trang performance investigation.
+- ~~"Chưa có k6 load test"~~ → **DONE** (5 milestone runs 800→3200 VU + artifacts đầy đủ trong `load-test/results/`: `multi-800-fix-e48c7b4-20260728T134159.json`, `multi-1600-e48c7b4-20260728T141317.json`, `multi-3200-e48c7b4-20260728T151011.json`; Plan A single-room baseline evidence remaining open).
+- ~~"Chưa từng chạy ở quy mô nó tuyên bố"~~ → **DONE** (**3,200 socket/VU đồng thời** chạy từ 1 máy rig/load-generator 12-core tới ứng dụng vận hành trên **cluster 3 node**: `load-test/results/multi-3200-e48c7b4-20260728T151011.json` field `vus_max`: 3200, `ws_connect_errors`: 0 count, `app_error_rate.value`: 0, scaling tuyến tính ở run paced steady-state; phân biệt rõ với run compressed `multi-3200-slow-e48c7b4-20260728T152207.json` bị trần rig).
+- ~~"single-process là giới hạn"~~ → **DONE** (distributed runtime đã chạy thật: `load-test/results/multi-1600-e48c7b4-20260728T141317-distribution.summary.json` field `peakSplit` socket chia đều 3 node 33.3% / 33.5% / 33.3%, cross-node fan-out qua Redis adapter hoạt động dưới tải).
+- Phần multi-node của "Nâng trần" (mục 1 và 2) là **DONE**; giữ mở Plan A single-room 100-user baseline và trang performance investigation (mục 4 narrative).
 
 ### Verdict phỏng vấn (big tech)
 

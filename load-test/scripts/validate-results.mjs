@@ -17,103 +17,118 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const args = (() => {
-  const out = {};
-  for (let i = 2; i < process.argv.length; i += 2) {
-    const k = process.argv[i];
-    const v = process.argv[i + 1];
-    if (!k || !k.startsWith("--")) continue;
-    out[k.slice(2)] = v;
+export function parseK6Metrics(m = {}) {
+  let errorRate = null;
+  let p95 = null;
+  let p99 = null;
+  let disconnectRate = null;
+
+  if (m && typeof m === "object") {
+    if (m.app_error_rate) {
+      const obj = m.app_error_rate.values || m.app_error_rate;
+      if (typeof obj.rate === "number") errorRate = obj.rate;
+      else if (typeof obj.value === "number") errorRate = obj.value;
+    }
+    if (m.answer_result_latency_ms) {
+      const obj = m.answer_result_latency_ms.values || m.answer_result_latency_ms;
+      if (typeof obj["p(95)"] === "number") p95 = obj["p(95)"];
+      if (typeof obj["p(99)"] === "number") p99 = obj["p(99)"];
+    }
+    if (m.ws_unexpected_disconnect && m.ws_connect_success) {
+      const discObj = m.ws_unexpected_disconnect.values || m.ws_unexpected_disconnect;
+      const okObj = m.ws_connect_success.values || m.ws_connect_success;
+      const disc = typeof discObj.count === "number" ? discObj.count : (typeof discObj.value === "number" ? discObj.value : 0);
+      const ok = typeof okObj.count === "number" ? okObj.count : (typeof okObj.value === "number" ? okObj.value : 0);
+      disconnectRate = ok === 0 ? Infinity : disc / ok;
+    }
   }
-  return out;
-})();
 
-const MANIFEST = args.manifest;
-if (!MANIFEST) {
-  console.error("validate-results: --manifest <path> is required");
-  process.exit(2);
-}
-const OUT_DIR = args["out-dir"] || path.dirname(MANIFEST);
-
-const manifest = JSON.parse(fs.readFileSync(MANIFEST, "utf8"));
-const {
-  name,
-  scenario,
-  thresholds = {},
-  steadyState = {},
-  expectedRedisKeys = null,
-  k6Summary = null,
-  cpuJsonl = null,
-  redisJsonl = null,
-  anchorJson = null,
-  baselineRedisKeys = null,
-} = manifest;
-
-const errors = [];
-const checks = [];
-const ANCHOR_TOLERANCE_MS = 2000;
-
-function check(name, ok, detail) {
-  checks.push({ name, ok, detail });
-  if (!ok) errors.push(`${name}: ${detail}`);
+  return { errorRate, p95, p99, disconnectRate };
 }
 
-function readJsonl(p) {
-  if (!p || !fs.existsSync(p)) return [];
-  return fs
-    .readFileSync(p, "utf8")
-    .split("\n")
-    .filter((l) => l.trim().length > 0)
-    .map((l) => JSON.parse(l));
+const isMain = Boolean(
+  process.argv[1] &&
+    path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url)),
+);
+
+if (isMain) {
+  runValidationCli();
 }
 
-function quantile(sorted, q) {
-  if (sorted.length === 0) return null;
-  const idx = Math.min(
-    sorted.length - 1,
-    Math.max(0, Math.ceil(q * sorted.length) - 1),
-  );
-  return sorted[idx];
-}
+function runValidationCli() {
+  const args = (() => {
+    const out = {};
+    for (let i = 2; i < process.argv.length; i += 2) {
+      const k = process.argv[i];
+      const v = process.argv[i + 1];
+      if (!k || !k.startsWith("--")) continue;
+      out[k.slice(2)] = v;
+    }
+    return out;
+  })();
 
-function isFiniteNumber(v) {
-  return typeof v === "number" && Number.isFinite(v);
-}
-
-const cpu = readJsonl(cpuJsonl);
-const redis = readJsonl(redisJsonl);
-const anchors = anchorJson && fs.existsSync(anchorJson)
-  ? JSON.parse(fs.readFileSync(anchorJson, "utf8"))
-  : {};
-
-// ----- k6 summary metrics -----
-
-let errorRate = null;
-let p95 = null;
-let p99 = null;
-let disconnectRate = null;
-if (k6Summary && fs.existsSync(k6Summary)) {
-  const sum = JSON.parse(fs.readFileSync(k6Summary, "utf8"));
-  const m = sum.metrics || {};
-  if (m.app_error_rate && m.app_error_rate.values) {
-    errorRate = m.app_error_rate.values.rate;
+  const MANIFEST = args.manifest;
+  if (!MANIFEST) {
+    console.error("validate-results: --manifest <path> is required");
+    process.exit(2);
   }
-  if (m.answer_result_latency_ms && m.answer_result_latency_ms.values) {
-    p95 = m.answer_result_latency_ms.values["p(95)"];
-    p99 = m.answer_result_latency_ms.values["p(99)"];
+  const OUT_DIR = args["out-dir"] || path.dirname(MANIFEST);
+
+  const manifest = JSON.parse(fs.readFileSync(MANIFEST, "utf8"));
+  const {
+    name,
+    scenario,
+    thresholds = {},
+    steadyState = {},
+    expectedRedisKeys = null,
+    k6Summary = null,
+    cpuJsonl = null,
+    redisJsonl = null,
+    anchorJson = null,
+    baselineRedisKeys = null,
+  } = manifest;
+
+  const errors = [];
+  const checks = [];
+  const ANCHOR_TOLERANCE_MS = 2000;
+
+  function check(name, ok, detail) {
+    checks.push({ name, ok, detail });
+    if (!ok) errors.push(`${name}: ${detail}`);
   }
-  if (
-    m.ws_unexpected_disconnect &&
-    m.ws_unexpected_disconnect.values &&
-    m.ws_connect_success &&
-    m.ws_connect_success.values
-  ) {
-    const disc = m.ws_unexpected_disconnect.values.count || 0;
-    const ok = m.ws_connect_success.values.count || 0;
-    disconnectRate = ok === 0 ? Infinity : disc / ok;
+
+  function readJsonl(p) {
+    if (!p || !fs.existsSync(p)) return [];
+    return fs
+      .readFileSync(p, "utf8")
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l));
   }
-}
+
+  const cpu = readJsonl(cpuJsonl);
+  const redis = readJsonl(redisJsonl);
+  const anchors = anchorJson && fs.existsSync(anchorJson)
+    ? JSON.parse(fs.readFileSync(anchorJson, "utf8"))
+    : {};
+
+  // ----- k6 summary metrics -----
+
+  let errorRate = null;
+  let p95 = null;
+  let p99 = null;
+  let disconnectRate = null;
+  if (k6Summary && fs.existsSync(k6Summary)) {
+    const sum = JSON.parse(fs.readFileSync(k6Summary, "utf8"));
+    const m = sum.metrics || {};
+    const parsed = parseK6Metrics(m);
+    errorRate = parsed.errorRate;
+    p95 = parsed.p95;
+    p99 = parsed.p99;
+    disconnectRate = parsed.disconnectRate;
+  }
 
 if (errorRate !== null) {
   check(
@@ -547,7 +562,7 @@ const summary = {
     errorRate,
     p95,
     p99,
-    disconnectRate,
+    disconnectRate: disconnectRate === Infinity ? "Infinity" : disconnectRate,
     cpuPeak,
     cpuP95,
     rssPeakBytes: rssPeak,
@@ -645,3 +660,5 @@ function fmtAnchor(a) {
   if (!a) return "n/a";
   return `ts=${a.ts}, value=${fmt(Object.values(a).find((v) => typeof v === "number"))}`;
 }
+}
+
