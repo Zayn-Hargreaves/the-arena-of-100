@@ -88,8 +88,8 @@ Pure Q&A trivia đã bão hoà (Kahoot, QuizUp, HQ Trivia). Arena of 100 cần:
 | ----- | ------------------ | ------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------- |
 | TN-1  | **50:50**          | Common | `OPTION_DISABLE`  | resolve 2 random wrong answers server-side, then persist concrete `indexes`, durationMs=20000 (clamp at round end)                   | 0.0           |
 | TN-2  | **Double Points**  | Common | `SCORE_MULT`      | factor=2                                                                                                                             | 0.0           |
-| TN-3  | **Hint Reveal**    | Common | `HINT_REVEAL`     | partial=first 1 char                                                                                                                 | 0.0           |
-| TN-4  | **Shield**         | Rare   | `SHIELD`          | expiresAtRound=current+1                                                                                                             | 0.0           |
+| TN-3  | **Hint Reveal**    | Common | `HINT_REVEAL`     | template: `revealDescriptor="FIRST_N_CHARS", count=1` → server resolves `partial` from current question                              | 0.0           |
+| TN-4  | **Shield**         | Rare   | `SHIELD`          | template: `expiresAfterRoundOffset=1` → server resolves `expiresAtRound` from persisted `roundNo`                                    | 0.0           |
 | TN-5  | **Time Bonus**     | Common | `QUESTION_REPLAY` | extraMs=5000 on the player's authoritative per-question deadline                                                                     | 0.0           |
 | TN-6  | **Second Chance**  | Common | `SECOND_CHANCE`   | allow re-submit before deadline                                                                                                      | 0.0           |
 | TN-7  | **Deep Read**      | Rare   | `VISUAL_OVERLAY`  | flag=DEEP_READ, durationMs=5000                                                                                                      | 0.0           |
@@ -102,6 +102,156 @@ Pure Q&A trivia đã bão hoà (Kahoot, QuizUp, HQ Trivia). Arena of 100 cần:
 - **Common**: 60% drop rate (10 cards: CB-1, CB-2, CB-3, CB-6, CB-7, TN-1, TN-2, TN-3, TN-5, TN-6)
 - **Rare**: 30% drop rate (6 cards: CB-4, CB-5, TN-4, TN-7, TN-8, TN-9)
 - **Epic**: 10% drop rate (2 cards: CB-8, TN-10)
+
+**Sampling algorithm (canonical — shared + game-core MUST reference the same):**
+Offer each match selects 3 cards from the player's class pool using
+**class-specific weighted sampling without replacement**. Tier weights apply
+within the class pool: each draw picks a tier by global-pool 60/30/10 weights,
+then selects a random card of that tier from the remaining class-pool cards.
+On collision (tier exhausted in class pool), retry on the same substream
+(deterministic, no new draw). If the class pool is exhausted, return fewer
+than 3 cards. The shared contract in `@arena/shared` defines the tier weights
+and pool ordering; the pure sampling logic in `@arena/game-core` consumes an
+explicit `seed`/`rng` input and implements the same algorithm — never ambient
+`Math.random`.
+
+**Byte-level RNG consumption (canonical, pinned per `prngVersion`):**
+Every RNG consumption step MUST be specified exactly so API, game-core, and
+replay produce byte-identical output. The contract mirrors the question-pool
+byte-level algorithm in `docs/plans/gauntlet-design.md` §"Seed-derivation
+contract" (mulberry32, `Math.floor(u * N)`, unsigned 32-bit arithmetic).
+
+- **Draw count**: exactly 3 cards per offer (or fewer if the class pool is
+  exhausted before 3 unique cards are drawn).
+- **Tier selection (per draw)**: consume one float `u ∈ [0, 1)` from
+  `mulberry32(s)`. Tier = `COMMON` if `u < 0.60`, `RARE` if
+  `0.60 ≤ u < 0.90`, `EPIC` if `u ≥ 0.90`. (60/30/10 weights.)
+- **Card-within-tier selection**: consume a second float `u2 ∈ [0, 1)`;
+  `idx = Math.floor(u2 * remainingTierCards)`. The remaining class-pool cards
+  of the selected tier are an ordered frozen list (by `CardId` ascending).
+- **Deterministic retry on collision / exhausted tier**: if the selected tier
+  has zero remaining cards in the class pool, retry on the same substream
+  (pull the next float for tier selection, then the next for card selection)
+  — never a new draw. If the entire class pool is exhausted, stop and return
+  fewer than 3 cards; do not consume further floats.
+- **count > remaining**: if `count` (3) exceeds the remaining unique cards in
+  the class pool, return as many as are available; do not pad, do not wrap.
+- **Without replacement**: a drawn `CardId` is removed from the class pool for
+  the remainder of this offer; duplicate draws are impossible by construction.
+
+**Seeded replayable test vectors:** for each class (Công, Thủ), pin a test
+vector with a known `seed` and assert the exact 3 `offeredCardIds` produced.
+The vector MUST pass identically in `@arena/game-core` unit tests and the
+replay harness. Each vector MUST also assert the per-consumption RNG
+progression (the exact sequence of floats consumed and the tier + card index
+derived at each step) so any divergence between API, game-core, and replay is
+detected at the byte level, not just at the final `offeredCardIds`.
+
+**Vector location & shape:** vectors live in
+`packages/shared/src/cards.sampling-vectors.ts` (co-located, importable by
+all consumers) as a single shared source. Each vector has this shape:
+
+```typescript
+export interface SamplingVector {
+  readonly classId: ClassId; // "CONG" | "THU"
+  readonly seed: string; // known seed passed to deriveSubstream
+  readonly prngVersion: string; // canonical RNG-contract version pinned for this vector (e.g. PRNG_CONTRACT_VERSION = "mulberry32-substream-v1" per gauntlet-design.md §"Seed-derivation contract"). Identifies the ENTIRE deterministic RNG contract: seed derivation (SHA-256), Mulberry32 algorithm, RNG-consumption order, and sampling rules — NOT only SHA-256 derivation.
+  readonly pool: readonly CardId[]; // frozen class-pool snapshot at vector creation
+  readonly steps: ReadonlyArray<{
+    readonly float: number; // exact mulberry32 float consumed (u or u2)
+    readonly purpose: "TIER" | "CARD"; // which selection step consumed this float
+    readonly tier?: CardTier; // resolved tier (TIER steps only)
+    readonly cardIndex?: number; // resolved index into remaining tier cards (CARD steps only)
+    readonly retry: boolean; // true if this step was a retry (tier exhausted)
+    readonly drawnCardId?: CardId; // card drawn this step (CARD steps only; undefined on exhausted-tier retry)
+  }>;
+  readonly offeredCardIds: readonly CardId[]; // final offered cards (≤3)
+}
+```
+
+**Immutability note:** `readonly` in TypeScript is a compile-time contract only and is shallow. If runtime-loaded vectors are exposed beyond validation (e.g. handed to the engine or replay harness by reference), the vector loader MUST return a deeply frozen (`Object.freeze` recursive) value — or an immutable copy that is **itself** made mutation-safe by the same recursive freeze (or an equivalent mechanism such as a read-only `Proxy`) — rather than relying on `readonly` alone, so a buggy consumer cannot mutate `pool`, `steps`, or `offeredCardIds` and corrupt subsequent replays. A bare `structuredClone` is **not** sufficient: the clone is fully mutable, so it protects only the source object, not the canonical vector the caller then replays against.
+
+**Runtime immutability test (required in `@arena/shared`):** a test
+(`packages/shared/src/cards.sampling-vectors.spec.ts`) MUST verify the
+deep-freeze / immutable-copy mechanism at runtime — `readonly` alone is not
+sufficient because the consumer may bypass the compiler via `as unknown as
+{...}` casts. Required assertions:
+
+- After the vector loader returns a vector, cast through `unknown` to bypass
+  `readonly` and attempt mutations on every mutable field:
+  - `vector.pool[0] = ...`; `vector.pool.push(...)`.
+  - `vector.steps[0] = ...`; `vector.steps[0].float = 999`; `vector.steps.length = 0`.
+  - `vector.offeredCardIds[0] = ...`; `vector.offeredCardIds.push(...)`.
+- Each mutation MUST be either rejected (`TypeError` in strict mode for
+  `Object.freeze` paths) OR silently ignored AND the returned vector MUST be
+  unchanged. **Primary assertion — full-vector canonical bytes:** canonically
+  serialize the **entire returned vector** (`canonicalSerialize`, the same
+  helper the replay coverage validator uses) immediately BEFORE and AFTER
+  every attempted mutation and assert the serialized bytes are identical.
+  This covers every field by construction — including `pool`, `steps`, all
+  nested step fields, and `offeredCardIds` — so a mutation to a field that
+  replay does not happen to consume still fails the test.
+- **Additional assertion:** ALSO re-run the replay against the returned
+  reference before AND after each attempted mutation and assert
+  byte-identical replay output (retains the end-to-end determinism check).
+- Coverage MUST include both protection paths the loader may take:
+  1. the direct recursive `Object.freeze` path, and
+  2. the "immutable copy" path (e.g. `structuredClone`-based deep copy the
+     loader may swap in when freezing the shared source is too costly) —
+     which MUST apply the same recursive deep-freeze (or an equivalent
+     mutation-safe wrapper) to the clone **before returning it**.
+     Both paths MUST satisfy the identical assertion set above — full-vector
+     canonical-byte identity plus replay-output byte identity — across
+     `pool`, `steps`, every nested step field (`float`, `purpose`, `tier`,
+     `cardIndex`, `retry`, `drawnCardId`), and `offeredCardIds`.
+- The test MUST exercise the loader's actual exported entry point so a
+  regression that drops the freeze/copy silently fails CI.
+
+**prngVersion validation (canonical RNG-contract version):** `prngVersion`
+canonically identifies the **entire deterministic RNG contract** — seed
+derivation (SHA-256 per gauntlet-design.md §"Seed-derivation contract" §1-2),
+the `deriveSubstream` substream-seeding rule (§4), the **Mulberry32**
+algorithm (32-bit unsigned wraparound, first-4-bytes little-endian uint32
+seed), the **RNG-consumption order** (one float per draw, retry on same
+substream), and the **sampling rules** (frozen ordered pool, no-replacement,
+`idx = Math.floor(u * N)`, deterministic retry until pool exhausted). It is
+NOT only a SHA-256 derivation tag; any change to any of those facets bumps the
+version.
+
+The canonical version constant is defined **once** in `@arena/shared` alongside
+the shared types/constants (e.g. `packages/shared/src/cards.ts`):
+
+```typescript
+export const PRNG_CONTRACT_VERSION = "mulberry32-substream-v1";
+```
+
+The vector loader (`@arena/shared`), the sampling engine (`@arena/game-core`),
+the boundary validator (`@arena/api`), and the replay harness MUST all import
+`PRNG_CONTRACT_VERSION` from `@arena/shared` and validate the vector's
+`prngVersion === PRNG_CONTRACT_VERSION` **before** replay. Any vector whose
+`prngVersion` differs is rejected before running. This ensures vectors
+authored for one RNG contract are never replayed against an incompatible
+engine, and that a contract bump invalidates every stale vector in lockstep
+across all consumers.
+
+**Minimum vector coverage:**
+
+- At least one vector per class (Công, Thủ) with a happy path (3 cards, no retry).
+- At least one vector across both classes that exercises retry-when-tier-exhausted
+  (a tier selection picks a tier with zero remaining cards → retry on same
+  substream).
+- At least one vector where `count` (3) exceeds remaining unique cards →
+  `offeredCardIds.length < 3`.
+
+**Cross-package execution:** the same test MUST execute identically in
+`@arena/shared` (vector loader), `@arena/game-core` (sampling engine),
+`@arena/api` (boundary), and the replay harness. A divergence in any consumer
+is a spec violation.
+
+> **Implementation note**: no `@arena/game-core` card/class code exists yet.
+> The `steps[].float` values MUST be derived from the actual mulberry32
+> implementation when Sub-task B (§5.2) lands — do NOT fabricate floats.
+> Vectors are authored alongside the engine and frozen at first green test.
 
 Drop rate áp dụng cho offer mỗi match (3 cards offered từ class pool).
 
@@ -176,7 +326,11 @@ export type CardEffectTemplate =
     }
   | { kind: "OPTION_FAKE"; indexes: number[]; durationMs: number }
   | { kind: "OPTION_LOCK"; durationMs: number }
-  | { kind: "HINT_REVEAL"; partial: string }
+  | {
+      kind: "HINT_REVEAL_TEMPLATE";
+      revealDescriptor: "FIRST_N_CHARS";
+      count: number; // relative: server resolves to concrete `partial` from current question
+    }
   | { kind: "DELAY_RENDER"; delayMs: number; targetCount: number }
   | {
       kind: "VISUAL_OVERLAY";
@@ -185,7 +339,10 @@ export type CardEffectTemplate =
     }
   | { kind: "SEMANTIC_FLIP"; durationMs: number }
   | { kind: "QUESTION_REPLAY"; extraMs: number }
-  | { kind: "SHIELD"; expiresAtRound: number }
+  | {
+      kind: "SHIELD_TEMPLATE";
+      expiresAfterRoundOffset: number; // relative: server resolves to absolute `expiresAtRound` from persisted roundNo
+    }
   | { kind: "SCORE_MULT"; factor: number }
   | { kind: "HAND_DESTROY"; count: number }
   | { kind: "SECOND_CHANCE" };
@@ -195,7 +352,7 @@ export type CardEffect =
   | { kind: "OPTION_DISABLE"; indexes: number[]; durationMs: number }
   | { kind: "OPTION_FAKE"; indexes: number[]; durationMs: number }
   | { kind: "OPTION_LOCK"; durationMs: number }
-  | { kind: "HINT_REVEAL"; partial: string }
+  | { kind: "HINT_REVEAL"; partial: string } // resolved: concrete string derived from current question
   | { kind: "DELAY_RENDER"; delayMs: number; targetCount: number }
   | {
       kind: "VISUAL_OVERLAY";
@@ -204,7 +361,7 @@ export type CardEffect =
     }
   | { kind: "SEMANTIC_FLIP"; durationMs: number }
   | { kind: "QUESTION_REPLAY"; extraMs: number }
-  | { kind: "SHIELD"; expiresAtRound: number }
+  | { kind: "SHIELD"; expiresAtRound: number } // resolved: absolute round number derived from persisted roundNo
   | { kind: "SCORE_MULT"; factor: number }
   | { kind: "HAND_DESTROY"; count: number }
   | { kind: "SECOND_CHANCE" };
@@ -223,6 +380,7 @@ client-side timer or a mixed shared/per-player deadline model.
 ```typescript
 // packages/shared/src/events.ts (NEW canonical owner; cards.ts may re-export types if needed)
 // Append vào event log hiện tại (Track D shipped)
+import type { CardId } from "./cards";
 
 /** Exported so consumers of CardEffectEvent can import the resolution discriminator. */
 export type CardEffectResolution = "MUTATION" | "TEMPORARY";
@@ -231,6 +389,8 @@ export type MutationEffect = {
   seqNo: number; // monotonic, persisted in Redis / event log
   type: "CARD_RESOLVED";
   roundNo: number;
+  cardId: CardId; // immutable: identifies the consumed card for audit/replay correlation
+  offerSeqNo: number; // immutable: points back to CARD_OFFER.seqNo for selection correlation
   playedByPlayerId: string;
   targetPlayerIds: string[]; // concrete recipients, expanded server-side before append
   effect:
@@ -246,13 +406,14 @@ export type MutationEffect = {
   serverTimestamp: number;
   expiresAtServer: null;
   remainingMs: null; // mutations never carry temporary countdown state
-  rolledBack: boolean;
 };
 
 export type TemporaryEffect = {
   seqNo: number;
   type: "CARD_RESOLVED";
   roundNo: number;
+  cardId: CardId; // immutable: identifies the consumed card for audit/replay correlation
+  offerSeqNo: number; // immutable: points back to CARD_OFFER.seqNo for selection correlation
   playedByPlayerId: string;
   targetPlayerIds: string[];
   effect:
@@ -269,10 +430,23 @@ export type TemporaryEffect = {
   serverTimestamp: number;
   expiresAtServer: number;
   remainingMs: number; // temporary effects always carry remaining duration metadata
-  rolledBack: boolean;
 };
 
 export type CardEffectEvent = MutationEffect | TemporaryEffect;
+
+/**
+ * `cardId` + `offerSeqNo` correlation: both fields are immutable and MUST be
+ * validated before appending a CARD_RESOLVED event. The server checks that
+ * `offerSeqNo` points to a valid `CARD_OFFER` event whose `offeredCardIds`
+ * contains `cardId`, and that the player picked that card via a `CARD_PICKED`
+ * event. This correlation is part of the audit/replay contract — `@arena/shared`
+ * owns the event schema; the API boundary enforces the validation.
+ *
+ * `rolledBack` field removed for v1: replay cannot use it to reverse
+ * already-materialized state. No replay-time skipping based on a rollback flag.
+ * If rollback support is required later, model it as an explicit compensating
+ * event with reducer semantics — not a boolean on the original event.
+ */
 
 /**
  * Socket.IO transport optimization ONLY.
@@ -348,6 +522,9 @@ function rehydrateCardTurn(
   snapshot: CardTurnSnapshot,
   persistedEvents: CardEffectEvent[], // authoritative persisted CARD_RESOLVED events after snapshotSeqNo
   replayServerNow: number, // TRUSTED current server time; not snapshot.serverNow
+  validatedHighWaterMark: number, // TRUSTED event-log high-water mark; supplied by the
+  // event-log layer, NEVER derived from persistedEvents (a derived bound cannot
+  // detect a truncated tail — see replay contract item 6).
 ): { mutations: CardEffectEvent[]; activeEffects: ActiveEffect[] } {
   const mutations: CardEffectEvent[] = [];
   const activeEffects: ActiveEffect[] = [];
@@ -372,8 +549,32 @@ function rehydrateCardTurn(
   }
 
   // 2) Replay events strictly after snapshotSeqNo.
-  for (const event of persistedEvents.sort((a, b) => a.seqNo - b.seqNo)) {
-    const encoded = JSON.stringify(event);
+  //    Sort a shallow copy so the caller-provided array is never mutated.
+  const sorted = [...persistedEvents].sort((a, b) => a.seqNo - b.seqNo);
+
+  // 2a) Reject a snapshot that claims coverage beyond the authoritative log.
+  //     Checked BEFORE any dedup/coverage work: such a snapshot is from a
+  //     different epoch or corrupt, so its seqNo is not a usable cursor.
+  if (snapshot.snapshotSeqNo > validatedHighWaterMark) {
+    throw new Error(
+      `snapshot beyond high-water mark: snapshotSeqNo=${snapshot.snapshotSeqNo}` +
+        ` > validatedHighWaterMark=${validatedHighWaterMark}`,
+    );
+  }
+
+  // 2b) Deduplicate by seqNo BEFORE checking coverage. Equivalent duplicate
+  //     payloads (same seqNo, same canonical bytes) are idempotent and
+  //     allowed. Conflicting payloads for the same seqNo are a hard error.
+  //     Events above the trusted mark are not covered by this replay.
+  for (const event of sorted) {
+    if (event.seqNo <= snapshot.snapshotSeqNo) continue;
+    if (event.seqNo > validatedHighWaterMark) {
+      throw new Error(
+        `event above high-water mark: seqNo=${event.seqNo}` +
+          ` > validatedHighWaterMark=${validatedHighWaterMark}`,
+      );
+    }
+    const encoded = canonicalSerialize(event);
     const prior = seenSeqNos.get(event.seqNo);
     if (prior !== undefined) {
       if (prior !== encoded) {
@@ -381,11 +582,37 @@ function rehydrateCardTurn(
           `conflicting duplicate CARD_RESOLVED seqNo=${event.seqNo}`,
         );
       }
-      continue;
+      continue; // equivalent duplicate — idempotent
     }
     seenSeqNos.set(event.seqNo, encoded);
+  }
 
+  // 2c) Validate complete, contiguous coverage over the half-open interval
+  //     (snapshotSeqNo, validatedHighWaterMark]. The bound is the TRUSTED
+  //     mark, never max(received seqNo): a derived bound silently accepts a
+  //     truncated tail (drop the highest seqNo and the range just shrinks to
+  //     match). snapshotSeqNo === validatedHighWaterMark means zero events to
+  //     replay, which is valid; snapshotSeqNo = 0 with the first event at
+  //     seqNo = 1 is also valid (the interval is open at the low end).
+  //     A gap or truncated tail means events are missing — fail closed by
+  //     requesting a full resync rather than returning partial state.
+  const expectedUniqueCount = validatedHighWaterMark - snapshot.snapshotSeqNo;
+  const uniqueSeqNoCount = seenSeqNos.size;
+  if (uniqueSeqNoCount !== expectedUniqueCount) {
+    // Too few unique seqNos: a gap, or a tail truncated below the mark.
+    throw new Error(
+      `seqNo coverage gap: expected ${expectedUniqueCount} unique seqNos in` +
+        ` (${snapshot.snapshotSeqNo}, ${validatedHighWaterMark}], got ${uniqueSeqNoCount}`,
+    );
+  }
+
+  const replayedSeqNos = new Set<number>();
+  for (const event of sorted) {
+    // Dedup already validated above; skip events at or below the snapshot.
     if (event.seqNo <= snapshot.snapshotSeqNo) continue;
+    // Skip equivalent duplicates already replayed in this loop.
+    if (replayedSeqNos.has(event.seqNo)) continue;
+    replayedSeqNos.add(event.seqNo);
     if (!event.targetPlayerIds.includes(playerId)) continue;
 
     if (event.resolution === "MUTATION") {
@@ -425,6 +652,32 @@ function rehydrateCardTurn(
 5. Restore is deduped by `sourceSeqNo` so an effect present in both the snapshot's
    `activeEffects` and a post-snapshot event is applied exactly once. Coverage must
    include events arriving after the snapshot and failover between nodes.
+6. **seqNo dedup before coverage**: the reducer first deduplicates events by
+   `seqNo` using `canonicalSerialize` to detect equivalent vs conflicting
+   payloads. The coverage bound is `validatedHighWaterMark` — an
+   **externally validated** mark supplied by the event-log layer. It MUST NOT
+   be derived from the received events (e.g. `max(event.seqNo)`): a derived
+   bound cannot detect a truncated tail, because dropping the highest `seqNo`
+   also shrinks the expected range, so the check passes vacuously. The reducer
+   first rejects any snapshot with `snapshotSeqNo > validatedHighWaterMark`
+   (wrong epoch / corrupt), then requires the unique `seqNo`s to form a
+   complete contiguous range over the **half-open interval**
+   `(snapshot.snapshotSeqNo, validatedHighWaterMark]`. Open at the low end, so
+   `snapshotSeqNo = 0` with the first event at `seqNo = 1` is valid;
+   `snapshotSeqNo === validatedHighWaterMark` (nothing to replay) is valid too.
+   A truncated tail or gap means events are missing — the reducer fails closed
+   by throwing — the caller MUST request the existing full-resync path rather
+   than returning partially restored state. Equivalent duplicate payloads
+   (same `seqNo`, same canonical bytes) are treated as idempotent; conflicting
+   payloads for the same `seqNo` still throw. **Caller split (same contract,
+   two behaviors):** the _replay_ path fails closed (throw → full resync),
+   while the _reconciliation_ path clamps its cursor to the last contiguous
+   `seqNo` and enqueues nothing past the gap (see
+   `memory-bank/progress.md` §"Scan-cursor invariants"); both report the
+   missing range. Coverage MUST include equivalent events deserialized with
+   different key orders to verify they are treated as idempotent, not
+   conflicts, and MUST include a truncated-tail case (missing highest `seqNo`,
+   detectable only via the external mark) that is rejected.
 
 **Clock invariants:**
 
@@ -496,12 +749,16 @@ class MatchHandler {
             this.pendingEffects.push(recovery.transportEvent);
             this.scheduleMicroBatchFlush(appendedAtMono);
           } else {
-            await this.recoveryTaskStore.append({
-              matchId: this.matchId,
-              seqNo: resolved.seqNo,
-              kind: "EMIT_STATE_RESYNC",
-              source: "applyCardEffect",
-            });
+            try {
+              await this.recoveryTaskStore.append({
+                matchId: this.matchId,
+                seqNo: resolved.seqNo,
+                kind: "EMIT_STATE_RESYNC",
+                source: "applyCardEffect",
+              });
+            } catch {
+              // Recovery task store unavailable — reconciliation backstop.
+            }
             return {
               status: "COMMITTED_PENDING_RECOVERY",
               seqNo: resolved.seqNo,
@@ -509,12 +766,16 @@ class MatchHandler {
           }
           return { status: "COMMITTED_REBUILT", seqNo: resolved.seqNo };
         } catch {
-          await this.recoveryTaskStore.append({
-            matchId: this.matchId,
-            seqNo: resolved.seqNo,
-            kind: "REBUILD_AND_RESYNC",
-            source: "applyCardEffect",
-          });
+          try {
+            await this.recoveryTaskStore.append({
+              matchId: this.matchId,
+              seqNo: resolved.seqNo,
+              kind: "REBUILD_AND_RESYNC",
+              source: "applyCardEffect",
+            });
+          } catch {
+            // Recovery task store unavailable — reconciliation backstop.
+          }
           return {
             status: "COMMITTED_PENDING_RECOVERY",
             seqNo: resolved.seqNo,
@@ -523,7 +784,32 @@ class MatchHandler {
           this.isRecoveringFromApplyFailure = false;
         }
       }
-      await this.transportOutbox.enqueue(resolved);
+      // Post-apply enqueue: the event is already persisted and applied
+      // (COMMITTED). A catch-only recovery task is NOT sufficient — if
+      // recoveryTaskStore.append also fails or the process crashes, COMMITTED
+      // must still be preserved by a durable, idempotent backstop. The
+      // persisted seqNo is the idempotency key: callers MUST NOT re-enter
+      // handleCardPlay for an already-persisted command; the event log / AOE
+      // append dedup by seqNo rejects duplicate command processing. A periodic
+      // reconciliation job scans the event log for CARD_RESOLVED rows whose
+      // outbox state is unsatisfied and rebuilds the outbox from the log.
+      try {
+        await this.transportOutbox.enqueue(resolved);
+      } catch {
+        // Best-effort recovery task; even if this throws, reconciliation from
+        // the event log is the durable backstop that preserves COMMITTED.
+        try {
+          await this.recoveryTaskStore.append({
+            matchId: this.matchId,
+            seqNo: resolved.seqNo,
+            kind: "REBUILD_OUTBOX_FROM_LOG",
+            source: "transportOutbox.enqueue_post_apply",
+          });
+        } catch {
+          // Recovery task store unavailable — rely on periodic reconciliation.
+        }
+        return { status: "COMMITTED_PENDING_RECOVERY", seqNo: resolved.seqNo };
+      }
       this.pendingEffects.push(resolved);
       this.scheduleMicroBatchFlush(appendedAtMono);
       return { status: "COMMITTED_APPLIED", seqNo: resolved.seqNo };
@@ -561,6 +847,12 @@ class MatchHandler {
     );
   }
 
+  private flushRetryCount = 0;
+  private flushExhausted = false; // live-process flag; NOT crash-safe — see restart contract below
+  private static readonly FLUSH_RETRY_BASE_MS = 100;
+  private static readonly FLUSH_RETRY_MAX_MS = 10_000;
+  private static readonly FLUSH_RETRY_MAX_ATTEMPTS = 20;
+
   private async flushPendingEffects() {
     if (this.flushPromise) {
       return this.flushPromise;
@@ -568,41 +860,139 @@ class MatchHandler {
 
     this.flushPromise = (async () => {
       if (this.pendingEffects.length === 0) return;
-      const effects = [...this.pendingEffects];
-      try {
-        const aoeCountInRound = await this.eventLog.countAoeResolved(
-          this.matchId,
-          effects[0].roundNo,
-        );
-        this.emit("CARD_RESOLVED_BATCH", {
-          seqNo: effects.at(-1)!.seqNo, // transport metadata only; NOT a replay cursor
-          roundNo: effects[0].roundNo,
-          effects,
-          aoeCountInRound,
-        });
-        // Fire-and-forget emit is not sufficient to drop committed items.
-        // Pending transport stays durable in the outbox and is removed only
-        // after ack/resync advancement proves delivery or safe supersession.
-        await this.transportOutbox.markDispatched(
-          effects.map((event) => event.seqNo),
-        );
-        // Keep pendingEffects as the in-memory view of the durable outbox until
-        // ack/resync advancement confirms delivery or safe supersession.
-        this.pendingEffects = await this.transportOutbox.loadPending(
-          this.matchId,
-        );
-        this.flushScheduled = false;
-        this.flushDeadline = null;
-        if (this.pendingEffects.length > 0) {
-          this.scheduleMicroBatchFlush(this.clock.monotonicNow());
+
+      // Partition pending effects by roundNo so each batch belongs to exactly
+      // one round. Sort each partition by ascending seqNo before emit.
+      const byRound = new Map<number, CardEffectEvent[]>();
+      for (const eff of this.pendingEffects) {
+        const bucket = byRound.get(eff.roundNo) ?? [];
+        bucket.push(eff);
+        byRound.set(eff.roundNo, bucket);
+      }
+
+      for (const [roundNo, roundEffects] of byRound) {
+        const sorted = roundEffects.sort((a, b) => a.seqNo - b.seqNo);
+        try {
+          const aoeCountInRound = await this.eventLog.countAoeResolved(
+            this.matchId,
+            roundNo,
+          );
+          this.emit("CARD_RESOLVED_BATCH", {
+            seqNo: sorted.at(-1)!.seqNo, // transport metadata only; NOT a replay cursor
+            roundNo: sorted[0].roundNo, // first (== roundNo) after sort
+            effects: sorted,
+            aoeCountInRound,
+          });
+          // Mark only the emitted batch's events as dispatched.
+          await this.transportOutbox.markDispatched(
+            sorted.map((event) => event.seqNo),
+          );
+          this.flushRetryCount = 0; // reset on success
+        } catch {
+          // Exponential backoff with jitter + limit to avoid hot loop.
+          this.flushRetryCount++;
+          if (this.flushRetryCount >= MatchHandler.FLUSH_RETRY_MAX_ATTEMPTS) {
+            // Terminal state for this process. The in-memory `flushExhausted`
+            // flag is a live-process optimization — it is NOT crash-safe. On
+            // restart, the handler re-derives exhaustion by checking for a
+            // persisted FLUSH_RETRY_EXHAUSTED recovery task (or via the
+            // periodic reconciliation job).
+            //
+            // CRASH-SAFETY ORDER (append-first): the idempotent recovery task
+            // MUST be appended BEFORE the in-memory flag and metric are
+            // updated. Only set `flushExhausted` and record the metric AFTER a
+            // successful append. If the append fails, leave `flushExhausted`
+            // false and rely on the periodic reconciliation job to detect and
+            // recover the exhausted match. This ordering guarantees that
+            // whenever the flag is set, a durable restart signal already
+            // exists; a crash before append leaves no flag AND no recovery
+            // task, so reconciliation is the only backstop (correct — we
+            // cannot pretend to be exhausted without a durable record).
+            // Idempotent key = (matchId, seqNo, kind) — repeated calls cannot
+            // create duplicate recovery tasks.
+            let appendOk = false;
+            let appendErr: unknown = undefined;
+            try {
+              await this.recoveryTaskStore.append({
+                matchId: this.matchId,
+                seqNo: sorted[0].seqNo,
+                kind: "FLUSH_RETRY_EXHAUSTED",
+                source: "flushPendingEffects",
+              });
+              appendOk = true;
+            } catch (err) {
+              appendErr = err;
+              // Recovery task store unavailable — DO NOT set flag/metric;
+              // reconciliation will detect the exhausted match and recover.
+              // Observability: surface the failure via a structured error log
+              // AND a dedicated append-failure metric so ops can distinguish
+              // "no exhaustion reached" from "exhaustion reached but durable
+              // record write failed". `card.flush_exhausted` is intentionally
+              // NOT incremented here — that metric is reserved for the
+              // post-append-success telemetry path (see below) so dashboards
+              // only flag true exhausted matches, not transient store blips.
+              this.logger.error(
+                {
+                  matchId: this.matchId,
+                  seqNo: sorted[0].seqNo,
+                  kind: "FLUSH_RETRY_EXHAUSTED",
+                  source: "flushPendingEffects",
+                  retryCount: this.flushRetryCount,
+                  err,
+                },
+                "flush_recovery_task_append_failed",
+              );
+              this.metrics.increment("card.flush_exhausted_append_failed", {
+                matchId: this.matchId,
+                seqNo: sorted[0].seqNo,
+              });
+            }
+            if (appendOk) {
+              this.flushExhausted = true;
+              this.flushScheduled = false;
+              // Record metric/log for ops visibility — only after durable
+              // signal exists.
+              this.metrics.increment("card.flush_exhausted", {
+                matchId: this.matchId,
+                seqNo: sorted[0].seqNo,
+              });
+            }
+            return; // terminal — no further retry scheduling, no propagation
+          }
+          // Before the next retry, reload pending effects so that any effects
+          // whose seqNo was marked dispatched by a partial-success flush are
+          // removed — already-dispatched partitions must not be emitted again.
+          this.pendingEffects = await this.transportOutbox.loadPending(
+            this.matchId,
+          );
+          const base = Math.min(
+            MatchHandler.FLUSH_RETRY_BASE_MS * 2 ** this.flushRetryCount,
+            MatchHandler.FLUSH_RETRY_MAX_MS,
+          );
+          const jitter = Math.floor(Math.random() * (base * 0.25));
+          const delay = base + jitter;
+          // Keep events in the outbox; maintain pending state across retries.
+          // Only reset flush scheduling for the next retry cadence.
+          this.flushScheduled = false;
+          this.flushDeadline = this.clock.monotonicNow() + delay;
+          // Expose pending age for ops monitoring (metric/alert hook).
+          // If pending effects persist beyond a threshold, an alert fires.
+          setTimeout(
+            () => void this.flushPendingEffects().catch(() => undefined),
+            delay,
+          );
+          return; // stop processing further rounds this pass
         }
-      } catch {
-        this.flushScheduled = false;
-        this.flushDeadline = null;
-        setTimeout(
-          () => void this.flushPendingEffects().catch(() => undefined),
-          50,
-        );
+      }
+
+      // Reload pending after all emitted batches dispatched.
+      this.pendingEffects = await this.transportOutbox.loadPending(
+        this.matchId,
+      );
+      this.flushScheduled = false;
+      this.flushDeadline = null;
+      if (this.pendingEffects.length > 0) {
+        this.scheduleMicroBatchFlush(this.clock.monotonicNow());
       }
     })();
 
@@ -620,11 +1010,16 @@ class MatchHandler {
 - Effects apply immediately in the authoritative state machine; target timers, locks and UI update during the answer window.
 - `appendedAtMono` is captured only **after** `reserveAoeAndAppendIfAllowed` succeeds, so the append→emit SLO measures from successful persistence to emit, not from pre-append waiting time.
 - If persistence succeeds but `applyCardEffect` fails deterministically, the command stays **committed**: rebuild from the canonical event log in `mode: "committed"` without re-entering the failing apply path. If rebuild or resync cannot complete inline, persist a durable recovery task first and return `COMMITTED_PENDING_RECOVERY` with the committed `seqNo` instead of rethrowing.
+- **Post-apply durability**: after the event is persisted and applied (COMMITTED), a transport-outbox enqueue failure or a recovery-task-store failure MUST NOT lose the committed result. The persisted `seqNo` is the idempotency key — callers cannot re-enter `handleCardPlay` for an already-persisted command (event-log dedup by `seqNo` rejects it). A periodic reconciliation job rebuilds the outbox from the event log as the durable backstop when both `transportOutbox.enqueue` and `recoveryTaskStore.append` fail.
 - `handleCardPlay` MUST return the `commandMutex.runExclusive(...)` promise so callers receive `COMMITTED_APPLIED`, `COMMITTED_REBUILT`, or `COMMITTED_PENDING_RECOVERY` plus the committed `seqNo`.
 - `pendingEffects`, transport broadcast, and recovery must converge on the same committed outcome; a recovered event must not be left out of `pendingEffects`, duplicated indefinitely, or replayed into the same deterministic failure loop.
 - Committed effects are not deleted merely because a Socket.IO emit was attempted. They stay in a durable transport outbox keyed by `seqNo`, and are removed only after ack/resync advancement proves delivery or safe supersession. Reconnect/failover reloads unsatisfied outbox rows and deduplicates by `seqNo`.
 - Coverage MUST include connection drop before batch delivery, then reconnect/resync/failover recovery, proving no committed event is lost and duplicate retransmit by `seqNo` is harmless.
 - `endRound` is a flush/reset boundary, not the resolution boundary.
+- **Flush retry exhaustion (terminal, per-process)**: when `flushRetryCount` reaches `FLUSH_RETRY_MAX_ATTEMPTS`, the handler appends the idempotent `FLUSH_RETRY_EXHAUSTED` recovery task FIRST, and only AFTER a successful append sets `flushExhausted = true` (in-memory, live-process flag) and records the metric/log. The recovery task key is idempotent — `(matchId, seqNo, kind)` — so repeated calls cannot create duplicates. If the append fails, `flushExhausted` is left `false` and the metric is NOT recorded; the periodic event-log reconciliation job is the durable backstop that detects and recovers the exhausted match. The handler returns immediately either way: no further retry scheduling, no propagation of rejection, no further recovery tasks for the same exhaustion. **Append-failure observability (telemetry distinct from exhaustion signal):** when the recovery-task append throws, the catch branch MUST emit a structured error log (`flush_recovery_task_append_failed` with `matchId`, `seqNo`, `kind`, `retryCount`, `err`) AND increment the dedicated failure metric `card.flush_exhausted_append_failed`. The success-side telemetry `card.flush_exhausted` is intentionally NEVER recorded on append failure so dashboards distinguish true exhausted matches from transient store blips. Coverage MUST assert: (i) append failure increments `card.flush_exhausted_append_failed` (and the structured log fires); (ii) `card.flush_exhausted` is NOT incremented on append failure; (iii) once reconciliation recovers and the append eventually succeeds, `card.flush_exhausted` IS recorded (no silent telemetry loss after durable recovery). **Crash-safety / restart contract (append-first)**: the in-memory `flushExhausted` flag is NOT crash-safe — it is lost on process restart. The ordering guarantee is: whenever the flag is set, a durable `FLUSH_RETRY_EXHAUSTED` recovery task already exists. On startup, the handler re-derives exhaustion state by querying for a persisted `FLUSH_RETRY_EXHAUSTED` recovery task for the match (or via reconciliation). Coverage MUST include three crash points: (i) crash **before** append completes — no flag, no recovery task; reconciliation recovers and the handler does not silently claim exhaustion; (ii) crash **after** append succeeds but before the flag/metric update — restart finds the durable recovery task and does not resume retrying; (iii) restart recovery — kill the process after exhaustion is fully reached, restart the handler, and verify it does NOT resume retrying — the persisted recovery task (or reconciliation) provides the durable signal.
+- **Startup recovery gate (retries blocked while exhaustion state is unknown)**: the durable `FLUSH_RETRY_EXHAUSTED` lookup / reconciliation on startup is **asynchronous**, so `flushExhausted === false` after restart means "unknown", NOT "not exhausted". The handler MUST start in an explicit `recoveryPending` state and block **flush** scheduling — `scheduleMicroBatchFlush` and every flush retry timer — while that recovery is in flight. Scheduling resumes only after recovery completes AND confirms no durable `FLUSH_RETRY_EXHAUSTED` task exists for the match; if recovery confirms exhaustion, the handler sets `flushExhausted = true` and stays terminal. **Two independent retry mechanisms — do not conflate:** (1) the _flush_ retry timer, gated by `recoveryPending`; (2) a **dedicated backoff-based reconciliation retry** for the durable lookup itself, which is explicitly **NOT** gated by `recoveryPending` — gating it would deadlock the gate forever, since the only thing that can clear `recoveryPending` is a completed lookup. If the lookup fails, flush scheduling stays fail-closed (blocked) while the reconciliation mechanism retries the lookup on its own backoff schedule; never fall through to flush scheduling on an inconclusive result. **The blocking condition is `recoveryPending === true`, NOT the value of `flushExhausted`** — the flag is never a sufficient gate because "unknown" and "not exhausted" are indistinguishable through it. Coverage MUST assert: (iv) with the recovery lookup held pending (unresolved promise) after restart, an incoming flush trigger schedules **no** flush and starts **no** retry timer while `recoveryPending === true` — asserted for **both** `flushExhausted === undefined` (never set in a fresh process) AND `flushExhausted === false` (explicitly unset), since both mean "unknown" during the recovery window; resolving the lookup as "not exhausted" then allows **exactly one** scheduled flush (assert the scheduler fired once — not zero, not twice); resolving it as "exhausted" keeps scheduling blocked (zero flushes, zero timers, handler stays terminal). (v) **Lookup failure then successful recovery**: first lookup attempt rejects, the backoff reconciliation retry fires and the second attempt resolves "not exhausted". Assert **zero** flushes and **zero** flush retry timers across the ENTIRE pending window (spanning the failed attempt, the backoff interval, and the retry in flight), that the reconciliation retry itself was NOT blocked by `recoveryPending`, and that **exactly one** flush is scheduled only after the successful attempt clears the gate.
+- **Partial-success flush**: after any partial-success flush (some rounds emitted + `markDispatched`, then a later round fails), the handler MUST reload `pendingEffects` via `transportOutbox.loadPending` before the next retry, so effects whose `seqNo` was already marked dispatched are removed and never re-emitted.
+- **Apply-failure recovery appends (NOT flush exhaustion)**: the `EMIT_STATE_RESYNC` and `REBUILD_AND_RESYNC` recovery-task appends in the `applyCardEffect` path are guarded (try/catch) so an append failure is swallowed to preserve COMMITTED status — but they do NOT set `flushExhausted`, do NOT record `card.flush_exhausted`, and do NOT stop flush retries. Only the flush-retry exhaustion path (above) is terminal. Reconciliation handles the remaining recovery work for apply-failure appends consistently across event-sourcing layers.
 - Track D replay contract remains preserved because each `CARD_RESOLVED` has its own monotonic `seqNo` in the event log; `CARD_RESOLVED_BATCH` is never appended.
 - Load tests must assert append→emit latency under load still meets the SLO.
 

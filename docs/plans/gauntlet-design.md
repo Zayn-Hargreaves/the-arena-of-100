@@ -173,13 +173,22 @@ interface ResolvedQuestion {
 
 ### Precision & rounding (deterministic)
 
-- Không dùng IEEE-754 float. Mult được lưu fixed-point milli: `0.3 = 300`,
-  `0.5 = 500`, `1.5 = 1_500`, `3.7 = 3_700`; `×1 = 1_000`.
-- **Arithmetic type (G1):** safe-integer `number` (not `bigint`). Intermediate
-  products for G1 ranges stay within `Number.MAX_SAFE_INTEGER`. The single final
-  division normalizes the two milli-scaled multipliers (`1_000 × 1_000 = 1_000_000`
-  effective unit) back to milli-points and uses `Math.trunc` toward zero:
+- Không dùng decimal floating-point multipliers. Multipliers là fixed-point
+  milli integers: `0.3 = 300`, `0.5 = 500`, `1.5 = 1_500`, `3.7 = 3_700`;
+  `×1 = 1_000`. Lưu ý: `number` storage (IEEE-754 doubles) IS allowed for safe
+  integer products — the prohibition is on decimal-floating-point
+  _multipliers_ (e.g. `0.3`, `1.5` as runtime floats), not on the IEEE-754
+  representation used for safe integer arithmetic. Live scoring và replay
+  harness dùng cùng arithmetic-mode selection algorithm ở "Arithmetic mode
+  selection" dưới đây, nên semantics là identical between live và replay.
+- **Arithmetic type (G1):** `number` when the complete product is provably
+  safe, otherwise `bigint` from the first multiplication — see "Arithmetic
+  mode selection" below. The single final division normalizes the three
+  milli-scaled multipliers — `categoryMultiplierMilli`, `runMultiplierMilli`,
+  and `questionMultiplierMilli` (`1_000 × 1_000 × 1_000 = 1_000_000` effective
+  unit) back to milli-points and uses integer division toward zero:
   ```ts
+  // number path (provably safe product)
   scoreMilli = Math.trunc(
     ((Base + chipBonus) *
       categoryMultiplierMilli *
@@ -187,11 +196,50 @@ interface ResolvedQuestion {
       questionMultiplierMilli) /
       1_000_000,
   );
+  // bigint path (product may exceed MAX_SAFE_INTEGER)
+  scoreMilli_big = numerator_big / 1_000_000n;
   ```
-  No scorer path may use floating-point rounding semantics that differ from
-  `Math.trunc(numerator / 1_000_000)`.
+  Both paths use truncation toward zero — `Math.trunc` for `number`, bigint
+  integer division for `bigint` (never call `Math.trunc` on a `bigint`).
   Serialize as JSON **integer** numbers (never float strings). No mid-question
   rounding; accumulate exact milli-points through the floor.
+- **Upper bounds (balance config MUST enforce):** the frozen balance config
+  (`balanceConfigVersion`) MUST pin explicit maxima. These maxima are inputs
+  to "Arithmetic mode selection" below — use `number` only when the worst-case
+  product is a safe integer, and require `bigint` otherwise. Valid
+  configurations whose worst-case product exceeds `Number.MAX_SAFE_INTEGER`
+  are accepted and select bigint:
+  - `Base` ≤ `100` (unscaled points; Easy 10 / Medium 20 / Hard 40, cap allows
+    future tuning).
+  - `chipBonus` total per question ≤ `1_000` (sum of all active chip perks).
+  - `categoryMultiplierMilli` ≤ `10_000` (i.e. ×10).
+  - `runMultiplierMilli` ≤ `100_000` (i.e. ×100, well beyond any realistic build).
+  - `questionMultiplierMilli` ≤ `10_000` (i.e. ×10).
+  - Worst-case intermediate product:
+    `(100 + 1_000) × 10_000 × 100_000 × 10_000 = 1.1 × 10^16` — this EXCEEDS
+    `Number.MAX_SAFE_INTEGER` (≈ `9.007 × 10^15`), so G1 maxima select the
+    bigint path. The "Arithmetic mode selection" below uses this worst-case
+    product to choose bigint before the first multiplication.
+- **Arithmetic mode selection (deterministic, single path):** the scorer, live
+  reducer, replay harness, and leaderboard score path MUST all choose the
+  arithmetic mode **before** the first multiplication — never ad hoc mid-flight.
+  The algorithm is:
+  1. Compute `worstCaseProduct = (Base_max + chipBonus_max) ×
+categoryMultiplierMilli_max × runMultiplierMilli_max ×
+questionMultiplierMilli_max` from the frozen balance config maxima.
+  2. If `Number.isSafeInteger(worstCaseProduct)` is `true`, use `number`
+     throughout: `scoreMilli = Math.trunc(numerator / 1_000_000)`.
+  3. Otherwise, use `bigint` from the first multiplication: cast every factor
+     to `bigint`, accumulate the product as `bigint`, and divide with bigint
+     integer division toward zero: `scoreMilli_big = numerator_big /
+1_000_000n`. Never call `Math.trunc` on a `bigint` (it throws `TypeError`).
+  4. Convert to `number` (and serialize) only after asserting
+     `Number.isSafeInteger(Number(scoreMilli_big))`. If the quotient is
+     outside `[-(2^53-1), 2^53-1]`, throw `ScoreOverflowError` — no silent
+     truncation, no float corruption.
+     All four paths share this single milli-point contract. The guard runs in
+     both the live reducer and the replay harness so a replay divergence is
+     impossible by construction.
 - Target check: exact integer `floorScoreMilli >= targetMilli` after Q5.
 - Display / UI only: round-half-up
   `Math.floor(scoreMilli / 1000 + 0.5)`. Persisted replay and leaderboard keep
@@ -263,19 +311,30 @@ required for readonly replay that does not re-run current ruleset/config):
 
 ```typescript
 interface QuestionResolvedEvent {
-  // effect flags (single-effect cases unchanged)
+  // ── Identity (event identity = (runId, floorNo, questionIndex)) ──
+  runId: string;
+  floorNo: number;
+  questionIndex: number;
+  // ── Effect flags (single-effect cases unchanged) ──
   insuranceConsumed: boolean;
   doubleOrNothingConsumed: boolean;
   // livesDelta = livesAfter - livesBefore (actual, post-Insurance). This is
   // the SOLE field used to mutate `lives`. Insurance → 0; uninsured wrong →
   // -1; uninsured wrong under DoN → -2; correct → 0.
-  livesDelta: number;
+  livesDelta: -2 | -1 | 0;
   // intendedLivesLoss: pre-Insurance intended loss — audit/UI only. NEVER
   // used to mutate `lives`. `null` on correct answers (no loss intended);
   // `1` for plain wrong; `2` for wrong under DoN.
   intendedLivesLoss: 1 | 2 | null;
   streakReset: boolean;
-  // full reducer outputs
+  // ── maxLives (authoritative — KHAT_MAU stateful effect) ──
+  // maxLivesAfter is the persistent ceiling on `lives` after this resolve.
+  // KHAT_MAU reduces maxLives by 1 (minimum 1) when acquired via
+  // PerkAcquiredEvent; livesAfter can never exceed maxLivesAfter. Replay
+  // reconstructs maxLives from the full PerkAcquiredEvent sequence — never
+  // from ambient config.
+  maxLivesAfter: number;
+  // ── Full reducer outputs ──
   scoreMilli: number;
   answerElapsedMs: number; // persisted clamped elapsed used by readonly replay
   floorScoreMilli: number;
@@ -292,7 +351,7 @@ interface QuestionResolvedEvent {
   runMultiplierMilliAfter: number;
   // floorCleared: null until Q5 resolves, concrete boolean after.
   floorCleared: boolean | null; // null before Q5; true/false after Q5 resolves
-  // Event-specific terminal contract:
+  // ── Event-specific terminal contract ──
   //   `DailyRunHeader.rulesetVersion` MUST bind EXACTLY ONE completionEncoding
   //   discriminator for the whole run:
   //   - `completionEncoding: "INLINE_COMPLETED"`:
@@ -320,16 +379,68 @@ interface QuestionResolvedEvent {
   runEnded: boolean;
   runEndReason: "NO_LIVES" | "MISSED_TARGET" | "COMPLETED" | null;
 }
+
+/**
+ * Terminal run event for the `SEPARATE_RUN_COMPLETED` pattern. Identity = (runId).
+ * Field order below is the canonical payload order — serializers and replay MUST
+ * preserve it byte-for-byte. When this event exists, QuestionResolvedEvent for the
+ * terminal floor-9 Q5 success MUST keep runEnded=false / runEndReason=null.
+ */
+interface RunCompletedEvent {
+  runId: string;
+  completionEncoding: "SEPARATE_RUN_COMPLETED";
+  runEnded: true;
+  runEndReason: "COMPLETED";
+  floorNo: number;
+  questionIndex: number;
+  livesAfter: number;
+  floorScoreMilli: number;
+  runScoreMilli: number;
+  runMultiplierMilliAfter: number;
+  streakAfter: number;
+}
 ```
 
+**Runtime validation for persisted JSON.** Before an event is accepted into the
+event log or replayed, the deserializer MUST validate the JSON shape against
+the schema above and reject invalid event shapes. Specifically:
+
+- `livesDelta` MUST be one of `-2`, `-1`, `0` — any other value is rejected.
+- `intendedLivesLoss` MUST be `1`, `2`, or `null`.
+- Terminal-state combinations MUST satisfy the `completionEncoding` invariant
+  above. Invalid combinations (e.g. `runEnded=true` with `runEndReason=null`,
+  or `runEndReason="COMPLETED"` with `runEnded=false`) are rejected.
+- If `completionEncoding === "INLINE_COMPLETED"`, a `RunCompletedEvent` in the
+  same run is rejected. If `completionEncoding === "SEPARATE_RUN_COMPLETED"`,
+  any `QuestionResolvedEvent` with `runEndReason="COMPLETED"` is rejected.
+- `maxLivesAfter` MUST be a safe integer ≥ `1` and ≥ `livesAfter`.
+- Identity fields (`runId`, `floorNo`, `questionIndex`) MUST be present and
+  type-correct; missing or malformed identity is rejected before the event
+  enters the dedup/replay pipeline.
+
 **Replay-required effect state.** Các effect còn lại trong floor (Bảo Hiểm
-remaining, DoN remaining-uses, perk modifier inventory) được persist bởi
-`FloorStartedEvent` / `PerkAcquiredEvent` / `FloorEndedEvent` — không phải
-standalone `QuestionResolvedEvent` records. Readonly replay phối hợp full event
-sequence này theo `seqNo`; `streakAfter` + `runMultiplierMilliAfter` trên
-`QuestionResolvedEvent` là output cuối cùng dùng để rebuild persistent
+remaining, DoN remaining-uses, perk modifier inventory, and `maxLives`) được
+persist bởi `FloorStartedEvent` / `PerkAcquiredEvent` / `FloorEndedEvent` —
+không phải standalone `QuestionResolvedEvent` records. Readonly replay phối hợp
+full event sequence này theo `seqNo`; `streakAfter` + `runMultiplierMilliAfter`
+trên `QuestionResolvedEvent` là output cuối cùng dùng để rebuild persistent
 `runMultiplierMilli` của câu kế tiếp, còn `questionMultiplierMilli` captures the
 current-question Tốc Chiến application.
+
+**KHAT_MAU `maxLives` effect (authoritative stateful perk).** KHAT_MAU reduces
+`maxLives` by 1 (minimum 1) in exchange for +1.5 permanent base Mult. This is
+a **stateful** effect, not a transient flag:
+
+- `PerkAcquiredEvent` for KHAT_MAU MUST persist the resulting `maxLivesAfter`
+  value in its payload so replay can reconstruct the ceiling without re-running
+  perk resolution logic.
+- `QuestionResolvedEvent.maxLivesAfter` echoes the current `maxLives` ceiling
+  after each resolve; `livesAfter` can never exceed `maxLivesAfter`.
+- Snapshots MUST persist `maxLives` as part of the canonical run state.
+- Replay comparison output MUST include `maxLives` as an exact-match field
+  alongside the other authoritative fields (see the comparison table below).
+- Replay reconstructs `maxLives` from the complete `PerkAcquiredEvent` sequence
+  (not from ambient config) and MUST produce the same value as the live reducer.
 
 **Replay test vector bắt buộc.** Test vector của replay harness phải bao
 gồm **full authoritative combined event sequence**, không chỉ một event
@@ -367,14 +478,20 @@ gồm **full authoritative combined event sequence**, không chỉ một event
   `QuestionResolvedEvent` `runEndReason="COMPLETED"` và `runEnded=true`.
 
 **Authoritative replay payload contract.** Trước khi implement replay harness,
-shared contract phải pin rõ các payload sau:
+shared contract phải pin rõ các payload sau. **Uniform idempotency rule:** for
+every retryable event below, a duplicate with the same `(eventType, eventIdentity)`
+AND identical canonical payload bytes is idempotent (silently ignored, no second
+effect). A duplicate with the same identity but different canonical payload bytes
+is a hard conflict and MUST be rejected. Events marked "no idempotent retry" do
+not support redelivery and MUST NOT be replayed as duplicates.
 
-- `DailyRunHeader`: immutable run identity/header only; never mutated after run start. `completionEncoding` is the explicit completion-pattern discriminator bound by `rulesetVersion`; validation rejects any event sequence that violates the chosen pattern.
-- `FloorStartedEvent`: identity = `(runId, floorNo)`; identifies `targetMilli`, question-set identity for the floor, and the exact floor-scoped resets applied at transition.
-- `PerkAcquiredEvent`: identity = the existing idempotency key inside the run; identifies acquired perk/effect, whether it is run-scoped or floor-scoped, and inventory mutation semantics.
-- `QuestionResolvedEvent`: identity = `(runId, floorNo, questionIndex)`; authoritative per-question reducer outputs only, including persisted `answerElapsedMs`, `canonicalArrivalKey`, and `acceptedBeforeDeadline`; no hidden dependency on ambient state.
-- `FloorEndedEvent`: identity = `(runId, floorNo)`; authoritative floor terminal decision (`floorCleared`) plus reward draw references emitted for the next step.
-- `RunCompletedEvent` if used: identity = `(runId)`; terminal run event with precedence over embedding `"COMPLETED"` inside `QuestionResolvedEvent`. Canonical payload field order is fixed as `runId`, `completionEncoding`, `runEnded`, `runEndReason`, `floorNo`, `questionIndex`, `livesAfter`, `floorScoreMilli`, `runScoreMilli`, `runMultiplierMilliAfter`, `streakAfter`.
+- `DailyRunHeader`: immutable run identity/header only; never mutated after run start. `completionEncoding` is the explicit completion-pattern discriminator bound by `rulesetVersion`; validation rejects any event sequence that violates the chosen pattern. Identity = `(runId)`. Idempotent: identical header is a no-op; conflicting header is rejected.
+- `FloorStartedEvent`: identity = `(runId, floorNo)`; identifies `targetMilli`, question-set identity for the floor, and the exact floor-scoped resets applied at transition. Idempotent on identical payload; conflicting payload rejected.
+- `PerkAcquiredEvent`: identity = the existing idempotency key inside the run; identifies acquired perk/effect, whether it is run-scoped or floor-scoped, and inventory mutation semantics (including `maxLivesAfter` for KHAT_MAU). Idempotent on identical payload; conflicting payload rejected.
+- `DRAW_RESOLVED`: identity = `(runId, drawId)`; payload includes `count` and `resultIds`. Idempotent on identical `count` + `resultIds`; mismatched `count` or `resultIds` rejected. Identity does NOT include `count` — `(runId, drawId)` remains the canonical key.
+- `QuestionResolvedEvent`: identity = `(runId, floorNo, questionIndex)`; authoritative per-question reducer outputs only, including persisted `answerElapsedMs`, `canonicalArrivalKey`, and `acceptedBeforeDeadline`; no hidden dependency on ambient state. Idempotent on identical payload; conflicting payload rejected.
+- `FloorEndedEvent`: identity = `(runId, floorNo)`; authoritative floor terminal decision (`floorCleared`) plus reward draw references emitted for the next step. Idempotent on identical payload; conflicting payload rejected.
+- `RunCompletedEvent` if used: identity = `(runId)`; terminal run event with precedence over embedding `"COMPLETED"` inside `QuestionResolvedEvent`. Canonical payload field order is fixed as `runId`, `completionEncoding`, `runEnded`, `runEndReason`, `floorNo`, `questionIndex`, `livesAfter`, `floorScoreMilli`, `runScoreMilli`, `runMultiplierMilliAfter`, `streakAfter` — matching the `RunCompletedEvent` interface declared in the authoritative schema above. Idempotent on identical payload; conflicting payload rejected.
 
 **Canonical payload serializer for duplicate detection.** `QuestionResolvedEvent`,
 `DRAW_RESOLVED`, and `RunCompletedEvent` MUST use a dedicated payload serializer,
@@ -382,15 +499,15 @@ separate from the §2 header serializer. This serializer is the source of truth
 for idempotent payload equality and conflicting-duplicate detection.
 
 - Scope: payload bytes only; never reuse header/envelope serialization.
-- Metadata excluded from serialization: `seqNo`, transport timestamp/envelope
-  timestamp, append metadata, trace/request ids, and any other non-payload
-  envelope fields.
+- Metadata excluded from serialization: `seqNo` (including `QuestionResolvedEvent.seqNo`, `DrawTraceEntry.seqNo`, and `CardResolvedBatchEvent.seqNo`), transport timestamp/envelope timestamp, append metadata, trace/request ids, and any other non-payload envelope fields. Payload projection is defined independently of header serialization.
 - `QuestionResolvedEvent` field order is fixed exactly as declared in the
-  authoritative schema above. `DRAW_RESOLVED` field order is fixed exactly as
-  declared in its shared schema. `RunCompletedEvent` field order is fixed by its
-  shared schema and MUST start with `runId`, then the completion discriminator /
-  terminal reason fields, then the final authoritative run totals. No producer
-  may reorder keys.
+  authoritative schema above. `DRAW_RESOLVED` (`DrawTraceEntry`) field order is
+  fixed exactly as declared in its shared schema: `type`, `runId`, `drawId`,
+  `count`, `resultIds` (envelope `seqNo` excluded). `RunCompletedEvent` field
+  order is fixed by its interface declared in the authoritative schema above
+  and MUST start with `runId`, then the completion discriminator / terminal
+  reason fields, then the final authoritative run totals. No producer may
+  reorder keys.
 - Arrays serialize in schema order and preserve element order exactly;
   duplicate handling does not sort arrays. For `DRAW_RESOLVED.resultIds`,
   emitted order is authoritative.
@@ -401,7 +518,22 @@ for idempotent payload equality and conflicting-duplicate detection.
 - Strings use NFC-normalized Unicode scalar values before JSON escaping. Escape
   only `"` `\` and control chars U+0000..U+001F using lowercase JSON escapes;
   do not escape `/`; non-control non-ASCII code points are emitted as UTF-8, not
-  `\uXXXX`, except when required to encode a control character.
+  `\uXXXX`, except when required to encode a control character. The exact
+  per-codepoint mapping is pinned (no encoder may choose between named and
+  `\u00xx` for the same codepoint):
+  - **Short 2-byte escapes** (the only named escapes used): `"` → `\"`, `\` → `\\`,
+    newline `U+000A` → `\n`, `U+0009` → `\t`, `U+000D` → `\r`, `U+0008` → `\b`,
+    `U+000C` → `\f`.
+  - **All other control chars** in `U+0000`..`U+001F` — i.e. every codepoint
+    NOT listed as a named escape above (including `U+0000` and any not covered
+    by the short 2-byte set) — MUST use the lowercase 6-byte `\u00xx` form
+    (e.g. `U+0001` → `\u0001`, `U+001A` → `\u001a`). Hex digits are lowercase.
+    The 7 named escapes (`"`, `\`, `U+000A`, `U+0009`, `U+000D`, `U+0008`,
+    `U+000C`) are the ONLY codepoints allowed to use the short 2-byte form;
+    no encoder may emit `\u00xx` for those 7, and no encoder may emit a named
+    escape for any other codepoint. This removes all per-codepoint ambiguity.
+  - This matches the escape table in the §"Seed-derivation contract" and the
+    byte-level test vectors below.
 - Scalar encoding is fixed: booleans as lowercase `true`/`false`, `null` as
   lowercase `null`, and integers as base-10 ASCII with optional leading `-`
   only for values < 0. `-0` is invalid and MUST be rejected. Only safe integers
@@ -446,6 +578,7 @@ không chỉ multiplier:
 | Field                                                                    | So sánh |
 | ------------------------------------------------------------------------ | ------- |
 | `livesAfter`                                                             | exact   |
+| `maxLivesAfter`                                                          | exact   |
 | `floorScoreMilli`                                                        | exact   |
 | `runScoreMilli`                                                          | exact   |
 | `runMultiplierMilli`                                                     | exact   |
@@ -598,13 +731,16 @@ dev seed. Việc: import nguồn mở (OpenTDB...) + tool nhập/duyệt tối t
 
 ### G1 — Minimal Viable Gauntlet (2-3 tuần)
 
-- Solo run: floor → 5 câu → `(Base + chips) × category × runMult` → reward 1-trong-3 →
-  `floorScoreMilli ≥ targetMilli` → floor kế
+- Solo run: floor → 5 câu →
+  `(Base + chips) × categoryMult × runMult × questionMult / 1_000_000` →
+  reward 1-trong-3 → `floorScoreMilli ≥ targetMilli` → floor kế
 - 15 perk trên, engine = **single pure reducer** `reduceQuestionResolved(runState,
 resolvedQuestion, perks) => nextRunState`. `applyPerk(runState, perk) => nextRunState`
   là helper adapter riêng giữa các floor — không replace reducer, không mutation.
-  Thứ tự resolve chốt trong data (cộng chip trước → category Mult → run Mult),
-  fixed-point milli-points, không float
+  Thứ tự resolve chốt trong data: **cộng chip trước → category Mult → run Mult →
+  `questionMultiplierMilli`**, rồi chia fixed-point `/ 1_000_000` (milli-scaled
+  multipliers, `Math.trunc` toward zero). Live reducer và replay MUST dùng cùng
+  công thức này — xem §3 "Công thức resolve" cho contract đầy đủ.
 - **Seeded PRNG server-side ngay từ dòng đầu**: immutable root `prngSeed` in
   `DailyRunHeader` + `deriveSubstream(prngSeed, drawId)` per draw; draws append
   as `DRAW_RESOLVED` events. No mutable `seedState` stream. Daily _feature_ để
@@ -637,12 +773,15 @@ interface DailyRunHeader {
 /**
  * Append-only event-log entry — NOT stored inside snapshot meta.
  * Unique key: (runId, drawId). At most one successful draw per key.
+ * `count` is persisted so retries can verify the requested count matches;
+ * identity remains (runId, drawId) — `count` is NOT part of the identity key.
  */
 export interface DrawTraceEntry {
   readonly seqNo: number;
   readonly type: "DRAW_RESOLVED";
   readonly runId: string;
   readonly drawId: string; // "floor-3-perk-offer", "floor-2-question-4"
+  readonly count: number; // requested draw count validated by Number.isSafeInteger && >= 0
   readonly resultIds: readonly string[]; // authoritative server-derived question/perk IDs drawn
 }
 ```
@@ -661,9 +800,10 @@ export interface DrawTraceEntry {
   - First append wins.
   - Persistence MUST enforce a unique constraint on `(runId, drawId)` and use a
     transaction around insert + conflict handling.
-  - Retry re-derives `resultIds` server-side and compares with the stored event.
-    Identical derived IDs → idempotent success (no second event).
-  - Retry whose derived IDs differ from the stored event → **reject**.
+  - Retry re-derives `resultIds` server-side and compares **both `count` and
+    `resultIds`** with the stored event. Identical `count` AND identical derived
+    IDs → idempotent success (no second event).
+  - Retry whose `count` or derived IDs differ from the stored event → **reject**.
   - Replay never materializes two draws for the same `drawId`.
 - **Leaderboard identity (before any write):**
   1. Validate `prngSeed === sha256-hex(canonicalSerialize({ balanceConfigVersion,
@@ -816,7 +956,7 @@ identity, replay, và audit.
 | `U+0000`   | `00`         | `5c 75 30 30 30 30`    |
 | `U+0001`   | `01`         | `5c 75 30 30 30 31`    |
 | `U+001A`   | `1a`         | `5c 75 30 30 31 61`    |
-| `U+000D`   | `0d`         | `5c 75 30 30 30 64`    |
+| `U+000D`   | `0d`         | `5c 72`                |
 | newline    | `0a`         | `5c 6e`                |
 
 Điều kiện mở daily: G0 đạt ~500 câu.

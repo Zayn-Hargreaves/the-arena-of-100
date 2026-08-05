@@ -29,7 +29,7 @@
 - Do not introduce Command Pattern for current socket use cases.
 - Consider Strategy Pattern only for focused tie-break refactor if/when needed.
 - Treat BotFactory/AvatarFactory/EmoteFactory/ContentModerationFactory as planned/future only.
-- **Class + Card Hybrid (Phase 2)**: 2 classes (Công / Thủ) random server-side, 18 cards milestone-based, 20s round flow. Card events là event log extension (Track D compatible), KHÔNG transient state. Client rehydrate dựa trên `serverTimestamp` + `remainingMs` + `targetPlayerIds` (clock drift safe, MUTATION/TEMPORARY split). AOE cap 2/round + immediate apply + ≤50ms `CARD_RESOLVED_BATCH` micro-batch. Banned: `Time Drain`, `Push Down`. Chi tiết: `memory-bank/spec/class-cards-phase.md`.
+- **Class + Card Hybrid (Phase 2)**: 2 classes (Công / Thủ) random server-side, 18 cards milestone-based, 20s round flow. Card events là event log extension (Track D compatible), KHÔNG transient state. Client rehydrate dựa trên `serverTimestamp` + `remainingMs` + `targetPlayerIds` (clock drift safe, MUTATION/TEMPORARY split). AOE cap 2/round + immediate apply + ≤50ms `CARD_RESOLVED_BATCH` micro-batch. **CARD_RESOLVED_BATCH durable ordering**: mỗi inner `CARD_RESOLVED` event có stable identity và `seqNo` được persist TRƯỚC khi apply state, rồi apply ngay lập tức; replay/failover dedup từng effect dùng identity + `seqNo` đó. `CARD_RESOLVED_BATCH` chỉ là transport frame — KHÔNG có replay identity riêng, `seqNo` của batch KHÔNG phải replay cursor. Banned: `Time Drain`, `Push Down`. Chi tiết: `memory-bank/spec/class-cards-phase.md`.
 
 ## Immediate Priority Queue
 
@@ -54,7 +54,7 @@
 - In-match AFK policy should follow locked product semantics: missing active round deadline means elimination in that round.
 - Mass-spectator transport split is deferred until `k6` evidence exists.
 - Moderation MVP is completed; deeper fingerprint/shadow-ban is post-MVP.
-- **Class + Card Hybrid (Phase 1-3)**: spec locked 2026-07-30, chưa bắt đầu code. Phase 1 (Daily Challenge) ship Week 1-2. Phase 2 (Class+Card) ship Week 3-6, bắt đầu bằng `gitnexus_impact` upstream cho `MatchStateMachine.playCard` với blast-radius report và cảnh báo nếu risk HIGH/CRITICAL; phase này closes the **C3-owner-failover** gate. Phase 3 (Integration + VI i18n) ship Week 7-8 và closes the **C3-card-batch-failover** gate.
+- **Class + Card Hybrid (Phase 1-3)**: spec locked 2026-07-30, chưa bắt đầu code. Phase 1 (Daily Challenge) ship Week 1-2. Phase 2 (Class+Card) ship Week 3-6, bắt đầu bằng `gitnexus_impact({target: "symbolName", direction: "upstream"})` cho **mọi** function, class hoặc method sắp sửa sửa (không chỉ `MatchStateMachine.playCard`). Artifact ghi direct callers, affected processes và risk level; dừng trước khi sửa nếu risk HIGH hoặc CRITICAL. Phase này closes the **C3-owner-failover** gate. Phase 3 (Integration + VI i18n) ship Week 7-8 và closes the **C3-card-batch-failover** gate. `gitnexus_detect_changes()` MUST chạy trước mỗi commit.
 
 ## Agent Read Policy
 
