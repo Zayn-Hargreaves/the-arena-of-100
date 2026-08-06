@@ -184,17 +184,18 @@ Run the relevant package tests before using these numbers in PR text.
    pattern, `CARD_RESOLVED_BATCH` aggregation, AOE cap 2/round. Bắt đầu bằng
    `gitnexus_impact` cho `MatchStateMachine.playCard` (CRITICAL). Card events
    là event log extension (Track D compatible), reconnect rehydrate từ
-   `serverTimestamp` + `remainingMs` (clock drift safe). **Rehydrate contract
-   (canonical expiry schema):** persist only `expiresAt` as authoritative
+   `expiresAtServer` và một `serverNow` do server chụp. **Rehydrate contract
+   (canonical expiry schema):** persist only `expiresAtServer` as authoritative
    state — epoch milliseconds (Unix ms, `number`), là canonical logical expiry
-   dùng cho reconnect/failover restore. `remainingMs` trong `CardEffectEvent`
+   dùng cho reconnect/failover restore (tên field khớp `TemporaryEffect.expiresAtServer`
+   và `ActiveEffectSnapshot.expiresAtServer` trong spec §4.2). `remainingMs` trong `CardEffectEvent`
    và `CARD_RESOLVED_BATCH` là **derived transport metadata** — replay MUST
-   ignore any serialized `remainingMs` và recalculate từ `expiresAt` + server
+   ignore any serialized `remainingMs` và recalculate từ `expiresAtServer` + server
    clock. `serverTimestamp` trên `CARD_RESOLVED` event ghi thời điểm effect
    được append (audit), KHÔNG phải effect-start cho `CARD_RESOLVED_BATCH`;
    `CARD_RESOLVED_BATCH.seqNo`/timestamp là transport metadata only. `serverNow`
    được chụp đúng **một lần** cho mỗi lần reconnect/rehydration và dùng để tính
-   `remainingMs = max(0, expiresAt - serverNow)` cho tất cả restored effects.
+   `remainingMs = max(0, expiresAtServer - serverNow)` cho tất cả restored effects.
    Server recalculate và send `remainingMs` trong reconnect payload. **DoD**:
    18 cards designed + 95% unit coverage + **C3-owner-failover** (baseline
    owner-lease) pass + EN i18n ship + all existing tests pass. Acceptance
@@ -212,14 +213,13 @@ Run the relevant package tests before using these numbers in PR text.
      persisted + outbox row present, emit attempted, ack chưa về → row vẫn
      undispatched).
    - (c) Before retry reset (outbox committed, `flushRetryCount` not reset yet).
-     **Successful commit** = durable event-log commit AND outbox commit both
-     confirmed (the snapshot checkpoint is NOT part of this commit boundary — it
-     is a separate recovery-layer concern); retry reset / cancellation chỉ xảy
+     **Durable commit boundary** = durable event-log append AND durable outbox-intent append both confirmed.
+     Client delivery ACK is separate from the durable commit boundary.
+     If the event-log append succeeds but the outbox append fails, reconcile by `commandId` or `eventId`; do not append the event again.
+     (the snapshot checkpoint is NOT part of this commit boundary —
+     it is a separate recovery-layer concern); retry reset / cancellation chỉ xảy
      sau durable commit boundary.
-     **CLASS_ASSIGNED commit contract (failure (b) recovery — reconciliation
-     backstop):** event log là source of truth cho `CLASS_ASSIGNED`; transport
-     outbox là derivative layer để deliver tới client. Không yêu cầu atomic
-     write — architectural choice là reconciliation backstop. Cụ thể:
+     **CLASS_ASSIGNED commit contract (failure (b) recovery — reconciliation backstop):** event log là source of truth cho `CLASS_ASSIGNED`; transport outbox là derivative layer để deliver tới client. Không yêu cầu atomic write — architectural choice là reconciliation backstop. Cụ thể:
    - **Stable event identity:** mỗi committed event có `(matchId, seqNo)`
      làm idempotency key — replay dedup và outbox replay đều dùng key này.
    - **Outbox rebuild:** nếu transport outbox chưa có row cho committed event
@@ -236,6 +236,8 @@ Run the relevant package tests before using these numbers in PR text.
      **truncated tail** — nếu log có `1..5` mà event `5` bị mất, derived bound
      thành `4` và mọi contiguity check trên `(snapshot.seqNo, 4]` đều pass
      dù event cao nhất đã mất. Chỉ external mark mới phát hiện được case này.
+     `highWaterMark` và event range MUST được lấy từ cùng một linearizable event-log view.
+     Nếu `highWaterMark` thay đổi trong lúc scan, recovery MUST discard kết quả scan và retry.
      Thứ tự bắt buộc: obtain validated mark → reject snapshot nếu
      `snapshot.seqNo > highWaterMark` → validate contiguity → **chỉ sau đó**
      mới apply snapshot fallback hoặc gap handling.
@@ -250,7 +252,6 @@ Run the relevant package tests before using these numbers in PR text.
      replay coverage validator trong `memory-bank/spec/class-cards-phase.md`
      §4.4 "Reconnect Strategy" đã dùng
      (`(snapshotSeqNo, validatedHighWaterMark]`).
-     **On-violation behavior khác nhau theo invariant:**
      - (i) fail (`snapshot.seqNo >` high-water mark) → reject/rebuild
        snapshot, fall back về **last validated event-log checkpoint** (worst
        case `seqNo = 0` → full scan) làm cursor, surface inconsistency qua
@@ -324,7 +325,7 @@ Run the relevant package tests before using these numbers in PR text.
      snapshot seqNo KHÔNG được replay lại.
    - Assert: assignment theo event authoritative source (`CLASS_ASSIGNED`),
      KHÔNG theo in-memory state hay snapshot.
-   - Assert: `remainingMs == max(0, expiresAt - serverNow)` (server clock),
+   - Assert: `remainingMs == max(0, expiresAtServer - serverNow)` (server clock),
      KHÔNG phải client clock hay stale `remainingMs`.
    - Assert: `CARD_RESOLVED` được apply **exactly once** khi new owner replay
      event log (dedup by `seqNo` — failure injection (b) không gây double-apply).

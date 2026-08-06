@@ -366,9 +366,14 @@ interface QuestionResolvedEvent {
   //       Completion is encoded only by RunCompletedEvent, and
   //       QuestionResolvedEvent + RunCompletedEvent MUST be appended atomically
   //       in one persistence transaction.
-  //       Replay sees a QuestionResolvedEvent without its paired RunCompletedEvent
-  //       as an interrupted partial sequence: keep the floor/question outputs,
-  //       but the run is NOT completed until the matching RunCompletedEvent arrives.
+  //       BECAUSE that append is atomic, a COMMITTED log can NEVER contain the
+  //       terminal QuestionResolvedEvent without its paired RunCompletedEvent.
+  //       An orphan terminal QuestionResolvedEvent is therefore NOT an
+  //       "interrupted partial sequence" to be resumed: it is an UNCOMMITTED
+  //       (torn / partially-visible) write and MUST be REJECTED by replay and
+  //       by the append path. Replay MUST NOT apply its floor/question outputs.
+  //       Only non-terminal QuestionResolvedEvents (runEnded === false on a
+  //       non-final resolve) legitimately appear without a RunCompletedEvent.
   //   Mixed sequences are invalid: reject any run that contains both inline
   //   completion (`runEndReason="COMPLETED"`) and RunCompletedEvent.
   // Precedence when multiple terminal conditions apply in the same resolve
@@ -412,8 +417,27 @@ the schema above and reject invalid event shapes. Specifically:
   or `runEndReason="COMPLETED"` with `runEnded=false`) are rejected.
 - If `completionEncoding === "INLINE_COMPLETED"`, a `RunCompletedEvent` in the
   same run is rejected. If `completionEncoding === "SEPARATE_RUN_COMPLETED"`,
-  any `QuestionResolvedEvent` with `runEndReason="COMPLETED"` is rejected.
+  any `QuestionResolvedEvent` with `runEndReason="COMPLETED"` is rejected, and a
+  terminal floor-9 Q5 success `QuestionResolvedEvent` without its atomically
+  paired `RunCompletedEvent` is rejected as an uncommitted/torn write — never
+  accepted as a resumable partial sequence.
 - `maxLivesAfter` MUST be a safe integer ≥ `1` and ≥ `livesAfter`.
+- **Life-state domain validation (before any clamp arithmetic).** On
+  `PerkAcquiredEvent` for KHAT_MAU, each of `maxLivesBefore`, `livesBefore`,
+  `livesAfter`, and `maxLivesAfter` MUST independently satisfy
+  `Number.isSafeInteger(v) && v >= 0`. This check runs **before** any
+  `Math.max` / `Math.min` clamp is computed or verified. Invalid pre-state or
+  post-state values are **rejected outright** — never normalized, clamped, or
+  coerced into range. Clamping a malformed input would silently manufacture a
+  self-consistent triple (e.g. `livesBefore = -3` with `livesAfter = -3` and
+  `clampedLivesLoss = 0` satisfies the consistency rule below while encoding
+  impossible state), so normalization is forbidden at this boundary.
+- On `PerkAcquiredEvent` for KHAT_MAU, `maxLivesAfter`, `livesAfter`, and
+  `clampedLivesLoss` MUST be mutually consistent — checked only after the
+  domain validation above passes:
+  `livesAfter === Math.min(livesBefore, maxLivesAfter)` and
+  `clampedLivesLoss === livesBefore - livesAfter` with `clampedLivesLoss ∈ {0, 1}`.
+  Inconsistent triples are rejected.
 - Identity fields (`runId`, `floorNo`, `questionIndex`) MUST be present and
   type-correct; missing or malformed identity is rejected before the event
   enters the dedup/replay pipeline.
@@ -434,6 +458,36 @@ a **stateful** effect, not a transient flag:
 - `PerkAcquiredEvent` for KHAT_MAU MUST persist the resulting `maxLivesAfter`
   value in its payload so replay can reconstruct the ceiling without re-running
   perk resolution logic.
+- **Ceiling clamp on acquisition (authoritative).** **Precondition (checked
+  first):** `livesBefore >= 1` and `maxLivesBefore >= 1`. A run at `0` lives has
+  already terminated with `runEndReason="NO_LIVES"`, so no perk offer can be
+  presented and no acquisition can occur. A `PerkAcquiredEvent` carrying
+  `livesBefore === 0` is an **invariant violation** and MUST be rejected — it is
+  not a clamp case. Once the precondition holds, acquiring KHAT_MAU resolves in
+  a fixed order inside the same `PerkAcquiredEvent`:
+  1. `maxLivesAfter = Math.max(1, maxLivesBefore - 1)`
+  2. `livesAfter = Math.min(livesBefore, maxLivesAfter)`
+  3. `clampedLivesLoss = livesBefore - livesAfter` (`0` or `1`)
+
+  Because `maxLivesAfter >= 1` and `livesBefore >= 1`, the clamp always yields
+  `livesAfter >= 1`: **KHAT_MAU can never by itself reduce a run to `0` lives.**
+  It narrows the ceiling and may cost one life, but the run always survives the
+  acquisition — death comes later, from a wrong answer against the tighter
+  ceiling. This is exactly the floor-5/floor-6 narrative in §4.
+
+  Acquisition is **never rejected because of the ceiling**: when the player is
+  at the old life ceiling (`livesBefore === maxLivesBefore`), the reduction
+  **costs a real life immediately** — this is the perk's stated trade ("-1 mạng
+  tối đa, đổi +1.5 Mult nền vĩnh viễn **ngay**"). The only rejection is the
+  impossible pre-state in step 0. `PerkAcquiredEvent` MUST persist
+  `maxLivesAfter`, `livesAfter`, and `clampedLivesLoss` so replay applies the
+  clamp from stored values and never recomputes it from ambient config or the
+  current ruleset.
+
+- **Clamp is not a `livesDelta`.** `clampedLivesLoss` belongs to
+  `PerkAcquiredEvent`, not to `QuestionResolvedEvent`. It MUST NOT be folded
+  into any `QuestionResolvedEvent.livesDelta` (whose domain stays `-2 | -1 | 0`
+  and whose sole cause is answer resolution), and it never resets Chuỗi Cháy.
 - `QuestionResolvedEvent.maxLivesAfter` echoes the current `maxLives` ceiling
   after each resolve; `livesAfter` can never exceed `maxLivesAfter`.
 - Snapshots MUST persist `maxLives` as part of the canonical run state.
@@ -441,6 +495,19 @@ a **stateful** effect, not a transient flag:
   alongside the other authoritative fields (see the comparison table below).
 - Replay reconstructs `maxLives` from the complete `PerkAcquiredEvent` sequence
   (not from ambient config) and MUST produce the same value as the live reducer.
+- **Required test vector — acquisition at the old life ceiling.** The replay
+  harness MUST cover KHAT_MAU acquired while `livesBefore === maxLivesBefore`
+  (e.g. `3/3 → 2/2`, `clampedLivesLoss = 1`) **and** acquired below the ceiling
+  (e.g. `2/3 → 2/2`, `clampedLivesLoss = 0`). Both vectors assert that the live
+  reducer and readonly replay produce byte-identical `maxLivesAfter`,
+  `livesAfter`, and `clampedLivesLoss`. A third vector MUST cover the
+  `maxLives` floor (`maxLivesBefore === 1`, `livesBefore === 1` →
+  `maxLivesAfter === 1`, `livesAfter === 1`, `clampedLivesLoss = 0`: no further
+  reduction and no life lost). A fourth vector MUST cover **rejection** of a
+  malformed `PerkAcquiredEvent` with `livesBefore === 0` (impossible pre-state
+  per step 0 — the run already ended with `NO_LIVES`), asserting the event is
+  rejected rather than clamped. There is deliberately **no** clamp-to-zero
+  vector: the clamp cannot produce `livesAfter === 0` from a valid pre-state.
 
 **Replay test vector bắt buộc.** Test vector của replay harness phải bao
 gồm **full authoritative combined event sequence**, không chỉ một event
@@ -468,11 +535,12 @@ gồm **full authoritative combined event sequence**, không chỉ một event
   `QuestionResolvedEvent`). Trong pattern này, `QuestionResolvedEvent`
   của floor 9 / Q5 success MUST keep `runEnded=false` và
   `runEndReason=null`, sau đó `RunCompletedEvent` mới encode completion;
-  append của cặp này MUST là atomic; replay test vector phải cover đúng chuỗi
-  đó, cả trường hợp interrupted khi `QuestionResolvedEvent` đã có nhưng
-  `RunCompletedEvent` còn thiếu. Expected state của partial sequence:
-  floor/question outputs đã apply, nhưng `runEnded=false`, completion chưa
-  materialize, và replay/resume phải chờ hoặc bù `RunCompletedEvent`.
+  append của cặp này MUST là atomic. Vì atomic, một committed log KHÔNG
+  BAO GIỜ chứa orphan terminal `QuestionResolvedEvent` — test vector phải
+  cover **rejection case**: feed một log có terminal `QuestionResolvedEvent`
+  nhưng thiếu `RunCompletedEvent`, assert replay **reject** log đó
+  (uncommitted/torn write) và KHÔNG apply floor/question outputs, KHÔNG
+  chờ, KHÔNG bù event thiếu.
   Replay cũng phải assert duplicate `RunCompletedEvent` cùng canonical payload
   là idempotent, còn payload xung đột cho cùng identity thì reject. Nếu không, một
   `QuestionResolvedEvent` `runEndReason="COMPLETED"` và `runEnded=true`.
@@ -487,7 +555,7 @@ not support redelivery and MUST NOT be replayed as duplicates.
 
 - `DailyRunHeader`: immutable run identity/header only; never mutated after run start. `completionEncoding` is the explicit completion-pattern discriminator bound by `rulesetVersion`; validation rejects any event sequence that violates the chosen pattern. Identity = `(runId)`. Idempotent: identical header is a no-op; conflicting header is rejected.
 - `FloorStartedEvent`: identity = `(runId, floorNo)`; identifies `targetMilli`, question-set identity for the floor, and the exact floor-scoped resets applied at transition. Idempotent on identical payload; conflicting payload rejected.
-- `PerkAcquiredEvent`: identity = the existing idempotency key inside the run; identifies acquired perk/effect, whether it is run-scoped or floor-scoped, and inventory mutation semantics (including `maxLivesAfter` for KHAT_MAU). Idempotent on identical payload; conflicting payload rejected.
+- `PerkAcquiredEvent`: identity = the existing idempotency key inside the run; identifies acquired perk/effect, whether it is run-scoped or floor-scoped, and inventory mutation semantics (including `maxLivesAfter`, `livesAfter`, and `clampedLivesLoss` for KHAT_MAU). Idempotent on identical payload; conflicting payload rejected.
 - `DRAW_RESOLVED`: identity = `(runId, drawId)`; payload includes `count` and `resultIds`. Idempotent on identical `count` + `resultIds`; mismatched `count` or `resultIds` rejected. Identity does NOT include `count` — `(runId, drawId)` remains the canonical key.
 - `QuestionResolvedEvent`: identity = `(runId, floorNo, questionIndex)`; authoritative per-question reducer outputs only, including persisted `answerElapsedMs`, `canonicalArrivalKey`, and `acceptedBeforeDeadline`; no hidden dependency on ambient state. Idempotent on identical payload; conflicting payload rejected.
 - `FloorEndedEvent`: identity = `(runId, floorNo)`; authoritative floor terminal decision (`floorCleared`) plus reward draw references emitted for the next step. Idempotent on identical payload; conflicting payload rejected.
@@ -573,20 +641,36 @@ sequence above must rebuild state end-to-end exactly and idempotently without
 depending on standalone `QuestionResolvedEvent` records alone.
 
 So sánh replay output với game-core results cho **mọi** field authoritative,
-không chỉ multiplier:
+không chỉ multiplier. Bảng dưới đây phải phủ **toàn bộ** authoritative reducer
+output của `QuestionResolvedEvent` — mọi persisted authoritative field so sánh
+**exact**. Không field authoritative nào được phép vắng mặt khỏi test-vector
+check; field nào là _derived_ thì phải được validate qua reconstruction rule
+định nghĩa của nó (ghi rõ ở cột "So sánh"), chứ không được bỏ qua.
 
-| Field                                                                    | So sánh |
-| ------------------------------------------------------------------------ | ------- |
-| `livesAfter`                                                             | exact   |
-| `maxLivesAfter`                                                          | exact   |
-| `floorScoreMilli`                                                        | exact   |
-| `runScoreMilli`                                                          | exact   |
-| `runMultiplierMilli`                                                     | exact   |
-| `floorCleared`                                                           | exact   |
-| `runEnded`                                                               | exact   |
-| `runEndReason` (incl. COMPLETED)                                         | exact   |
-| `streakAfter`                                                            | exact   |
-| Effect inventory (Insurance remaining, DoN remaining-uses, perks active) | exact   |
+| Field                                                                     | So sánh                                                                  |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `livesAfter`                                                              | exact                                                                    |
+| `maxLivesAfter`                                                           | exact                                                                    |
+| `livesDelta`                                                              | exact                                                                    |
+| `intendedLivesLoss`                                                       | exact (audit/UI only — never mutates `lives`)                            |
+| `streakReset`                                                             | exact                                                                    |
+| `insuranceConsumed`                                                       | exact                                                                    |
+| `doubleOrNothingConsumed`                                                 | exact                                                                    |
+| `scoreMilli`                                                              | exact                                                                    |
+| `floorScoreMilli`                                                         | exact                                                                    |
+| `runScoreMilli`                                                           | exact                                                                    |
+| `questionMultiplierMilli`                                                 | exact                                                                    |
+| `runMultiplierMilliAfter`                                                 | exact                                                                    |
+| `streakAfter`                                                             | exact                                                                    |
+| `answerElapsedMs`                                                         | exact (persisted clamped value — never recomputed from timestamps)       |
+| `canonicalArrivalKey`                                                     | exact (byte-for-byte string compare)                                     |
+| `acceptedBeforeDeadline`                                                  | exact                                                                    |
+| `floorCleared`                                                            | exact (incl. `null` before Q5)                                           |
+| `runEnded`                                                                | exact                                                                    |
+| `runEndReason` (incl. COMPLETED)                                          | exact                                                                    |
+| Effect inventory (Insurance remaining, DoN remaining-uses, perks active)  | exact                                                                    |
+| KHAT_MAU clamp triple (`maxLivesAfter`, `livesAfter`, `clampedLivesLoss`) | exact on `PerkAcquiredEvent`                                             |
+| Derived display values (e.g. non-milli score rendering)                   | validated via documented reconstruction rule from the exact fields above |
 
 Test phải phát hiện bất kỳ divergence nào (escape difference, field-order
 drift, drawId normalization, mulberry32 seed width) trước khi code merge.
@@ -907,7 +991,12 @@ identity, replay, và audit.
      thuộc `questionPoolVersion` / `balanceConfigVersion` và đã frozen
      trong snapshot; replay dùng pool của recorded version, không pool
      hiện tại. Kích thước pool `N`.
-   - **Sampling algorithm (one pass, no replacement):** cho mỗi vị trí
+   - **Sampling algorithm (one pass, no replacement):** collision state được
+     track bằng **`selectedIdx: Set<number>`** — một set các **numeric pool
+     index** đã chấp nhận, KHÔNG phải `resultIds` (chứa pool IDs, khác type).
+     So sánh `idx` với `resultIds` là spec violation. Khởi tạo
+     `selectedIdx = new Set<number>()` trước loop; invariant
+     `selectedIdx.size === resultIds.length` luôn giữ. Cho mỗi vị trí
      `i ∈ [0, count)` của `resultIds`:
      1. Nếu `resultIds.length === pool.length`, return ngay result hiện có
         trước khi consume thêm float nào.
@@ -915,9 +1004,10 @@ identity, replay, và audit.
      3. `idx = Math.floor(u * pool.length)` — `pool.length = N`, không
         modulo với pool còn lại (no Fisher-Yates trong pool). Integer
         arithmetic, `Math.trunc` toward zero.
-     4. Nếu `idx` **chưa xuất hiện** trong các vị trí `[0, i)` của
-        `resultIds`, append `pool[idx]` vào `resultIds`.
-     5. Nếu `idx` **đã xuất hiện** (collision), trước mỗi retry phải check
+     4. Nếu `!selectedIdx.has(idx)` (chỉ số **chưa dùng**): `selectedIdx.add(idx)`
+        **trước**, rồi append `pool[idx]` vào `resultIds`. Hai bước này là một
+        đơn vị không tách rời — không được append mà bỏ `add`.
+     5. Nếu `selectedIdx.has(idx)` (collision), trước mỗi retry phải check
         `resultIds.length === pool.length`; nếu pool đã cạn thì return ngay
         result hiện có. Nếu chưa cạn, pull float tiếp theo và
         thử lại bước 2. Lặp đến khi tìm được chỉ số chưa dùng.
@@ -931,7 +1021,8 @@ identity, replay, và audit.
    - **Duplicate-handling rule:** `resultIds` chỉ chứa IDs phân biệt;
      sample **without replacement**. Một ID không xuất hiện hai lần
      trong cùng `resultIds`. Collision trong một draw dẫn đến retry
-     trên cùng substream — không tạo draw mới.
+     trên cùng substream — không tạo draw mới. Uniqueness được enforce qua
+     `selectedIdx` (numeric index set), không qua string-ID comparison.
    - **Float-to-index conversion:** `idx = Math.floor(u * N)` với
      `u ∈ [0, 1)`. Lưu ý deterministic: `u === 1.0` không xảy ra trong
      `mulberry32` output (period 2^32, `u < 1`), nên không cần clamp
