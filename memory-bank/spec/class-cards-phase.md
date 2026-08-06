@@ -192,9 +192,50 @@ contract" (mulberry32, `Math.floor(u * N)`, unsigned 32-bit arithmetic).
 - **Without replacement**: a drawn `CardId` is removed from the class pool for
   the remainder of this offer; duplicate draws are impossible by construction.
 
-**Random effect resolution (canonical, same `prngVersion` as sampling):** two
-cards resolve randomly server-side; both MUST persist their concrete outcome so
-replay never re-runs the RNG.
+**Random effect resolution (canonical, same `prngVersion` as sampling):** exactly
+**three cards** consume RNG at effect-resolution time, via **two templates**.
+Resolution happens **server-side in the resolver only**: the resolver draws the
+floats, then appends **exactly one `CARD_RESOLVED` event per resolution** carrying
+the concrete outcome. That event is the sole authoritative record. Every
+downstream consumer — reducer, replay harness, snapshot restore, web client —
+**applies that persisted outcome verbatim**: it MUST NOT re-run the RNG and MUST
+NOT persist an outcome of its own. This list is **exhaustive** — no other card
+draws a float at resolution:
+
+| Card    | Template                  | Catalog     | Float consumption                   | Persisted outcome  |
+| ------- | ------------------------- | ----------- | ----------------------------------- | ------------------ |
+| `CB-3`  | `HAND_DESTROY_TEMPLATE`   | §3.1 (Công) | `count=1` → `effectiveCount` floats | `destroyedCardIds` |
+| `TN-1`  | `OPTION_DISABLE_TEMPLATE` | §3.2 (Thủ)  | `count=2` → `effectiveCount` floats | `indexes`          |
+| `TN-10` | `OPTION_DISABLE_TEMPLATE` | §3.2 (Thủ)  | `count=1` → `effectiveCount` floats | `indexes`          |
+
+**`effectiveCount` (shared rule, both templates):**
+`effectiveCount = Math.min(count, availableAtResolution)` — the number of
+candidates actually selectable at resolve time. Float accounting follows it
+exactly:
+
+- Consume **exactly one float per selectable candidate** — `effectiveCount`
+  floats total, drawn sequentially without replacement.
+- **Stop consuming the moment candidates are exhausted.** Never draw a float for
+  a pick that has no candidate to index into; a phantom float desynchronizes the
+  substream and diverges every subsequent draw (same failure mode as the
+  "Byte-level RNG consumption" rules above).
+- **Partial exhaustion is the normal case, not an error.** TN-1 (`count=2`)
+  against a question with only **one** wrong option remaining has
+  `effectiveCount = 1`: it consumes **exactly 1 float**, not 2, and persists a
+  single-element `indexes`. Replay therefore stays aligned on the same RNG
+  substream position.
+- **Total exhaustion** (`availableAtResolution === 0`) gives
+  `effectiveCount = 0`: **zero floats**, resolved array `[]`. Still a valid
+  committed effect — not an error and not a no-op to be skipped at replay.
+- Persist **only** the resulting `indexes` / `destroyedCardIds`; `effectiveCount`
+  is recoverable as the array's length and is never a separate authoritative
+  field.
+
+`backfireRate` (`CardDefinition.backfireRate`, §4.1) is **not** a runtime RNG
+consumer in v1: no float is drawn for it, and no backfire outcome is resolved or
+persisted. If a backfire roll is introduced later, it MUST first be added to the
+table above with an explicit float-consumption position — an unspecified roll
+would desynchronize the substream and diverge every subsequent draw.
 
 **Resolved cardinality (shared rule for both templates):** `count` always means
 the **requested** number of picks and is never rewritten. The resolved array
@@ -206,8 +247,9 @@ state.
 
 - `OPTION_DISABLE_TEMPLATE` (TN-1, TN-10) — `selectionPolicy`
   `"RANDOM_WRONG_OPTIONS"`: the wrong-answer option indexes of the current
-  question form an ordered frozen list (ascending index). For each of `count`
-  picks, consume one float `u`; `idx = Math.floor(u * remainingWrongCount)`;
+  question form an ordered frozen list (ascending index). For each of
+  `effectiveCount` picks, consume one float `u`;
+  `idx = Math.floor(u * remainingWrongCount)`;
   remove the picked index (without replacement). The resolved
   `OPTION_DISABLE.indexes` is persisted on the event, and
   `indexes.length === Math.min(count, wrongOptionCountAtResolution)`. If fewer
@@ -216,10 +258,10 @@ state.
 - `HAND_DESTROY_TEMPLATE` (CB-3) — `selectionPolicy`
   `"RANDOM_FROM_TARGET_HAND"`: the target's hand is an ordered frozen list
   sorted by `compareCardId` (see "Canonical `CardId` order" in §3.3) — never
-  plain lexicographic order. For each of `count` picks, consume one float `u`;
-  `idx = Math.floor(u * remainingHandSize)`; remove the picked card (without
-  replacement). The resolved `HAND_DESTROY.destroyedCardIds` is persisted on
-  the event, and
+  plain lexicographic order. For each of `effectiveCount` picks, consume one
+  float `u`; `idx = Math.floor(u * remainingHandSize)`; remove the picked card
+  (without replacement). The resolved `HAND_DESTROY.destroyedCardIds` is
+  persisted on the event, and
   `destroyedCardIds.length === Math.min(count, targetHandSizeAtResolution)`.
   If the target's hand holds fewer than `count` cards, destroy every card
   available and persist that shorter list. An **empty** target hand
@@ -1340,7 +1382,23 @@ export interface CardPickedEvent {
 
 **Sub-task C — MatchStateMachine integration (Week 4, Days 8-12) ⚠️ CRITICAL**
 
-- `gitnexus_impact` upstream cho `MatchStateMachine.playCard` document blast radius
+- `gitnexus_impact` **riêng cho từng symbol** sắp sửa — mỗi symbol một call, với
+  chính symbol đó làm `target`:
+  - `gitnexus_impact({target: "MatchStateMachine.playCard", direction: "upstream"})`
+  - `gitnexus_impact({target: "pickOffer", direction: "upstream"})`
+  - `gitnexus_impact({target: "classAssignment", direction: "upstream"})`
+
+  Artifact ghi direct callers / affected processes / risk level cho **mỗi**
+  symbol; **dừng và warn** nếu risk HIGH hoặc CRITICAL trước khi sửa.
+
+- **Stale-index recovery:** nếu `gitnexus_impact` hoặc `gitnexus_detect_changes()`
+  báo index stale, **dừng quy trình ngay** — không dùng kết quả đó làm risk
+  level. Chạy `npx gitnexus analyze`, đợi hoàn tất, rồi **chạy lại
+  `gitnexus_impact` riêng cho từng symbol** (đúng danh sách trên, mỗi symbol một
+  call) trước khi tiếp tục sửa.
+- `gitnexus_detect_changes()` MUST chạy trước mỗi commit, và kết quả MUST được
+  **verify**: chỉ các symbol và execution flow dự kiến thay đổi. Bất kỳ symbol
+  hoặc flow ngoài dự kiến nào xuất hiện → dừng và điều tra trước khi commit.
 - `playCard()`, `pickOffer()`, `classAssignment` methods
 - Card events qua event log (Track D compatible)
 - Strategy Pattern cho card resolution
@@ -1348,6 +1406,11 @@ export interface CardPickedEvent {
 
 **Sub-task D — API Layer (Week 5, Days 13-16)**
 
+- `gitnexus_impact({direction: "upstream"})` cho **mọi** symbol sắp sửa:
+  `MatchHandler.handleCardPick`, `handleCardPlay`, `handleEndRound`, và mọi
+  function/method trong `card-validator.ts`. Artifact ghi direct callers /
+  affected processes / risk level; **dừng và warn** nếu risk HIGH hoặc CRITICAL
+  trước khi sửa. `gitnexus_detect_changes()` MUST chạy trước mỗi commit.
 - `MatchHandler` thêm `handleCardPick`, `handleCardPlay` (immediate broadcast, required `commandId` idempotency key), `handleEndRound` (counter reset)
 - `card-validator.ts` (hand state, target validity, cooldown, AOE cap, required `commandId` shape)
 - Class assignment khi match start

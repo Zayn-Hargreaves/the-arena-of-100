@@ -432,6 +432,17 @@ the schema above and reject invalid event shapes. Specifically:
   self-consistent triple (e.g. `livesBefore = -3` with `livesAfter = -3` and
   `clampedLivesLoss = 0` satisfies the consistency rule below while encoding
   impossible state), so normalization is forbidden at this boundary.
+- **Producer-rule exact match (ceiling derivation).** On `PerkAcquiredEvent` for
+  KHAT_MAU, `maxLivesAfter` MUST equal `Math.max(1, maxLivesBefore - 1)` exactly.
+  This runs after the domain validation above and alongside the consistency
+  check below — it is an **independent** constraint, not implied by consistency.
+  The consistency triple only relates `livesAfter` to `maxLivesAfter`; it cannot
+  detect a `maxLivesAfter` the reducer could never have produced. Example: a
+  payload with `maxLivesBefore = 3`, `maxLivesAfter = 3`, `livesBefore = 3`,
+  `livesAfter = 3`, `clampedLivesLoss = 0` satisfies every consistency rule yet
+  is unproducible — the reducer would have yielded `maxLivesAfter = 2`. Such
+  payloads are **rejected**, never normalized or recomputed to the producer
+  value.
 - On `PerkAcquiredEvent` for KHAT_MAU, `maxLivesAfter`, `livesAfter`, and
   `clampedLivesLoss` MUST be mutually consistent — checked only after the
   domain validation above passes:
@@ -506,8 +517,14 @@ a **stateful** effect, not a transient flag:
   reduction and no life lost). A fourth vector MUST cover **rejection** of a
   malformed `PerkAcquiredEvent` with `livesBefore === 0` (impossible pre-state
   per step 0 — the run already ended with `NO_LIVES`), asserting the event is
-  rejected rather than clamped. There is deliberately **no** clamp-to-zero
-  vector: the clamp cannot produce `livesAfter === 0` from a valid pre-state.
+  rejected rather than clamped. A fifth vector MUST cover **rejection** of an
+  internally consistent but **unproducible** payload (`maxLivesBefore = 3` with
+  `maxLivesAfter = 3`, `livesBefore = 3`, `livesAfter = 3`,
+  `clampedLivesLoss = 0`): it satisfies the consistency triple but violates the
+  producer rule `maxLivesAfter === Math.max(1, maxLivesBefore - 1)`, so it MUST
+  be rejected rather than accepted or recomputed. There is deliberately **no**
+  clamp-to-zero vector: the clamp cannot produce `livesAfter === 0` from a valid
+  pre-state.
 
 **Replay test vector bắt buộc.** Test vector của replay harness phải bao
 gồm **full authoritative combined event sequence**, không chỉ một event
