@@ -25,6 +25,7 @@ arena-of-100/
 │   └── game-core/    # Pure game logic
 ├── infrastructure/   # Docker Compose files
 └── memory-bank/      # Project documentation
+    └── spec/         # Feature specs (e.g., class-cards-phase.md)
 ```
 
 ## Essential Commands
@@ -137,11 +138,15 @@ pnpm db:studio
   - the user explicitly asks for them, or
   - one of the 4 core files explicitly points to them.
 
+### Active Spec Docs
+
+- **[class-cards-phase.md](memory-bank/spec/class-cards-phase.md)** — source of truth cho Phase 1-3 (Daily Challenge + Class+Card Hybrid + Integration). Locked 2026-07-30. Read khi làm việc với Class system, Card effects, Daily Challenge. Scope gồm (non-exhaustive): `packages/shared/src/cards.ts`, `classes.ts`, `events.ts`, `packages/game-core/src/card-engine.ts`, `class-engine.ts`, `MatchStateMachine`, `MatchHandler`, card validators ở API boundary, card UI components và `apps/web/src/app/daily/`. Full touch list và phases xem spec **§5.2 / §5.3**. Package rules giữ nguyên: `@arena/shared` owns types/events/constants; `@arena/api` depends on shared + game-core; `@arena/web` depends only on shared.
+
 <!-- gitnexus:start -->
 
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **the-arena-of-100** (6783 symbols, 15923 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **the-arena-of-100** (6953 symbols, 16130 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
