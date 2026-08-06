@@ -227,9 +227,12 @@ exactly:
 - **Total exhaustion** (`availableAtResolution === 0`) gives
   `effectiveCount = 0`: **zero floats**, resolved array `[]`. Still a valid
   committed effect — not an error and not a no-op to be skipped at replay.
-- Persist **only** the resulting `indexes` / `destroyedCardIds`; `effectiveCount`
-  is recoverable as the array's length and is never a separate authoritative
-  field.
+- Persist the resolved `indexes` / `destroyedCardIds` **together with the
+  canonical cardinality metadata** (`count` + `availableAtResolution`, see
+  "Resolved cardinality" below). `effectiveCount` itself is **not** persisted —
+  it is exactly `Math.min(count, availableAtResolution)` and is recomputed from
+  the two persisted operands, so the validator can check the resolved length
+  without consulting live state.
 
 `backfireRate` (`CardDefinition.backfireRate`, §4.1) is **not** a runtime RNG
 consumer in v1: no float is drawn for it, and no backfire outcome is resolved or
@@ -251,8 +254,9 @@ state.
   `effectiveCount` picks, consume one float `u`;
   `idx = Math.floor(u * remainingWrongCount)`;
   remove the picked index (without replacement). The resolved
-  `OPTION_DISABLE.indexes` is persisted on the event, and
-  `indexes.length === Math.min(count, wrongOptionCountAtResolution)`. If fewer
+  `OPTION_DISABLE.indexes` is persisted on the event alongside `count` and
+  `availableAtResolution` (here: the wrong-option supply at resolve time), and
+  `indexes.length === Math.min(count, availableAtResolution)`. If fewer
   wrong options remain than `count`, disable every one available and persist
   that shorter list.
 - `HAND_DESTROY_TEMPLATE` (CB-3) — `selectionPolicy`
@@ -261,20 +265,27 @@ state.
   plain lexicographic order. For each of `effectiveCount` picks, consume one
   float `u`; `idx = Math.floor(u * remainingHandSize)`; remove the picked card
   (without replacement). The resolved `HAND_DESTROY.destroyedCardIds` is
-  persisted on the event, and
-  `destroyedCardIds.length === Math.min(count, targetHandSizeAtResolution)`.
+  persisted on the event alongside `count` and `availableAtResolution` (here:
+  the target hand size at resolve time), and
+  `destroyedCardIds.length === Math.min(count, availableAtResolution)`.
   If the target's hand holds fewer than `count` cards, destroy every card
   available and persist that shorter list. An **empty** target hand
-  (`targetHandSizeAtResolution === 0`) resolves to `destroyedCardIds: []`,
+  (`availableAtResolution === 0`) resolves to `destroyedCardIds: []`,
   consumes **zero** floats, and is still a valid committed effect — not an
   error and not a no-op to be skipped at replay.
 
 **Cardinality coverage (validator, reducer, replay):** the boundary validator
-MUST accept any resolved array whose length equals
-`Math.min(count, availableAtResolution)` and reject any other length (including
-a padded array of exactly `count`). The reducer and replay harness MUST cover
-three cases per template: full supply (`length === count`), partial supply
-(`0 < length < count`), and empty supply (`length === 0`, zero floats consumed).
+MUST recompute `Math.min(count, availableAtResolution)` **from the persisted
+payload alone** — never from live question or hand state — and accept only a
+resolved array of exactly that length, rejecting any other length (including a
+padded array of exactly `count`). `count` and `availableAtResolution` MUST both
+be safe integers with `count >= 1` and `availableAtResolution >= 0`; a payload
+violating either bound is rejected before the length check. The reducer and
+replay harness MUST cover three cases per template — full supply
+(`length === count`), partial supply (`0 < length < count`), and empty supply
+(`length === 0`, zero floats consumed) — and each vector MUST assert the
+persisted `count` and `availableAtResolution` values, not just the array length,
+so a payload whose metadata disagrees with its array is caught.
 
 **Replay MUST NOT re-randomize:** the reducer reads the persisted
 `indexes` / `destroyedCardIds` verbatim. Re-deriving them at replay time would
@@ -500,7 +511,20 @@ export type CardEffectTemplate =
 
 export type CardEffect =
   | { kind: "TIMER_MODIFY"; deltaMs: number; targetCount: number }
-  | { kind: "OPTION_DISABLE"; indexes: number[]; durationMs: number }
+  // resolved: concrete wrong-option indexes chosen server-side before append.
+  // `count` is the REQUESTED number and is never rewritten;
+  // `availableAtResolution` is the wrong-option supply captured at resolve time.
+  // `indexes.length === Math.min(count, availableAtResolution)` (§3.3
+  // "Resolved cardinality"), so the validator checks cardinality from the
+  // payload alone — never from live question state. Replay reads these indexes
+  // verbatim and MUST NOT re-run the RNG (§3.3 "Replay MUST NOT re-randomize").
+  | {
+      kind: "OPTION_DISABLE";
+      indexes: number[];
+      count: number;
+      availableAtResolution: number;
+      durationMs: number;
+    }
   | { kind: "OPTION_FAKE"; indexes: number[]; durationMs: number }
   | { kind: "OPTION_LOCK"; durationMs: number }
   | { kind: "HINT_REVEAL"; partial: string } // resolved: concrete string derived from current question
@@ -516,11 +540,17 @@ export type CardEffect =
   | { kind: "SCORE_MULT"; factor: number }
   // resolved: concrete cards chosen server-side before append.
   // `count` is the REQUESTED number and is never rewritten;
-  // `destroyedCardIds.length === Math.min(count, targetHandSizeAtResolution)`
+  // `availableAtResolution` is the target hand size captured at resolve time.
+  // `destroyedCardIds.length === Math.min(count, availableAtResolution)`
   // (§3.3 "Resolved cardinality"), so a short or empty target hand yields a
   // shorter array — never padded, never wrapped. Replay reads these IDs
   // verbatim and MUST NOT re-run the RNG (§3.3 "Replay MUST NOT re-randomize").
-  | { kind: "HAND_DESTROY"; count: number; destroyedCardIds: CardId[] }
+  | {
+      kind: "HAND_DESTROY";
+      count: number;
+      availableAtResolution: number;
+      destroyedCardIds: CardId[];
+    }
   | { kind: "SECOND_CHANCE" };
 ```
 
@@ -559,7 +589,15 @@ export type MutationEffect = {
     | { kind: "SCORE_MULT"; factor: number }
     // `destroyedCardIds` persists the concrete cards destroyed so replay and
     // the audit log agree; never re-derived from the RNG at replay time.
-    | { kind: "HAND_DESTROY"; count: number; destroyedCardIds: CardId[] }
+    // `count` + `availableAtResolution` carry the canonical cardinality so the
+    // validator checks `length === Math.min(count, availableAtResolution)`
+    // from the payload alone (§3.3 "Cardinality coverage").
+    | {
+        kind: "HAND_DESTROY";
+        count: number;
+        availableAtResolution: number;
+        destroyedCardIds: CardId[];
+      }
     | { kind: "SECOND_CHANCE" };
   resolution: "MUTATION";
   serverTimestamp: number;
@@ -575,8 +613,16 @@ export type TemporaryEffect = {
   offerSeqNo: number; // immutable: points back to CARD_OFFER.seqNo for selection correlation
   playedByPlayerId: string;
   targetPlayerIds: string[];
-  effect:
-    | { kind: "OPTION_DISABLE"; indexes: number[]; durationMs: number }
+  effect: // `count` + `availableAtResolution` carry the canonical cardinality so the
+    // validator checks `indexes.length === Math.min(count, availableAtResolution)`
+    // from the payload alone (§3.3 "Cardinality coverage").
+    | {
+        kind: "OPTION_DISABLE";
+        indexes: number[];
+        count: number;
+        availableAtResolution: number;
+        durationMs: number;
+      }
     | { kind: "OPTION_FAKE"; indexes: number[]; durationMs: number }
     | { kind: "OPTION_LOCK"; durationMs: number }
     | {
@@ -1406,11 +1452,24 @@ export interface CardPickedEvent {
 
 **Sub-task D — API Layer (Week 5, Days 13-16)**
 
-- `gitnexus_impact({direction: "upstream"})` cho **mọi** symbol sắp sửa:
-  `MatchHandler.handleCardPick`, `handleCardPlay`, `handleEndRound`, và mọi
-  function/method trong `card-validator.ts`. Artifact ghi direct callers /
-  affected processes / risk level; **dừng và warn** nếu risk HIGH hoặc CRITICAL
-  trước khi sửa. `gitnexus_detect_changes()` MUST chạy trước mỗi commit.
+- `gitnexus_impact` **riêng cho từng symbol** sắp sửa — mỗi symbol một call, với
+  chính symbol đó làm `target`:
+  - `gitnexus_impact({target: "MatchHandler.handleCardPick", direction: "upstream"})`
+  - `gitnexus_impact({target: "MatchHandler.handleCardPlay", direction: "upstream"})`
+  - `gitnexus_impact({target: "MatchHandler.handleEndRound", direction: "upstream"})`
+  - mỗi function/method trong `card-validator.ts` — một call riêng cho từng
+    symbol, không gộp theo file
+
+  Artifact ghi direct callers / affected processes / risk level cho **mỗi**
+  symbol; **dừng và warn** nếu risk HIGH hoặc CRITICAL trước khi sửa.
+
+- **Stale-index recovery:** nếu `gitnexus_impact` hoặc `gitnexus_detect_changes()`
+  báo index stale, **dừng quy trình ngay** — không dùng kết quả đó làm risk
+  level. Chạy `npx gitnexus analyze`, đợi hoàn tất, rồi chạy lại
+  `gitnexus_impact` riêng cho từng symbol trước khi tiếp tục sửa.
+- `gitnexus_detect_changes()` MUST chạy trước mỗi commit, và kết quả MUST được
+  **verify**: chỉ các symbol và execution flow dự kiến thay đổi. Bất kỳ symbol
+  hoặc flow ngoài dự kiến nào xuất hiện → dừng và điều tra trước khi commit.
 - `MatchHandler` thêm `handleCardPick`, `handleCardPlay` (immediate broadcast, required `commandId` idempotency key), `handleEndRound` (counter reset)
 - `card-validator.ts` (hand state, target validity, cooldown, AOE cap, required `commandId` shape)
 - Class assignment khi match start
