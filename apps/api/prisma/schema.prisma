@@ -49,6 +49,7 @@ model User {
   matchPlayers   MatchPlayer[]
   answers        Answer[]
   wonMatches     Match[]         @relation("MatchWinner")
+  dailyAttempts  DailyAttempt[]
   // PR 3 (Admin Audit): inverse side of EventLog.adminUser. Optional FK
   // (onDelete: SetNull on the EventLog side) so a deleted admin user
   // does not cascade-delete their own audit trail.
@@ -256,4 +257,39 @@ model QuestionTag {
 
   @@id([questionId, tagId])
   @@map("question_tags")
+}
+
+// Daily Challenge — Phase 1
+model DailyQuestion {
+  id        String           @id @default(cuid())
+  dateKey   String           @unique // "YYYY-MM-DD" — 1 question set per day
+  questions Json             // 5 questions: [{ content, options, correctAnswer, difficulty, category, explanation? }]
+  category  QuestionCategory @default(GENERAL)
+  active    Boolean          @default(true)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  attempts DailyAttempt[]
+
+  @@index([dateKey, active])
+  @@map("daily_questions")
+}
+
+model DailyAttempt {
+  id           String   @id @default(cuid())
+  dateKey      String
+  userId       String
+  answers      Json     // [{ answer, isCorrect, responseTimeMs }]
+  score        Int      @default(0)
+  correctCount Int      @default(0)
+  streakBefore Int      @default(0)
+  streakAfter  Int      @default(0)
+  completedAt  DateTime @default(now())
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dailyQuestion DailyQuestion @relation(fields: [dateKey], references: [dateKey])
+
+  @@unique([dateKey, userId]) // 1 attempt/user/day
+  @@index([dateKey, score])   // leaderboard query
+  @@map("daily_attempts")
 }
