@@ -1,10 +1,15 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
+import { Role } from "@prisma/client";
 import { DailyController } from "./daily.controller";
 import { DailyService } from "./daily.service";
 import { AuthService } from "../auth/auth.service";
 import type { FastifyRequest } from "fastify";
 import type { AuthenticatedRequest } from "../auth/auth.types";
-import type { DailySubmitInput } from "./dto";
+import type {
+  DailyLeaderboardResponse,
+  DailySubmitInput,
+  DailySubmitResponse,
+} from "./dto";
 
 const TODAY_RESPONSE = {
   dateKey: "2026-08-09",
@@ -16,6 +21,43 @@ const TODAY_RESPONSE = {
   alreadyAttempted: false,
 };
 
+/**
+ * The controller only forwards these payloads, so the specific field values
+ * are irrelevant — but the mocks are typed against the real service
+ * signatures, which means a fixture must still be shape-complete. These
+ * builders supply the full shape and let each test override only what it
+ * actually asserts on.
+ */
+function submitResponse(
+  overrides: Partial<DailySubmitResponse> = {},
+): DailySubmitResponse {
+  return {
+    dateKey: "2026-08-09",
+    version: 1,
+    score: 500,
+    correctCount: 5,
+    totalQuestions: 5,
+    elapsedMs: 1_000,
+    streakBefore: 0,
+    streakAfter: 1,
+    results: [],
+    completedAt: "2026-08-09T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function leaderboardResponse(
+  overrides: Partial<DailyLeaderboardResponse> = {},
+): DailyLeaderboardResponse {
+  return {
+    dateKey: "2026-08-09",
+    generatedAt: "2026-08-09T10:00:00.000Z",
+    cached: false,
+    items: [],
+    ...overrides,
+  };
+}
+
 function requestWith(headers: Record<string, string>): FastifyRequest {
   return { headers } as unknown as FastifyRequest;
 }
@@ -25,24 +67,12 @@ describe("DailyController", () => {
   // Typed against the real service signatures, so a change to DailyService
   // surfaces here at compile time instead of silently passing on `any`.
   let service: {
-    getToday: Mock<
-      Parameters<DailyService["getToday"]>,
-      ReturnType<DailyService["getToday"]>
-    >;
-    submit: Mock<
-      Parameters<DailyService["submit"]>,
-      ReturnType<DailyService["submit"]>
-    >;
-    getLeaderboard: Mock<
-      Parameters<DailyService["getLeaderboard"]>,
-      ReturnType<DailyService["getLeaderboard"]>
-    >;
+    getToday: Mock<DailyService["getToday"]>;
+    submit: Mock<DailyService["submit"]>;
+    getLeaderboard: Mock<DailyService["getLeaderboard"]>;
   };
   let auth: {
-    verifyToken: Mock<
-      Parameters<AuthService["verifyToken"]>,
-      ReturnType<AuthService["verifyToken"]>
-    >;
+    verifyToken: Mock<AuthService["verifyToken"]>;
   };
 
   beforeEach(() => {
@@ -68,7 +98,11 @@ describe("DailyController", () => {
     });
 
     it("resolves the userId from a Bearer header", async () => {
-      auth.verifyToken.mockReturnValue({ userId: "u1", username: "Alice" });
+      auth.verifyToken.mockReturnValue({
+        userId: "u1",
+        username: "Alice",
+        role: Role.GUEST,
+      });
 
       await controller.getToday(
         requestWith({ authorization: "Bearer token-123" }),
@@ -79,7 +113,11 @@ describe("DailyController", () => {
     });
 
     it("resolves the userId from the access-token cookie", async () => {
-      auth.verifyToken.mockReturnValue({ userId: "u2", username: "Bob" });
+      auth.verifyToken.mockReturnValue({
+        userId: "u2",
+        username: "Bob",
+        role: Role.GUEST,
+      });
 
       await controller.getToday(
         requestWith({ cookie: "arena_access_token=cookie-abc" }),
@@ -90,7 +128,11 @@ describe("DailyController", () => {
     });
 
     it("prefers the Authorization header over the cookie", async () => {
-      auth.verifyToken.mockReturnValue({ userId: "u1", username: "Alice" });
+      auth.verifyToken.mockReturnValue({
+        userId: "u1",
+        username: "Alice",
+        role: Role.GUEST,
+      });
 
       await controller.getToday(
         requestWith({
@@ -128,7 +170,7 @@ describe("DailyController", () => {
 
   describe("POST /daily/submit", () => {
     it("forwards the authenticated userId, body and session token", async () => {
-      const expected = { dateKey: "2026-08-09", score: 500 };
+      const expected = submitResponse({ dateKey: "2026-08-09", score: 500 });
       service.submit.mockResolvedValue(expected);
       const body: DailySubmitInput = {
         sessionToken: "valid-session-token",
@@ -148,12 +190,12 @@ describe("DailyController", () => {
 
   describe("GET /daily/leaderboard", () => {
     it("forwards the parsed query", async () => {
-      const expected = {
+      const expected = leaderboardResponse({
         dateKey: "2026-08-09",
         generatedAt: "2026-08-09T10:00:00.000Z",
         cached: false,
         items: [],
-      };
+      });
       service.getLeaderboard.mockResolvedValue(expected);
 
       const result = await controller.getLeaderboard({
@@ -169,7 +211,7 @@ describe("DailyController", () => {
     });
 
     it("forwards a query without an explicit dateKey", async () => {
-      service.getLeaderboard.mockResolvedValue({ items: [] });
+      service.getLeaderboard.mockResolvedValue(leaderboardResponse());
 
       await controller.getLeaderboard({ limit: 50 });
 
