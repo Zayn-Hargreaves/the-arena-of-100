@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  DAILY_LEADERBOARD_DEFAULT_LIMIT,
   DAILY_QUESTION_COUNT,
   MAX_RESPONSE_TIME_MS,
   dailyLeaderboardQuerySchema,
@@ -21,6 +22,23 @@ describe("daily DTO schemas", () => {
         expect(dateKeySchema.safeParse(value).success).toBe(false);
       },
     );
+
+    // Well-shaped but impossible dates: Date.parse silently rolls these
+    // forward (2026-02-30 -> Mar 2), so the regex alone is not enough.
+    it.each([
+      "2026-02-30",
+      "2026-13-01",
+      "2026-00-10",
+      "2026-04-31",
+      "2025-02-29",
+      "2026-01-32",
+    ])("rejects the impossible date %s", (value) => {
+      expect(dateKeySchema.safeParse(value).success).toBe(false);
+    });
+
+    it("accepts Feb 29 in a real leap year", () => {
+      expect(dateKeySchema.safeParse("2028-02-29").success).toBe(true);
+    });
   });
 
   describe("storedDailyQuestionsSchema", () => {
@@ -61,6 +79,39 @@ describe("daily DTO schemas", () => {
 
       expect(storedDailyQuestionsSchema.safeParse(broken).success).toBe(false);
     });
+
+    // A correctAnswer outside options makes the question unanswerable: every
+    // player would be graded wrong no matter what they pick.
+    it("rejects a correctAnswer that is not one of the options", () => {
+      const broken = Array.from({ length: DAILY_QUESTION_COUNT }, () => ({
+        ...question,
+        options: ["A", "B"],
+        correctAnswer: "C",
+      }));
+
+      const result = storedDailyQuestionsSchema.safeParse(broken);
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a correctAnswer differing from an option only by case", () => {
+      const broken = Array.from({ length: DAILY_QUESTION_COUNT }, () => ({
+        ...question,
+        options: ["Hà Nội", "Huế"],
+        correctAnswer: "hà nội",
+      }));
+
+      expect(storedDailyQuestionsSchema.safeParse(broken).success).toBe(false);
+    });
+
+    it("accepts a correctAnswer present in options", () => {
+      const valid = Array.from({ length: DAILY_QUESTION_COUNT }, () => ({
+        ...question,
+        options: ["A", "B", "C"],
+        correctAnswer: "C",
+      }));
+
+      expect(storedDailyQuestionsSchema.safeParse(valid).success).toBe(true);
+    });
   });
 
   describe("publicQuestionSchema", () => {
@@ -81,15 +132,27 @@ describe("daily DTO schemas", () => {
 
   describe("dailySubmitSchema", () => {
     const answer = { answer: "A", responseTimeMs: 1000 };
+    const wrapped = (answers: unknown) => ({ sessionToken: "tok", answers });
 
     it(`requires exactly ${DAILY_QUESTION_COUNT} answers`, () => {
       const answers = Array.from(
         { length: DAILY_QUESTION_COUNT },
         () => answer,
       );
-      expect(dailySubmitSchema.safeParse({ answers }).success).toBe(true);
+      expect(dailySubmitSchema.safeParse(wrapped(answers)).success).toBe(true);
       expect(
-        dailySubmitSchema.safeParse({ answers: answers.slice(0, 3) }).success,
+        dailySubmitSchema.safeParse(wrapped(answers.slice(0, 3))).success,
+      ).toBe(false);
+    });
+
+    it("requires a sessionToken", () => {
+      const answers = Array.from(
+        { length: DAILY_QUESTION_COUNT },
+        () => answer,
+      );
+      expect(dailySubmitSchema.safeParse({ answers }).success).toBe(false);
+      expect(
+        dailySubmitSchema.safeParse({ sessionToken: "", answers }).success,
       ).toBe(false);
     });
 
@@ -99,16 +162,17 @@ describe("daily DTO schemas", () => {
         responseTimeMs: 0,
       }));
 
-      expect(dailySubmitSchema.safeParse({ answers }).success).toBe(true);
+      expect(dailySubmitSchema.safeParse(wrapped(answers)).success).toBe(true);
     });
 
     it("rejects a negative or over-long responseTimeMs", () => {
-      const withTime = (responseTimeMs: number) => ({
-        answers: Array.from({ length: DAILY_QUESTION_COUNT }, () => ({
-          answer: "A",
-          responseTimeMs,
-        })),
-      });
+      const withTime = (responseTimeMs: number) =>
+        wrapped(
+          Array.from({ length: DAILY_QUESTION_COUNT }, () => ({
+            answer: "A",
+            responseTimeMs,
+          })),
+        );
 
       expect(dailySubmitSchema.safeParse(withTime(-1)).success).toBe(false);
       expect(
@@ -125,13 +189,21 @@ describe("daily DTO schemas", () => {
         responseTimeMs: 0,
       }));
 
-      expect(dailySubmitSchema.safeParse({ answers }).success).toBe(false);
+      expect(dailySubmitSchema.safeParse(wrapped(answers)).success).toBe(false);
     });
   });
 
   describe("dailyLeaderboardQuerySchema", () => {
-    it("defaults limit to 50 and leaves dateKey optional", () => {
-      expect(dailyLeaderboardQuerySchema.parse({})).toEqual({ limit: 50 });
+    it("defaults limit to the shared constant and leaves dateKey optional", () => {
+      expect(dailyLeaderboardQuerySchema.parse({})).toEqual({
+        limit: DAILY_LEADERBOARD_DEFAULT_LIMIT,
+      });
+    });
+
+    // The service evicts exactly the key built from this default, so the two
+    // must stay in lockstep — a literal in either place would silently drift.
+    it("keeps the default in sync with the cache-invalidation constant", () => {
+      expect(DAILY_LEADERBOARD_DEFAULT_LIMIT).toBe(50);
     });
 
     it("coerces a numeric string limit", () => {
@@ -150,6 +222,15 @@ describe("daily DTO schemas", () => {
     it("rejects a malformed dateKey", () => {
       expect(
         dailyLeaderboardQuerySchema.safeParse({ dateKey: "2026-8-9" }).success,
+      ).toBe(false);
+    });
+
+    // The leaderboard query reuses dateKeySchema, so calendar validation must
+    // apply here too — not just to the stored question set.
+    it("rejects an impossible dateKey", () => {
+      expect(
+        dailyLeaderboardQuerySchema.safeParse({ dateKey: "2026-02-30" })
+          .success,
       ).toBe(false);
     });
   });

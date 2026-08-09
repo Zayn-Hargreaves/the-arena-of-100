@@ -260,18 +260,31 @@ model QuestionTag {
 }
 
 // Daily Challenge — Phase 1
+//
+// Append-only question sets. A day may hold several versions: publishing a
+// correction inserts version N+1 rather than rewriting N, so the payload a
+// player actually answered is never mutated underneath their recorded
+// attempt. `DailyAttempt.dailyQuestionId` pins the exact version played,
+// which is what makes a stored attempt auditable after the fact.
 model DailyQuestion {
-  id        String           @id @default(cuid())
-  dateKey   String           @unique // "YYYY-MM-DD" — 1 question set per day
+  id      String @id @default(cuid())
+  dateKey String // "YYYY-MM-DD" — NOT unique: one row per version
+  version Int    @default(1)
+
   questions Json             // 5 questions: [{ content, options, correctAnswer, difficulty, category, explanation? }]
   category  QuestionCategory @default(GENERAL)
   active    Boolean          @default(true)
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
+
+  // Non-null marks the payload as published and therefore immutable. The seed
+  // refuses to mutate a published row and appends a new version instead.
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   attempts DailyAttempt[]
 
-  @@index([dateKey, active])
+  @@unique([dateKey, version])
+  @@index([dateKey, active, version])
   @@map("daily_questions")
 }
 
@@ -279,17 +292,27 @@ model DailyAttempt {
   id           String   @id @default(cuid())
   dateKey      String
   userId       String
-  answers      Json     // [{ answer, isCorrect, responseTimeMs }]
+  answers      Json     // [{ answer, isCorrect, responseTimeMs }] — client times are stats-only
   score        Int      @default(0)
   correctCount Int      @default(0)
   streakBefore Int      @default(0)
   streakAfter  Int      @default(0)
+  // Server-measured session duration (GET /daily/today -> POST /daily/submit).
+  // This, not any client-reported value, is what the speed bonus scores.
+  // NULL when the session could not be pinned (anonymous fetch, or the session
+  // store was unavailable): the duration is genuinely unknown, so it is stored
+  // as such rather than as a 0 that would read like an instantaneous run.
+  elapsedMs    Int?
   completedAt  DateTime @default(now())
 
+  // The exact question-set version this attempt was graded against.
+  dailyQuestionId String
+
   user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  dailyQuestion DailyQuestion @relation(fields: [dateKey], references: [dateKey])
+  dailyQuestion DailyQuestion @relation(fields: [dailyQuestionId], references: [id], onDelete: Restrict)
 
   @@unique([dateKey, userId]) // 1 attempt/user/day
   @@index([dateKey, score])   // leaderboard query
+  @@index([dailyQuestionId])
   @@map("daily_attempts")
 }

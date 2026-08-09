@@ -7,6 +7,15 @@ import { z } from "zod";
 import { ApiProperty } from "@nestjs/swagger";
 import { dateKeySchema } from "./daily-question.dto";
 
+/**
+ * Default page size for the leaderboard.
+ *
+ * Shared on purpose: `DailyService.invalidateLeaderboardCache` evicts exactly
+ * the key produced by this default, so a literal in either place would let the
+ * two drift apart and leave a stale entry that nothing ever clears.
+ */
+export const DAILY_LEADERBOARD_DEFAULT_LIMIT = 50;
+
 export const dailyLeaderboardQuerySchema = z.object({
   /** Omitted = today (UTC). Explicit value lets a client browse past days. */
   dateKey: dateKeySchema.optional(),
@@ -15,7 +24,7 @@ export const dailyLeaderboardQuerySchema = z.object({
     .int()
     .min(1)
     .max(100)
-    .default(50)
+    .default(DAILY_LEADERBOARD_DEFAULT_LIMIT)
     .describe("Number of top players to return (1-100, default 50)"),
 });
 

@@ -23,9 +23,15 @@ import { Pool } from "pg";
 import { z } from "zod";
 import { questionSeeds } from "../src/prisma-seeds/questions";
 import { buildSslConfig } from "../src/common/database/ssl-config";
+import {
+  DATE_KEY_PATTERN,
+  isRealUtcDate,
+} from "../src/common/date/calendar-date";
 
 const QUESTIONS_PER_DAY = 5;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+/** Version-conflict retries before giving up on a day (concurrent seeds). */
+const MAX_PUBLISH_RETRIES = 5;
 
 const envSchema = z.object({
   DATABASE_URL: z.string(),
@@ -44,7 +50,8 @@ const envSchema = z.object({
   /** First day to generate (YYYY-MM-DD). Defaults to today (UTC). */
   DAILY_SEED_START: z
     .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .regex(DATE_KEY_PATTERN)
+    .refine(isRealUtcDate, "DAILY_SEED_START must be a real calendar date")
     .optional(),
   /** Overwrite sets that already exist. Off by default to protect live days. */
   DAILY_SEED_OVERWRITE: z
@@ -96,6 +103,34 @@ function toDateKey(at: Date): string {
 }
 
 /**
+ * Structural equality for a stored payload vs. a freshly derived one.
+ *
+ * Postgres returns JSONB keys alphabetically, while `pickQuestionsForDay`
+ * writes them in declaration order — so `JSON.stringify` differs even when
+ * the content is identical. Deep walk is the cheap fix.
+ */
+function isSamePayload(stored: unknown, next: unknown): boolean {
+  if (stored === next) return true;
+  if (!isPlainObject(stored) || !isPlainObject(next)) {
+    if (Array.isArray(stored) && Array.isArray(next)) {
+      if (stored.length !== next.length) return false;
+      return stored.every((v, i) => isSamePayload(v, next[i]));
+    }
+    return false;
+  }
+
+  const storedKeys = Object.keys(stored);
+  const nextKeys = Object.keys(next);
+  if (storedKeys.length !== nextKeys.length) return false;
+
+  return storedKeys.every((key) => isSamePayload(stored[key], next[key]));
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
  * Picks `QUESTIONS_PER_DAY` distinct questions for a day. Partial
  * Fisher-Yates over a copy: unbiased, and only as much work as we need.
  */
@@ -118,6 +153,78 @@ function pickQuestionsForDay(dateKey: string) {
   }));
 }
 
+type DayOutcome = "created" | "versioned" | "unchanged" | "skipped";
+
+/** True when the error is a Prisma unique-constraint violation. */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: string }).code === "P2002"
+  );
+}
+
+/**
+ * Publishes a day's question set, tolerating a concurrent seed process.
+ *
+ * Append-only does NOT eliminate the race between two seeds running at once —
+ * both can read the same `latest` and try to insert the same version number.
+ * What it does is make losing that race harmless: the unique
+ * ([dateKey, version]) constraint rejects the duplicate instead of letting one
+ * writer clobber the other's payload, and we simply re-read and retry. No
+ * published row is ever mutated, so an attempt already citing a version keeps
+ * grading against exactly what it was served.
+ */
+async function upsertDay(
+  dateKey: string,
+  questions: ReturnType<typeof pickQuestionsForDay>,
+  attempt = 0,
+): Promise<DayOutcome> {
+  // Bounded: each retry re-reads a strictly newer `latest`, so a handful of
+  // rounds is far more than a real seed race needs.
+  if (attempt >= MAX_PUBLISH_RETRIES) {
+    throw new Error(
+      `❌ Gave up publishing ${dateKey} after ${MAX_PUBLISH_RETRIES} version conflicts.`,
+    );
+  }
+
+  // Newest version wins; older ones are kept for the attempts that cite them.
+  const latest = await prisma.dailyQuestion.findFirst({
+    where: { dateKey },
+    orderBy: { version: "desc" },
+  });
+
+  // Identical payload: nothing to publish. Makes reruns a true no-op rather
+  // than churning version numbers on every invocation.
+  if (latest && isSamePayload(latest.questions, questions)) {
+    return "unchanged";
+  }
+
+  if (latest && !env.DAILY_SEED_OVERWRITE) {
+    return "skipped";
+  }
+
+  try {
+    await prisma.dailyQuestion.create({
+      data: {
+        dateKey,
+        version: latest ? latest.version + 1 : 1,
+        questions,
+        publishedAt: new Date(),
+      },
+    });
+    return latest ? "versioned" : "created";
+  } catch (error) {
+    // Another seed process claimed this version number first. Re-read and
+    // retry: the winner's row is intact, and we either find our payload
+    // already published (-> unchanged) or append on top of theirs.
+    if (isUniqueViolation(error)) {
+      return upsertDay(dateKey, questions, attempt + 1);
+    }
+    throw error;
+  }
+}
+
 async function main() {
   console.log("🌱 Seeding daily challenges...");
 
@@ -131,42 +238,32 @@ async function main() {
     ? Date.parse(`${env.DAILY_SEED_START}T00:00:00.000Z`)
     : Date.parse(`${toDateKey(new Date())}T00:00:00.000Z`);
 
-  let created = 0;
-  let updated = 0;
-  let skipped = 0;
+  const counts: Record<DayOutcome, number> = {
+    created: 0,
+    versioned: 0,
+    unchanged: 0,
+    skipped: 0,
+  };
 
   for (let offset = 0; offset < env.DAILY_SEED_DAYS; offset++) {
     const dateKey = toDateKey(new Date(startMs + offset * MS_PER_DAY));
     const questions = pickQuestionsForDay(dateKey);
-
-    const existing = await prisma.dailyQuestion.findUnique({
-      where: { dateKey },
-    });
-
-    if (existing && !env.DAILY_SEED_OVERWRITE) {
-      skipped++;
-      continue;
-    }
-
-    if (existing) {
-      await prisma.dailyQuestion.update({
-        where: { dateKey },
-        data: { questions, active: true },
-      });
-      updated++;
-    } else {
-      await prisma.dailyQuestion.create({
-        data: { dateKey, questions, active: true },
-      });
-      created++;
-    }
+    const outcome = await upsertDay(dateKey, questions);
+    counts[outcome]++;
   }
 
-  console.log(`✅ Created ${created} daily challenge(s)`);
-  if (updated > 0) console.log(`♻️  Updated ${updated} existing day(s)`);
-  if (skipped > 0) {
+  console.log(`✅ Created ${counts.created} daily challenge(s)`);
+  if (counts.versioned > 0) {
     console.log(
-      `⏭️  Skipped ${skipped} existing day(s) (set DAILY_SEED_OVERWRITE=true to replace)`,
+      `🆕 Published ${counts.versioned} new version(s) (old ones retained)`,
+    );
+  }
+  if (counts.unchanged > 0) {
+    console.log(`✔️  ${counts.unchanged} day(s) already up to date (no-op)`);
+  }
+  if (counts.skipped > 0) {
+    console.log(
+      `⏭️  Skipped ${counts.skipped} changed day(s) (set DAILY_SEED_OVERWRITE=true to publish a new version)`,
     );
   }
   console.log("🚀 Daily challenge seeding completed!");

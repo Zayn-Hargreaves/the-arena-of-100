@@ -20,6 +20,18 @@ export interface TokenPayload {
 
 const RESERVED_USERNAMES = ["admin"];
 
+/**
+ * `typ` markers separating the two token families. Both are signed with the
+ * same secret, so without an explicit type an access token could be replayed
+ * as a Daily session token (granting a free speed bonus) and a session token
+ * could be replayed as an access token (granting API access).
+ */
+export const ACCESS_TOKEN_TYP = "access";
+export const DAILY_SESSION_TYP = "daily-session";
+
+/** Session-token lifetime. Generous: the Daily Challenge is not a race. */
+export const DAILY_SESSION_TTL_SECONDS = 30 * 60;
+
 function normalizeReservedUsername(value: string): string {
   return baseNormalize(value);
 }
@@ -116,9 +128,13 @@ export class AuthService {
   ): Promise<AuthResult> {
     const payload: TokenPayload = { userId, username, role };
 
-    const accessToken = jwt.sign(payload, this.jwtSecret, {
-      expiresIn: this.accessTokenTtlSeconds,
-    } as jwt.SignOptions);
+    const accessToken = jwt.sign(
+      { ...payload, typ: ACCESS_TOKEN_TYP },
+      this.jwtSecret,
+      {
+        expiresIn: this.accessTokenTtlSeconds,
+      } as jwt.SignOptions,
+    );
 
     const refreshToken = nanoid(64);
 
@@ -136,13 +152,104 @@ export class AuthService {
     };
   }
 
-  // Verify JWT token
+  /**
+   * Verifies an access token.
+   *
+   * Rejects any token carrying a foreign `typ` (notably a Daily session
+   * token), but deliberately ACCEPTS a token with no `typ` at all: access
+   * tokens live for 24h, so refusing untyped ones would sign out every
+   * session already in flight when this deploys and break live socket
+   * handshakes. The marker can be made mandatory once one full token TTL has
+   * elapsed since rollout.
+   */
   verifyToken(token: string): TokenPayload {
+    let decoded: TokenPayload & { typ?: string };
+
     try {
-      return jwt.verify(token, this.jwtSecret) as TokenPayload;
+      decoded = jwt.verify(token, this.jwtSecret) as TokenPayload & {
+        typ?: string;
+      };
     } catch {
       throw new UnauthorizedException("Invalid or expired token");
     }
+
+    if (decoded?.typ !== undefined && decoded.typ !== ACCESS_TOKEN_TYP) {
+      throw new UnauthorizedException("Not an access token");
+    }
+
+    // A token that verifies but carries no identity is unusable downstream:
+    // callers read `.userId` straight off it. Two of the three call sites do
+    // not re-check, so the guarantee belongs here.
+    if (
+      typeof decoded?.userId !== "string" ||
+      decoded.userId.length === 0 ||
+      typeof decoded?.username !== "string"
+    ) {
+      throw new UnauthorizedException("Invalid token payload");
+    }
+
+    return decoded;
+  }
+
+  /**
+   * Signs a Daily Challenge session token.
+   *
+   * `startedAtMs` is the authoritative session start, pinned by the caller so
+   * it survives token reissuance — re-fetching the questions mints a new token
+   * but must NOT reset the clock, or the speed bonus would be free. `iat` is
+   * deliberately not used for timing for exactly that reason.
+   */
+  signDailySession(claims: {
+    sub: string;
+    dateKey: string;
+    dailyQuestionId: string;
+    startedAtMs: number | null;
+  }): string {
+    return jwt.sign({ ...claims, typ: DAILY_SESSION_TYP }, this.jwtSecret, {
+      expiresIn: DAILY_SESSION_TTL_SECONDS,
+    });
+  }
+
+  /** Verifies a Daily session token and rejects tokens of any other type. */
+  verifyDailySession(token: string): {
+    sub: string;
+    dateKey: string;
+    dailyQuestionId: string;
+    startedAtMs: number | null;
+    iat: number;
+  } {
+    const decoded = jwt.verify(token, this.jwtSecret) as {
+      typ?: string;
+      sub?: string;
+      dateKey?: string;
+      dailyQuestionId?: string;
+      startedAtMs?: number | null;
+      iat?: number;
+    };
+
+    if (decoded?.typ !== DAILY_SESSION_TYP) {
+      throw new UnauthorizedException("Not a daily session token");
+    }
+
+    // `startedAtMs` is what the speed bonus is measured from. A missing or
+    // non-numeric claim would survive the cast below and be read downstream as
+    // if it were a real pin, so it is rejected here rather than trusted.
+    // Explicit `null` stays legal: that is how an unpinnable session (anonymous
+    // fetch, or the session store being down) forfeits the bonus.
+    if (
+      decoded.startedAtMs !== null &&
+      !Number.isFinite(decoded.startedAtMs as number)
+    ) {
+      throw new UnauthorizedException("Invalid daily session payload");
+    }
+
+    return decoded as {
+      sub: string;
+      dateKey: string;
+      dailyQuestionId: string;
+      startedAtMs: number | null;
+      iat: number;
+    };
   }
 
   // Refresh token

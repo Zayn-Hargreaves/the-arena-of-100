@@ -7,7 +7,9 @@ import type { AuthenticatedRequest } from "../auth/auth.types";
 
 const TODAY_RESPONSE = {
   dateKey: "2026-08-09",
+  version: 1,
   questions: [],
+  sessionToken: "signed-session-token",
   serverTime: "2026-08-09T10:00:00.000Z",
   nextResetAt: "2026-08-10T00:00:00.000Z",
   alreadyAttempted: false,
@@ -104,10 +106,13 @@ describe("DailyController", () => {
   });
 
   describe("POST /daily/submit", () => {
-    it("forwards the authenticated userId and body", async () => {
+    it("forwards the authenticated userId, body and session token", async () => {
       const expected = { dateKey: "2026-08-09", score: 500 };
       service.submit.mockResolvedValue(expected);
-      const body = { answers: [{ answer: "A", responseTimeMs: 1000 }] };
+      const body = {
+        sessionToken: "valid-session-token",
+        answers: [{ answer: "A", responseTimeMs: 1000 }],
+      };
 
       const request = {
         user: { userId: "u1", username: "Alice" },
