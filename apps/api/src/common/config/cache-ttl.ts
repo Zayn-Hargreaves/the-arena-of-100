@@ -8,4 +8,10 @@
 export const CACHE_TTL = {
   /** Leaderboard endpoint — short-lived; 60s balances freshness vs. DB load. */
   LEADERBOARD: 60,
+  /**
+   * Daily Challenge leaderboard — same 60s window as the global leaderboard.
+   * Scoped per `dateKey`, so the key set rotates daily and old entries expire
+   * on their own without an explicit purge.
+   */
+  DAILY_LEADERBOARD: 60,
 } as const;

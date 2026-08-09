@@ -2,7 +2,11 @@ import { ConfigService } from "@nestjs/config";
 import * as jwt from "jsonwebtoken";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { UnauthorizedException } from "@nestjs/common";
-import { AuthService } from "./auth.service";
+import {
+  AuthService,
+  ACCESS_TOKEN_TYP,
+  DAILY_SESSION_TYP,
+} from "./auth.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { Prisma, Role } from "@prisma/client";
@@ -347,6 +351,11 @@ describe("AuthService.verifyToken", () => {
     );
   }
 
+  // Signed WITHOUT a `typ` claim on purpose: access tokens live for 24h, so
+  // rejecting untyped ones would sign out every session already in flight at
+  // deploy time. This is the backward-compatibility guarantee documented on
+  // verifyToken — do not "tighten" it into a rejection until one full token
+  // TTL has elapsed since the typ marker shipped.
   it("returns the decoded payload when the token is valid", () => {
     const service = buildServiceForVerify();
     const token = jwt.sign(
@@ -360,6 +369,145 @@ describe("AuthService.verifyToken", () => {
       username: "p1",
       role: Role.GUEST,
     });
+  });
+
+  // ---- token-type separation ----
+  it("accepts a token carrying the access typ marker", () => {
+    const service = buildServiceForVerify();
+    const token = jwt.sign(
+      {
+        userId: "u-1",
+        username: "p1",
+        role: Role.GUEST,
+        typ: ACCESS_TOKEN_TYP,
+      },
+      "test-secret",
+      { expiresIn: 60 },
+    );
+
+    expect(service.verifyToken(token)).toMatchObject({ userId: "u-1" });
+  });
+
+  it("rejects a daily session token replayed as an access token", () => {
+    const service = buildServiceForVerify();
+    // Same secret, different purpose — only `typ` tells them apart.
+    const sessionToken = jwt.sign(
+      {
+        sub: "u-1",
+        dateKey: "2026-08-09",
+        dailyQuestionId: "dq-1",
+        typ: DAILY_SESSION_TYP,
+      },
+      "test-secret",
+      { expiresIn: 60 },
+    );
+
+    expect(() => service.verifyToken(sessionToken)).toThrow(
+      UnauthorizedException,
+    );
+  });
+
+  it("rejects a verifying token whose payload carries no identity", () => {
+    const service = buildServiceForVerify();
+    // Signed correctly, but unusable: callers read `.userId` straight off it.
+    const token = jwt.sign({ role: Role.GUEST }, "test-secret", {
+      expiresIn: 60,
+    });
+
+    expect(() => service.verifyToken(token)).toThrow(UnauthorizedException);
+  });
+
+  it("rejects an access token replayed as a daily session token", () => {
+    const service = buildServiceForVerify();
+    const accessToken = jwt.sign(
+      {
+        userId: "u-1",
+        username: "p1",
+        role: Role.GUEST,
+        typ: ACCESS_TOKEN_TYP,
+      },
+      "test-secret",
+      { expiresIn: 60 },
+    );
+
+    expect(() => service.verifyDailySession(accessToken)).toThrow(
+      UnauthorizedException,
+    );
+  });
+
+  it("round-trips a daily session token with its pinned start", () => {
+    const service = buildServiceForVerify();
+    const token = service.signDailySession({
+      sub: "u-1",
+      dateKey: "2026-08-09",
+      dailyQuestionId: "dq-1",
+      startedAtMs: 1_700_000_000_000,
+    });
+
+    expect(service.verifyDailySession(token)).toMatchObject({
+      sub: "u-1",
+      dailyQuestionId: "dq-1",
+      startedAtMs: 1_700_000_000_000,
+    });
+  });
+
+  it("round-trips an unpinned (null) start", () => {
+    const service = buildServiceForVerify();
+    // Anonymous fetches and session-store outages both mint a null pin; it is
+    // a legitimate value meaning "no speed bonus", not a malformed claim.
+    const token = service.signDailySession({
+      sub: "anon",
+      dateKey: "2026-08-09",
+      dailyQuestionId: "dq-1",
+      startedAtMs: null,
+    });
+
+    expect(service.verifyDailySession(token)).toMatchObject({
+      sub: "anon",
+      startedAtMs: null,
+    });
+  });
+
+  it("rejects a daily session token carrying no pinned start", () => {
+    const service = buildServiceForVerify();
+    // Hand-rolled: signDailySession cannot produce this, and jwt.sign drops
+    // `undefined`, so an absent claim and an explicitly-undefined one are the
+    // same token on the wire.
+    const token = jwt.sign(
+      {
+        sub: "u-1",
+        dateKey: "2026-08-09",
+        dailyQuestionId: "dq-1",
+        typ: DAILY_SESSION_TYP,
+      },
+      "test-secret",
+      { expiresIn: 60 },
+    );
+
+    expect(() => service.verifyDailySession(token)).toThrow(
+      UnauthorizedException,
+    );
+  });
+
+  it("rejects a daily session token whose pinned start is a string", () => {
+    const service = buildServiceForVerify();
+    // A stringified pin would pass the cast and then be compared numerically
+    // downstream, so it must not verify.
+    const token = jwt.sign(
+      {
+        sub: "u-1",
+        dateKey: "2026-08-09",
+        dailyQuestionId: "dq-1",
+        startedAtMs: "1700000000000",
+        typ: DAILY_SESSION_TYP,
+      },
+      "test-secret",
+      { expiresIn: 60 },
+    );
+
+    expect(() => service.verifyDailySession(token)).toThrow(
+      UnauthorizedException,
+    );
   });
 
   it("throws UnauthorizedException for an invalid token", () => {
