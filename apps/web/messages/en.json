@@ -159,7 +159,8 @@
       "rankings": "Rankings",
       "settings": "Settings",
       "profile": "Profile",
-      "admin": "Admin"
+      "admin": "Admin",
+      "daily": "Daily"
     }
   },
   "Timer": {
@@ -429,5 +430,73 @@
     "createErrorFallback": "Failed to create room. Please try again.",
     "creating": "Creating room...",
     "submit": "Launch Arena"
+  },
+  "daily": {
+    "title": "Daily Challenge",
+    "subtitle": "5 questions. One shot. Climb the streak.",
+    "intro": "Sign in to play today's challenge. Speed earns a bonus.",
+    "start": "Play Today's Challenge",
+    "streak": "streak",
+    "nextReset": "Next reset",
+    "back": "Back",
+    "next": "Next",
+    "submit": "Submit",
+    "alreadyDone": "You've already completed today's challenge.",
+    "progressLabel": "Daily Challenge progress",
+    "speedBonus": {
+      "none": "No bonus",
+      "awarded": "Completed in {ms}ms"
+    },
+    "share": {
+      "result": "Share your result",
+      "copy": "Copy result link",
+      "copied": "Copied!",
+      "error": "Couldn't share — try again",
+      "textTitle": "Arena of 100 — Daily",
+      "textScore": "Score",
+      "textStreak": "Streak"
+    },
+    "leaderboard": {
+      "title": "Today's Leaderboard",
+      "error": "Leaderboard unavailable.",
+      "empty": "No scores yet today — be the first."
+    },
+    "gate": {
+      "title": "Choose your nickname",
+      "description": "We need a name to record your run on the leaderboard.",
+      "cta": "Continue",
+      "cancel": "Cancel",
+      "nicknameLabel": "Nickname",
+      "playerPlaceholder": "Player",
+      "errors": {
+        "required": "Nickname is required",
+        "authFailed": "Authentication failed"
+      }
+    },
+    "error": {
+      "loadFailed": "Couldn't load today's challenge.",
+      "retry": "Try again",
+      "noQuestions": "No challenge configured for today.",
+      "submitFailed": "Submission failed",
+      "alreadySubmitted": "You've already submitted today.",
+      "rateLimited": "Too many attempts — try again later."
+    },
+    "result": {
+      "score": "Score",
+      "correct": "Correct",
+      "streak": "Streak",
+      "speed": "Speed",
+      "perfectRun": "Perfect run — streak extended!",
+      "skipped": "(skipped)",
+      "correctAnswer": "Correct: {answer}",
+      "questionLabel": "Q{index}",
+      "srCorrect": "Correct answer",
+      "srIncorrect": "Incorrect answer"
+    },
+    "difficulty": {
+      "EASY": "Easy",
+      "MEDIUM": "Medium",
+      "HARD": "Hard"
+    }
   }
 }

@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/routing";
 import { cn } from "@/lib/utils";
 import {
+  CalendarCheck,
   Gamepad2,
   Trophy,
   Settings,
@@ -36,6 +37,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const subtitleKey = resolvedNickname ? "playerRole" : "guestRole";
 
   const navItems = [
+    { key: "nav.daily", href: "/daily", icon: CalendarCheck },
     { key: "nav.createRoom", href: "/room/create", icon: PlusCircle },
     { key: "nav.arena", href: "/game", icon: Gamepad2, disabled: true },
     { key: "nav.rankings", href: "/rankings", icon: Trophy },

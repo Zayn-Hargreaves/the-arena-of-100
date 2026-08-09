@@ -159,7 +159,8 @@
       "rankings": "Xếp Hạng",
       "settings": "Cài Đặt",
       "profile": "Hồ Sơ",
-      "admin": "Admin"
+      "admin": "Admin",
+      "daily": "Hằng Ngày"
     }
   },
   "Timer": {
@@ -429,5 +430,73 @@
     "createErrorFallback": "Không thể tạo phòng. Vui lòng thử lại.",
     "creating": "Đang tạo phòng...",
     "submit": "Khởi Chạy Đấu Trường"
+  },
+  "daily": {
+    "title": "Thử Thách Hằng Ngày",
+    "subtitle": "5 câu. Một lần duy nhất. Giữ streak.",
+    "intro": "Đăng nhập để chơi. Tốc độ mang lại điểm thưởng.",
+    "start": "Chơi Thử Thách Hôm Nay",
+    "streak": "streak",
+    "nextReset": "Reset sau",
+    "back": "Quay lại",
+    "next": "Tiếp",
+    "submit": "Nộp bài",
+    "alreadyDone": "Bạn đã hoàn thành thử thách hôm nay rồi.",
+    "progressLabel": "Tiến trình Thử Thách Hằng Ngày",
+    "speedBonus": {
+      "none": "Không có thưởng",
+      "awarded": "Hoàn thành trong {ms}ms"
+    },
+    "share": {
+      "result": "Chia sẻ kết quả",
+      "copy": "Sao chép liên kết",
+      "copied": "Đã sao chép!",
+      "error": "Không thể chia sẻ — thử lại",
+      "textTitle": "Arena of 100 — Hằng Ngày",
+      "textScore": "Điểm",
+      "textStreak": "Streak"
+    },
+    "leaderboard": {
+      "title": "Bảng Xếp Hạng Hôm Nay",
+      "error": "Không tải được bảng xếp hạng.",
+      "empty": "Hôm nay chưa có điểm — hãy là người đầu tiên."
+    },
+    "gate": {
+      "title": "Chọn biệt danh",
+      "description": "Cần tên để ghi nhận lượt chơi trên bảng xếp hạng.",
+      "cta": "Tiếp tục",
+      "cancel": "Huỷ",
+      "nicknameLabel": "Biệt danh",
+      "playerPlaceholder": "Người chơi",
+      "errors": {
+        "required": "Cần nhập biệt danh",
+        "authFailed": "Xác thực thất bại"
+      }
+    },
+    "error": {
+      "loadFailed": "Không tải được thử thách hôm nay.",
+      "retry": "Thử lại",
+      "noQuestions": "Chưa có bộ câu hỏi cho hôm nay.",
+      "submitFailed": "Nộp bài thất bại",
+      "alreadySubmitted": "Bạn đã nộp bài hôm nay rồi.",
+      "rateLimited": "Quá nhiều lần thử — thử lại sau."
+    },
+    "result": {
+      "score": "Điểm",
+      "correct": "Đúng",
+      "streak": "Streak",
+      "speed": "Tốc độ",
+      "perfectRun": "Hoàn hảo — streak được cộng!",
+      "skipped": "(bỏ qua)",
+      "correctAnswer": "Đáp án: {answer}",
+      "questionLabel": "Câu {index}",
+      "srCorrect": "Trả lời đúng",
+      "srIncorrect": "Trả lời sai"
+    },
+    "difficulty": {
+      "EASY": "Dễ",
+      "MEDIUM": "Trung bình",
+      "HARD": "Khó"
+    }
   }
 }
