@@ -21,6 +21,14 @@ import {
 import { disconnectRedis } from "./../helpers/redis-helpers";
 import { cleanupE2ETestEnv, prepareE2ETestEnv } from "./../setup-e2e";
 import { AVATAR_SEEDS } from "@arena/shared";
+import { pathToFileURL } from "node:url";
+
+// `__filename` is always defined in CommonJS modules. Converting it
+// to a file:// URL is what setup-e2e's `fileURLToPath` / `stateByFile`
+// keying actually expects — and it sidesteps TS1343, since the
+// base tsconfig pins `"module": "commonjs"` and forbids `import.meta`.
+// (Same workaround as `room.service.integration.spec.ts`.)
+const currentFileUrl = pathToFileURL(__filename).href;
 
 describe("E2E /users", () => {
   let testApp: TestApp;
@@ -28,7 +36,7 @@ describe("E2E /users", () => {
   const demoUsername = "demo_player_01";
 
   beforeAll(async () => {
-    await prepareE2ETestEnv(import.meta.url);
+    await prepareE2ETestEnv(currentFileUrl);
     testApp = await createTestApp();
     const user = await requireDemoUser(demoUsername);
     demoUserId = user.id;
@@ -38,7 +46,7 @@ describe("E2E /users", () => {
     await testApp.close();
     await disconnectPrisma();
     await disconnectRedis();
-    await cleanupE2ETestEnv(import.meta.url);
+    await cleanupE2ETestEnv(currentFileUrl);
   });
 
   describe("GET /api/v1/users/me/stats", () => {

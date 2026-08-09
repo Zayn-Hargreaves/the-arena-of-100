@@ -48,8 +48,9 @@ describe("Sidebar — desktop", () => {
 
   it("renders all enabled nav items with translated labels", () => {
     render(<Sidebar nickname="Alice" />);
-    // nav.createRoom, nav.rankings, nav.settings, nav.profile, nav.admin
+    // nav.daily, nav.createRoom, nav.rankings, nav.settings, nav.profile, nav.admin
     // (nav.arena is disabled, so the element is not rendered.)
+    expect(screen.getByText("nav.daily")).toBeInTheDocument();
     expect(screen.getByText("nav.createRoom")).toBeInTheDocument();
     expect(screen.getByText("nav.rankings")).toBeInTheDocument();
     expect(screen.getByText("nav.settings")).toBeInTheDocument();

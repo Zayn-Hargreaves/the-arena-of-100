@@ -27,8 +27,13 @@ export default defineConfig({
       include: [
         "src/components/ui/app-shell-layout.tsx",
         "src/components/ui/sidebar.tsx",
+        "src/components/daily/**/*.tsx",
+        "src/hooks/use-daily-challenge.ts",
+        "src/hooks/use-daily-countdown.ts",
+        "src/lib/api/daily.ts",
+        "src/app/\\[locale\\]/daily/page.tsx",
       ],
-      exclude: ["node_modules", ".next", "dist", "**/*.d.ts"],
+      exclude: ["node_modules", ".next", "dist", "**/*.d.ts", "**/*.spec.*"],
       thresholds: {
         lines: 80,
         functions: 80,
