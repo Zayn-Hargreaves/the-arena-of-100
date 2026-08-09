@@ -78,7 +78,16 @@ export default function DailyPage() {
   const accessToken = useSocketStore((state) => state.accessToken);
 
   const today = useDailyToday();
-  const leaderboard = useDailyLeaderboard({ limit: 10 });
+  const data: DailyTodayResponse | undefined = today.data;
+
+  // Key the leaderboard on the challenge date. The reset timer only
+  // resets DAILY_TODAY_KEY, and this query disables focus refetches,
+  // so without the dateKey the board would stay pinned to the previous
+  // day's cache entry while the question set has already rolled over.
+  const leaderboard = useDailyLeaderboard({
+    dateKey: data?.dateKey,
+    limit: 10,
+  });
   const submitMutation = useSubmitDaily();
 
   const [questionIndex, setQuestionIndex] = React.useState(0);
@@ -97,8 +106,6 @@ export default function DailyPage() {
   // scoring derives from the server-side sessionToken clock, not from
   // anything the client reports (server-authoritative).
   const startedAtRef = React.useRef<number | null>(null);
-
-  const data: DailyTodayResponse | undefined = today.data;
 
   // The server owns the question count — a day may ship more or fewer
   // than the usual five. Everything below (progress, navigation,
