@@ -275,6 +275,19 @@ describe("DailyService", () => {
         );
       });
 
+      // ioredis can reject with a non-Error value; the handler must still
+      // produce a log line instead of throwing on `.message` of a string.
+      it("fails closed when the session store rejects with a non-Error", async () => {
+        prisma.dailyAttempt.count.mockResolvedValue(0);
+        redis.setIfAbsent.mockRejectedValue("connection reset");
+
+        await service.getToday("user-1");
+
+        expect(auth.signDailySession).toHaveBeenCalledWith(
+          expect.objectContaining({ startedAtMs: null }),
+        );
+      });
+
       it("fails closed when the stored pin is unreadable", async () => {
         prisma.dailyAttempt.count.mockResolvedValue(0);
         redis.setIfAbsent.mockResolvedValue(false);
@@ -538,21 +551,36 @@ describe("DailyService", () => {
        * service pinned. Every GET mints a NEW token, so if elapsedMs were
        * derived from the token's own issue time, re-fetching just before
        * submitting would reset it to ~0 and hand over the full speed bonus.
+       *
+       * The pin fake honours the TTL the service asks for, and expiry is what
+       * makes this a real test: a pin that outlived its key would let the
+       * clock-reset tests below pass even against a too-short TTL.
        */
       function wireRealTokenRoundTrip() {
         let pinned: number | null = null;
+        let expiresAtMs = Number.POSITIVE_INFINITY;
 
-        // Emulate SET NX: only the first call claims the start.
+        const isExpired = () => Date.now() >= expiresAtMs;
+
+        // Emulate SET NX with expiry: the first call claims the start, and a
+        // lapsed key is indistinguishable from an absent one, so a later
+        // fetch would claim a FRESH start — the delayed clock reset.
         redis.setIfAbsent.mockImplementation(
-          async (_key: string, value: string) => {
-            if (pinned === null) {
+          async (_key: string, value: string, ttlSeconds?: number) => {
+            if (pinned === null || isExpired()) {
               pinned = Number(value);
+              expiresAtMs =
+                ttlSeconds != null
+                  ? Date.now() + ttlSeconds * 1000
+                  : Number.POSITIVE_INFINITY;
               return true;
             }
             return false;
           },
         );
-        redis.get.mockImplementation(async () => String(pinned));
+        redis.get.mockImplementation(async () =>
+          pinned === null || isExpired() ? null : String(pinned),
+        );
 
         auth.signDailySession.mockImplementation((claims: any) => {
           auth.verifyDailySession.mockReturnValue({
@@ -607,6 +635,46 @@ describe("DailyService", () => {
         expect(result.elapsedMs).toBe(1_000);
         expect(result.score).toBe(
           DAILY_SCORE_BASE_CORRECT * 5 + bonus + DAILY_STREAK_BONUS_PER_DAY,
+        );
+      });
+
+      /**
+       * The same reset, merely delayed: a pin that expired on the token's TTL
+       * would be re-claimable after 30 minutes, so waiting out the key bought
+       * back the full speed bonus. The pin therefore lives until the UTC day
+       * ends — past which the attempt itself is no longer available.
+       *
+       * Stays inside 2026-08-09 on purpose: crossing midnight changes the
+       * dateKey and the token would be rejected for a different reason,
+       * proving nothing about the pin.
+       */
+      it("does not re-pin after the token TTL has lapsed", async () => {
+        await service.getToday("user-1");
+
+        // Well past the 30-minute token TTL, still the same UTC day.
+        const lateMs = NOW_MS + 31 * 60_000;
+        vi.setSystemTime(new Date(lateMs));
+
+        await service.getToday("user-1");
+        const result = await service.submit("user-1", submitInput());
+
+        // Measured from the original fetch, so the window is long gone.
+        expect(result.elapsedMs).toBe(lateMs - NOW_MS);
+        expect(result.score).toBe(
+          DAILY_SCORE_BASE_CORRECT * 5 + DAILY_STREAK_BONUS_PER_DAY,
+        );
+      });
+
+      it("pins for the remainder of the UTC day, not the token lifetime", async () => {
+        await service.getToday("user-1");
+
+        // 10:00Z -> 14h left. Asserted as a duration rather than a literal so
+        // the intent survives a change to NOW_MS.
+        const secondsLeftInDay = (Date.UTC(2026, 7, 10) - NOW_MS) / 1000;
+        expect(redis.setIfAbsent).toHaveBeenCalledWith(
+          "daily:session:user-1:2026-08-09",
+          String(NOW_MS),
+          secondsLeftInDay,
         );
       });
     });
@@ -892,6 +960,15 @@ describe("DailyService", () => {
         service.submit("user-1", submitInput()),
       ).resolves.toMatchObject({ correctCount: 5 });
     });
+
+    it("still succeeds when cache eviction rejects with a non-Error", async () => {
+      prisma.dailyAttempt.findUnique.mockResolvedValue(null);
+      redis.del.mockRejectedValue("connection reset");
+
+      await expect(
+        service.submit("user-1", submitInput()),
+      ).resolves.toMatchObject({ correctCount: 5 });
+    });
   });
 
   // ---------------------------------------------------------
@@ -1004,9 +1081,32 @@ describe("DailyService", () => {
       expect(prisma.$queryRaw).toHaveBeenCalled();
     });
 
+    it("falls back to the DB when the cache read rejects with a non-Error", async () => {
+      redis.getJSON.mockRejectedValue("connection reset");
+      prisma.$queryRaw.mockResolvedValue([]);
+
+      const result = await service.getLeaderboard({
+        dateKey: "2026-08-09",
+        limit: 50,
+      });
+
+      expect(result.cached).toBe(false);
+      expect(prisma.$queryRaw).toHaveBeenCalled();
+    });
+
     it("still returns data when the cache write throws", async () => {
       redis.getJSON.mockResolvedValue(null);
       redis.setJSON.mockRejectedValue(new Error("redis down"));
+      prisma.$queryRaw.mockResolvedValue([]);
+
+      await expect(
+        service.getLeaderboard({ dateKey: "2026-08-09", limit: 50 }),
+      ).resolves.toMatchObject({ cached: false });
+    });
+
+    it("still returns data when the cache write rejects with a non-Error", async () => {
+      redis.getJSON.mockResolvedValue(null);
+      redis.setJSON.mockRejectedValue("connection reset");
       prisma.$queryRaw.mockResolvedValue([]);
 
       await expect(

@@ -218,7 +218,7 @@ export class AuthService {
     startedAtMs: number | null;
     iat: number;
   } {
-    const decoded = jwt.verify(token, this.jwtSecret) as {
+    let decoded: {
       typ?: string;
       sub?: string;
       dateKey?: string;
@@ -226,6 +226,15 @@ export class AuthService {
       startedAtMs?: number | null;
       iat?: number;
     };
+
+    // Normalised exactly as verifyToken does: jwt throws JsonWebTokenError /
+    // TokenExpiredError, which would otherwise escape as a raw library error
+    // while every other failure below leaves here as UnauthorizedException.
+    try {
+      decoded = jwt.verify(token, this.jwtSecret) as typeof decoded;
+    } catch {
+      throw new UnauthorizedException("Invalid or expired daily session token");
+    }
 
     if (decoded?.typ !== DAILY_SESSION_TYP) {
       throw new UnauthorizedException("Not a daily session token");

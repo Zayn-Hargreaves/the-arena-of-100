@@ -351,6 +351,11 @@ describe("AuthService.verifyToken", () => {
     );
   }
 
+  // Signed WITHOUT a `typ` claim on purpose: access tokens live for 24h, so
+  // rejecting untyped ones would sign out every session already in flight at
+  // deploy time. This is the backward-compatibility guarantee documented on
+  // verifyToken — do not "tighten" it into a rejection until one full token
+  // TTL has elapsed since the typ marker shipped.
   it("returns the decoded payload when the token is valid", () => {
     const service = buildServiceForVerify();
     const token = jwt.sign(

@@ -76,8 +76,16 @@ export const dailyTodayResponseSchema = z.object({
   questions: z.array(publicQuestionSchema),
   /**
    * Signed, short-lived token binding this delivery to the submit that
-   * follows. The server reads its issue time to measure the session
-   * authoritatively — the client never reports its own timing for scoring.
+   * follows, carrying the exact question-set version served.
+   *
+   * Session duration is measured from a server-pinned start — written on the
+   * FIRST fetch of the day and held in the session store — NOT from the
+   * token's own issue time: every fetch mints a new token, so an `iat`-based
+   * clock would reset by simply re-fetching before submitting. When no pin
+   * exists (anonymous fetch, or the session store was unavailable) the speed
+   * bonus is forfeited rather than falling back to that resettable clock.
+   * The client never reports its own timing for scoring
+   * (server-authoritative; see memory-bank/codingGuidelines.md §1).
    */
   sessionToken: z.string(),
   /** Server clock at response time — lets the client render a reset countdown. */

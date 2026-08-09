@@ -20,11 +20,10 @@ import {
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
-import { AuthService, DAILY_SESSION_TTL_SECONDS } from "../auth/auth.service";
+import { AuthService } from "../auth/auth.service";
 import { CACHE_TTL } from "../../common/config/cache-ttl";
 import {
   DAILY_LEADERBOARD_DEFAULT_LIMIT,
-  DAILY_QUESTION_COUNT,
   storedDailyQuestionsSchema,
   type DailyLeaderboardItem,
   type DailyLeaderboardQuery,
@@ -530,7 +529,7 @@ export class DailyService {
       const created = await this.redis.setIfAbsent(
         key,
         String(nowMs),
-        DAILY_SESSION_TTL_SECONDS,
+        this.sessionPinTtlSeconds(nowMs),
       );
       if (created) return nowMs;
 
@@ -547,6 +546,23 @@ export class DailyService {
       );
       return null;
     }
+  }
+
+  /**
+   * Lifetime of the pin: the remainder of the UTC day it belongs to.
+   *
+   * Deliberately NOT the token's TTL. The pin must outlive every token minted
+   * against it, because the attempt it guards is one-per-user-per-UTC-day: an
+   * expired pin lets the next fetch claim a FRESH start, which is exactly the
+   * clock reset this design exists to prevent — merely delayed by the TTL
+   * rather than prevented. Expiring at the day boundary means the pin dies
+   * only once the attempt it protects can no longer be made.
+   *
+   * Floored at 1s because Redis rejects a non-positive EX.
+   */
+  private sessionPinTtlSeconds(nowMs: number): number {
+    const msRemaining = this.nextResetAt(new Date(nowMs)).getTime() - nowMs;
+    return Math.max(1, Math.ceil(msRemaining / 1000));
   }
 
   private sessionKey(userId: string, dateKey: string): string {
@@ -666,10 +682,5 @@ export class DailyService {
         `Redis DEL failed for daily leaderboard ${dateKey}: ${message}`,
       );
     }
-  }
-
-  /** Exposed for tests and callers that need the canonical set size. */
-  get questionCount(): number {
-    return DAILY_QUESTION_COUNT;
   }
 }

@@ -6,12 +6,24 @@
 // clock. The centrepiece is the reissue regression: re-fetching
 // the questions must NOT reset the speed-bonus clock.
 //
+// `Date` is faked for the whole suite (real Postgres/Redis, real
+// timers) so the UTC day cannot shift mid-run and elapsed times
+// are exact rather than jitter-tolerant. See installFakeClock.
+//
 // Note the factory signs access tokens WITHOUT a `typ` claim, so
 // these tests also cover the legacy-token tolerance in
 // AuthService.verifyToken.
 // ============================================================
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { createTestApp, type TestApp } from "./../helpers/test-app.factory";
 import { disconnectPrisma, getPrisma } from "./../helpers/db-helpers";
 import { disconnectRedis, flushTestRedis } from "./../helpers/redis-helpers";
@@ -31,8 +43,7 @@ const USER_ID = "e2e-daily-user";
 const USERNAME = "e2e_daily_user";
 
 /**
- * Real time deliberately spent between the two GETs in the reissue test, so
- * elapsedMs has something non-trivial to prove it measured.
+ * Simulated gap between the two GETs in the reissue test.
  *
  * Over one second on purpose: `iat` has second granularity, so a shorter gap
  * mints a byte-identical token and the reissue this test exists to cover would
@@ -40,12 +51,33 @@ const USERNAME = "e2e_daily_user";
  */
 const SESSION_GAP_MS = 1_200;
 
-/** Tolerance for scheduler jitter — well under SESSION_GAP_MS, so the lower
- * bound it guards stays a real assertion rather than a formality. */
-const CLOCK_SLACK_MS = 50;
+/**
+ * The UTC day the whole suite operates on, and the instant the fake clock is
+ * anchored to.
+ *
+ * Capturing the key alone is not enough: DailyService derives its OWN dateKey
+ * from the clock on every request (toDateKey), so a run that crossed UTC
+ * midnight would still seed one day and then be served another. Midday leaves
+ * ~12h of headroom on either side, so the anchor cannot drift across a
+ * boundary no matter how long the suite runs.
+ */
+const DATE_KEY = new Date().toISOString().slice(0, 10);
+const CLOCK_ANCHOR = new Date(`${DATE_KEY}T12:00:00.000Z`);
 
-function todayKey(): string {
-  return new Date().toISOString().slice(0, 10);
+/**
+ * Only `Date` is faked. This suite drives real Postgres and Redis, whose
+ * drivers rely on timers and immediates internally — freezing those would
+ * deadlock the very I/O under test. Faking `Date` alone is enough, because
+ * every clock the service reads (toDateKey, the session pin, jwt `iat`) goes
+ * through it.
+ */
+function installFakeClock() {
+  vi.useFakeTimers({ toFake: ["Date"], now: CLOCK_ANCHOR });
+}
+
+/** Moves the simulated clock forward without blocking on real time. */
+function advanceClock(ms: number) {
+  vi.setSystemTime(new Date(Date.now() + ms));
 }
 
 /** Five well-formed questions; correctAnswer is always inside options. */
@@ -69,6 +101,11 @@ describe("E2E /daily", () => {
     testApp = await createTestApp();
     await flushTestRedis();
 
+    // Installed before the seed so the row, every endpoint call and every
+    // assertion agree on the day — the service re-derives its dateKey from
+    // this clock on each request.
+    installFakeClock();
+
     const prisma = getPrisma();
     await prisma.user.upsert({
       where: { id: USER_ID },
@@ -77,10 +114,10 @@ describe("E2E /daily", () => {
     });
 
     const created = await prisma.dailyQuestion.upsert({
-      where: { dateKey_version: { dateKey: todayKey(), version: 1 } },
+      where: { dateKey_version: { dateKey: DATE_KEY, version: 1 } },
       update: { questions: questionSet("e2e"), active: true },
       create: {
-        dateKey: todayKey(),
+        dateKey: DATE_KEY,
         version: 1,
         questions: questionSet("e2e"),
         active: true,
@@ -96,12 +133,19 @@ describe("E2E /daily", () => {
     const prisma = getPrisma();
     await prisma.dailyAttempt.deleteMany({ where: { userId: USER_ID } });
     await flushTestRedis();
+    // Tests advance the clock; rewind so the next one starts from the anchor
+    // rather than inheriting a drifted (eventually midnight-crossing) one.
+    vi.setSystemTime(CLOCK_ANCHOR);
   });
 
   afterAll(async () => {
+    // Real time restored before teardown so cleanup and the pg/redis clients
+    // shut down against the same clock they connected with.
+    vi.useRealTimers();
+
     const prisma = getPrisma();
     await prisma.dailyAttempt.deleteMany({ where: { userId: USER_ID } });
-    await prisma.dailyQuestion.deleteMany({ where: { dateKey: todayKey() } });
+    await prisma.dailyQuestion.deleteMany({ where: { dateKey: DATE_KEY } });
     await prisma.user.deleteMany({ where: { id: USER_ID } });
     await testApp.close();
     await disconnectPrisma();
@@ -129,7 +173,7 @@ describe("E2E /daily", () => {
     it("serves the set without leaking answers, and issues a session token", async () => {
       const data = await fetchToday();
 
-      expect(data.dateKey).toBe(todayKey());
+      expect(data.dateKey).toBe(DATE_KEY);
       expect(data.version).toBe(1);
       expect(data.questions).toHaveLength(5);
       expect(data.sessionToken.length).toBeGreaterThan(0);
@@ -201,7 +245,7 @@ describe("E2E /daily", () => {
 
       // The attempt records the exact version it was graded against.
       const attempt = await getPrisma().dailyAttempt.findUnique({
-        where: { dateKey_userId: { dateKey: todayKey(), userId: USER_ID } },
+        where: { dateKey_userId: { dateKey: DATE_KEY, userId: USER_ID } },
       });
       expect(attempt?.dailyQuestionId).toBe(dailyQuestionId);
     });
@@ -226,17 +270,12 @@ describe("E2E /daily", () => {
 
   describe("session clock", () => {
     it("does not reset the clock when the questions are re-fetched", async () => {
-      // Wall-clock bounds, measured around the real requests. Everything below
-      // is asserted against elapsed time that actually passed, so a clock
-      // derived from the token's own `iat` cannot satisfy it.
-      const beforeFirstFetch = Date.now();
-
       // First fetch pins the session start.
       const first = await fetchToday();
 
-      // Let a measurable amount of time pass, then re-fetch. A NEW token is
-      // minted, but it must carry the SAME pinned start.
-      await new Promise((resolve) => setTimeout(resolve, SESSION_GAP_MS));
+      // Advance the simulated clock, then re-fetch. A NEW token is minted,
+      // but it must carry the SAME pinned start.
+      advanceClock(SESSION_GAP_MS);
       const second = await fetchToday();
       expect(second.sessionToken).not.toBe(first.sessionToken);
 
@@ -250,24 +289,24 @@ describe("E2E /daily", () => {
 
       expect(res.statusCode).toBe(200);
       const data = res.json<{ data: DailySubmitResponse }>().data;
-      const afterSubmit = Date.now();
 
-      // The lower bound is the assertion with teeth: it spans the gap between
-      // the two fetches, so an `iat`-derived clock — which the second token
-      // would reset to ~0 — falls short of it.
-      expect(data.elapsedMs).not.toBeNull();
-      expect(data.elapsedMs!).toBeGreaterThanOrEqual(
-        SESSION_GAP_MS - CLOCK_SLACK_MS,
-      );
-      // Upper bound: elapsed cannot exceed the whole test's wall time, which
-      // catches a start pinned earlier than the first fetch.
-      expect(data.elapsedMs!).toBeLessThanOrEqual(
-        afterSubmit - beforeFirstFetch + CLOCK_SLACK_MS,
-      );
+      // Exact, not a tolerance band: with the clock controlled there is no
+      // scheduler jitter to absorb. An `iat`-derived clock would report ~0
+      // here, since the second token was minted after the gap.
+      expect(data.elapsedMs).toBe(SESSION_GAP_MS);
     });
 
     it("ignores forged client responseTimeMs", async () => {
       const { sessionToken } = await fetchToday();
+
+      // A deliberate, sizeable gap is what gives this test teeth: it makes the
+      // server's measurement differ sharply from the zeros the client claims,
+      // so the two cannot produce the same score by coincidence. Under the
+      // previous real clock the difference was a few milliseconds — and once
+      // the clock is controlled it would be exactly zero, leaving nothing to
+      // distinguish.
+      const SERVER_MEASURED_MS = 20_000;
+      advanceClock(SERVER_MEASURED_MS);
 
       const res = await testApp.inject("POST", "/api/v1/daily/submit", {
         headers: await testApp.mutatingHeaders(USER_ID, USERNAME),
@@ -280,16 +319,21 @@ describe("E2E /daily", () => {
 
       const data = res.json<{ data: DailySubmitResponse }>().data;
       // The session was pinned (authenticated fetch), so the server has a real
-      // measurement to score against.
-      expect(data.elapsedMs).not.toBeNull();
-      // Scoring must derive from that server measurement — never from the
-      // zeros the client posted. Computing the expectation FROM elapsedMs is
-      // what makes this meaningful: had the forged zeros leaked into scoring,
-      // the score would have come out at the full-bonus maximum instead.
+      // measurement to score against — its own, not the client's.
+      expect(data.elapsedMs).toBe(SERVER_MEASURED_MS);
+
+      // Scoring must derive from that server measurement. The forged zeros
+      // would have paid the FULL window bonus; this expectation is strictly
+      // lower, so a leak of client timing into scoring fails here.
       const expectedBonus = Math.floor(
-        Math.max(0, DAILY_SPEED_BONUS_WINDOW_MS - data.elapsedMs!) /
+        (DAILY_SPEED_BONUS_WINDOW_MS - SERVER_MEASURED_MS) /
           DAILY_SPEED_BONUS_DIVISOR,
       );
+      const forgedBonus = Math.floor(
+        DAILY_SPEED_BONUS_WINDOW_MS / DAILY_SPEED_BONUS_DIVISOR,
+      );
+      expect(expectedBonus).toBeLessThan(forgedBonus);
+
       expect(data.score).toBe(
         DAILY_SCORE_BASE_CORRECT * 5 +
           expectedBonus +

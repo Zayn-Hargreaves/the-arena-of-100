@@ -111,13 +111,17 @@ function toDateKey(at: Date): string {
  */
 function isSamePayload(stored: unknown, next: unknown): boolean {
   if (stored === next) return true;
-  if (!isPlainObject(stored) || !isPlainObject(next)) {
-    if (Array.isArray(stored) && Array.isArray(next)) {
-      if (stored.length !== next.length) return false;
-      return stored.every((v, i) => isSamePayload(v, next[i]));
-    }
-    return false;
+
+  // Arrays first: isPlainObject excludes them, so leaving this inside the
+  // guard below reads as a fallback when it is really the questions-array
+  // case — the payload's whole top level.
+  if (Array.isArray(stored) || Array.isArray(next)) {
+    if (!Array.isArray(stored) || !Array.isArray(next)) return false;
+    if (stored.length !== next.length) return false;
+    return stored.every((v, i) => isSamePayload(v, next[i]));
   }
+
+  if (!isPlainObject(stored) || !isPlainObject(next)) return false;
 
   const storedKeys = Object.keys(stored);
   const nextKeys = Object.keys(next);

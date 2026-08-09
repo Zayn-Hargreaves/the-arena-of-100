@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { DailyController } from "./daily.controller";
 import { DailyService } from "./daily.service";
 import { AuthService } from "../auth/auth.service";
 import type { FastifyRequest } from "fastify";
 import type { AuthenticatedRequest } from "../auth/auth.types";
+import type { DailySubmitInput } from "./dto";
 
 const TODAY_RESPONSE = {
   dateKey: "2026-08-09",
@@ -21,8 +22,28 @@ function requestWith(headers: Record<string, string>): FastifyRequest {
 
 describe("DailyController", () => {
   let controller: DailyController;
-  let service: { getToday: any; submit: any; getLeaderboard: any };
-  let auth: { verifyToken: any };
+  // Typed against the real service signatures, so a change to DailyService
+  // surfaces here at compile time instead of silently passing on `any`.
+  let service: {
+    getToday: Mock<
+      Parameters<DailyService["getToday"]>,
+      ReturnType<DailyService["getToday"]>
+    >;
+    submit: Mock<
+      Parameters<DailyService["submit"]>,
+      ReturnType<DailyService["submit"]>
+    >;
+    getLeaderboard: Mock<
+      Parameters<DailyService["getLeaderboard"]>,
+      ReturnType<DailyService["getLeaderboard"]>
+    >;
+  };
+  let auth: {
+    verifyToken: Mock<
+      Parameters<AuthService["verifyToken"]>,
+      ReturnType<AuthService["verifyToken"]>
+    >;
+  };
 
   beforeEach(() => {
     service = {
@@ -109,7 +130,7 @@ describe("DailyController", () => {
     it("forwards the authenticated userId, body and session token", async () => {
       const expected = { dateKey: "2026-08-09", score: 500 };
       service.submit.mockResolvedValue(expected);
-      const body = {
+      const body: DailySubmitInput = {
         sessionToken: "valid-session-token",
         answers: [{ answer: "A", responseTimeMs: 1000 }],
       };
@@ -118,7 +139,7 @@ describe("DailyController", () => {
         user: { userId: "u1", username: "Alice" },
       } as unknown as AuthenticatedRequest;
 
-      const result = await controller.submit(request, body as any);
+      const result = await controller.submit(request, body);
 
       expect(service.submit).toHaveBeenCalledWith("u1", body);
       expect(result).toBe(expected);
