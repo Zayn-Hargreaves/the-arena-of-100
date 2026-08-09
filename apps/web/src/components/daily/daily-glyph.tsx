@@ -1,5 +1,3 @@
-"use client";
-
 import React from "react";
 import { COLORS } from "@/styles/tokens/colors";
 

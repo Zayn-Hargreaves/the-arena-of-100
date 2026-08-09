@@ -1,5 +1,3 @@
-"use client";
-
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -101,6 +99,9 @@ describe("DailyShareButton", () => {
         copyLabel="Copy"
         copiedLabel="Copied!"
         errorLabel="Failed"
+        shareTextTitle="Arena of 100 — Daily"
+        shareTextScoreLabel="Score"
+        shareTextStreakLabel="Streak"
       />,
     );
 
@@ -131,12 +132,19 @@ describe("DailyShareButton", () => {
         copyLabel="Copy"
         copiedLabel="Copied!"
         errorLabel="Failed"
+        shareTextTitle="Arena of 100 — Daily"
+        shareTextScoreLabel="Score"
+        shareTextStreakLabel="Streak"
       />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /copy/i }));
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
-    expect(screen.getByText("Copied!")).toBeInTheDocument();
+    // waitFor for the label flip too — setCopied(true) resolves in a
+    // microtask after writeText, and the re-render must commit before
+    // the assertion. Without this, the test races the React scheduler
+    // and flakes intermittently.
+    expect(await screen.findByText("Copied!")).toBeInTheDocument();
   });
 
   it("returns silently when user cancels share with an AbortError", async () => {
@@ -160,6 +168,9 @@ describe("DailyShareButton", () => {
         copyLabel="Copy"
         copiedLabel="Copied!"
         errorLabel="Failed"
+        shareTextTitle="Arena of 100 — Daily"
+        shareTextScoreLabel="Score"
+        shareTextStreakLabel="Streak"
       />,
     );
 
@@ -191,12 +202,15 @@ describe("DailyShareButton", () => {
         copyLabel="Copy"
         copiedLabel="Copied!"
         errorLabel="Failed"
+        shareTextTitle="Arena of 100 — Daily"
+        shareTextScoreLabel="Score"
+        shareTextStreakLabel="Streak"
       />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /share/i }));
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
-    expect(screen.getByText("Copied!")).toBeInTheDocument();
+    expect(await screen.findByText("Copied!")).toBeInTheDocument();
   });
 
   it("falls back to clipboard when share rejects with an 'aborted' message but Error name is not AbortError", async () => {
@@ -222,12 +236,15 @@ describe("DailyShareButton", () => {
         copyLabel="Copy"
         copiedLabel="Copied!"
         errorLabel="Failed"
+        shareTextTitle="Arena of 100 — Daily"
+        shareTextScoreLabel="Score"
+        shareTextStreakLabel="Streak"
       />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /share/i }));
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
-    expect(screen.getByText("Copied!")).toBeInTheDocument();
+    expect(await screen.findByText("Copied!")).toBeInTheDocument();
   });
 
   it("surfaces errorLabel when both share and clipboard fail", async () => {
@@ -249,11 +266,14 @@ describe("DailyShareButton", () => {
         copyLabel="Copy"
         copiedLabel="Copied!"
         errorLabel="Failed"
+        shareTextTitle="Arena of 100 — Daily"
+        shareTextScoreLabel="Score"
+        shareTextStreakLabel="Streak"
       />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /share/i }));
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
-    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(await screen.findByText("Failed")).toBeInTheDocument();
   });
 });

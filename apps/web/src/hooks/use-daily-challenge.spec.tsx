@@ -11,7 +11,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const storeState: {
   accessToken: string | null;
-} = { accessToken: "tok-xyz" };
+  userId: string | null;
+} = { accessToken: "tok-xyz", userId: "user-1" };
 
 function mockUseSocketStore<T>(
   selector?: (s: typeof storeState) => T,
@@ -54,6 +55,7 @@ function makeWrapper() {
 describe("useDailyToday", () => {
   beforeEach(() => {
     storeState.accessToken = "tok-xyz";
+    storeState.userId = "user-1";
     getDailyToday.mockReset();
   });
 
@@ -85,12 +87,96 @@ describe("useDailyToday", () => {
 
   it("passes undefined token through to the API when not authenticated", async () => {
     storeState.accessToken = null;
+    storeState.userId = null;
     getDailyToday.mockResolvedValue({ questions: [] });
 
     renderHook(() => useDailyToday(), { wrapper: makeWrapper() });
 
     await waitFor(() => expect(getDailyToday).toHaveBeenCalledTimes(1));
     expect(getDailyToday).toHaveBeenCalledWith(undefined);
+  });
+
+  describe("reset scheduling", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /**
+     * The client clock is set 1 hour BEHIND the server, and `nextResetAt`
+     * is 2 server-hours out. A naive `target - Date.now()` would wait 3
+     * hours (firing an hour late, leaving yesterday's set on screen).
+     * Compensating with `serverTime` must fire at the true 2 hours.
+     *
+     * Asserted through the observable effect — the refetch triggered by
+     * `resetQueries` — rather than by spying on `setTimeout`, which is
+     * shared with TanStack Query's own internals.
+     */
+    it("fires the reset on server time, not the skewed client clock", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      vi.setSystemTime(new Date("2026-08-09T11:00:00.000Z"));
+
+      getDailyToday.mockResolvedValue({
+        dateKey: "2026-08-09",
+        version: 1,
+        questions: [],
+        sessionToken: "sess",
+        serverTime: "2026-08-09T12:00:00.000Z", // server is 1h ahead
+        nextResetAt: "2026-08-09T14:00:00.000Z", // +2h server time
+        alreadyAttempted: false,
+      });
+
+      const { result } = renderHook(() => useDailyToday(), {
+        wrapper: makeWrapper(),
+      });
+      await waitFor(() => expect(result.current.data).toBeDefined());
+      expect(getDailyToday).toHaveBeenCalledTimes(1);
+
+      // Just shy of the server-time deadline: must NOT have reset yet.
+      await act(async () => {
+        vi.advanceTimersByTime(2 * 60 * 60 * 1000 - 1000);
+      });
+      expect(getDailyToday).toHaveBeenCalledTimes(1);
+
+      // Crossing the 2h server deadline triggers the refetch. Under the
+      // old client-clock maths this would still be an hour away.
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+      });
+      await waitFor(() => expect(getDailyToday).toHaveBeenCalledTimes(2));
+    });
+
+    it("falls back to the client clock when serverTime is unusable", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      vi.setSystemTime(new Date("2026-08-09T11:00:00.000Z"));
+
+      getDailyToday.mockResolvedValue({
+        dateKey: "2026-08-09",
+        version: 1,
+        questions: [],
+        sessionToken: "sess",
+        serverTime: "not-a-date",
+        nextResetAt: "2026-08-09T13:00:00.000Z", // +2h client time
+        alreadyAttempted: false,
+      });
+
+      const { result } = renderHook(() => useDailyToday(), {
+        wrapper: makeWrapper(),
+      });
+      await waitFor(() => expect(result.current.data).toBeDefined());
+      expect(getDailyToday).toHaveBeenCalledTimes(1);
+
+      // Offset degrades to 0 rather than NaN — a NaN delay would coerce
+      // to 0 and reset immediately, thrashing the session token.
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      expect(getDailyToday).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        vi.advanceTimersByTime(2 * 60 * 60 * 1000);
+      });
+      await waitFor(() => expect(getDailyToday).toHaveBeenCalledTimes(2));
+    });
   });
 });
 

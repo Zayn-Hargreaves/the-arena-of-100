@@ -451,10 +451,11 @@
       "result": "Share your result",
       "copy": "Copy result link",
       "copied": "Copied!",
-      "error": "Couldn't share — try again"
+      "error": "Couldn't share — try again",
+      "textTitle": "Arena of 100 — Daily",
+      "textScore": "Score",
+      "textStreak": "Streak"
     },
-    "share.copy": "Copy result link",
-    "share.copied": "Copied!",
     "leaderboard": {
       "title": "Today's Leaderboard",
       "error": "Leaderboard unavailable.",
@@ -488,7 +489,9 @@
       "perfectRun": "Perfect run — streak extended!",
       "skipped": "(skipped)",
       "correctAnswer": "Correct: {answer}",
-      "questionLabel": "Q{index}"
+      "questionLabel": "Q{index}",
+      "srCorrect": "Correct answer",
+      "srIncorrect": "Incorrect answer"
     },
     "difficulty": {
       "EASY": "Easy",

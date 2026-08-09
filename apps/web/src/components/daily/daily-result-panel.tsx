@@ -90,6 +90,11 @@ export function DailyResultPanel({
                 <CrossGlyph className="text-current" size={16} />
               )}
             </span>
+            {/* The icon above is decorative (aria-hidden); this carries
+                the pass/fail meaning for assistive tech. */}
+            <span className="sr-only">
+              {t(r.isCorrect ? "result.srCorrect" : "result.srIncorrect")}
+            </span>
             <div className="min-w-0 flex-1">
               <div className="font-body text-sm font-semibold text-candy-ink truncate">
                 {t("result.questionLabel", { index: i + 1 })}:{" "}

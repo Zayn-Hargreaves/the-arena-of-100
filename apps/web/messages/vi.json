@@ -451,10 +451,11 @@
       "result": "Chia sẻ kết quả",
       "copy": "Sao chép liên kết",
       "copied": "Đã sao chép!",
-      "error": "Không thể chia sẻ — thử lại"
+      "error": "Không thể chia sẻ — thử lại",
+      "textTitle": "Arena of 100 — Hằng Ngày",
+      "textScore": "Điểm",
+      "textStreak": "Streak"
     },
-    "share.copy": "Sao chép liên kết",
-    "share.copied": "Đã sao chép!",
     "leaderboard": {
       "title": "Bảng Xếp Hạng Hôm Nay",
       "error": "Không tải được bảng xếp hạng.",
@@ -488,7 +489,9 @@
       "perfectRun": "Hoàn hảo — streak được cộng!",
       "skipped": "(bỏ qua)",
       "correctAnswer": "Đáp án: {answer}",
-      "questionLabel": "Câu {index}"
+      "questionLabel": "Câu {index}",
+      "srCorrect": "Trả lời đúng",
+      "srIncorrect": "Trả lời sai"
     },
     "difficulty": {
       "EASY": "Dễ",

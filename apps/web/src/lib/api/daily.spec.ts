@@ -103,4 +103,30 @@ describe("getDailyLeaderboard", () => {
     await getDailyLeaderboard({ dateKey: "   ", limit: 5 });
     expect(apiGetJson).toHaveBeenCalledWith("/daily/leaderboard?limit=5");
   });
+
+  it.each([
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["-Infinity", Number.NEGATIVE_INFINITY],
+    ["a fraction", 2.5],
+    ["zero", 0],
+    ["a negative", -10],
+    ["above the backend maximum", 101],
+  ])("omits a limit that is %s", async (_label, limit) => {
+    // The backend schema accepts an integer in 1..100. Anything else is
+    // dropped client-side so the server falls back to its own default
+    // instead of rejecting the whole request.
+    await getDailyLeaderboard({ limit });
+    expect(apiGetJson).toHaveBeenCalledWith("/daily/leaderboard");
+  });
+
+  it.each([
+    ["the minimum", 1],
+    ["the maximum", 100],
+  ])("keeps a limit at %s", async (_label, limit) => {
+    await getDailyLeaderboard({ limit });
+    expect(apiGetJson).toHaveBeenCalledWith(
+      `/daily/leaderboard?limit=${limit}`,
+    );
+  });
 });

@@ -28,6 +28,9 @@ export * from "./audit";
 // import GAME_CONFIG.MAX_ROUNDS without creating a circular
 // dependency through the index barrel).
 export { GAME_CONFIG } from "./game-config";
+// Daily Challenge Constants (own file for the same reason as
+// game-config: the API's Zod DTOs import it directly).
+export { DAILY_QUESTION_COUNT } from "./daily-config";
 import { GAME_CONFIG } from "./game-config";
 
 export type RoomCategory =

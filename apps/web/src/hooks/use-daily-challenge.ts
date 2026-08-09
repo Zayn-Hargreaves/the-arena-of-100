@@ -31,19 +31,40 @@ const DAILY_LEADERBOARD_KEY = ["daily", "leaderboard"] as const;
  *
  * The schedule is a one-shot — we do NOT keep a long-lived timer; the
  * side effect just queues a single `setTimeout` and unmounts.
+ *
+ * The delay is measured against the SERVER clock, not the client's.
+ * `serverNowIso` gives us the offset (serverNow - clientNow) at fetch
+ * time; without it a skewed client would reset early (still showing
+ * yesterday's set as "today") or late. This mirrors what
+ * `useDailyCountdown` does for the visible timer, so the countdown
+ * hitting zero and the cache reset stay in agreement.
  */
-function useInvalidateAtReset(nextResetAtIso: string | undefined) {
+function useInvalidateAtReset(
+  nextResetAtIso: string | undefined,
+  serverNowIso?: string,
+) {
   const queryClient = useQueryClient();
   useEffect(() => {
     if (!nextResetAtIso) return;
     const targetMs = new Date(nextResetAtIso).getTime();
     if (!Number.isFinite(targetMs)) return;
-    const delay = Math.max(0, targetMs - Date.now());
+
+    // Fall back to a zero offset when the server time is missing or
+    // unparseable — behaviour then matches the old client-clock path
+    // rather than breaking the reset entirely.
+    const serverNowMs = serverNowIso
+      ? new Date(serverNowIso).getTime()
+      : Number.NaN;
+    const clockOffsetMs = Number.isFinite(serverNowMs)
+      ? serverNowMs - Date.now()
+      : 0;
+
+    const delay = Math.max(0, targetMs - (Date.now() + clockOffsetMs));
     const id = window.setTimeout(() => {
       queryClient.resetQueries({ queryKey: DAILY_TODAY_KEY });
     }, delay);
     return () => window.clearTimeout(id);
-  }, [nextResetAtIso, queryClient]);
+  }, [nextResetAtIso, serverNowIso, queryClient]);
 }
 
 /**
@@ -62,9 +83,14 @@ function useInvalidateAtReset(nextResetAtIso: string | undefined) {
  */
 export function useDailyToday() {
   const accessToken = useSocketStore((state) => state.accessToken);
+  // Key on the stable user identity, not the token: a token refresh
+  // keeps the same user but would otherwise mint a brand-new cache
+  // entry, silently re-fetching and re-minting the session token
+  // mid-quiz.
+  const userId = useSocketStore((state) => state.userId);
 
   const query = useQuery<DailyTodayResponse>({
-    queryKey: [...DAILY_TODAY_KEY, accessToken ?? "anon"],
+    queryKey: [...DAILY_TODAY_KEY, userId ?? "anon"],
     queryFn: () => getDailyToday(accessToken ?? undefined),
     enabled: true,
     staleTime: Infinity,
@@ -74,7 +100,7 @@ export function useDailyToday() {
     refetchOnReconnect: false,
   });
 
-  useInvalidateAtReset(query.data?.nextResetAt);
+  useInvalidateAtReset(query.data?.nextResetAt, query.data?.serverTime);
 
   return query;
 }

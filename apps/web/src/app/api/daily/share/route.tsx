@@ -17,6 +17,14 @@ export const runtime = "edge";
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * The rendered PNG is cached for a day and served to every viewer, so
+ * its number formatting must not depend on the Edge isolate's ambient
+ * locale — otherwise the cached card could show "1,000" or "1.000"
+ * depending on which region rendered it first.
+ */
+const OG_NUMBER_LOCALE = "en-US";
+
 function clampInt(
   value: string | null,
   min: number,
@@ -118,7 +126,7 @@ export async function GET(req: NextRequest): Promise<Response> {
             Score
           </div>
           <div style={{ display: "flex", fontSize: 96, fontWeight: 900 }}>
-            {score.toLocaleString()}
+            {score.toLocaleString(OG_NUMBER_LOCALE)}
           </div>
           <div style={{ display: "flex", fontSize: 22, opacity: 0.7 }}>
             {correct}/{total} correct · {correctPct}%

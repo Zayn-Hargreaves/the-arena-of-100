@@ -29,8 +29,6 @@ import { DailyNicknameGate } from "@/components/daily/daily-nickname-gate";
 import { DailyShareButton } from "@/components/daily/daily-share-button";
 import { DailyStreakBadge } from "@/components/daily/daily-streak-badge";
 
-const QUESTION_COUNT = 5;
-
 /**
  * Tracks which user action opened the nickname gate. The gate is
  * shared between two flows:
@@ -43,8 +41,8 @@ const QUESTION_COUNT = 5;
  */
 type NicknameIntent = "play" | "submit" | null;
 
-function freshAnswers(): DailyAnswerInput[] {
-  return Array.from({ length: QUESTION_COUNT }, () => ({
+function freshAnswers(count: number): DailyAnswerInput[] {
+  return Array.from({ length: count }, () => ({
     answer: "",
     responseTimeMs: 0,
   }));
@@ -84,8 +82,7 @@ export default function DailyPage() {
   const submitMutation = useSubmitDaily();
 
   const [questionIndex, setQuestionIndex] = React.useState(0);
-  const [answers, setAnswers] =
-    React.useState<DailyAnswerInput[]>(freshAnswers);
+  const [answers, setAnswers] = React.useState<DailyAnswerInput[]>([]);
   const [result, setResult] = React.useState<DailySubmitResponse | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [submitError, setSubmitError] = React.useState<{
@@ -103,15 +100,37 @@ export default function DailyPage() {
 
   const data: DailyTodayResponse | undefined = today.data;
 
+  // The server owns the question count — a day may ship more or fewer
+  // than the usual five. Everything below (progress, navigation,
+  // submit-enable) derives from this instead of a hardcoded constant.
+  const questionCount = data?.questions.length ?? 0;
+
   const currentQuestion: DailyQuestionPublic | undefined =
     data?.questions[questionIndex];
+
+  // A new day (or a differently-sized set) invalidates every in-flight
+  // attempt: the reset timer refetches `today` under the same query key,
+  // so without this the previous day's answers, position, and result
+  // would bleed into the new challenge.
+  React.useEffect(() => {
+    if (!data?.dateKey) return;
+    setQuestionIndex(0);
+    setAnswers(freshAnswers(data.questions.length));
+    setResult(null);
+    setSubmitError(null);
+  }, [data?.dateKey, data?.questions.length]);
 
   // Returning users (server says they already submitted) should see the
   // already-done notice. Fresh submissions must NOT show it — the result
   // panel renders for them instead.
   const alreadySubmitted = data?.alreadyAttempted ?? false;
   const showAlreadyDone = alreadySubmitted && !result;
-  const allAnswered = answers.every((a) => a.answer.length > 0);
+  // The length check is load-bearing: `[].every()` is `true`, so without
+  // it the Submit button would enable before answers are initialised.
+  const allAnswered =
+    questionCount > 0 &&
+    answers.length === questionCount &&
+    answers.every((a) => a.answer.length > 0);
 
   // Only start the per-question clock once the question card is actually
   // on screen. Counting load + gate time would inflate the first answer's
@@ -140,7 +159,7 @@ export default function DailyPage() {
   };
 
   const handleNext = () => {
-    setQuestionIndex((i) => Math.min(QUESTION_COUNT - 1, i + 1));
+    setQuestionIndex((i) => Math.min(questionCount - 1, i + 1));
   };
 
   const handleBack = () => {
@@ -247,7 +266,7 @@ export default function DailyPage() {
           <MessageCard message={t("error.noQuestions")} />
         ) : null}
 
-        {data && data.questions.length === QUESTION_COUNT ? (
+        {data && data.questions.length > 0 ? (
           showAlreadyDone ? (
             <MessageCard message={t("alreadyDone")} />
           ) : !accessToken ? (
@@ -265,12 +284,12 @@ export default function DailyPage() {
             </div>
           ) : result ? null : (
             <div className="bg-candy-cloud border-[3px] border-candy-ink shadow-[6px_6px_0_0_#2B2D42] p-5 rounded-2xl space-y-5">
-              <DailyProgress index={questionIndex + 1} total={QUESTION_COUNT} />
+              <DailyProgress index={questionIndex + 1} total={questionCount} />
               {currentQuestion ? (
                 <DailyQuestionCard
                   question={currentQuestion}
                   questionNumber={questionIndex + 1}
-                  totalQuestions={QUESTION_COUNT}
+                  totalQuestions={questionCount}
                   selected={answers[questionIndex]?.answer ?? null}
                   locked={false}
                   onSelect={handleSelect}
@@ -285,7 +304,7 @@ export default function DailyPage() {
                 >
                   {t("back")}
                 </button>
-                {questionIndex < QUESTION_COUNT - 1 ? (
+                {questionIndex < questionCount - 1 ? (
                   <button
                     type="button"
                     onClick={handleNext}
@@ -335,6 +354,9 @@ export default function DailyPage() {
               copyLabel={t("share.copy")}
               copiedLabel={t("share.copied")}
               errorLabel={t("share.error")}
+              shareTextTitle={t("share.textTitle")}
+              shareTextScoreLabel={t("share.textScore")}
+              shareTextStreakLabel={t("share.textStreak")}
             />
           </>
         ) : null}

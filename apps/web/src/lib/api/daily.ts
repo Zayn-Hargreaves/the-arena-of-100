@@ -33,6 +33,10 @@ export async function submitDaily(
   return apiSendJson<DailySubmitResponse>("/daily/submit", "POST", body, token);
 }
 
+/** Bounds mirror `dailyLeaderboardQuerySchema` on the API side. */
+const LEADERBOARD_LIMIT_MIN = 1;
+const LEADERBOARD_LIMIT_MAX = 100;
+
 /**
  * Builds the leaderboard querystring, omitting empty/undefined
  * values so we never send `dateKey=` (which would fail the
@@ -44,8 +48,18 @@ function buildLeaderboardQuery(query: DailyLeaderboardQuery): string {
   const dateKey = query.dateKey?.trim();
   if (dateKey) search.set("dateKey", dateKey);
 
-  if (query.limit !== undefined) {
-    search.set("limit", String(query.limit));
+  // Only serialize a limit the backend will actually accept. Anything
+  // else (NaN, Infinity, fractions, out-of-range) is dropped so the
+  // server applies its own default instead of 400-ing the request.
+  // `Number.isInteger` rejects NaN, ±Infinity and non-integers at once.
+  const { limit } = query;
+  if (
+    limit !== undefined &&
+    Number.isInteger(limit) &&
+    limit >= LEADERBOARD_LIMIT_MIN &&
+    limit <= LEADERBOARD_LIMIT_MAX
+  ) {
+    search.set("limit", String(limit));
   }
 
   return search.toString();

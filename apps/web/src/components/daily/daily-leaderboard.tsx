@@ -2,11 +2,11 @@
 
 import React from "react";
 import type { DailyLeaderboardItem } from "@/types/daily";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { MiniGlyph } from "@/components/ui/mini-glyph";
 import { SpriteFrame } from "@/components/ui/sprite-frame";
 import { StreakGlyph } from "./daily-glyph";
-import { isValidAvatarSeed } from "@arena/shared";
+import { DAILY_QUESTION_COUNT, isValidAvatarSeed } from "@arena/shared";
 import { avatars, findAvatarBySeed } from "@/lib/avatars";
 
 interface DailyLeaderboardProps {
@@ -15,6 +15,10 @@ interface DailyLeaderboardProps {
 
 export function DailyLeaderboard({ items }: Readonly<DailyLeaderboardProps>) {
   const t = useTranslations("daily");
+  // Format against the active app locale rather than the browser's, so
+  // the separators match the rest of the page (and stay deterministic
+  // in tests / SSR).
+  const locale = useLocale();
 
   if (items.length === 0) {
     return (
@@ -53,11 +57,15 @@ export function DailyLeaderboard({ items }: Readonly<DailyLeaderboardProps>) {
                 {item.username}
               </span>
               <span className="font-mono font-black text-sm text-candy-pink shrink-0">
-                {item.score.toLocaleString()}
+                {item.score.toLocaleString(locale)}
               </span>
               <span className="font-mono text-[10px] text-candy-ink/60 inline-flex items-center gap-0.5 shrink-0">
                 <MiniGlyph variant="speed" className="w-3 h-3" />
-                {item.correctCount}/{5}
+                {/* The leaderboard payload carries `correctCount` with no
+                    denominator, so the shared constant supplies it. Rows
+                    that DO get a server-side total (result panel, share
+                    card) use that instead. */}
+                {item.correctCount}/{DAILY_QUESTION_COUNT}
               </span>
               <span className="font-mono text-[10px] text-candy-ink/60 shrink-0 inline-flex items-center gap-0.5">
                 <StreakGlyph className="text-candy-pink" size={10} />

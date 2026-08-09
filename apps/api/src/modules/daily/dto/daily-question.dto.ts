@@ -5,13 +5,20 @@
 
 import { z } from "zod";
 import { ApiProperty } from "@nestjs/swagger";
+import { DAILY_QUESTION_COUNT } from "@arena/shared";
 import {
   DATE_KEY_PATTERN,
   isRealUtcDate,
 } from "../../../common/date/calendar-date";
 
-/** Number of questions in every daily set. Fixed by the Phase 1 spec (§5.1). */
-export const DAILY_QUESTION_COUNT = 5;
+/**
+ * Number of questions in every daily set. Fixed by the Phase 1 spec (§5.1).
+ *
+ * Defined in `@arena/shared` so the web client can render leaderboard
+ * denominators against the same value this schema enforces; re-exported
+ * here to keep the existing `dto` import surface intact.
+ */
+export { DAILY_QUESTION_COUNT };
 
 /** `YYYY-MM-DD` in UTC. Used as the natural key for a day's question set. */
 export const dateKeySchema = z

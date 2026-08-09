@@ -123,6 +123,68 @@ describe("DailyNicknameGate", () => {
     expect(onAuthenticated).not.toHaveBeenCalled();
   });
 
+  it("routes an onAuthenticated rejection to onAuthenticatedError, not the modal", async () => {
+    storeState.authenticate = vi.fn(async () => undefined);
+    const postAuthFailure = new Error("submit blew up");
+    const onAuthenticated = vi.fn(async () => {
+      throw postAuthFailure;
+    });
+    const onAuthenticatedError = vi.fn();
+    const onOpenChange = vi.fn();
+
+    render(
+      <DailyNicknameGate
+        open
+        onOpenChange={onOpenChange}
+        onAuthenticated={onAuthenticated}
+        onAuthenticatedError={onAuthenticatedError}
+        {...baseProps}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "X" } });
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    await waitFor(() =>
+      expect(onAuthenticatedError).toHaveBeenCalledWith(postAuthFailure),
+    );
+    // Auth itself succeeded, so the gate still closes...
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    // ...and the post-auth failure must NOT appear in this modal — the
+    // parent owns that error surface.
+    expect(screen.queryByText("submit blew up")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("logs instead of rejecting when onAuthenticated fails and no error handler is given", async () => {
+    storeState.authenticate = vi.fn(async () => undefined);
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const onAuthenticated = vi.fn(async () => {
+      throw new Error("unhandled path");
+    });
+
+    render(
+      <DailyNicknameGate
+        open
+        onOpenChange={() => undefined}
+        onAuthenticated={onAuthenticated}
+        {...baseProps}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "X" } });
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    // The rejection is swallowed into console.error rather than escaping
+    // through the form's `void submit()` as an unhandled rejection.
+    await waitFor(() => expect(consoleError).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    consoleError.mockRestore();
+  });
+
   it("falls back to the translated copy when error is not an Error instance", async () => {
     storeState.authenticate = vi.fn(async () => {
       throw "string-error";

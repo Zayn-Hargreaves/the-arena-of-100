@@ -55,6 +55,13 @@ vi.mock("next-intl", async () => {
   return {
     ...actual,
     useTranslations: useTranslationsMock,
+    useFormatter: () => ({
+      // The tests assert against the raw number value; locale-aware
+      // formatting is exercised in the real app via the i18n provider.
+      number: (value: number) => String(value),
+      dateTime: (value: Date | number) => String(value),
+      date: (value: Date | number) => String(value),
+    }),
     useLocale: () => "en",
   };
 });

@@ -9,6 +9,10 @@ interface DailyShareButtonProps {
   copyLabel: string;
   copiedLabel: string;
   errorLabel: string;
+  /** Localized strings baked into the shared text itself. */
+  shareTextTitle: string;
+  shareTextScoreLabel: string;
+  shareTextStreakLabel: string;
 }
 
 function buildShareUrl(origin: string, result: DailySubmitResponse): string {
@@ -22,14 +26,23 @@ function buildShareUrl(origin: string, result: DailySubmitResponse): string {
   return `${origin}/api/daily/share?${params.toString()}`;
 }
 
-function buildShareText(result: DailySubmitResponse): string {
+interface ShareTextLabels {
+  title: string;
+  score: string;
+  streak: string;
+}
+
+function buildShareText(
+  result: DailySubmitResponse,
+  labels: ShareTextLabels,
+): string {
   const squares = "🟩";
   const wrongs = "🟥";
   const rows = result.results.map((r) => (r.isCorrect ? squares : wrongs));
   return [
-    `Arena of 100 — Daily ${result.dateKey}`,
-    `Score ${result.score} (${result.correctCount}/${result.totalQuestions})`,
-    `Streak ${result.streakAfter}`,
+    `${labels.title} ${result.dateKey}`,
+    `${labels.score} ${result.score} (${result.correctCount}/${result.totalQuestions})`,
+    `${labels.streak} ${result.streakAfter}`,
     rows.join(" "),
   ].join("\n");
 }
@@ -66,12 +79,25 @@ export function DailyShareButton({
   copyLabel,
   copiedLabel,
   errorLabel,
+  shareTextTitle,
+  shareTextScoreLabel,
+  shareTextStreakLabel,
 }: Readonly<DailyShareButtonProps>) {
   const [copied, setCopied] = React.useState(false);
   const [error, setError] = React.useState(false);
 
-  const supportsNativeShare =
-    typeof navigator !== "undefined" && typeof navigator.share === "function";
+  // Detected after mount, never during render: `navigator` does not
+  // exist on the server, and branching on it inline would make the
+  // server HTML and the first client render disagree. Starting at
+  // `false` means both render `copyLabel`; the effect then upgrades to
+  // the native-share label on capable clients.
+  const [supportsNativeShare, setSupportsNativeShare] = React.useState(false);
+
+  React.useEffect(() => {
+    setSupportsNativeShare(
+      typeof navigator !== "undefined" && typeof navigator.share === "function",
+    );
+  }, []);
 
   const timerRef = React.useRef<number | null>(null);
 
@@ -93,11 +119,15 @@ export function DailyShareButton({
 
     const origin = typeof window !== "undefined" ? window.location.origin : "";
     const url = buildShareUrl(origin, result);
-    const text = buildShareText(result);
+    const text = buildShareText(result, {
+      title: shareTextTitle,
+      score: shareTextScoreLabel,
+      streak: shareTextStreakLabel,
+    });
 
     if (supportsNativeShare) {
       try {
-        await navigator.share({ title: "Arena of 100 — Daily", text, url });
+        await navigator.share({ title: shareTextTitle, text, url });
         return;
       } catch (e) {
         // User cancellation is not a failure — leave quietly.
@@ -129,7 +159,13 @@ export function DailyShareButton({
     }
 
     setError(true);
-  }, [result, supportsNativeShare]);
+  }, [
+    result,
+    supportsNativeShare,
+    shareTextTitle,
+    shareTextScoreLabel,
+    shareTextStreakLabel,
+  ]);
 
   const label = copied
     ? copiedLabel
