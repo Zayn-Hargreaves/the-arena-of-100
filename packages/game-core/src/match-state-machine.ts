@@ -167,6 +167,15 @@ export class MatchStateMachine {
     return round;
   }
 
+  // Server-only accessor for the current round's correct answer.
+  // The client-safe public `RoundState` (snapshot/replay) omits
+  // it by design — only the server-side resolver needs the
+  // value, and it MUST go through this accessor so a future
+  // rename of the internal field surfaces at the call site.
+  getCorrectAnswer(): string | undefined {
+    return this.currentRound?.correctAnswer;
+  }
+
   // Validate Transition (Guard)
   canTransition(to: MatchStatus): boolean {
     return VALID_TRANSITIONS[this.state.status]?.includes(to) ?? false;

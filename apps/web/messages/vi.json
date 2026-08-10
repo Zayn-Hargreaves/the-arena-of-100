@@ -39,12 +39,13 @@
     "AOE_CAP_REACHED": "Đã đạt giới hạn lá bài diện rộng trong round này!",
     "COMMAND_ID_CONFLICT": "Lệnh này đã được xử lý trước đó!",
     "CARD_NOT_FOUND": "Không tìm thấy thông tin lá bài!",
-    "INVALID_COMMAND_ID": "Mã lệnh commandId không hợp lệ!",
-    "SPECTATOR_CANNOT_ANSWER": "Khán giả không được phép thực hiện thao tác!",
+    "INVALID_COMMAND_ID": "Mã lệnh không hợp lệ!",
+    "SPECTATOR_CANNOT_ANSWER": "Khán giả không được phép trả lời câu hỏi!",
     "PLAYER_DISCONNECTED": "Người chơi đã mất kết nối!",
     "MATCH_NOT_FOUND": "Không tìm thấy trận đấu!",
     "UNAUTHORIZED": "Bạn không có quyền thực hiện thao tác này!",
     "INVALID_PAYLOAD": "Dữ liệu yêu cầu không hợp lệ!",
+    "INTERNAL_ERROR": "Đã xảy ra lỗi hệ thống. Vui lòng thử lại!",
     "UNKNOWN_ERROR": "Đã xảy ra lỗi không xác định. Vui lòng thử lại!"
   },
   "admin": {
@@ -532,9 +533,9 @@
     "errors": {
       "cardNotInHand": "Lá bài không có trong tay",
       "cardNotFound": "Không tìm thấy lá bài",
-      "commandIdConflict": "Xung đột commandId",
+      "commandIdConflict": "Xung đột mã lệnh",
       "aoeCapExhausted": "Đã đạt giới hạn AOE",
-      "invalidCommandId": "commandId không hợp lệ"
+      "invalidCommandId": "Mã lệnh không hợp lệ"
     }
   }
 }

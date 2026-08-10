@@ -240,7 +240,7 @@ export interface CardOfferEvent {
   matchId: string;
   roundNo: number;
   playerId: string;
-  offeredCardIds: [CardId, CardId, CardId];
+  readonly offeredCardIds: readonly [CardId, CardId, CardId];
   seedUsed: string;
 }
 
@@ -283,41 +283,49 @@ export type TemporaryEffectKind =
   | "SEMANTIC_FLIP";
 
 export type MutationEffect = {
-  matchId: string;
-  roundNo: number;
-  cardId: CardId;
-  offerSeqNo: number;
-  playedByPlayerId: string;
-  targetPlayerIds: string[];
-  effect: Extract<CardEffect, { kind: MutationEffectKind }>;
-  resolution: "MUTATION";
-  serverTimestamp: number;
-  expiresAtServer: null;
-  remainingMs: null;
+  readonly matchId: string;
+  readonly roundNo: number;
+  readonly cardId: CardId;
+  readonly offerSeqNo: number;
+  readonly playedByPlayerId: string;
+  readonly targetPlayerIds: readonly string[];
+  readonly effect: Extract<CardEffect, { kind: MutationEffectKind }>;
+  readonly resolution: "MUTATION";
+  readonly serverTimestamp: number;
+  readonly expiresAtServer: null;
+  readonly remainingMs: null;
 };
 
 export type TemporaryEffect = {
-  matchId: string;
-  roundNo: number;
-  cardId: CardId;
-  offerSeqNo: number;
-  playedByPlayerId: string;
-  targetPlayerIds: string[];
-  effect: Extract<CardEffect, { kind: TemporaryEffectKind }>;
-  resolution: "TEMPORARY";
-  serverTimestamp: number;
-  expiresAtServer: number;
-  remainingMs: number;
+  readonly matchId: string;
+  readonly roundNo: number;
+  readonly cardId: CardId;
+  readonly offerSeqNo: number;
+  readonly playedByPlayerId: string;
+  readonly targetPlayerIds: readonly string[];
+  readonly effect: Extract<CardEffect, { kind: TemporaryEffectKind }>;
+  readonly resolution: "TEMPORARY";
+  readonly serverTimestamp: number;
+  readonly expiresAtServer: number;
+  readonly remainingMs: number;
 };
 
 export type CardEffectEvent = MutationEffect | TemporaryEffect;
 
-type _AllKindsCovered = [CardEffect["kind"]] extends [
+export type _AssertAllKindsCovered = [CardEffect["kind"]] extends [
   MutationEffectKind | TemporaryEffectKind,
 ]
-  ? true
-  : false;
-export const _checkAllKindsCovered: _AllKindsCovered = true;
+  ? [MutationEffectKind | TemporaryEffectKind] extends [CardEffect["kind"]]
+    ? [Extract<MutationEffectKind, TemporaryEffectKind>] extends [never]
+      ? true
+      : never
+    : never
+  : never;
+
+// Compile-time witness — forces TypeScript to evaluate
+// `_AssertAllKindsCovered`. If it resolves to `never` (missing
+// or overlapping kind), this assignment fails the build.
+export const _assertAllKindsCovered: _AssertAllKindsCovered = true;
 
 export interface CardResolvedBatchEvent {
   type: "CARD_RESOLVED_BATCH";
@@ -434,7 +442,37 @@ export function createEvent<T>(
     id: crypto.randomUUID(),
     type,
     timestamp: Date.now(),
-    payload,
+    payload: cloneAndFreeze(payload),
     seqNo,
   };
+}
+
+function cloneAndFreeze<T>(value: T): T {
+  if (value === null || typeof value !== "object") return value;
+  // Always clone first — including for already-frozen inputs —
+  // so the returned tree owns fresh references for every nested
+  // object/array. Returning early on `Object.isFrozen(value)`
+  // would silently alias the caller's frozen reference, allowing
+  // a shallow-frozen parent to keep mutable children reachable
+  // from the returned event payload.
+  if (Array.isArray(value)) {
+    return Object.freeze([...value].map(cloneAndFreeze) as unknown as T[]) as T;
+  }
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) {
+    const ctor =
+      proto && typeof proto === "object" && "constructor" in proto
+        ? (proto as { constructor?: { name?: string } }).constructor?.name
+        : undefined;
+    throw new TypeError(
+      `createEvent: ${ctor ?? "class"} instance is not a serializable plain object payload`,
+    );
+  }
+  const cloned = Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+      k,
+      cloneAndFreeze(v),
+    ]),
+  ) as T;
+  return Object.freeze(cloned) as T;
 }

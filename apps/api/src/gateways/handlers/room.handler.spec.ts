@@ -1,5 +1,11 @@
 import { Socket, Server } from "socket.io";
-import { ServerEvent, ErrorCode, RoomError, RoomStatus } from "@arena/shared";
+import {
+  ServerEvent,
+  ErrorCode,
+  ERROR_MESSAGE_KEYS,
+  RoomError,
+  RoomStatus,
+} from "@arena/shared";
 import { RoomHandler } from "./room.handler";
 import { RoomService } from "../../modules/room/room.service";
 import { PresenceService } from "../../modules/match/presence.service";
@@ -202,7 +208,7 @@ describe("RoomHandler", () => {
         ServerEvent.ERROR,
         expect.objectContaining({
           code: ErrorCode.INTERNAL_ERROR,
-          message: "Internal server error",
+          message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
         }),
       );
     });
@@ -492,7 +498,7 @@ describe("RoomHandler", () => {
         ServerEvent.ERROR,
         expect.objectContaining({
           code: ErrorCode.INTERNAL_ERROR,
-          message: "Internal server error",
+          message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
         }),
       );
     });
@@ -675,7 +681,7 @@ describe("RoomHandler", () => {
         ServerEvent.ERROR,
         expect.objectContaining({
           code: ErrorCode.INTERNAL_ERROR,
-          message: "Internal server error",
+          message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
         }),
       );
     });
@@ -818,7 +824,7 @@ describe("RoomHandler", () => {
         ServerEvent.ERROR,
         expect.objectContaining({
           code: ErrorCode.INTERNAL_ERROR,
-          message: "Internal server error",
+          message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
         }),
       );
     });

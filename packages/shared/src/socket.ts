@@ -111,6 +111,10 @@ export interface ErrorPayload {
   message: string;
   submissionId?: string;
   failedEvent?: ClientEvent;
+  // Optional per-field validation details, populated for
+  // `INVALID_PAYLOAD` from `WsValidationError` so the client can
+  // render field-level feedback (e.g. "matchId is required").
+  details?: string;
 }
 
 export interface SnapshotPayload {

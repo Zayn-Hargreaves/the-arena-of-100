@@ -3,7 +3,7 @@ import { Socket, Server } from "socket.io";
 import {
   ServerEvent,
   ErrorCode,
-  ERROR_MESSAGES,
+  ERROR_MESSAGE_KEYS,
   RoomJoinedPayload,
   RoomError,
   asRoomTypeOrDefault,
@@ -120,7 +120,7 @@ export class AuthHandler extends BaseHandler {
             );
             oldSocket.emit(ServerEvent.ERROR, {
               code: ErrorCode.UNAUTHORIZED,
-              message: ERROR_MESSAGES[ErrorCode.UNAUTHORIZED],
+              message: ERROR_MESSAGE_KEYS[ErrorCode.UNAUTHORIZED],
             });
             oldSocket.disconnect(true);
           } else {
@@ -163,7 +163,7 @@ export class AuthHandler extends BaseHandler {
         this.emitError(
           client,
           ErrorCode.INVALID_TOKEN,
-          ERROR_MESSAGES[ErrorCode.INVALID_TOKEN],
+          ERROR_MESSAGE_KEYS[ErrorCode.INVALID_TOKEN],
         );
       },
     );

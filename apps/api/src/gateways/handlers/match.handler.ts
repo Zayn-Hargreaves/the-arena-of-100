@@ -15,7 +15,7 @@ import {
   type CardPickPayload,
   type CardPlayPayload,
   RoomError,
-  ERROR_MESSAGES,
+  ERROR_MESSAGE_KEYS,
 } from "@arena/shared";
 import { RoomService } from "../../modules/room/room.service";
 import { MatchService } from "../../modules/match/match.service";
@@ -28,9 +28,11 @@ import { ClusterService } from "../../modules/cluster/cluster.service";
 import { BaseHandler } from "./base.handler";
 import {
   assertValidCommandId,
+  assertCardId,
   validateCardCommand,
 } from "../../modules/match/card-validator";
 import { resolveCardEffect, deriveSubstream } from "@arena/game-core";
+import type { MatchStateMachine } from "@arena/game-core";
 
 @Injectable()
 export class MatchHandler extends BaseHandler {
@@ -81,11 +83,11 @@ export class MatchHandler extends BaseHandler {
         const code = this.getErrorCode(error);
         let msg =
           error instanceof RoomError
-            ? ERROR_MESSAGES[error.code]
+            ? ERROR_MESSAGE_KEYS[error.code]
             : this.getErrorMessage(error);
         if (code === ErrorCode.INTERNAL_ERROR) {
           this.logger.error("Error starting match:", error);
-          msg = "Internal server error";
+          msg = ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR];
         }
         this.emitError(client, code, msg);
       },
@@ -152,10 +154,10 @@ export class MatchHandler extends BaseHandler {
       (error) => {
         const rawCode = error instanceof RoomError ? error.code : null;
         const code = rawCode ?? this.getErrorCode(error);
-        let msg = ERROR_MESSAGES[code] ?? this.getErrorMessage(error);
+        let msg = ERROR_MESSAGE_KEYS[code] ?? this.getErrorMessage(error);
         if (code === ErrorCode.INTERNAL_ERROR) {
           this.logger.error("Error submitting answer:", error);
-          msg = "Internal server error";
+          msg = ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR];
         }
         client.emit(ServerEvent.ERROR, {
           code,
@@ -240,11 +242,11 @@ export class MatchHandler extends BaseHandler {
         const code = this.getErrorCode(error);
         let msg =
           error instanceof RoomError
-            ? ERROR_MESSAGES[error.code]
+            ? ERROR_MESSAGE_KEYS[error.code]
             : this.getErrorMessage(error);
         if (code === ErrorCode.INTERNAL_ERROR) {
           this.logger.error("Error sending snapshot:", error);
-          msg = "Internal server error";
+          msg = ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR];
         }
         this.emitError(client, code, msg, ClientEvent.REQUEST_SNAPSHOT);
       },
@@ -275,6 +277,7 @@ export class MatchHandler extends BaseHandler {
       async () => {
         const userId = this.requireAuth(client);
         assertValidCommandId(payload.commandId);
+        assertCardId(payload.cardId);
 
         const roomId = await this.matchService.getRoomIdByMatchId(
           payload.matchId,
@@ -288,35 +291,15 @@ export class MatchHandler extends BaseHandler {
         );
         if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
 
-        const state = stateMachine.getState?.();
-        if (state?.players) {
-          const isPlayerInMatch = state.players.has(userId);
-          if (!isPlayerInMatch) {
-            throw new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER);
-          }
-          const player = state.players.get(userId);
-          if (
-            player &&
-            (player.status === PlayerStatus.ELIMINATED ||
-              player.status === PlayerStatus.WINNER)
-          ) {
-            throw new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER);
-          }
-          if (player?.status === PlayerStatus.DISCONNECTED) {
-            throw new RoomError(ErrorCode.PLAYER_DISCONNECTED);
-          }
-        }
+        const state = stateMachine.getState();
+        this.assertActivePlayer(state, userId);
 
         // The state machine validates the offer correlation
         // (cardId must be in the player's current hand) and
-        // appends CARD_PICKED. The hand only contains valid
-        // `CardId` literals, so the cast is safe — and the
-        // state machine throws if the card isn't in the hand.
-        stateMachine.pickCard(
-          userId,
-          payload.cardId as CardId,
-          payload.offerSeqNo,
-        );
+        // appends CARD_PICKED. `assertCardId` already narrows
+        // the schema-bound `payload.cardId` to `CardId`, so the
+        // state-machine call passes the value through directly.
+        stateMachine.pickCard(userId, payload.cardId, payload.offerSeqNo);
 
         // Broadcast to the room channel so other clients see the
         // player's hand update.
@@ -332,11 +315,11 @@ export class MatchHandler extends BaseHandler {
         const code = this.getErrorCode(error);
         let msg =
           error instanceof RoomError
-            ? ERROR_MESSAGES[error.code]
+            ? ERROR_MESSAGE_KEYS[error.code]
             : this.getErrorMessage(error);
-        if (error instanceof Error && !(error instanceof RoomError)) {
+        if (code === ErrorCode.INTERNAL_ERROR) {
           this.logger.error("Error handling card pick:", error);
-          msg = "Internal server error";
+          msg = ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR];
         }
         client.emit(ServerEvent.ERROR, {
           code,
@@ -375,14 +358,14 @@ export class MatchHandler extends BaseHandler {
         );
         if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
 
-        const state = stateMachine.getState?.();
+        const state = stateMachine.getState();
         this.assertActivePlayer(state, userId);
 
         const pickedCards = Array.from(stateMachine.getPickedCards(userId));
         const offeredCardIds =
           stateMachine.getCardOfferForPlayer(userId, payload.offerSeqNo) ??
           ([] as CardId[]);
-        const roster = new Set(state?.players ? state.players.keys() : []);
+        const roster = new Set(state.players.keys());
         const playedSet = stateMachine.getPlayedCards(userId);
         const currentRoundNo = stateMachine.getCurrentRound()?.roundNo ?? 0;
         const aoeCount = stateMachine.getAoeCountForRound(currentRoundNo);
@@ -400,7 +383,7 @@ export class MatchHandler extends BaseHandler {
 
         // Resolve the template server-side (3 cards consume RNG).
         const resolveRng = this.makeResolveRng(
-          stateMachine.getState?.()?.id ?? payload.matchId,
+          state.id,
           userId,
           currentRoundNo,
           payload.offerSeqNo,
@@ -449,9 +432,10 @@ export class MatchHandler extends BaseHandler {
           offerSeqNo: payload.offerSeqNo,
           playedByPlayerId: userId,
           targetPlayerIds,
-          resolution: this.isTemporaryEffect(resolved)
-            ? ("TEMPORARY" as const)
-            : ("MUTATION" as const),
+          resolution:
+            result.expiresAtServer === null
+              ? ("MUTATION" as const)
+              : ("TEMPORARY" as const),
           serverTimestamp: serverNow,
           expiresAtServer: result.expiresAtServer,
           remainingMs: result.remainingMs,
@@ -459,15 +443,26 @@ export class MatchHandler extends BaseHandler {
 
         const sanitizedEffect = this.sanitizeEffect(resolved);
 
-        // Broadcast sanitized effect to room
-        server.to(`room:${roomId}`).emit(ServerEvent.CARD_RESOLVED, {
-          ...basePayload,
-          effect: sanitizedEffect,
-        });
+        // Full resolved effect is delivered only to the concrete
+        // targetPlayerIds. A self-targeting actor IS already in this
+        // set (expandTargets returns the actor for self-only cards),
+        // so we do not add `userId` separately — that would expose
+        // target-private fields (e.g. OPTION_FAKE.indexes) to a
+        // non-target actor.
+        const fullEffectRooms = targetPlayerIds.map((id) => `player:${id}`);
 
-        // Broadcast full effect with details to targets and playedBy player
-        const secretReceivers = new Set([...targetPlayerIds, userId]);
-        for (const targetId of secretReceivers) {
+        // Broadcast sanitized effect to room excluding direct receivers
+        // to avoid duplicate seqNo frames.
+        server
+          .to(`room:${roomId}`)
+          .except(fullEffectRooms)
+          .emit(ServerEvent.CARD_RESOLVED, {
+            ...basePayload,
+            effect: sanitizedEffect,
+          });
+
+        // Broadcast full effect with details to each target player.
+        for (const targetId of targetPlayerIds) {
           server.to(`player:${targetId}`).emit(ServerEvent.CARD_RESOLVED, {
             ...basePayload,
             effect: resolved,
@@ -478,11 +473,11 @@ export class MatchHandler extends BaseHandler {
         const code = this.getErrorCode(error);
         let msg =
           error instanceof RoomError
-            ? ERROR_MESSAGES[error.code]
+            ? ERROR_MESSAGE_KEYS[error.code]
             : this.getErrorMessage(error);
-        if (error instanceof Error && !(error instanceof RoomError)) {
+        if (code === ErrorCode.INTERNAL_ERROR) {
           this.logger.error("Error handling card play:", error);
-          msg = "Internal server error";
+          msg = ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR];
         }
         client.emit(ServerEvent.ERROR, {
           code,
@@ -519,22 +514,17 @@ export class MatchHandler extends BaseHandler {
     };
   }
 
-  private peekCorrectAnswer(stateMachine: {
-    getCurrentRound: () => unknown;
-  }): string | undefined {
-    const round = stateMachine.getCurrentRound() as {
-      correctAnswer?: string;
-    } | null;
-    return round?.correctAnswer;
+  private peekCorrectAnswer(
+    stateMachine: MatchStateMachine,
+  ): string | undefined {
+    return stateMachine.getCorrectAnswer();
   }
 
   private expandTargets(
     cardId: CardId,
     playedByPlayerId: string,
     targetPlayerId: string | undefined,
-    stateMachine: {
-      getState: () => { players: Map<string, { status: string }> };
-    },
+    stateMachine: MatchStateMachine,
     rng: () => number,
   ): string[] {
     const def = getCardDefinition(cardId);
@@ -552,7 +542,7 @@ export class MatchHandler extends BaseHandler {
             p.status !== PlayerStatus.DISCONNECTED,
         )
         .map(([id]) => id)
-        .sort((a, b) => a.localeCompare(b));
+        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
       const selected: string[] = [];
       const numToPick = Math.min(count, eligible.length);
@@ -569,31 +559,47 @@ export class MatchHandler extends BaseHandler {
     return [playedByPlayerId];
   }
 
+  // Per-kind allowlist for fields that contain data derived from
+  // the correct answer (or otherwise target-private). Anything
+  // listed here is cleared for the room-wide sanitized event;
+  // kinds not listed pass through unchanged. Adding a new
+  // `CardEffect` variant will leave the default branch untouched
+  // until the kind is explicitly classified here.
   private sanitizeEffect(effect: CardEffect): CardEffect {
-    if (effect.kind === "OPTION_DISABLE") {
-      return { ...effect, indexes: [] };
+    switch (effect.kind) {
+      case "OPTION_DISABLE":
+        return { ...effect, indexes: [] };
+      case "OPTION_FAKE":
+        return { ...effect, indexes: [] };
+      case "HINT_REVEAL":
+        return { ...effect, partial: "" };
+      case "HAND_DESTROY":
+        return { ...effect, destroyedCardIds: [] };
+      case "TIMER_MODIFY":
+      case "OPTION_LOCK":
+      case "DELAY_RENDER":
+      case "VISUAL_OVERLAY":
+      case "SEMANTIC_FLIP":
+      case "QUESTION_REPLAY":
+      case "SHIELD":
+      case "SCORE_MULT":
+      case "SECOND_CHANCE":
+        return effect;
+      default: {
+        const _exhaustive: never = effect;
+        void _exhaustive;
+        return effect;
+      }
     }
-    if (effect.kind === "HINT_REVEAL") {
-      return { ...effect, partial: "" };
-    }
-    return effect;
-  }
-
-  private isTemporaryEffect(effect: { kind: string }): boolean {
-    return [
-      "OPTION_DISABLE",
-      "OPTION_FAKE",
-      "OPTION_LOCK",
-      "VISUAL_OVERLAY",
-      "SEMANTIC_FLIP",
-    ].includes(effect.kind);
   }
 
   private assertActivePlayer(
     state: MatchState | null | undefined,
     userId: string,
   ): void {
-    if (!state?.players) return;
+    if (!state?.players) {
+      throw new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER);
+    }
     const player = state.players.get(userId);
     if (!player) {
       throw new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER);

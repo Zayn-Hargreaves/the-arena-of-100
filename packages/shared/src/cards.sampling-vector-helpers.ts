@@ -70,9 +70,19 @@ function canonicalSerializeInner(
     ancestors.delete(value as object);
     return "[" + parts.join(",") + "]";
   }
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) {
+    const ctor =
+      proto && typeof proto === "object" && "constructor" in proto
+        ? (proto as { constructor?: { name?: string } }).constructor?.name
+        : undefined;
+    throw new TypeError(
+      `canonicalSerialize: ${ctor ?? "class"} instance is not a serializable plain object`,
+    );
+  }
   const keys = Object.keys(value)
     .filter((k) => (value as Record<string, unknown>)[k] !== undefined)
-    .sort((a, b) => a.localeCompare(b));
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   const out =
     "{" +
     keys

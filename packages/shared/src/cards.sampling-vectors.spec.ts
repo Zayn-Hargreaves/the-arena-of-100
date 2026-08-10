@@ -8,11 +8,13 @@
 import { describe, it, expect } from "vitest";
 import {
   ALL_SAMPLING_VECTORS,
-  canonicalSerialize,
-  getImmutableSamplingVector,
   loadSamplingVector,
   type SamplingVector,
 } from "./cards.sampling-vectors";
+import {
+  canonicalSerialize,
+  getImmutableSamplingVector,
+} from "./cards.sampling-vector-helpers";
 import { PRNG_CONTRACT_VERSION } from "./cards";
 
 const LABELS = [
@@ -160,9 +162,10 @@ describe("canonicalSerialize byte-stable property", () => {
 
   it("rejects an array whose value is explicitly undefined with a TypeError", () => {
     // `undefined` inside an array is a value, not a hole — the
-    // outer guard at the top of canonicalSerialize rejects
-    // undefined as a top-level input, but as a nested element
-    // it surfaces through the array-element string check.
+    // outer guard at the top of canonicalSerializeInner rejects
+    // `value === undefined` before any string/serialization check,
+    // so when the array branch recurses into an undefined element
+    // the same guard fires and the call throws TypeError.
     expect(() =>
       canonicalSerialize([1, undefined as unknown as number, 3]),
     ).toThrow(TypeError);
@@ -222,5 +225,36 @@ describe("canonicalSerialize byte-stable property", () => {
         z: [{ a: 1 }],
       }),
     );
+  });
+
+  it("rejects Date instances instead of serializing them as {}", () => {
+    // Without the plain-object guard, `Object.keys(new Date())`
+    // returns [] and a Date would canonicalize to "{}" — silently
+    // dropping the timestamp. Pin the rejection here so the
+    // contract cannot regress.
+    expect(() => canonicalSerialize(new Date("2026-01-01T00:00:00Z"))).toThrow(
+      TypeError,
+    );
+    expect(() => canonicalSerialize(new Date("2026-01-01T00:00:00Z"))).toThrow(
+      /plain object/,
+    );
+  });
+
+  it("rejects arbitrary class instances instead of serializing them as {}", () => {
+    class Card {
+      constructor(public id: string) {}
+    }
+    expect(() => canonicalSerialize(new Card("CB-1"))).toThrow(TypeError);
+    expect(() => canonicalSerialize(new Card("CB-1"))).toThrow(/plain object/);
+  });
+
+  it("accepts objects with a null prototype (Object.create(null))", () => {
+    // The guard must allow Object.create(null) so call sites that
+    // build dicts without the inherited Object.prototype members
+    // still serialize cleanly.
+    const dict = Object.create(null) as Record<string, unknown>;
+    dict.b = 1;
+    dict.a = 2;
+    expect(canonicalSerialize(dict)).toBe('{"a":2,"b":1}');
   });
 });

@@ -19,13 +19,14 @@ import {
 
 describe("seedFromString — UTF-8 encoding of non-ASCII inputs", () => {
   it.each([
-    ["2-byte UTF-8 (U+0080..U+07FF)", "é"],
-    ["3-byte UTF-8 (U+0800..U+FFFF)", "中"],
-    ["4-byte UTF-8 surrogate pair", "𝄞"],
-    ["unpaired high surrogate", "\uD800"],
-    ["unpaired low surrogate", "\uDC00"],
-  ])("encodes %s via seedFromString", (_, input) => {
+    ["2-byte UTF-8 (U+0080..U+07FF)", "é", 2119539018],
+    ["3-byte UTF-8 (U+0800..U+FFFF)", "中", 2864539557],
+    ["4-byte UTF-8 surrogate pair", "𝄞", 3555662308],
+    ["unpaired high surrogate", "\uD800", 3427063171],
+    ["unpaired low surrogate", "\uDC00", 3427063171],
+  ])("encodes %s via seedFromString", (_, input, expected) => {
     const seed = seedFromString(input);
+    expect(seed).toBe(expected);
     expect(Number.isInteger(seed)).toBe(true);
     expect(seed).toBeGreaterThanOrEqual(0);
     expect(seed).toBeLessThanOrEqual(0xffffffff);
@@ -132,8 +133,9 @@ describe("deriveSubstream — parent + label composition", () => {
 });
 
 describe("hashStringToSeed — FNV-1a 32-bit", () => {
-  it("returns 0 for the empty string", () => {
-    // FNV-1a offset basis (0x811c9dc5) is the canonical "empty" output.
+  it("returns the FNV-1a offset basis (0x811c9dc5) for the empty string", () => {
+    // The FNV-1a algorithm starts from a fixed offset basis, so
+    // the empty string digests to that constant — NOT to 0.
     expect(hashStringToSeed("")).toBe(0x811c9dc5);
   });
 

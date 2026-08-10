@@ -1,13 +1,18 @@
 import { Socket, Server } from "socket.io";
+import { createServer, type Server as HttpServer } from "node:http";
+import { AddressInfo } from "node:net";
+import { io as ioClient, type Socket as ClientSocket } from "socket.io-client";
 import {
   ServerEvent,
   ErrorCode,
   ERROR_MESSAGES,
+  ERROR_MESSAGE_KEYS,
   PlayerStatus,
   RoomStatus,
   RoomError,
   ClientEvent,
-  CardId,
+  type CardEffectEvent,
+  type CardId,
 } from "@arena/shared";
 import { MatchHandler } from "./match.handler";
 import { RoomService } from "../../modules/room/room.service";
@@ -27,6 +32,31 @@ describe("MatchHandler", () => {
   let matchCommand: { forward: ReturnType<typeof vi.fn> };
   let client: Socket;
   let server: Server;
+  // Wire frame shape: a `CARD_RESOLVED` event carries the
+  // canonical effect payload plus the immutable `seqNo` allocated
+  // at append time. The discriminator is narrowed via
+  // `CardEffectEvent` so each listener/assertion site is statically
+  // type-checked instead of falling through to `any`.
+  type CardResolvedFrame = CardEffectEvent & { readonly seqNo: number };
+  // Narrow helper for assertions that read `effect.indexes`
+  // directly (OPTION_FAKE / OPTION_DISABLE). Using a single alias
+  // avoids repeating the `Extract` at every assertion site and
+  // keeps the `kind` discriminator explicit at the cast.
+  type IndexesFrame = CardResolvedFrame & {
+    readonly effect: Extract<
+      CardEffectEvent["effect"],
+      { readonly indexes: readonly number[] }
+    >;
+  };
+  const asIndexesFrame = (f: CardResolvedFrame): IndexesFrame =>
+    f as IndexesFrame;
+  // Per-room broadcaster map populated by the `server.to` mock so
+  // CARD_RESOLVED tests can assert exact destination-specific
+  // payloads (sanitized room vs. full-effect player rooms).
+  let roomOperators: Map<
+    string,
+    { emit: ReturnType<typeof vi.fn>; except: ReturnType<typeof vi.fn> }
+  >;
 
   beforeEach(() => {
     roomService = { getRoom: vi.fn() } as unknown as RoomService;
@@ -40,6 +70,7 @@ describe("MatchHandler", () => {
       forceStartRoomMatch: vi.fn().mockResolvedValue({ id: "m1" }),
     };
     matchCommand = { forward: vi.fn().mockResolvedValue(undefined) };
+    roomOperators = new Map();
     handler = new MatchHandler(
       roomService,
       matchService,
@@ -48,7 +79,17 @@ describe("MatchHandler", () => {
       { nodeId: "node-a" } as unknown as ClusterService,
     );
     server = {
-      to: vi.fn().mockReturnValue({ emit: vi.fn() }),
+      // Per-room broadcaster map so each `server.to(roomName)`
+      // call returns a distinct emitter. CARD_RESOLVED delivery
+      // routes one sanitized effect to the room channel and one
+      // full effect to each target's private player channel —
+      // tests need to assert against each specific destination.
+      to: vi.fn().mockImplementation((roomName: string) => {
+        const except = vi.fn().mockReturnValue({ emit: vi.fn() });
+        const operator = { emit: vi.fn(), except };
+        roomOperators.set(roomName, operator);
+        return operator;
+      }),
     } as unknown as Server;
     client = {
       emit: vi.fn(),
@@ -148,7 +189,7 @@ describe("MatchHandler", () => {
       await handler.handleStartMatch(client, server, { roomId: "r1" });
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: "Internal server error",
+        message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
       });
     });
 
@@ -486,7 +527,7 @@ describe("MatchHandler", () => {
 
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: "Internal server error",
+        message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
         failedEvent: ClientEvent.REQUEST_SNAPSHOT,
       });
     });
@@ -513,7 +554,7 @@ describe("MatchHandler", () => {
 
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: "Internal server error",
+        message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
         failedEvent: ClientEvent.REQUEST_SNAPSHOT,
       });
     });
@@ -674,13 +715,6 @@ describe("MatchHandler", () => {
     });
   });
 
-  // ===========================================================================
-  // Phase 2 — Class + Card Hybrid handlers (sub-task D).
-  // Source of truth: memory-bank/spec/class-cards-phase.md §5.2 sub-task D.
-  // These cover the new handlers shipped in this PR; the prior describe
-  // blocks above cover the original handlers.
-  // ===========================================================================
-
   describe("handleCardPick", () => {
     const pickPayload = {
       matchId: "m1",
@@ -693,6 +727,9 @@ describe("MatchHandler", () => {
       const machine = {
         pickCard: vi.fn(),
         getCurrentRound: vi.fn().mockReturnValue({ roundNo: 5 }),
+        getState: vi.fn().mockReturnValue({
+          players: new Map([["u1", { id: "u1", status: PlayerStatus.ACTIVE }]]),
+        }),
       } as any;
       vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
 
@@ -703,10 +740,9 @@ describe("MatchHandler", () => {
         "CB-1",
         pickPayload.offerSeqNo,
       );
-      const roomEmit = (server.to as ReturnType<typeof vi.fn>).mock.results[0]
-        .value.emit;
-      expect(server.to).toHaveBeenCalledWith("room:r1");
-      expect(roomEmit).toHaveBeenCalledWith(ServerEvent.CARD_PICKED, {
+      const roomOp = roomOperators.get("room:r1");
+      expect(roomOp).toBeDefined();
+      expect(roomOp!.emit).toHaveBeenCalledWith(ServerEvent.CARD_PICKED, {
         matchId: "m1",
         roundNo: 5,
         playerId: "u1",
@@ -762,12 +798,68 @@ describe("MatchHandler", () => {
       );
     });
 
+    it.each<{
+      label: string;
+      status: PlayerStatus | "ABSENT";
+      expectedCode: ErrorCode;
+    }>([
+      {
+        label: "spectator (not in roster)",
+        status: "ABSENT",
+        expectedCode: ErrorCode.SPECTATOR_CANNOT_ANSWER,
+      },
+      {
+        label: "eliminated player",
+        status: PlayerStatus.ELIMINATED,
+        expectedCode: ErrorCode.SPECTATOR_CANNOT_ANSWER,
+      },
+      {
+        label: "winner",
+        status: PlayerStatus.WINNER,
+        expectedCode: ErrorCode.SPECTATOR_CANNOT_ANSWER,
+      },
+      {
+        label: "disconnected player",
+        status: PlayerStatus.DISCONNECTED,
+        expectedCode: ErrorCode.PLAYER_DISCONNECTED,
+      },
+    ])(
+      "rejects $label for pick with $expectedCode",
+      async ({ status, expectedCode }) => {
+        const players =
+          status === "ABSENT"
+            ? new Map()
+            : new Map([["u1", { id: "u1", status }]]);
+        const machine = {
+          getState: vi.fn().mockReturnValue({ players }),
+        } as any;
+        vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(machine);
+        vi.mocked(client.emit).mockClear();
+
+        await handler.handleCardPick(client, server, pickPayload);
+
+        // Each iteration isolates its own mock calls so a
+        // failure surfaces only the offending case.
+        expect(client.emit).toHaveBeenCalledTimes(1);
+        expect(client.emit).toHaveBeenCalledWith(
+          ServerEvent.ERROR,
+          expect.objectContaining({
+            code: expectedCode,
+            failedEvent: ClientEvent.CARD_PICK,
+          }),
+        );
+      },
+    );
+
     it("forwards the state-machine error (e.g. CARD_NOT_IN_HAND) verbatim", async () => {
       const machine = {
         pickCard: vi.fn().mockImplementation(() => {
           throw new RoomError(ErrorCode.CARD_NOT_IN_HAND);
         }),
         getCurrentRound: vi.fn().mockReturnValue({ roundNo: 5 }),
+        getState: vi.fn().mockReturnValue({
+          players: new Map([["u1", { id: "u1", status: PlayerStatus.ACTIVE }]]),
+        }),
       } as any;
       vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
 
@@ -803,6 +895,9 @@ describe("MatchHandler", () => {
           throw "string error";
         }),
         getCurrentRound: vi.fn().mockReturnValue({ roundNo: 5 }),
+        getState: vi.fn().mockReturnValue({
+          players: new Map([["u1", { id: "u1", status: PlayerStatus.ACTIVE }]]),
+        }),
       } as any;
       vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
 
@@ -810,7 +905,7 @@ describe("MatchHandler", () => {
 
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: "string error",
+        message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
         failedEvent: ClientEvent.CARD_PICK,
         commandId: pickPayload.commandId,
       });
@@ -834,8 +929,8 @@ describe("MatchHandler", () => {
       getCurrentRound: () => any;
       getState: () => any;
       getHand: (playerId: string) => readonly CardId[];
-      playCard: (...args: any[]) => any;
-      pickCard: (...args: any[]) => any;
+      playCard: (...args: unknown[]) => unknown;
+      pickCard: (...args: unknown[]) => unknown;
     }> = {},
   ) {
     const players = new Map([
@@ -853,6 +948,7 @@ describe("MatchHandler", () => {
         question: { id: "q1", options: ["A", "B", "C", "D"] },
         correctAnswer: "A",
       }),
+      getCorrectAnswer: vi.fn().mockReturnValue("A"),
       getState: vi.fn().mockReturnValue({ id: "m1", players }),
       getHand: vi.fn().mockReturnValue([]),
       playCard: vi.fn().mockReturnValue({
@@ -882,7 +978,7 @@ describe("MatchHandler", () => {
 
       expect(machine.getCardOfferForPlayer).toHaveBeenCalledWith("u1", 1);
       expect(machine.playCard).toHaveBeenCalledTimes(1);
-      const playArgs = machine.playCard.mock.calls[0];
+      const playArgs = machine.playCard.mock.calls[0] as unknown[];
       expect(playArgs[0]).toBe("u1");
       expect(playArgs[1]).toBe("CB-1");
       expect(playArgs[2]).toBe(1);
@@ -890,9 +986,12 @@ describe("MatchHandler", () => {
       expect(playArgs[4]).toEqual(["p2"]);
       expect(typeof playArgs[5]).toBe("number");
 
-      const roomEmit = (server.to as ReturnType<typeof vi.fn>).mock.results[0]
-        .value.emit;
-      expect(server.to).toHaveBeenCalledWith("room:r1");
+      // Sanitized MUTATION broadcast goes to the room channel
+      // excluding the target player rooms (here: p2).
+      const roomOp = roomOperators.get("room:r1");
+      expect(roomOp).toBeDefined();
+      const roomEmit = roomOp!.except.mock.results[0].value.emit;
+      expect(roomOp!.except).toHaveBeenCalledWith(["player:p2"]);
       expect(roomEmit).toHaveBeenCalledWith(
         ServerEvent.CARD_RESOLVED,
         expect.objectContaining({
@@ -904,6 +1003,113 @@ describe("MatchHandler", () => {
           playedByPlayerId: "u1",
           resolution: "MUTATION",
         }),
+      );
+
+      // Full effect must reach the target player room exactly once.
+      const targetOp = roomOperators.get("player:p2");
+      expect(targetOp).toBeDefined();
+      expect(targetOp!.emit).toHaveBeenCalledTimes(1);
+      expect(targetOp!.emit).toHaveBeenCalledWith(
+        ServerEvent.CARD_RESOLVED,
+        expect.objectContaining({
+          seqNo: 10,
+          cardId: "CB-1",
+          playedByPlayerId: "u1",
+        }),
+      );
+
+      // The non-target actor (u1) MUST NOT receive the full effect
+      // via a player-room broadcast — disclosure is restricted to
+      // targetPlayerIds.
+      expect(roomOperators.get("player:u1")).toBeUndefined();
+    });
+
+    it("emits sanitized OPTION_DISABLE to the room and full indexes to the target", async () => {
+      // TN-1 resolves to OPTION_DISABLE which carries concrete
+      // indexes derived from the correct answer. Only the target
+      // p2 must receive the concrete indexes; the room and other
+      // players must see the indexes redacted.
+      const machine = makePlayMachine({
+        getCardOfferForPlayer: vi
+          .fn()
+          .mockReturnValue(["TN-1", "CB-1", "CB-2"]),
+        getPickedCards: vi.fn().mockReturnValue(new Set<CardId>(["TN-1"])),
+        playCard: vi.fn().mockReturnValue({
+          seqNo: 12,
+          expiresAtServer: 1234567,
+          remainingMs: 5000,
+        }),
+      });
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+
+      // TN-1 is a self-only THU card; the validator must accept
+      // it without a targetPlayerId. The handler's expandTargets
+      // then resolves the actor as the recipient (self-only).
+      await handler.handleCardPlay(client, server, {
+        ...playPayload,
+        cardId: "TN-1",
+        targetPlayerId: undefined,
+      });
+
+      const roomOp = roomOperators.get("room:r1");
+      expect(roomOp).toBeDefined();
+      const roomEmit = roomOp!.except.mock.results[0].value.emit;
+      const roomCall = roomEmit.mock.calls.find(
+        (call: unknown[]) =>
+          (call[0] as ServerEvent | undefined) === ServerEvent.CARD_RESOLVED,
+      ) as [ServerEvent, CardResolvedFrame] | undefined;
+      expect(roomCall).toBeDefined();
+      const sanitizedPayload = roomCall![1];
+      expect(sanitizedPayload.resolution).toBe("TEMPORARY");
+      expect(sanitizedPayload.effect.kind).toBe("OPTION_DISABLE");
+      expect(asIndexesFrame(sanitizedPayload).effect.indexes).toEqual([]);
+
+      const targetOp = roomOperators.get("player:u1");
+      expect(targetOp).toBeDefined();
+      const targetCall = targetOp!.emit.mock.calls.find(
+        (call: unknown[]) =>
+          (call[0] as ServerEvent | undefined) === ServerEvent.CARD_RESOLVED,
+      ) as [ServerEvent, CardResolvedFrame] | undefined;
+      expect(targetCall).toBeDefined();
+      expect(targetCall![1].effect.kind).toBe("OPTION_DISABLE");
+      expect(Array.isArray(asIndexesFrame(targetCall![1]).effect.indexes)).toBe(
+        true,
+      );
+      expect(
+        asIndexesFrame(targetCall![1]).effect.indexes.length,
+      ).toBeGreaterThan(0);
+      // The indexes must NOT include the correct answer index.
+      expect(asIndexesFrame(targetCall![1]).effect.indexes).not.toContain(0);
+    });
+
+    it("excludes all target player rooms when sanitizing the room broadcast", async () => {
+      // CB-8 is an AOE card targeting multiple players. The room
+      // broadcast must exclude every target's private room so the
+      // same seqNo is not delivered twice.
+      const machine = makePlayMachine({
+        getCardOfferForPlayer: vi
+          .fn()
+          .mockReturnValue(["CB-8", "CB-1", "CB-2"]),
+        getPickedCards: vi.fn().mockReturnValue(new Set<CardId>(["CB-8"])),
+      });
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+
+      await handler.handleCardPlay(client, server, {
+        ...playPayload,
+        cardId: "CB-8",
+        targetPlayerId: undefined,
+      });
+
+      const roomOp = roomOperators.get("room:r1");
+      expect(roomOp).toBeDefined();
+      const excludedRooms = roomOp!.except.mock.calls[0][0] as string[];
+      const playArgs = machine.playCard.mock.calls[0] as unknown[];
+      expect(new Set(excludedRooms)).toEqual(
+        new Set(
+          (playArgs[4] as readonly string[]).map(
+            (id: string) => `player:${id}`,
+          ),
+        ),
       );
     });
 
@@ -922,9 +1128,11 @@ describe("MatchHandler", () => {
         cardId: "CB-8",
       });
 
-      const playArgs = machine.playCard.mock.calls[0];
-      // AOE expansion: roster minus player, capped at catalog targetCount.
-      expect(playArgs[4]).toEqual(["p2", "p3"]);
+      const playArgs = machine.playCard.mock.calls[0] as unknown[];
+      // AOE expansion: roster minus player, capped at catalog targetCount (unordered set comparison).
+      expect(new Set(playArgs[4] as readonly string[])).toEqual(
+        new Set(["p2", "p3"]),
+      );
     });
 
     it("tags the CARD_RESOLVED event as TEMPORARY for OPTION_DISABLE kinds", async () => {
@@ -951,8 +1159,9 @@ describe("MatchHandler", () => {
         targetPlayerId: undefined,
       });
 
-      const roomEmit = (server.to as ReturnType<typeof vi.fn>).mock.results[0]
-        .value.emit;
+      const roomOp = roomOperators.get("room:r1");
+      expect(roomOp).toBeDefined();
+      const roomEmit = roomOp!.except.mock.results[0].value.emit;
       expect(roomEmit).toHaveBeenCalledWith(
         ServerEvent.CARD_RESOLVED,
         expect.objectContaining({
@@ -972,7 +1181,7 @@ describe("MatchHandler", () => {
         targetPlayerId: "p2",
       });
 
-      const playArgs = machine.playCard.mock.calls[0];
+      const playArgs = machine.playCard.mock.calls[0] as unknown[];
       expect(playArgs[4]).toEqual(["p2"]);
     });
 
@@ -1089,10 +1298,213 @@ describe("MatchHandler", () => {
 
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: "kaboom",
+        message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
         failedEvent: ClientEvent.CARD_PLAY,
         commandId: playPayload.commandId,
       });
     });
+
+    // Real Socket.IO integration: drives handleCardPlay through a
+    // listening server with three real client sockets so that the
+    // room-union / .except() exclusion semantics are exercised by
+    // Socket.IO itself, not by the per-room vi.fn mock. The mock
+    // assertions above only verify the routing call shape; this
+    // test verifies the end-to-end wire behavior.
+    it("routes CARD_RESOLVED through real Socket.IO: target receives full effect once, non-targets receive sanitized frames only", async () => {
+      const httpServer: HttpServer = createServer();
+      const ioServer = new Server(httpServer, {
+        cors: { origin: "*" },
+      });
+      await new Promise<void>((resolve) => httpServer.listen(0, resolve));
+      const port = (httpServer.address() as AddressInfo).port;
+
+      const actorClient = ioClient(`http://127.0.0.1:${port}`, {
+        autoConnect: false,
+        transports: ["websocket"],
+      });
+      const targetClient = ioClient(`http://127.0.0.1:${port}`, {
+        autoConnect: false,
+        transports: ["websocket"],
+      });
+      const observerClient = ioClient(`http://127.0.0.1:${port}`, {
+        autoConnect: false,
+        transports: ["websocket"],
+      });
+
+      const connect = (c: ClientSocket) =>
+        new Promise<void>((resolve, reject) => {
+          c.once("connect", () => resolve());
+          c.once("connect_error", (err) => reject(err));
+          c.connect();
+        });
+
+      try {
+        await Promise.all([
+          connect(actorClient),
+          connect(targetClient),
+          connect(observerClient),
+        ]);
+
+        // Map each client socket to its server-side socket and
+        // join the room channel + per-player channel so the
+        // handler's H6 gate (room:r1) and `.except([...])`
+        // exclusion behave the same as in production.
+        const sockets = ioServer.sockets.sockets;
+        const actorServerSocket = findSocketForClient(sockets, actorClient.id!);
+        const targetServerSocket = findSocketForClient(
+          sockets,
+          targetClient.id!,
+        );
+        const observerServerSocket = findSocketForClient(
+          sockets,
+          observerClient.id!,
+        );
+        expect(actorServerSocket).toBeDefined();
+        actorServerSocket!.join("room:r1");
+        actorServerSocket!.join("player:u1");
+        actorServerSocket!.data = { userId: "u1", username: "Alice" };
+        targetServerSocket!.join("room:r1");
+        targetServerSocket!.join("player:p2");
+        targetServerSocket!.data = { userId: "p2", username: "Bob" };
+        observerServerSocket!.join("room:r1");
+        observerServerSocket!.join("player:p3");
+        observerServerSocket!.data = { userId: "p3", username: "Carla" };
+
+        // Make sure the actor socket id from the client is present
+        // before we wire assertions — `socket.io-client` types id
+        // as `string | undefined` even though it is always set
+        // after `connect`.
+        expect(actorClient.id).toBeDefined();
+        expect(targetClient.id).toBeDefined();
+        expect(observerClient.id).toBeDefined();
+
+        // Collect every CARD_RESOLVED frame each client receives.
+        const actorFrames: CardResolvedFrame[] = [];
+        const targetFrames: CardResolvedFrame[] = [];
+        const observerFrames: CardResolvedFrame[] = [];
+        actorClient.on(ServerEvent.CARD_RESOLVED, (p: CardResolvedFrame) =>
+          actorFrames.push(p),
+        );
+        targetClient.on(ServerEvent.CARD_RESOLVED, (p: CardResolvedFrame) =>
+          targetFrames.push(p),
+        );
+        observerClient.on(ServerEvent.CARD_RESOLVED, (p: CardResolvedFrame) =>
+          observerFrames.push(p),
+        );
+
+        // CB-6 (OPTION_FAKE) is the canonical disclosure case: the
+        // resolved `indexes` array carries a derived hint at the
+        // correct answer and MUST NOT leak to non-targets through
+        // the room-wide broadcast.
+        const machine = makePlayMachine({
+          getCardOfferForPlayer: vi
+            .fn()
+            .mockReturnValue(["CB-6", "CB-1", "CB-2"]),
+          getPickedCards: vi.fn().mockReturnValue(new Set<CardId>(["CB-6"])),
+          playCard: vi.fn().mockReturnValue({
+            seqNo: 42,
+            expiresAtServer: 1000,
+            remainingMs: 1000,
+          }),
+        });
+        vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+
+        // Drive the handler through the real server with the real
+        // actor socket as the `client` argument so the broadcast
+        // targets connected sockets only. The cast drops the
+        // `undefined` half of `findSocketForClient`'s return so
+        // the strict handler signature accepts the value.
+        await handler.handleCardPlay(actorServerSocket as Socket, ioServer, {
+          ...playPayload,
+          cardId: "CB-6",
+          targetPlayerId: "p2",
+        });
+
+        // Allow the broadcast loop to settle.
+        await waitFor(
+          () =>
+            targetFrames.filter((f) => f.seqNo === 42).length > 0 &&
+            actorFrames.filter((f) => f.seqNo === 42).length > 0 &&
+            observerFrames.filter((f) => f.seqNo === 42).length > 0,
+          1000,
+        );
+
+        // Target receives exactly one frame at the test seqNo.
+        const targetAtSeq = targetFrames.filter((f) => f.seqNo === 42);
+        expect(targetAtSeq).toHaveLength(1);
+        expect(targetAtSeq[0]!.effect.kind).toBe("OPTION_FAKE");
+        const targetIndexes = asIndexesFrame(targetAtSeq[0]!).effect.indexes;
+        expect(Array.isArray(targetIndexes)).toBe(true);
+        expect(targetIndexes.length).toBeGreaterThan(0);
+        // OPTION_FAKE indexes must not include the correct answer
+        // index (correctAnswer "A" options[0] = index 0).
+        expect(targetIndexes).not.toContain(0);
+
+        // Target MUST NOT receive a second sanitized frame with
+        // the same seqNo — the `.except(...)` exclusion must have
+        // stripped the room broadcast.
+        const targetSanitized = targetFrames.filter(
+          (f) =>
+            f.seqNo === 42 &&
+            f.effect.kind === "OPTION_FAKE" &&
+            Array.isArray(asIndexesFrame(f).effect.indexes) &&
+            asIndexesFrame(f).effect.indexes.length === 0,
+        );
+        expect(targetSanitized).toHaveLength(0);
+
+        // Actor and observer receive the sanitized frame only.
+        for (const frames of [actorFrames, observerFrames]) {
+          const atSeq = frames.filter((f) => f.seqNo === 42);
+          expect(atSeq).toHaveLength(1);
+          expect(atSeq[0]!.effect.kind).toBe("OPTION_FAKE");
+          expect(asIndexesFrame(atSeq[0]!).effect.indexes).toEqual([]);
+        }
+
+        // No non-target receives a frame containing indexes.
+        const actorWithIndexes = actorFrames.filter(
+          (f) =>
+            f.seqNo === 42 &&
+            Array.isArray(asIndexesFrame(f).effect.indexes) &&
+            asIndexesFrame(f).effect.indexes.length > 0,
+        );
+        const observerWithIndexes = observerFrames.filter(
+          (f) =>
+            f.seqNo === 42 &&
+            Array.isArray(asIndexesFrame(f).effect.indexes) &&
+            asIndexesFrame(f).effect.indexes.length > 0,
+        );
+        expect(actorWithIndexes).toHaveLength(0);
+        expect(observerWithIndexes).toHaveLength(0);
+      } finally {
+        actorClient.disconnect();
+        targetClient.disconnect();
+        observerClient.disconnect();
+        await new Promise<void>((resolve) => ioServer.close(() => resolve()));
+        await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+      }
+    });
   });
 });
+
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs: number,
+): Promise<void> {
+  const start = Date.now();
+  while (!predicate() && Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  if (!predicate()) {
+    throw new Error("waitFor: predicate did not become true within timeout");
+  }
+}
+
+function findSocketForClient(
+  sockets: Map<string, Socket>,
+  clientId: string,
+): Socket | undefined {
+  for (const [, s] of sockets) {
+    if (s.id === clientId) return s;
+  }
+  return undefined;
+}

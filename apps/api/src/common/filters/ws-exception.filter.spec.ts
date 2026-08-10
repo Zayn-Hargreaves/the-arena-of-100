@@ -1,6 +1,11 @@
 import { ArgumentsHost } from "@nestjs/common";
 import { Socket } from "socket.io";
-import { ErrorCode, ServerEvent, RoomError } from "@arena/shared";
+import {
+  ErrorCode,
+  ServerEvent,
+  RoomError,
+  ERROR_MESSAGE_KEYS,
+} from "@arena/shared";
 import { WsExceptionFilter } from "./ws-exception.filter";
 import { WsValidationError } from "../pipes/ws-validation.pipe";
 
@@ -33,10 +38,12 @@ beforeEach(() => {
 });
 
 describe("WsExceptionFilter", () => {
-  it("emits ServerEvent.ERROR with INVALID_PAYLOAD and the Zod message for WsValidationError", () => {
-    // The WsValidationPipe formats Zod issues as "field: message" lines;
-    // the filter must surface that exact string so the client can render
-    // per-field details in forms.
+  it("emits ServerEvent.ERROR with INVALID_PAYLOAD and the i18n key for WsValidationError", () => {
+    // The wire contract is now a stable i18n key, NOT the raw
+    // Zod message — the client translates the key at the
+    // locale-aware boundary. Per-field validation details travel
+    // in `details` so forms can render field-level feedback
+    // (e.g. "matchId: required").
     const err = new WsValidationError(
       "answer: Invalid input; roundNo: Expected number",
     );
@@ -45,39 +52,44 @@ describe("WsExceptionFilter", () => {
 
     expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
       code: ErrorCode.INVALID_PAYLOAD,
-      message: "answer: Invalid input; roundNo: Expected number",
+      message: ERROR_MESSAGE_KEYS[ErrorCode.INVALID_PAYLOAD],
+      details: "answer: Invalid input; roundNo: Expected number",
     });
   });
 
-  it("emits the fallback 'Invalid payload' message when the pipe used it", () => {
+  it("emits the i18n key for the fallback 'Invalid payload' message", () => {
     // Defensive: formatZodError can return an empty array if Zod
     // produced zero issues (shouldn't happen in practice but the
-    // pipe falls back to "Invalid payload"). The filter must
-    // forward whatever the pipe produced, verbatim.
+    // pipe falls back to "Invalid payload"). The filter maps it
+    // to the SAME i18n key as the structured case so the client
+    // never sees raw Zod output.
     const err = new WsValidationError("Invalid payload");
 
     filter.catch(err, host as unknown as ArgumentsHost);
 
     expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
       code: ErrorCode.INVALID_PAYLOAD,
-      message: "Invalid payload",
+      message: ERROR_MESSAGE_KEYS[ErrorCode.INVALID_PAYLOAD],
+      details: "Invalid payload",
     });
   });
 
-  it("emits the RoomError's own code and message for other RoomError instances", () => {
+  it("emits the RoomError's code and the i18n key (not exception.message) for other RoomError instances", () => {
     // Synchronous path leaks: e.g. a requireAuth() throw inside a
-    // handler. The filter must not re-wrap it as INVALID_PAYLOAD.
+    // handler. The filter must not re-wrap it as INVALID_PAYLOAD
+    // and MUST NOT leak the raw exception message (which may
+    // include internal details).
     const err = new RoomError(ErrorCode.UNAUTHORIZED, "Not authenticated");
 
     filter.catch(err, host as unknown as ArgumentsHost);
 
     expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
       code: ErrorCode.UNAUTHORIZED,
-      message: "Not authenticated",
+      message: ERROR_MESSAGE_KEYS[ErrorCode.UNAUTHORIZED],
     });
   });
 
-  it("emits INTERNAL_ERROR with a generic message and logs the stack for unknown throwables", () => {
+  it("emits INTERNAL_ERROR with the i18n key and logs the stack for unknown throwables", () => {
     const stack = "Error: kaboom\n    at handler:1:1";
     const boom = new Error("kaboom");
     boom.stack = stack;
@@ -93,10 +105,10 @@ describe("WsExceptionFilter", () => {
 
     expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
       code: ErrorCode.INTERNAL_ERROR,
-      message: "Internal server error",
+      message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
     });
     // Operators see the real stack; the client only sees the
-    // generic message (no server details leaked over the wire).
+    // i18n key (no server details leaked over the wire).
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("Unhandled WS exception on socket"),
       stack,
@@ -121,11 +133,11 @@ describe("WsExceptionFilter", () => {
     expect(client.emit).toHaveBeenCalledTimes(2);
     expect(client.emit).toHaveBeenNthCalledWith(1, ServerEvent.ERROR, {
       code: ErrorCode.INTERNAL_ERROR,
-      message: "Internal server error",
+      message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
     });
     expect(client.emit).toHaveBeenNthCalledWith(2, ServerEvent.ERROR, {
       code: ErrorCode.INTERNAL_ERROR,
-      message: "Internal server error",
+      message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
     });
     expect(errorSpy).toHaveBeenCalledTimes(2);
   });

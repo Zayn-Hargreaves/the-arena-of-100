@@ -32,7 +32,7 @@ import {
   VECTOR_CONG_CLASS_HAPPY,
   VECTOR_THU_CLASS_HAPPY,
   loadSamplingVector,
-} from "@arena/shared";
+} from "@arena/shared/src/cards.sampling-vectors";
 
 describe("sampleOffer — happy path (spec §3.3)", () => {
   it("returns exactly 3 unique cards for CONG", () => {
@@ -115,7 +115,10 @@ describe("sampleOffer — exhausted-pool branch (spec §3.3 fewer-than-3)", () =
     // Pass custom single-card pool ["CB-1"] to sampleOffer seam.
     const result = sampleOffer("CONG", "exhausted-seed", ["CB-1"]);
     expect(result.cards).toEqual(["CB-1"]);
-    // Only 1 CARD step float consumed.
+    // Exactly one TIER step (drew COMMON) and one CARD step
+    // (drew CB-1) — no further TIER or CARD draws once the pool
+    // is exhausted.
+    expect(result.steps.filter((s) => s.purpose === "TIER")).toHaveLength(1);
     expect(result.steps.filter((s) => s.purpose === "CARD")).toHaveLength(1);
   });
 });

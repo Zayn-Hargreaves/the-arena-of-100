@@ -29,7 +29,11 @@ export * from "./classes";
 
 // Cards (Phase 2 — Class + Card Hybrid, locked 2026-07-30)
 export * from "./cards";
-export * from "./cards.sampling-vectors";
+export {
+  deepFreeze,
+  getImmutableSamplingVector,
+  canonicalSerialize,
+} from "./cards.sampling-vector-helpers";
 
 // Game Constants (defined in its own file so schemas.ts can
 // import GAME_CONFIG.MAX_ROUNDS without creating a circular
@@ -80,8 +84,13 @@ export function generateRoomCode(
 export { ErrorCode } from "./error-codes";
 import { ErrorCode } from "./error-codes";
 
-// Error Messages (Vietnamese)
-export const ERROR_MESSAGES: Record<ErrorCode, string> = {
+// Error Messages (Vietnamese) — i18n keys, NOT display strings.
+// Every server-side emitter writes the matching key into
+// `ErrorPayload.message` and the client translates by code at
+// the locale-aware layer. This avoids hardcoded English leaking
+// into localized UIs and keeps the wire contract a stable set of
+// `Errors.*` / `Cards.errors.*` keys.
+export const ERROR_MESSAGE_KEYS: Record<ErrorCode, string> = {
   [ErrorCode.ROOM_NOT_FOUND]: "Errors.ROOM_NOT_FOUND",
   [ErrorCode.ROOM_FULL]: "Errors.ROOM_FULL",
   [ErrorCode.ROOM_ALREADY_STARTED]: "Errors.ROOM_ALREADY_STARTED",
@@ -107,3 +116,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.CARD_NOT_FOUND]: "Cards.errors.cardNotFound",
   [ErrorCode.INVALID_COMMAND_ID]: "Cards.errors.invalidCommandId",
 };
+
+// Backwards-compatible alias — callers still see ERROR_MESSAGES
+// even though the contract is now a key-based contract.
+export const ERROR_MESSAGES = ERROR_MESSAGE_KEYS;

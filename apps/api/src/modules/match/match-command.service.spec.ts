@@ -345,6 +345,11 @@ describe("MatchCommandService (B4a)", () => {
       claimed: [{ id: "7-0", data: JSON.stringify(pendingEnv) }],
     });
     service.setDispatcher(vi.fn().mockResolvedValue("APPLIED"));
+    (service as any).registered.set("m1", {
+      server,
+      abort: new AbortController(),
+      lastClaimAt: 0,
+    });
 
     await service.pollOnce("m1", server);
 

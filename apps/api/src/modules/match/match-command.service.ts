@@ -344,8 +344,11 @@ export class MatchCommandService implements OnModuleDestroy {
     signal?: AbortSignal,
   ): Promise<number> {
     const reg = this.registered.get(matchId);
+    if (!reg) {
+      return 0;
+    }
     const now = Date.now();
-    if (reg && now - reg.lastClaimAt < CLAIM_INTERVAL_MS) {
+    if (now - reg.lastClaimAt < CLAIM_INTERVAL_MS) {
       return 0;
     }
     let processed = 0;

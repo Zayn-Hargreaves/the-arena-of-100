@@ -3,6 +3,7 @@ import {
   ServerEvent,
   ClientEvent,
   ErrorCode,
+  ErrorPayload,
   GAME_CONFIG,
   SubmitAnswerPayloadSchema,
   CreateRoomPayloadSchema,
@@ -697,24 +698,22 @@ describe("GameGateway", () => {
         clientTimestamp: Date.now(),
       };
 
-      const errorPromise = new Promise<{ code: string; message: string }>(
-        (resolve, reject) => {
-          const timeout = setTimeout(
-            () => reject(new Error("Timeout waiting for ERROR event")),
-            1000,
-          );
-          clientSocket.on(ServerEvent.ERROR, (err) => {
-            clearTimeout(timeout);
-            resolve(err);
-          });
-        },
-      );
+      const errorPromise = new Promise<ErrorPayload>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("Timeout waiting for ERROR event")),
+          1000,
+        );
+        clientSocket.on(ServerEvent.ERROR, (err: ErrorPayload) => {
+          clearTimeout(timeout);
+          resolve(err);
+        });
+      });
 
       clientSocket.emit(ClientEvent.SUBMIT_ANSWER, malformedPayload);
 
       const error = await errorPromise;
       expect(error.code).toBe(ErrorCode.INVALID_PAYLOAD);
-      expect(error.message).toContain("matchId");
+      expect(error.details ?? error.message).toContain("matchId");
       expect(mockMatchHandler.handleSubmitAnswer).not.toHaveBeenCalled();
     });
 
@@ -727,24 +726,22 @@ describe("GameGateway", () => {
         clientTimestamp: Date.now(),
       };
 
-      const errorPromise = new Promise<{ code: string; message: string }>(
-        (resolve, reject) => {
-          const timeout = setTimeout(
-            () => reject(new Error("Timeout waiting for ERROR event")),
-            1000,
-          );
-          clientSocket.on(ServerEvent.ERROR, (err) => {
-            clearTimeout(timeout);
-            resolve(err);
-          });
-        },
-      );
+      const errorPromise = new Promise<ErrorPayload>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("Timeout waiting for ERROR event")),
+          1000,
+        );
+        clientSocket.on(ServerEvent.ERROR, (err: ErrorPayload) => {
+          clearTimeout(timeout);
+          resolve(err);
+        });
+      });
 
       clientSocket.emit(ClientEvent.SUBMIT_ANSWER, malformedPayload);
 
       const error = await errorPromise;
       expect(error.code).toBe(ErrorCode.INVALID_PAYLOAD);
-      expect(error.message).toContain("answer");
+      expect(error.details ?? error.message).toContain("answer");
       expect(mockMatchHandler.handleSubmitAnswer).not.toHaveBeenCalled();
     });
 
@@ -787,19 +784,16 @@ describe("GameGateway", () => {
             reject(new Error(`Timeout waiting for ERROR event on ${event}`)),
           1000,
         );
-        clientSocket.once(
-          ServerEvent.ERROR,
-          (err: { code: string; message: string }) => {
-            clearTimeout(timeout);
-            try {
-              expect(err.code).toBe(ErrorCode.INVALID_PAYLOAD);
-              expect(err.message).toContain(expectedErrorField);
-              resolve();
-            } catch (e) {
-              reject(e);
-            }
-          },
-        );
+        clientSocket.once(ServerEvent.ERROR, (err: ErrorPayload) => {
+          clearTimeout(timeout);
+          try {
+            expect(err.code).toBe(ErrorCode.INVALID_PAYLOAD);
+            expect(err.details ?? err.message).toContain(expectedErrorField);
+            resolve();
+          } catch (e) {
+            reject(e);
+          }
+        });
         clientSocket.emit(event, payload);
       });
     };

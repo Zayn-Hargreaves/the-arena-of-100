@@ -131,6 +131,16 @@ export interface CardDefinition {
   cooldownPerMatch: 1;
 }
 
+/**
+ * Deeply-readonly view of a `CardDefinition`, matching the runtime
+ * `Object.freeze` applied to every entry in `CARD_CATALOG`.
+ * Consumers that receive a card via `getCardDefinition` or iterate
+ * `CARD_CATALOG` get this type and cannot mutate it.
+ */
+export type ReadonlyCardDefinition = Readonly<CardDefinition> & {
+  readonly effectTemplate: Readonly<CardEffectTemplate>;
+};
+
 // ---------------------------------------------------------------------------
 // Effect discriminated unions (template → resolved)
 // ---------------------------------------------------------------------------
@@ -193,12 +203,16 @@ export type CardEffect =
   // RNG (spec §3.3 "Replay MUST NOT re-randomize").
   | {
       kind: "OPTION_DISABLE";
-      indexes: number[];
+      readonly indexes: readonly number[];
       count: number;
       availableAtResolution: number;
       durationMs: number;
     }
-  | { kind: "OPTION_FAKE"; indexes: number[]; durationMs: number }
+  | {
+      kind: "OPTION_FAKE";
+      readonly indexes: readonly number[];
+      durationMs: number;
+    }
   | { kind: "OPTION_LOCK"; durationMs: number }
   // Resolved: concrete string derived from the current question.
   | { kind: "HINT_REVEAL"; partial: string }
@@ -220,7 +234,7 @@ export type CardEffect =
       kind: "HAND_DESTROY";
       count: number;
       availableAtResolution: number;
-      destroyedCardIds: CardId[];
+      readonly destroyedCardIds: readonly CardId[];
     }
   | { kind: "SECOND_CHANCE" };
 
@@ -234,7 +248,7 @@ export type CardEffect =
 // the sampling engine (class-pool partition) and the API
 // boundary (per-card validation).
 
-export const CARD_CATALOG: readonly CardDefinition[] = Object.freeze([
+const RAW_CARD_CATALOG: readonly CardDefinition[] = [
   // Offensive (CONG) — 8 cards
   {
     id: "CB-1",
@@ -446,7 +460,16 @@ export const CARD_CATALOG: readonly CardDefinition[] = Object.freeze([
     backfireRate: 0.0,
     cooldownPerMatch: 1,
   },
-]);
+];
+
+export const CARD_CATALOG: readonly ReadonlyCardDefinition[] = Object.freeze(
+  RAW_CARD_CATALOG.map((card) =>
+    Object.freeze({
+      ...card,
+      effectTemplate: Object.freeze({ ...card.effectTemplate }),
+    }),
+  ),
+);
 
 // Lookup a card by id. Throws if the id is not in the catalog —
 // the API boundary should never reach this with an invalid id, but
@@ -458,7 +481,7 @@ export const CARD_CATALOG: readonly CardDefinition[] = Object.freeze([
 // AND from the React `CardHand` component per render per card —
 // at 100 players × 3 cards per render that's 300 calls reduced
 // to 300 hash lookups. The Map is built once at module load.
-const CARD_CATALOG_BY_ID: ReadonlyMap<CardId, CardDefinition> = new Map(
+const CARD_CATALOG_BY_ID: ReadonlyMap<CardId, ReadonlyCardDefinition> = new Map(
   CARD_CATALOG.map((c) => [c.id, c] as const),
 );
 
@@ -475,7 +498,7 @@ for (const c of CARD_CATALOG) {
   }
 }
 
-export function getCardDefinition(id: CardId): CardDefinition {
+export function getCardDefinition(id: CardId): ReadonlyCardDefinition {
   const def = CARD_CATALOG_BY_ID.get(id);
   if (!def) {
     throw new Error(`Unknown card id: ${id}`);

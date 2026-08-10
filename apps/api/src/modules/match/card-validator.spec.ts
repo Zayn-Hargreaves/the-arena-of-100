@@ -17,7 +17,7 @@ import {
   AOE_CAP_PER_ROUND,
   COMMAND_ID_MAX_LENGTH,
 } from "./card-validator";
-import { ErrorCode, RoomError, CardId } from "@arena/shared";
+import { ErrorCode, RoomError, type CardId } from "@arena/shared";
 
 describe("assertValidCommandId", () => {
   it("accepts a non-empty string within length cap", () => {
@@ -184,6 +184,10 @@ describe("validateCardCommand — top-level", () => {
     // pickCard→playCard sequence does not get rejected because
     // pickCard removed the picked cardId from the hand.
     pickedCards: ["CB-1"] as CardId[],
+    // Forward the actor identity so the validator can reject
+    // self-targeting plays at the top level (the API handler
+    // already supplies this so the boundary is single-source).
+    actingPlayerId: "p1" as string,
   };
 
   it("accepts a valid Offensive/CONG play", () => {
@@ -227,6 +231,41 @@ describe("validateCardCommand — top-level", () => {
         currentAoeCount: AOE_CAP_PER_ROUND,
       }),
     ).toThrow(RoomError);
+  });
+
+  it("top-level: rejects self-targeting play as INVALID_PAYLOAD", () => {
+    // The actor must not appear as the explicit target — the
+    // AOE expansion path handles this, but a direct
+    // targetPlayerId === actingPlayerId is also rejected here so
+    // the boundary returns INVALID_PAYLOAD rather than silently
+    // falling through to AOE logic.
+    try {
+      validateCardCommand({
+        ...baseArgs,
+        targetPlayerId: "p1",
+        actingPlayerId: "p1",
+      });
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(RoomError);
+      expect((err as RoomError).code).toBe(ErrorCode.INVALID_PAYLOAD);
+    }
+  });
+
+  it("top-level: AOE card CB-8 succeeds without an explicit targetPlayerId", () => {
+    // CB-8 has `targetCount: 3` — the API boundary must allow
+    // playing an AOE card without a targetPlayerId because the
+    // target expansion happens inside the handler.
+    const result = validateCardCommand({
+      ...baseArgs,
+      cardId: "CB-8",
+      targetPlayerId: undefined,
+      pickedCards: ["CB-8"] as CardId[],
+      offeredCardIds: ["CB-8", "CB-1", "CB-2"] as CardId[],
+      actingPlayerId: "p1",
+    });
+    expect(result.cardId).toBe("CB-8");
+    expect(result.template.kind).toBe("DELAY_RENDER");
   });
 
   it("accepts a self-only Defensive/THU play with no target", () => {

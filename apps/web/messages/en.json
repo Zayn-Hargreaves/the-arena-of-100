@@ -40,11 +40,12 @@
     "COMMAND_ID_CONFLICT": "This command has already been processed!",
     "CARD_NOT_FOUND": "Card definition not found!",
     "INVALID_COMMAND_ID": "Invalid command ID format!",
-    "SPECTATOR_CANNOT_ANSWER": "Spectators are not allowed to perform card actions!",
+    "SPECTATOR_CANNOT_ANSWER": "Spectators are not allowed to answer questions!",
     "PLAYER_DISCONNECTED": "Player is currently disconnected!",
     "MATCH_NOT_FOUND": "Match not found!",
     "UNAUTHORIZED": "Unauthorized action!",
     "INVALID_PAYLOAD": "Invalid request payload!",
+    "INTERNAL_ERROR": "An internal error occurred. Please try again!",
     "UNKNOWN_ERROR": "An unknown error occurred. Please try again!"
   },
   "admin": {
