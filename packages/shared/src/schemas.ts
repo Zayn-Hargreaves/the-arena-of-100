@@ -20,6 +20,7 @@
 
 import { z } from "zod";
 import { GAME_CONFIG } from "./game-config";
+import { COMMAND_ID_MAX_LENGTH } from "./cards";
 import { MatchStatus } from "./state";
 
 // Helper: roomId / matchId are server-issued CUIDs. The client never
@@ -169,7 +170,6 @@ export type RequestSnapshotPayload = z.infer<
 // (CB-1, CB-2, CB-3, CB-4, CB-5, CB-6, CB-7, CB-8), absent for self-only
 // cards (TN-1..TN-10). The server validates per-card visibility.
 const CARD_ID_MAX_LENGTH = 16;
-const COMMAND_ID_MAX_LENGTH = 64;
 
 export const CardPickPayloadSchema = z.object({
   matchId: idSchema,
@@ -301,7 +301,6 @@ export const ReplayEventSchema = z.discriminatedUnion("type", [
 // single declaration. Adding a new event type means adding a branch
 // to ReplayEventSchema — the type updates automatically.
 export type ReplayEvent = z.infer<typeof ReplayEventSchema>;
-export type ReplayEventParsed = ReplayEvent;
 
 // Per-event-type payload types — exported so consumers (events.ts,
 // web fold) can reference them by name. The schema above is the
@@ -343,5 +342,4 @@ type AssertReplayPayloadShape = {
 }[ReplayEvent["type"]] extends true
   ? true
   : false;
-const _replayPayloadShapeCheck: AssertReplayPayloadShape = true;
-void _replayPayloadShapeCheck;
+export const _replayPayloadShapeCheck: AssertReplayPayloadShape = true;

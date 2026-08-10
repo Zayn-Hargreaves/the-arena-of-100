@@ -26,9 +26,9 @@
 // ============================================================
 
 import {
-  CARD_CATALOG,
   CARD_TIER_WEIGHTS,
   compareCardId,
+  getClassPool,
   getCardDefinition,
   type CardId,
   type CardTier,
@@ -77,9 +77,7 @@ export interface SamplingResult {
 // without bumping PRNG_CONTRACT_VERSION.
 function selectTier(u: number): CardTier {
   if (u < CARD_TIER_WEIGHTS.COMMON) return "COMMON";
-  // Explicit 0.9 RARE/EPIC threshold — EPIC owns the 0.9 boundary
-  // (per spec §3.3) — u < 0.9 → RARE; u >= 0.9 → EPIC.
-  if (u < 0.9) return "RARE";
+  if (u < CARD_TIER_WEIGHTS.COMMON + CARD_TIER_WEIGHTS.RARE) return "RARE";
   return "EPIC";
 }
 
@@ -120,15 +118,17 @@ export const SAMPLE_OFFER_COUNT = 3;
 export function sampleOffer(
   classId: "CONG" | "THU",
   seed: string,
+  customPool?: readonly CardId[],
 ): SamplingResult {
   const substreamSeed = deriveSubstream(seed, `card|${classId}`);
   const rng = mulberry32(substreamSeed);
 
-  const classPool = CARD_CATALOG.filter((c) => c.classId === classId);
+  const poolIds = customPool ?? getClassPool(classId);
+  const classPoolDefs = poolIds.map((id) => getCardDefinition(id));
   const remaining = new Map<CardTier, CardId[]>(
     (["COMMON", "RARE", "EPIC"] as CardTier[]).map((tier) => [
       tier,
-      classPool
+      classPoolDefs
         .filter((c) => c.tier === tier)
         .map((c) => c.id)
         .sort(compareCardId),

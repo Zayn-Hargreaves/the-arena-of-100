@@ -11,7 +11,7 @@ describe("assignClasses — happy path", () => {
   it("returns an assignment per playerId", () => {
     const players = ["p1", "p2", "p3", "p4"];
     const result = assignClasses(players, "seed-1");
-    expect(result.length).toBe(4);
+    expect(result).toHaveLength(4);
     for (const p of players) {
       const entry = result.find((r) => r.playerId === p);
       expect(entry).toBeDefined();
@@ -94,7 +94,7 @@ describe("assignClasses — edge cases", () => {
 
   it("handles single player", () => {
     const result = assignClasses(["solo"], "solo-seed");
-    expect(result.length).toBe(1);
+    expect(result).toHaveLength(1);
     expect(result[0]?.playerId).toBe("solo");
     expect(["CONG", "THU"]).toContain(result[0]?.classId);
   });
@@ -103,5 +103,13 @@ describe("assignClasses — edge cases", () => {
     const result = assignClasses(["p1", "p2"], "pair-seed");
     const classes = result.map((r) => r.classId).sort();
     expect(classes).toEqual(["CONG", "THU"]);
+  });
+
+  it("assigns the extra slot to CONG when player count is odd", () => {
+    const result = assignClasses(["p1", "p2", "p3"], "odd-seed");
+    const congCount = result.filter((r) => r.classId === "CONG").length;
+    const thuCount = result.filter((r) => r.classId === "THU").length;
+    expect(congCount).toBe(2);
+    expect(thuCount).toBe(1);
   });
 });

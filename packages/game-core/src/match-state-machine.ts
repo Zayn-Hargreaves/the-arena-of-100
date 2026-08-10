@@ -77,13 +77,13 @@ export class MatchStateMachine {
   // codec retains the only `serializeMatch` / `deserializeMatch`
   // boundary. Survives across `serialize`/`deserialize` via
   // the state machine's restore path (added below).
-  private playerClasses: Map<string, ClassId> = new Map();
-  private playerHands: Map<string, CardId[]> = new Map();
+  private readonly playerClasses: Map<string, ClassId> = new Map();
+  private readonly playerHands: Map<string, CardId[]> = new Map();
   // Per-player active card effects. Each entry tracks the
   // (serverNow, expiresAtServer) pair so reconnect/rehydrate
   // can compute `remainingMs = max(0, expiresAtServer - serverNow)`
   // from the AUTHORITATIVE `expiresAtServer` (spec §4.4).
-  private activeEffects: Map<
+  private readonly activeEffects: Map<
     string,
     Array<{
       sourceSeqNo: number;
@@ -96,18 +96,18 @@ export class MatchStateMachine {
   // single-use-per-match validator (spec §3.1 invariant). Maintained
   // incrementally on `playCard` / `rehydrateCardStateFromEventLog`.
   // O(1) reads instead of a per-call O(N) scan of the event log.
-  private playerPlayedCards: Map<string, Set<CardId>> = new Map();
+  private readonly playerPlayedCards: Map<string, Set<CardId>> = new Map();
   // Per-player picked-but-not-yet-played cards. Distinct from
   // `playerPlayedCards`: a card only counts as "played" after
   // the resolved CARD_RESOLVED event lands. A pick that never
   // resolves (e.g. validator rejects, client disconnects) is
   // cleared by the next offer — see `pickOffer`.
-  private playerPickedCards: Map<string, Set<CardId>> = new Map();
+  private readonly playerPickedCards: Map<string, Set<CardId>> = new Map();
   // Per-round AOE counter — used by the API boundary's
   // AOE-cap validator (spec §3.3 "AOE cap = 2 per round").
   // Incremental on `playCard` / `onEndRound`; rebuilt on
   // `rehydrateCardStateFromEventLog`. O(1) reads.
-  private aoeCountByRound: Map<number, number> = new Map();
+  private readonly aoeCountByRound: Map<number, number> = new Map();
 
   constructor(matchId: string, roomId: string, players: PlayerInfo[]) {
     this.state = {
@@ -321,7 +321,7 @@ export class MatchStateMachine {
     }
 
     const player = this.state.players.get(playerId);
-    if (!player || player.status !== PlayerStatus.ACTIVE) {
+    if (player?.status !== PlayerStatus.ACTIVE) {
       throw new RoomError(ErrorCode.PLAYER_NOT_IN_ROOM);
     }
 
@@ -638,7 +638,7 @@ export class MatchStateMachine {
   // Used by the reconnect handler as the full-snapshot cursor and to
   // bound the delta window.
   getHeadSeqNo(): number {
-    const last = this.eventLog[this.eventLog.length - 1];
+    const last = this.eventLog.at(-1);
     return last ? last.seqNo : 0;
   }
 
@@ -685,12 +685,8 @@ export class MatchStateMachine {
   }
 
   // `forEachEvent` — non-cloning iterator over the event log.
-  // Callers MUST NOT mutate the supplied entry (and now CAN'T:
-  // each delivered entry is a deep-frozen defensive snapshot,
-  // not the live internal record). The convention lets hot-path
-  // scans like `playedCardsByPlayer` / `aoeCountByRound` stay
-  // allocation-free on the producer side while still handing
-  // out safe handles.
+  // Callers MUST NOT mutate the supplied entry (callbacks receive
+  // live internal event records, which are deep-frozen by logEvent).
   forEachEvent(
     callback: (entry: {
       readonly type: string;
@@ -818,7 +814,7 @@ export class MatchStateMachine {
   // card was actually offered and not a replayed/foreign card id.
   pickCard(pickedByPlayerId: string, cardId: CardId, offerSeqNo: number): void {
     const hand = this.playerHands.get(pickedByPlayerId);
-    if (!hand || !hand.includes(cardId)) {
+    if (!hand?.includes(cardId)) {
       throw new RoomError(ErrorCode.CARD_NOT_IN_HAND);
     }
     this.logEvent("CARD_PICKED", {
@@ -1052,82 +1048,95 @@ export class MatchStateMachine {
     this.playerPickedCards.clear();
     this.aoeCountByRound.clear();
     for (const e of this.eventLog) {
-      if (
-        e.type !== "CLASS_ASSIGNED" &&
-        e.type !== "CARD_OFFER" &&
-        e.type !== "CARD_PICKED" &&
-        e.type !== "CARD_RESOLVED"
-      ) {
-        continue;
-      }
-      const payload = (e.payload ?? {}) as Record<string, unknown>;
-      if (e.type === "CLASS_ASSIGNED") {
-        const assignments = (payload.assignments ?? []) as Array<{
-          playerId: string;
-          classId: ClassId;
-        }>;
-        for (const a of assignments) {
-          this.playerClasses.set(a.playerId, a.classId);
-        }
-      } else if (e.type === "CARD_OFFER") {
-        const playerId = payload.playerId as string;
-        const ids = (payload.offeredCardIds ?? []) as CardId[];
-        if (ids.length === 3) {
-          this.playerHands.set(playerId, ids);
-          // Reset the picked-cards cache for this player —
-          // a fresh offer supersedes any prior un-resolved pick.
-          this.playerPickedCards.delete(playerId);
-        }
-      } else if (e.type === "CARD_PICKED") {
-        const playerId = payload.playerId as string;
-        const cardId = payload.selectedCardId as CardId;
-        const hand = this.playerHands.get(playerId) ?? [];
-        this.playerHands.set(
-          playerId,
-          hand.filter((c) => c !== cardId),
-        );
-        // Mirror the per-player picked-cards cache. Played-cards
-        // is updated on the matching CARD_RESOLVED below, so
-        // rehydrate preserves the picked/played split.
-        let set = this.playerPickedCards.get(playerId);
-        if (!set) {
-          set = new Set();
-          this.playerPickedCards.set(playerId, set);
-        }
-        set.add(cardId);
-      } else if (e.type === "CARD_RESOLVED") {
-        const playedBy = payload.playedByPlayerId as string;
-        const cardId = payload.cardId as CardId;
-        // Promote the picked card to "played" only now — this
-        // mirrors the incremental `playCard` path.
-        let played = this.playerPlayedCards.get(playedBy);
-        if (!played) {
-          played = new Set();
-          this.playerPlayedCards.set(playedBy, played);
-        }
-        played.add(cardId);
-        // Drop the card from the picked cache — a resolved
-        // pick no longer counts as pending.
-        this.playerPickedCards.get(playedBy)?.delete(cardId);
-        if (payload.resolution === "TEMPORARY") {
-          const list = this.activeEffects.get(playedBy) ?? [];
-          list.push({
-            sourceSeqNo: e.seqNo,
-            effect: payload.effect as CardEffect,
-            expiresAtServer: payload.expiresAtServer as number,
-            persistedDurationMs: getDurationMs(payload.effect as CardEffect),
-          });
-          this.activeEffects.set(playedBy, list);
-        }
-        // Mirror the per-round AOE counter — only AOE-shaped
-        // resolutions count toward the cap (spec §3.3).
-        const targets = (payload.targetPlayerIds ?? []) as string[];
-        if (targets.length > 1) {
-          const roundNo = payload.roundNo as number;
-          const current = this.aoeCountByRound.get(roundNo) ?? 0;
-          this.aoeCountByRound.set(roundNo, current + 1);
-        }
-      }
+      this.rehydrateEvent(e);
+    }
+  }
+
+  private rehydrateEvent(e: {
+    type: string;
+    payload?: unknown;
+    seqNo: number;
+  }): void {
+    const payload = (e.payload ?? {}) as Record<string, unknown>;
+    switch (e.type) {
+      case "CLASS_ASSIGNED":
+        this.rehydrateClassAssigned(payload);
+        break;
+      case "CARD_OFFER":
+        this.rehydrateCardOffer(payload);
+        break;
+      case "CARD_PICKED":
+        this.rehydrateCardPicked(payload);
+        break;
+      case "CARD_RESOLVED":
+        this.rehydrateCardResolved(e.seqNo, payload);
+        break;
+    }
+  }
+
+  private rehydrateClassAssigned(payload: Record<string, unknown>): void {
+    const assignments = (payload.assignments ?? []) as Array<{
+      playerId: string;
+      classId: ClassId;
+    }>;
+    for (const a of assignments) {
+      this.playerClasses.set(a.playerId, a.classId);
+    }
+  }
+
+  private rehydrateCardOffer(payload: Record<string, unknown>): void {
+    const playerId = payload.playerId as string;
+    const ids = (payload.offeredCardIds ?? []) as CardId[];
+    if (ids.length === 3) {
+      this.playerHands.set(playerId, ids);
+      this.playerPickedCards.delete(playerId);
+    }
+  }
+
+  private rehydrateCardPicked(payload: Record<string, unknown>): void {
+    const playerId = payload.playerId as string;
+    const cardId = payload.selectedCardId as CardId;
+    const hand = this.playerHands.get(playerId) ?? [];
+    this.playerHands.set(
+      playerId,
+      hand.filter((c) => c !== cardId),
+    );
+    let set = this.playerPickedCards.get(playerId);
+    if (!set) {
+      set = new Set();
+      this.playerPickedCards.set(playerId, set);
+    }
+    set.add(cardId);
+  }
+
+  private rehydrateCardResolved(
+    seqNo: number,
+    payload: Record<string, unknown>,
+  ): void {
+    const playedBy = payload.playedByPlayerId as string;
+    const cardId = payload.cardId as CardId;
+    let played = this.playerPlayedCards.get(playedBy);
+    if (!played) {
+      played = new Set();
+      this.playerPlayedCards.set(playedBy, played);
+    }
+    played.add(cardId);
+    this.playerPickedCards.get(playedBy)?.delete(cardId);
+    if (payload.resolution === "TEMPORARY") {
+      const list = this.activeEffects.get(playedBy) ?? [];
+      list.push({
+        sourceSeqNo: seqNo,
+        effect: payload.effect as CardEffect,
+        expiresAtServer: payload.expiresAtServer as number,
+        persistedDurationMs: getDurationMs(payload.effect as CardEffect),
+      });
+      this.activeEffects.set(playedBy, list);
+    }
+    const targets = (payload.targetPlayerIds ?? []) as string[];
+    if (targets.length > 1) {
+      const roundNo = payload.roundNo as number;
+      const current = this.aoeCountByRound.get(roundNo) ?? 0;
+      this.aoeCountByRound.set(roundNo, current + 1);
     }
   }
 
@@ -1151,7 +1160,7 @@ export class MatchStateMachine {
     // logged after rehydrate keep increasing and never collide with an
     // already-emitted seqNo (which would corrupt a client's delta cursor).
     instance.eventSeqCounter = eventLog.reduce(
-      (max, e) => (e.seqNo > max ? e.seqNo : max),
+      (max, e) => Math.max(e.seqNo, max),
       0,
     );
     // Phase 2 — rebuild class/card state from the event log.
@@ -1252,7 +1261,7 @@ function deepFreezeValue(value: unknown, seen: WeakSet<object>): unknown {
   if (!Object.isFrozen(value)) Object.freeze(value);
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
-      if (Object.prototype.hasOwnProperty.call(value, i)) {
+      if (Object.hasOwn(value, i)) {
         deepFreezeValue(value[i], seen);
       }
     }

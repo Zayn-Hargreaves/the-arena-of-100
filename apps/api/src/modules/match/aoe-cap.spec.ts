@@ -47,8 +47,6 @@ describe("AoeCapTracker", () => {
   it("onCardResolved increments only for AOE-shaped resolutions", () => {
     const t = new AoeCapTracker("m1", 5, 0);
     t.onCardResolved({
-      seqNo: 1,
-      type: "CARD_RESOLVED",
       matchId: "m1",
       roundNo: 5,
       cardId: "CB-1",
@@ -63,8 +61,6 @@ describe("AoeCapTracker", () => {
     });
     expect(t.getCurrentAoeCount()).toBe(0); // single-target, not AOE
     t.onCardResolved({
-      seqNo: 2,
-      type: "CARD_RESOLVED",
       matchId: "m1",
       roundNo: 5,
       cardId: "CB-8",
@@ -83,8 +79,6 @@ describe("AoeCapTracker", () => {
   it("onEndRound resets the counter for the next round", () => {
     const t = new AoeCapTracker("m1", 5, 0);
     t.onCardResolved({
-      seqNo: 1,
-      type: "CARD_RESOLVED",
       matchId: "m1",
       roundNo: 5,
       cardId: "CB-8",
@@ -102,11 +96,14 @@ describe("AoeCapTracker", () => {
     expect(t.getCurrentAoeCount()).toBe(0);
   });
 
+  it("getCap returns the AOE cap constant", () => {
+    const t = AoeCapTracker.empty("m1");
+    expect(t.getCap()).toBe(AOE_CAP_PER_ROUND);
+  });
+
   it("isExhausted returns true at AOE_CAP_PER_ROUND", () => {
     const t = new AoeCapTracker("m1", 5, 0);
     t.onCardResolved({
-      seqNo: 1,
-      type: "CARD_RESOLVED",
       matchId: "m1",
       roundNo: 5,
       cardId: "CB-8",
@@ -120,8 +117,6 @@ describe("AoeCapTracker", () => {
       remainingMs: null,
     });
     t.onCardResolved({
-      seqNo: 2,
-      type: "CARD_RESOLVED",
       matchId: "m1",
       roundNo: 5,
       cardId: "CB-8",
@@ -141,10 +136,26 @@ describe("AoeCapTracker", () => {
   it("ignores events from a different round", () => {
     const t = new AoeCapTracker("m1", 5, 0);
     t.onCardResolved({
-      seqNo: 1,
-      type: "CARD_RESOLVED",
       matchId: "m1",
       roundNo: 6,
+      cardId: "CB-8",
+      offerSeqNo: 1,
+      playedByPlayerId: "p1",
+      targetPlayerIds: ["p2", "p3", "p4"],
+      effect: { kind: "DELAY_RENDER", delayMs: 2000, targetCount: 3 },
+      resolution: "MUTATION",
+      serverTimestamp: 0,
+      expiresAtServer: null,
+      remainingMs: null,
+    });
+    expect(t.getCurrentAoeCount()).toBe(0);
+  });
+
+  it("ignores events from a different matchId", () => {
+    const t = new AoeCapTracker("m1", 5, 0);
+    t.onCardResolved({
+      matchId: "m2",
+      roundNo: 5,
       cardId: "CB-8",
       offerSeqNo: 1,
       playedByPlayerId: "p1",
@@ -184,5 +195,31 @@ describe("countAoeResolved (pure)", () => {
 
   it("returns 0 on empty log", () => {
     expect(countAoeResolved([], "m1", 5)).toBe(0);
+  });
+
+  it("ignores non-CARD_RESOLVED entries and undefined payload fields", () => {
+    const events = [
+      { type: "ROUND_STARTED", payload: { matchId: "m1", roundNo: 5 } },
+      // Payload present but not the target match.
+      {
+        type: "CARD_RESOLVED",
+        payload: { matchId: "mX", roundNo: 5, targetPlayerIds: ["p2", "p3"] },
+      },
+      // Round mismatch.
+      {
+        type: "CARD_RESOLVED",
+        payload: { matchId: "m1", roundNo: 9, targetPlayerIds: ["p2", "p3"] },
+      },
+      // targetPlayerIds missing entirely — default [] guard.
+      { type: "CARD_RESOLVED", payload: { matchId: "m1", roundNo: 5 } },
+      // payload field absent entirely — `??` fallback to {}.
+      { type: "CARD_RESOLVED" } as { type: string; payload?: unknown },
+      // Single-target — does NOT count as AOE.
+      {
+        type: "CARD_RESOLVED",
+        payload: { matchId: "m1", roundNo: 5, targetPlayerIds: ["p2"] },
+      },
+    ];
+    expect(countAoeResolved(events, "m1", 5)).toBe(0);
   });
 });

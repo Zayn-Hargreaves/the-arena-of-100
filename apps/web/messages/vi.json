@@ -34,6 +34,17 @@
     "MATCH_ALREADY_STARTED": "Trận đấu đã bắt đầu, không thể tham gia!",
     "USER_ALREADY_EXISTS": "Biệt danh này đã được sử dụng trong phòng!",
     "ROOM_NOT_FOUND": "Không tìm thấy phòng đấu yêu cầu!",
+    "CARD_NOT_IN_HAND": "Lá bài không có trong tay!",
+    "INVALID_CARD_TARGET": "Mục tiêu lá bài không hợp lệ!",
+    "AOE_CAP_REACHED": "Đã đạt giới hạn lá bài diện rộng trong round này!",
+    "COMMAND_ID_CONFLICT": "Lệnh này đã được xử lý trước đó!",
+    "CARD_NOT_FOUND": "Không tìm thấy thông tin lá bài!",
+    "INVALID_COMMAND_ID": "Mã lệnh commandId không hợp lệ!",
+    "SPECTATOR_CANNOT_ANSWER": "Khán giả không được phép thực hiện thao tác!",
+    "PLAYER_DISCONNECTED": "Người chơi đã mất kết nối!",
+    "MATCH_NOT_FOUND": "Không tìm thấy trận đấu!",
+    "UNAUTHORIZED": "Bạn không có quyền thực hiện thao tác này!",
+    "INVALID_PAYLOAD": "Dữ liệu yêu cầu không hợp lệ!",
     "UNKNOWN_ERROR": "Đã xảy ra lỗi không xác định. Vui lòng thử lại!"
   },
   "admin": {

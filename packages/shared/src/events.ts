@@ -3,20 +3,10 @@
 // Event Sourcing Pattern: All game actions are events
 // ============================================================
 
-import type { CardId } from "./cards";
+import type { CardId, CardEffect } from "./cards";
 import type { ClassId } from "./classes";
 import { MatchStatus, RoomStatus, type RoomType } from "./state";
-import type {
-  QuestionSnapshot,
-  ReplayEvent,
-  ReplayStateTransitionPayload,
-  ReplayRoundStartedPayload,
-  ReplayAnswerSubmittedPayload,
-  ReplayRoundEvaluatedPayload,
-  ReplayTieBreakPayload,
-  ReplayMatchFinishedPayload,
-  ReplayPlayerPresencePayload,
-} from "./schemas";
+import type { QuestionSnapshot } from "./schemas";
 
 // Room Events
 export enum RoomEventType {
@@ -52,11 +42,9 @@ export enum MatchEventType {
   CARD_OFFER = "CARD_OFFER",
   CARD_PICKED = "CARD_PICKED",
   CARD_RESOLVED = "CARD_RESOLVED",
-  // `CARD_RESOLVED_BATCH` is a Socket.IO transport frame ONLY.
-  // It is NEVER appended to the event log and NEVER used as a
-  // replay cursor; each inner `CARD_RESOLVED` keeps its own
-  // persisted `seqNo` and the batch's `seqNo` is transport
-  // metadata (the last effect's seqNo in the frame).
+}
+
+export enum TransportFrameType {
   CARD_RESOLVED_BATCH = "CARD_RESOLVED_BATCH",
 }
 
@@ -243,37 +231,21 @@ export interface PlayerReconnectedPayload {
 // produced the assignment is also persisted so a replay can
 // reproduce (deterministic + auditable).
 export interface ClassAssignedEvent {
-  seqNo: number;
-  type: "CLASS_ASSIGNED";
   matchId: string;
   assignments: Array<{ playerId: string; classId: ClassId }>;
   seedUsed: string;
 }
 
-// CARD_OFFER — emitted at milestone rounds (Q5/12/20 per
-// spec §4.3). The 3-card tuple is a FIXED LENGTH because the v1
-// class pools (8 Offensive/CONG / 10 Defensive/THU, every
-// tier non-empty) always
-// yield 3 unique cards. The spec couples the 3-tuple and the
-// pool sizes as a single contract: shrinking a pool below 3
-// reachable cards MUST widen this to `readonly CardId[]` in the
-// same change (spec §3.3 "Offer size invariant").
 export interface CardOfferEvent {
-  seqNo: number;
-  type: "CARD_OFFER";
+  matchId: string;
   roundNo: number;
   playerId: string;
   offeredCardIds: [CardId, CardId, CardId];
   seedUsed: string;
 }
 
-// CARD_PICKED — client-driven (`CARD_PICK` socket event). The
-// `offerSeqNo` correlation back-points to the offering
-// CARD_OFFER.seqNo so the validator can verify the picked card
-// was actually offered and not a replayed/foreign card id.
 export interface CardPickedEvent {
-  seqNo: number;
-  type: "CARD_PICKED";
+  matchId: string;
   roundNo: number;
   playerId: string;
   selectedCardId: CardId;
@@ -293,29 +265,31 @@ export interface CardPickedEvent {
 
 export type CardEffectResolution = "MUTATION" | "TEMPORARY";
 
+export type MutationEffectKind =
+  | "TIMER_MODIFY"
+  | "DELAY_RENDER"
+  | "HINT_REVEAL"
+  | "QUESTION_REPLAY"
+  | "SHIELD"
+  | "SCORE_MULT"
+  | "HAND_DESTROY"
+  | "SECOND_CHANCE";
+
+export type TemporaryEffectKind =
+  | "OPTION_DISABLE"
+  | "OPTION_FAKE"
+  | "OPTION_LOCK"
+  | "VISUAL_OVERLAY"
+  | "SEMANTIC_FLIP";
+
 export type MutationEffect = {
-  seqNo: number;
-  type: "CARD_RESOLVED";
   matchId: string;
   roundNo: number;
   cardId: CardId;
   offerSeqNo: number;
   playedByPlayerId: string;
   targetPlayerIds: string[];
-  effect:
-    | { kind: "TIMER_MODIFY"; deltaMs: number; targetCount: number }
-    | { kind: "DELAY_RENDER"; delayMs: number; targetCount: number }
-    | { kind: "HINT_REVEAL"; partial: string }
-    | { kind: "QUESTION_REPLAY"; extraMs: number }
-    | { kind: "SHIELD"; expiresAtRound: number }
-    | { kind: "SCORE_MULT"; factor: number }
-    | {
-        kind: "HAND_DESTROY";
-        count: number;
-        availableAtResolution: number;
-        destroyedCardIds: CardId[];
-      }
-    | { kind: "SECOND_CHANCE" };
+  effect: Extract<CardEffect, { kind: MutationEffectKind }>;
   resolution: "MUTATION";
   serverTimestamp: number;
   expiresAtServer: null;
@@ -323,30 +297,13 @@ export type MutationEffect = {
 };
 
 export type TemporaryEffect = {
-  seqNo: number;
-  type: "CARD_RESOLVED";
   matchId: string;
   roundNo: number;
   cardId: CardId;
   offerSeqNo: number;
   playedByPlayerId: string;
   targetPlayerIds: string[];
-  effect:
-    | {
-        kind: "OPTION_DISABLE";
-        indexes: number[];
-        count: number;
-        availableAtResolution: number;
-        durationMs: number;
-      }
-    | { kind: "OPTION_FAKE"; indexes: number[]; durationMs: number }
-    | { kind: "OPTION_LOCK"; durationMs: number }
-    | {
-        kind: "VISUAL_OVERLAY";
-        flag: "BRAIN_FOG" | "DEEP_READ";
-        durationMs: number;
-      }
-    | { kind: "SEMANTIC_FLIP"; durationMs: number };
+  effect: Extract<CardEffect, { kind: TemporaryEffectKind }>;
   resolution: "TEMPORARY";
   serverTimestamp: number;
   expiresAtServer: number;
@@ -355,17 +312,16 @@ export type TemporaryEffect = {
 
 export type CardEffectEvent = MutationEffect | TemporaryEffect;
 
-/**
- * `CARD_RESOLVED_BATCH` is a Socket.IO transport frame ONLY.
- * - NEVER appended to the event log.
- * - NEVER used as a replay cursor.
- * - Each inner `CardEffectEvent` keeps its own persisted `seqNo`;
- *   the batch's `seqNo` (last effect's seqNo in the frame) is
- *   transport metadata and does NOT participate in replay ordering.
- * - Append→emit SLO: ≤ 50ms (spec §4.5 BATCH_SLO_MS).
- */
+type _AllKindsCovered = [CardEffect["kind"]] extends [
+  MutationEffectKind | TemporaryEffectKind,
+]
+  ? true
+  : false;
+export const _checkAllKindsCovered: _AllKindsCovered = true;
+
 export interface CardResolvedBatchEvent {
   type: "CARD_RESOLVED_BATCH";
+  matchId: string;
   seqNo: number;
   roundNo: number;
   effects: CardEffectEvent[];
@@ -426,22 +382,13 @@ export interface PlayerTurnSnapshot {
   classId: ClassId;
   pendingPick: CardId | null;
   shieldSeqNo: number | null;
+  playedCardIds: CardId[];
+  pickedCardIds: CardId[];
 }
 
-// Question Snapshot (used in events) — single source of truth is the
-// Zod schema in `schemas.ts` (`QuestionSnapshotSchema`); this re-export
-// keeps the public surface stable for downstream consumers.
-export type { QuestionSnapshot };
-
-// ---------------------------------------------------------------------------
-// Replay events (Plan D — delta replay)
-//
-// Compile-time types live in `schemas.ts` (`ReplayEventSchema`,
-// `ReplayEvent`). They are derived from the runtime schema so the
-// server-side log sites and the client-side fold cannot drift apart.
-// correctAnswer is never included.
-// ---------------------------------------------------------------------------
+// Question Snapshot & Replay events — single source of truth is schemas.ts
 export type {
+  QuestionSnapshot,
   ReplayEvent,
   ReplayStateTransitionPayload,
   ReplayRoundStartedPayload,
@@ -450,7 +397,7 @@ export type {
   ReplayTieBreakPayload,
   ReplayMatchFinishedPayload,
   ReplayPlayerPresencePayload,
-};
+} from "./schemas";
 
 // Union types for type safety
 export type RoomEvent =
@@ -475,8 +422,7 @@ export type MatchEvent =
   | BaseEvent<ClassAssignedEvent>
   | BaseEvent<CardOfferEvent>
   | BaseEvent<CardPickedEvent>
-  | BaseEvent<CardEffectEvent>
-  | BaseEvent<CardResolvedBatchEvent>;
+  | BaseEvent<CardEffectEvent>;
 
 // Factory function for creating events (Command Pattern)
 export function createEvent<T>(
@@ -485,9 +431,7 @@ export function createEvent<T>(
   seqNo: number,
 ): BaseEvent<T> {
   return {
-    id:
-      crypto.randomUUID?.() ??
-      `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    id: crypto.randomUUID(),
     type,
     timestamp: Date.now(),
     payload,

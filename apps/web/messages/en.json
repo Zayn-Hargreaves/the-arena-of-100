@@ -34,6 +34,17 @@
     "MATCH_ALREADY_STARTED": "The match has already started and cannot be joined!",
     "USER_ALREADY_EXISTS": "This nickname is already taken in the room!",
     "ROOM_NOT_FOUND": "Requested match room was not found!",
+    "CARD_NOT_IN_HAND": "Card is not in your hand!",
+    "INVALID_CARD_TARGET": "Invalid target for this card!",
+    "AOE_CAP_REACHED": "AOE card limit reached for this round!",
+    "COMMAND_ID_CONFLICT": "This command has already been processed!",
+    "CARD_NOT_FOUND": "Card definition not found!",
+    "INVALID_COMMAND_ID": "Invalid command ID format!",
+    "SPECTATOR_CANNOT_ANSWER": "Spectators are not allowed to perform card actions!",
+    "PLAYER_DISCONNECTED": "Player is currently disconnected!",
+    "MATCH_NOT_FOUND": "Match not found!",
+    "UNAUTHORIZED": "Unauthorized action!",
+    "INVALID_PAYLOAD": "Invalid request payload!",
     "UNKNOWN_ERROR": "An unknown error occurred. Please try again!"
   },
   "admin": {

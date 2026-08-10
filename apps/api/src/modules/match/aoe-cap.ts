@@ -61,14 +61,16 @@ export function countAoeResolved(
 // "owner-fencing" rule for the persisted round counter.
 // ---------------------------------------------------------------------------
 export class AoeCapTracker {
+  readonly matchId: string;
   private currentRoundNo = 0;
   private currentAoeCount = 0;
 
   constructor(
-    private readonly matchId: string,
+    matchId: string,
     initialRoundNo: number,
     initialAoeCount: number,
   ) {
+    this.matchId = matchId;
     this.currentRoundNo = initialRoundNo;
     this.currentAoeCount = initialAoeCount;
   }
@@ -104,6 +106,7 @@ export class AoeCapTracker {
   // the counter only for AOE-shaped resolutions (targetPlayerIds
   // length > 1). Single-target Offensive/CONG cards do NOT count.
   onCardResolved(event: CardEffectEvent): void {
+    if (event.matchId !== this.matchId) return;
     if (event.roundNo !== this.currentRoundNo) return;
     if (event.targetPlayerIds.length > 1) {
       this.currentAoeCount++;

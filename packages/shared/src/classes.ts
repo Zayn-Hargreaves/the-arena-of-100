@@ -25,4 +25,7 @@ export type ClassId = "CONG" | "THU";
 // `cards.ts` because all consumers import the card catalog from
 // there; keeping a class->cards mapping here avoids a circular
 // dependency between classes.ts and cards.ts.
-export const CLASS_IDS: readonly ClassId[] = ["CONG", "THU"] as const;
+export const CLASS_IDS: readonly ClassId[] = Object.freeze([
+  "CONG",
+  "THU",
+] as const);

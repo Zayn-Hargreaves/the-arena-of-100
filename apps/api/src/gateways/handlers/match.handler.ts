@@ -8,6 +8,8 @@ import {
   RoomStatus,
   getCardDefinition,
   type CardId,
+  type CardEffect,
+  type MatchState,
   type SubmitAnswerPayload,
   type RequestSnapshotPayload,
   type CardPickPayload,
@@ -117,7 +119,7 @@ export class MatchHandler extends BaseHandler {
         // offline. The frontend can use PLAYER_DISCONNECTED to drive
         // a reconnect flow instead of an error toast.
         const player = stateMachine.getState().players.get(userId);
-        if (player && player.status === PlayerStatus.DISCONNECTED) {
+        if (player?.status === PlayerStatus.DISCONNECTED) {
           throw new RoomError(ErrorCode.PLAYER_DISCONNECTED);
         }
 
@@ -286,10 +288,35 @@ export class MatchHandler extends BaseHandler {
         );
         if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
 
+        const state = stateMachine.getState?.();
+        if (state?.players) {
+          const isPlayerInMatch = state.players.has(userId);
+          if (!isPlayerInMatch) {
+            throw new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER);
+          }
+          const player = state.players.get(userId);
+          if (
+            player &&
+            (player.status === PlayerStatus.ELIMINATED ||
+              player.status === PlayerStatus.WINNER)
+          ) {
+            throw new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER);
+          }
+          if (player?.status === PlayerStatus.DISCONNECTED) {
+            throw new RoomError(ErrorCode.PLAYER_DISCONNECTED);
+          }
+        }
+
         // The state machine validates the offer correlation
         // (cardId must be in the player's current hand) and
-        // appends CARD_PICKED.
-        stateMachine.pickCard(userId, payload.cardId, payload.offerSeqNo);
+        // appends CARD_PICKED. The hand only contains valid
+        // `CardId` literals, so the cast is safe — and the
+        // state machine throws if the card isn't in the hand.
+        stateMachine.pickCard(
+          userId,
+          payload.cardId as CardId,
+          payload.offerSeqNo,
+        );
 
         // Broadcast to the room channel so other clients see the
         // player's hand update.
@@ -303,10 +330,14 @@ export class MatchHandler extends BaseHandler {
       },
       (error) => {
         const code = this.getErrorCode(error);
-        const msg =
+        let msg =
           error instanceof RoomError
             ? ERROR_MESSAGES[error.code]
             : this.getErrorMessage(error);
+        if (error instanceof Error && !(error instanceof RoomError)) {
+          this.logger.error("Error handling card pick:", error);
+          msg = "Internal server error";
+        }
         client.emit(ServerEvent.ERROR, {
           code,
           message: msg,
@@ -320,8 +351,7 @@ export class MatchHandler extends BaseHandler {
   // `handleCardPlay` — apply the picked card. The boundary
   // validates the command, the resolver expands the template
   // into a concrete `CardEffect`, then the state machine
-  // appends `CARD_RESOLVED` and emits a transport-frame
-  // `CARD_RESOLVED_BATCH` (≤50ms micro-batch per spec §4.5).
+  // appends `CARD_RESOLVED`.
   async handleCardPlay(
     client: Socket,
     server: Server,
@@ -345,28 +375,14 @@ export class MatchHandler extends BaseHandler {
         );
         if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
 
-        const state = stateMachine.getState();
-        // The played-card check is the *picked* card (the player
-        // already declared intent via CARD_PICK), NOT the
-        // post-pick hand — `pickCard` has removed the picked
-        // cardId from the hand, so a hand-based check rejects
-        // otherwise-valid plays. The picked set is the
-        // pick-specific data that survives the pick→play gap.
+        const state = stateMachine.getState?.();
+        this.assertActivePlayer(state, userId);
+
         const pickedCards = Array.from(stateMachine.getPickedCards(userId));
-        // Resolve the exact `CARD_OFFER` envelope for this player
-        // by `offerSeqNo`. The offer is the canonical source of
-        // the offered 3-tuple; the post-pick hand is a thinner
-        // mirror. A foreign `offerSeqNo` (or one belonging to a
-        // different player) yields `null` and the validator
-        // rejects the play with `CARD_NOT_IN_HAND`.
         const offeredCardIds =
           stateMachine.getCardOfferForPlayer(userId, payload.offerSeqNo) ??
           ([] as CardId[]);
-        const roster = new Set(state.players.keys());
-        // O(1) reads from the state machine's cached counters
-        // (incremental on every pickCard/playCard, rebuilt on
-        // rehydrate). The previous implementation re-scanned the
-        // entire event log twice per `handleCardPlay` call.
+        const roster = new Set(state?.players ? state.players.keys() : []);
         const playedSet = stateMachine.getPlayedCards(userId);
         const currentRoundNo = stateMachine.getCurrentRound()?.roundNo ?? 0;
         const aoeCount = stateMachine.getAoeCountForRound(currentRoundNo);
@@ -379,11 +395,14 @@ export class MatchHandler extends BaseHandler {
           currentAoeCount: aoeCount,
           playedCardIds: playedSet,
           pickedCards,
+          actingPlayerId: userId,
         });
 
         // Resolve the template server-side (3 cards consume RNG).
         const resolveRng = this.makeResolveRng(
-          stateMachine.getState().id,
+          stateMachine.getState?.()?.id ?? payload.matchId,
+          userId,
+          currentRoundNo,
           payload.offerSeqNo,
           payload.cardId,
         );
@@ -399,20 +418,17 @@ export class MatchHandler extends BaseHandler {
               : undefined,
             options: stateMachine.getCurrentRound()?.question.options,
             correctAnswer,
-            currentRoundNo: stateMachine.getCurrentRound()?.roundNo ?? 0,
+            currentRoundNo,
             partial: correctAnswer ? correctAnswer[0] : "",
           },
         );
 
-        // The target list for the CARD_RESOLVED event:
-        // - Single-target Offensive/CONG card: explicit targetPlayerId
-        // - AOE Offensive/CONG card (targetCount > 1): expand to the
-        //   eligible roster (excluding the player themselves).
         const targetPlayerIds = this.expandTargets(
           validated.cardId,
           userId,
           payload.targetPlayerId,
-          roster,
+          stateMachine,
+          resolveRng,
         );
 
         const serverNow = Date.now();
@@ -425,30 +441,49 @@ export class MatchHandler extends BaseHandler {
           serverNow,
         );
 
-        // Broadcast the per-card CARD_RESOLVED event.
-        server.to(`room:${roomId}`).emit(ServerEvent.CARD_RESOLVED, {
+        const basePayload = {
           seqNo: result.seqNo,
           matchId: payload.matchId,
-          roundNo: stateMachine.getCurrentRound()?.roundNo ?? 0,
+          roundNo: currentRoundNo,
           cardId: payload.cardId,
           offerSeqNo: payload.offerSeqNo,
           playedByPlayerId: userId,
           targetPlayerIds,
-          effect: resolved,
           resolution: this.isTemporaryEffect(resolved)
-            ? "TEMPORARY"
-            : "MUTATION",
+            ? ("TEMPORARY" as const)
+            : ("MUTATION" as const),
           serverTimestamp: serverNow,
           expiresAtServer: result.expiresAtServer,
           remainingMs: result.remainingMs,
+        };
+
+        const sanitizedEffect = this.sanitizeEffect(resolved);
+
+        // Broadcast sanitized effect to room
+        server.to(`room:${roomId}`).emit(ServerEvent.CARD_RESOLVED, {
+          ...basePayload,
+          effect: sanitizedEffect,
         });
+
+        // Broadcast full effect with details to targets and playedBy player
+        const secretReceivers = new Set([...targetPlayerIds, userId]);
+        for (const targetId of secretReceivers) {
+          server.to(`player:${targetId}`).emit(ServerEvent.CARD_RESOLVED, {
+            ...basePayload,
+            effect: resolved,
+          });
+        }
       },
       (error) => {
         const code = this.getErrorCode(error);
-        const msg =
+        let msg =
           error instanceof RoomError
             ? ERROR_MESSAGES[error.code]
             : this.getErrorMessage(error);
+        if (error instanceof Error && !(error instanceof RoomError)) {
+          this.logger.error("Error handling card play:", error);
+          msg = "Internal server error";
+        }
         client.emit(ServerEvent.ERROR, {
           code,
           message: msg,
@@ -463,16 +498,15 @@ export class MatchHandler extends BaseHandler {
   // Internal helpers (sub-task D)
   // -------------------------------------------------------------------------
 
-  // Helper RNG for the resolver. Mirrors the `mulberry32` body
-  // shared with `@arena/game-core/src/prng.ts` so the API
-  // boundary doesn't need a second package import.
   private makeResolveRng(
     matchId: string,
+    userId: string,
+    roundNo: number,
     offerSeqNo: number,
     cardId: string,
   ): () => number {
     const stream = deriveSubstream(
-      `${matchId}|${offerSeqNo}|${cardId}`,
+      `${matchId}|${userId}|${roundNo}|${offerSeqNo}|${cardId}`,
       `resolve|${cardId}`,
     );
     let local = stream;
@@ -485,12 +519,6 @@ export class MatchHandler extends BaseHandler {
     };
   }
 
-  // Peek the correct answer for the in-flight round. The state
-  // machine exposes it via `attachCorrectAnswer` after recovery,
-  // but does NOT expose it directly through the public API for
-  // safety. For server-side resolution we cast through `unknown`
-  // — this is the one and only place server-side reading the
-  // correct answer is intentional.
   private peekCorrectAnswer(stateMachine: {
     getCurrentRound: () => unknown;
   }): string | undefined {
@@ -500,36 +528,57 @@ export class MatchHandler extends BaseHandler {
     return round?.correctAnswer;
   }
 
-  // Resolve the target list for a CARD_RESOLVED event per spec §4.2:
-  // single-target → exactly the supplied targetPlayerId;
-  // AOE (targetCount > 1) → all eligible roster except the player.
   private expandTargets(
     cardId: CardId,
     playedByPlayerId: string,
     targetPlayerId: string | undefined,
-    roster: Set<string>,
+    stateMachine: {
+      getState: () => { players: Map<string, { status: string }> };
+    },
+    rng: () => number,
   ): string[] {
     const def = getCardDefinition(cardId);
-    const template = def.effectTemplate as {
-      kind?: string;
-      targetCount?: number;
-    };
-    if (
-      template?.kind === "DELAY_RENDER" ||
-      template?.kind === "TIMER_MODIFY"
-    ) {
-      const count = template.targetCount ?? 1;
-      if (count > 1) {
-        return Array.from(roster)
-          .filter((p) => p !== playedByPlayerId)
-          .slice(0, count);
+    const template = def.effectTemplate as { targetCount?: number };
+    const count = template.targetCount ?? 1;
+
+    if (count > 1) {
+      const players = stateMachine.getState().players;
+      const eligible = Array.from(players.entries())
+        .filter(
+          ([id, p]) =>
+            id !== playedByPlayerId &&
+            p.status !== PlayerStatus.ELIMINATED &&
+            p.status !== PlayerStatus.WINNER &&
+            p.status !== PlayerStatus.DISCONNECTED,
+        )
+        .map(([id]) => id)
+        .sort((a, b) => a.localeCompare(b));
+
+      const selected: string[] = [];
+      const numToPick = Math.min(count, eligible.length);
+      const remaining = eligible.slice();
+      for (let i = 0; i < numToPick; i++) {
+        const u = rng();
+        const idx = Math.floor(u * remaining.length);
+        selected.push(remaining[idx]!);
+        remaining.splice(idx, 1);
       }
+      return selected;
     }
     if (targetPlayerId) return [targetPlayerId];
     return [playedByPlayerId];
   }
 
-  // Is the resolved effect a TEMPORARY kind (carries duration)?
+  private sanitizeEffect(effect: CardEffect): CardEffect {
+    if (effect.kind === "OPTION_DISABLE") {
+      return { ...effect, indexes: [] };
+    }
+    if (effect.kind === "HINT_REVEAL") {
+      return { ...effect, partial: "" };
+    }
+    return effect;
+  }
+
   private isTemporaryEffect(effect: { kind: string }): boolean {
     return [
       "OPTION_DISABLE",
@@ -538,5 +587,25 @@ export class MatchHandler extends BaseHandler {
       "VISUAL_OVERLAY",
       "SEMANTIC_FLIP",
     ].includes(effect.kind);
+  }
+
+  private assertActivePlayer(
+    state: MatchState | null | undefined,
+    userId: string,
+  ): void {
+    if (!state?.players) return;
+    const player = state.players.get(userId);
+    if (!player) {
+      throw new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER);
+    }
+    if (
+      player.status === PlayerStatus.ELIMINATED ||
+      player.status === PlayerStatus.WINNER
+    ) {
+      throw new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER);
+    }
+    if (player.status === PlayerStatus.DISCONNECTED) {
+      throw new RoomError(ErrorCode.PLAYER_DISCONNECTED);
+    }
   }
 }

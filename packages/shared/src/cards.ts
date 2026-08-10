@@ -234,7 +234,7 @@ export type CardEffect =
 // the sampling engine (class-pool partition) and the API
 // boundary (per-card validation).
 
-export const CARD_CATALOG: readonly CardDefinition[] = [
+export const CARD_CATALOG: readonly CardDefinition[] = Object.freeze([
   // Offensive (CONG) — 8 cards
   {
     id: "CB-1",
@@ -414,9 +414,9 @@ export const CARD_CATALOG: readonly CardDefinition[] = [
   {
     id: "TN-8",
     classId: "THU",
-    tier: "RARE",
-    name: "Replay",
-    description: "Re-open the current question for yourself.",
+    tier: "COMMON",
+    name: "Time Bonus",
+    description: "Add 5s to your per-question answer deadline.",
     effectTemplate: { kind: "QUESTION_REPLAY", extraMs: 5000 },
     backfireRate: 0.0,
     cooldownPerMatch: 1,
@@ -446,7 +446,7 @@ export const CARD_CATALOG: readonly CardDefinition[] = [
     backfireRate: 0.0,
     cooldownPerMatch: 1,
   },
-];
+]);
 
 // Lookup a card by id. Throws if the id is not in the catalog —
 // the API boundary should never reach this with an invalid id, but
@@ -533,3 +533,7 @@ export const CARD_TIER_WEIGHTS = {
 // the same number — a future bump must be made here in one
 // commit and apply to every consumer in lockstep.
 export const AOE_CAP_PER_ROUND = 2;
+
+export const COMMAND_ID_MAX_LENGTH = 64;
+
+export const MILESTONE_ROUNDS: ReadonlySet<number> = new Set([5, 12, 20]);

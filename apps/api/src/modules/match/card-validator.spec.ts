@@ -17,7 +17,7 @@ import {
   AOE_CAP_PER_ROUND,
   COMMAND_ID_MAX_LENGTH,
 } from "./card-validator";
-import { ErrorCode, RoomError } from "@arena/shared";
+import { ErrorCode, RoomError, CardId } from "@arena/shared";
 
 describe("assertValidCommandId", () => {
   it("accepts a non-empty string within length cap", () => {
@@ -88,8 +88,22 @@ describe("validateTarget", () => {
     }
   });
 
-  it("Offensive/CONG card with no target — accepted (single-target default)", () => {
-    expect(() => validateTarget("CB-1", undefined, roster)).not.toThrow();
+  it("Offensive/CONG non-AOE card with no target — INVALID_PAYLOAD", () => {
+    try {
+      validateTarget("CB-1", undefined, roster);
+      throw new Error("expected throw");
+    } catch (err) {
+      expect((err as RoomError).code).toBe(ErrorCode.INVALID_PAYLOAD);
+    }
+  });
+
+  it("Offensive/CONG card targeting self — INVALID_PAYLOAD", () => {
+    try {
+      validateTarget("CB-1", "p1", roster, "p1");
+      throw new Error("expected throw");
+    } catch (err) {
+      expect((err as RoomError).code).toBe(ErrorCode.INVALID_PAYLOAD);
+    }
   });
 
   it("Defensive/THU card with targetPlayerId — INVALID_PAYLOAD (self-only)", () => {
@@ -159,17 +173,17 @@ describe("validateAoeBudget", () => {
 describe("validateCardCommand — top-level", () => {
   const roster = new Set(["p1", "p2", "p3"]);
   const baseArgs = {
-    cardId: "CB-1",
-    offeredCardIds: ["CB-1", "CB-2", "CB-3"],
-    targetPlayerId: "p2",
+    cardId: "CB-1" as CardId,
+    offeredCardIds: ["CB-1", "CB-2", "CB-3"] as CardId[],
+    targetPlayerId: "p2" as string | undefined,
     rosterPlayerIds: roster,
     currentAoeCount: 0,
-    playedCardIds: new Set<string>(),
+    playedCardIds: new Set<CardId>(),
     // The post-pick hand is intentionally NOT used here — the
     // validator checks the PICKED set so a legitimate
     // pickCard→playCard sequence does not get rejected because
     // pickCard removed the picked cardId from the hand.
-    pickedCards: ["CB-1"],
+    pickedCards: ["CB-1"] as CardId[],
   };
 
   it("accepts a valid Offensive/CONG play", () => {
@@ -189,8 +203,8 @@ describe("validateCardCommand — top-level", () => {
       validateCardCommand({
         ...baseArgs,
         cardId: "CB-7",
-        offeredCardIds: ["CB-1", "CB-2", "CB-3"],
-        pickedCards: ["CB-1"],
+        offeredCardIds: ["CB-1", "CB-2", "CB-3"] as CardId[],
+        pickedCards: ["CB-1"] as CardId[],
       }),
     ).toThrow(RoomError);
   });
@@ -199,7 +213,7 @@ describe("validateCardCommand — top-level", () => {
     expect(() =>
       validateCardCommand({
         ...baseArgs,
-        playedCardIds: new Set(["CB-1"]),
+        playedCardIds: new Set<CardId>(["CB-1"]),
       }),
     ).toThrow(RoomError);
   });
@@ -209,7 +223,7 @@ describe("validateCardCommand — top-level", () => {
       validateCardCommand({
         ...baseArgs,
         cardId: "CB-8",
-        pickedCards: ["CB-8"],
+        pickedCards: ["CB-8"] as CardId[],
         currentAoeCount: AOE_CAP_PER_ROUND,
       }),
     ).toThrow(RoomError);
@@ -220,8 +234,8 @@ describe("validateCardCommand — top-level", () => {
       ...baseArgs,
       cardId: "TN-1",
       targetPlayerId: undefined,
-      pickedCards: ["TN-1"],
-      offeredCardIds: ["TN-1", "TN-2", "TN-3"],
+      pickedCards: ["TN-1"] as CardId[],
+      offeredCardIds: ["TN-1", "TN-2", "TN-3"] as CardId[],
     });
     expect(result.cardId).toBe("TN-1");
   });
@@ -234,8 +248,8 @@ describe("validateCardCommand — top-level", () => {
       validateCardCommand({
         ...baseArgs,
         cardId: "CB-2",
-        offeredCardIds: ["CB-1", "CB-2", "CB-3"],
-        pickedCards: ["CB-1"],
+        offeredCardIds: ["CB-1", "CB-2", "CB-3"] as CardId[],
+        pickedCards: ["CB-1"] as CardId[],
       }),
     ).toThrow(RoomError);
   });

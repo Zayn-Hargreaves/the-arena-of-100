@@ -24,7 +24,7 @@ const LABELS = [
 
 describe("sampling vectors — vectors exist and pin contract version", () => {
   it("exports the canonical 4 starter vectors", () => {
-    expect(ALL_SAMPLING_VECTORS.length).toBe(4);
+    expect(ALL_SAMPLING_VECTORS).toHaveLength(4);
   });
 
   it("every vector pins PRNG_CONTRACT_VERSION", () => {
@@ -158,7 +158,7 @@ describe("canonicalSerialize byte-stable property", () => {
     expect(() => canonicalSerialize(sparse)).toThrow(/hole/);
   });
 
-  it("still accepts an array whose value is explicitly undefined", () => {
+  it("rejects an array whose value is explicitly undefined with a TypeError", () => {
     // `undefined` inside an array is a value, not a hole — the
     // outer guard at the top of canonicalSerialize rejects
     // undefined as a top-level input, but as a nested element

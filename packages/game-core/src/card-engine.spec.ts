@@ -32,18 +32,18 @@ import {
   VECTOR_CONG_CLASS_HAPPY,
   VECTOR_THU_CLASS_HAPPY,
   loadSamplingVector,
-} from "@arena/shared/src/cards.sampling-vectors";
+} from "@arena/shared";
 
 describe("sampleOffer — happy path (spec §3.3)", () => {
   it("returns exactly 3 unique cards for CONG", () => {
     const result = sampleOffer("CONG", "match-1|CONG-player-1");
-    expect(result.cards.length).toBe(3);
+    expect(result.cards).toHaveLength(3);
     expect(new Set(result.cards).size).toBe(3);
   });
 
   it("returns exactly 3 unique cards for THU", () => {
     const result = sampleOffer("THU", "match-1|THU-player-1");
-    expect(result.cards.length).toBe(3);
+    expect(result.cards).toHaveLength(3);
     expect(new Set(result.cards).size).toBe(3);
   });
 
@@ -57,9 +57,9 @@ describe("sampleOffer — happy path (spec §3.3)", () => {
 
   it("consumes 6 floats per 3-card offer (no retry)", () => {
     const result = sampleOffer("CONG", "any-seed");
-    expect(result.steps.length).toBe(6);
-    expect(result.steps.filter((s) => s.purpose === "TIER").length).toBe(3);
-    expect(result.steps.filter((s) => s.purpose === "CARD").length).toBe(3);
+    expect(result.steps).toHaveLength(6);
+    expect(result.steps.filter((s) => s.purpose === "TIER")).toHaveLength(3);
+    expect(result.steps.filter((s) => s.purpose === "CARD")).toHaveLength(3);
   });
 
   it("is deterministic — same seed → same offer + same step trace", () => {
@@ -112,49 +112,11 @@ describe("sampleOffer — without replacement invariant", () => {
 
 describe("sampleOffer — exhausted-pool branch (spec §3.3 fewer-than-3)", () => {
   it("returns fewer than 3 cards and stops consuming RNG when no cards remain", () => {
-    // Build a 1-card pool by hand and drive `selectTier` + the
-    // "remaining" logic via the same floats a real substream would
-    // produce. With only one EPIC card and EPIC draws guaranteed by
-    // u >= 0.9, the first draw consumes 2 floats (TIER + CARD),
-    // the remaining tiers are empty, and the next draws must
-    // terminate on the `totalRemaining === 0` guard without
-    // consuming further floats.
-    const pool: CardId[] = ["CB-1"];
-    const floats = [0.95, 0.0, 0.99, 0.5, 0.99, 0.5];
-    let i = 0;
-    const rng = () => floats[i++] ?? 0;
-    // Inline replication of sampleOffer's draw loop with the
-    // 1-card pool, so we exercise the exhausted branch end-to-end
-    // (the public API cannot reach it with a v1 class pool).
-    const remaining = new Map([
-      ["COMMON", [] as CardId[]],
-      ["RARE", [] as CardId[]],
-      ["EPIC", [...pool]],
-    ]);
-    const cards: CardId[] = [];
-    for (let draw = 0; draw < 3; draw++) {
-      let total = 0;
-      for (const list of remaining.values()) total += list.length;
-      if (total === 0) break;
-      let tier: string;
-      while (true) {
-        const u = rng();
-        tier = u < 0.6 ? "COMMON" : u < 0.9 ? "RARE" : "EPIC";
-        const list = remaining.get(tier) ?? [];
-        if (list.length > 0) break;
-      }
-      const tierList = remaining.get(tier) ?? [];
-      const u2 = rng();
-      const idx = Math.floor(u2 * tierList.length);
-      const drawnCardId = tierList[idx];
-      cards.push(drawnCardId!);
-      remaining.set(
-        tier,
-        tierList.filter((_, j) => j !== idx),
-      );
-    }
-    expect(cards).toEqual(["CB-1"]);
-    expect(i).toBe(2); // only the first draw consumed floats
+    // Pass custom single-card pool ["CB-1"] to sampleOffer seam.
+    const result = sampleOffer("CONG", "exhausted-seed", ["CB-1"]);
+    expect(result.cards).toEqual(["CB-1"]);
+    // Only 1 CARD step float consumed.
+    expect(result.steps.filter((s) => s.purpose === "CARD")).toHaveLength(1);
   });
 });
 
@@ -173,7 +135,7 @@ describe("resolveOptionDisable — TN-1 / TN-10 (spec §3.3 effectiveCount)", ()
     expect(result.kind).toBe("OPTION_DISABLE");
     expect(result.count).toBe(2);
     expect(result.availableAtResolution).toBe(3);
-    expect(result.indexes.length).toBe(2);
+    expect(result.indexes).toHaveLength(2);
     // Never picks the correct answer's index.
     expect(result.indexes).not.toContain(1);
     // No duplicates within the resolved set.
@@ -197,7 +159,7 @@ describe("resolveOptionDisable — TN-1 / TN-10 (spec §3.3 effectiveCount)", ()
       rng,
     );
     expect(result.availableAtResolution).toBe(1);
-    expect(result.indexes.length).toBe(1);
+    expect(result.indexes).toHaveLength(1);
     expect(result.indexes[0]).toBe(0);
     expect(result.count).toBe(2); // count is REQUESTED, never rewritten
   });
@@ -212,7 +174,7 @@ describe("resolveOptionDisable — TN-1 / TN-10 (spec §3.3 effectiveCount)", ()
     const rng = mulberry32(0xcafebabe);
     const result = resolveOptionDisable(template, ["B"], "B", rng);
     expect(result.availableAtResolution).toBe(0);
-    expect(result.indexes.length).toBe(0);
+    expect(result.indexes).toHaveLength(0);
     expect(result.count).toBe(1);
   });
 });
@@ -226,7 +188,7 @@ describe("resolveHandDestroy — CB-3 (spec §3.3 effectiveCount)", () => {
     };
     const rng = mulberry32(0x12345678);
     const result = resolveHandDestroy(template, ["CB-1", "CB-2", "CB-3"], rng);
-    expect(result.destroyedCardIds.length).toBe(1);
+    expect(result.destroyedCardIds).toHaveLength(1);
     expect(result.count).toBe(1);
     expect(result.availableAtResolution).toBe(3);
   });
@@ -239,7 +201,7 @@ describe("resolveHandDestroy — CB-3 (spec §3.3 effectiveCount)", () => {
     };
     const rng = mulberry32(0x87654321);
     const result = resolveHandDestroy(template, ["CB-5"], rng);
-    expect(result.destroyedCardIds.length).toBe(1);
+    expect(result.destroyedCardIds).toHaveLength(1);
     expect(result.destroyedCardIds[0]).toBe("CB-5");
     expect(result.count).toBe(1);
     expect(result.availableAtResolution).toBe(1);
@@ -253,7 +215,7 @@ describe("resolveHandDestroy — CB-3 (spec §3.3 effectiveCount)", () => {
     };
     const rng = mulberry32(0xfeedface);
     const result = resolveHandDestroy(template, [], rng);
-    expect(result.destroyedCardIds.length).toBe(0);
+    expect(result.destroyedCardIds).toHaveLength(0);
     expect(result.availableAtResolution).toBe(0);
   });
 
@@ -381,7 +343,7 @@ describe("resolveCardEffect — explicit RNG consumption (CB-3, TN-1, TN-10)", (
     });
     expect(result.kind).toBe("OPTION_DISABLE");
     if (result.kind !== "OPTION_DISABLE") return;
-    expect(result.indexes.length).toBe(2);
+    expect(result.indexes).toHaveLength(2);
     expect(result.indexes).not.toContain(1);
   });
 
@@ -399,7 +361,7 @@ describe("resolveCardEffect — explicit RNG consumption (CB-3, TN-1, TN-10)", (
     });
     expect(result.kind).toBe("OPTION_DISABLE");
     if (result.kind !== "OPTION_DISABLE") return;
-    expect(result.indexes.length).toBe(1);
+    expect(result.indexes).toHaveLength(1);
     expect(result.indexes[0]).not.toBe(1);
   });
 });

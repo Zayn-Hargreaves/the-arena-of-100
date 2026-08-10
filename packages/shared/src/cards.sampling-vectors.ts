@@ -95,8 +95,8 @@ export const VECTOR_THU_CLASS_HAPPY: SamplingVector = {
       float: 0.35720975045114756,
       purpose: "CARD",
       retry: false,
-      cardIndex: 1,
-      drawnCardId: "TN-2",
+      cardIndex: 2,
+      drawnCardId: "TN-3",
     },
     { float: 0.7420756528154016, purpose: "TIER", retry: false, tier: "RARE" },
     {
@@ -111,11 +111,11 @@ export const VECTOR_THU_CLASS_HAPPY: SamplingVector = {
       float: 0.7070694454014301,
       purpose: "CARD",
       retry: false,
-      cardIndex: 2,
+      cardIndex: 1,
       drawnCardId: "TN-9",
     },
   ],
-  offeredCardIds: ["TN-2", "TN-4", "TN-9"],
+  offeredCardIds: ["TN-3", "TN-4", "TN-9"],
 } as const;
 
 export const VECTOR_SHARED_SEED_CONG: SamplingVector = {
@@ -202,7 +202,7 @@ export const VECTOR_SHARED_SEED_THU: SamplingVector = {
       float: 0.8973990571685135,
       purpose: "CARD",
       retry: false,
-      cardIndex: 3,
+      cardIndex: 2,
       drawnCardId: "TN-9",
     },
     { float: 0.8916048582177609, purpose: "TIER", retry: false, tier: "RARE" },
@@ -238,109 +238,8 @@ export function loadSamplingVector(label: string): SamplingVector {
   throw new Error(`Unknown sampling vector: ${label}`);
 }
 
-function deepFreeze<T>(value: T): T {
-  if (value === null || typeof value !== "object") return value;
-  Object.freeze(value);
-  for (const k of Object.keys(value)) {
-    deepFreeze((value as Record<string, unknown>)[k]);
-  }
-  return value;
-}
-
-export function getImmutableSamplingVector(label: string): SamplingVector {
-  // Clone first so we don't freeze the module-level VECTOR_*
-  // singleton returned by loadSamplingVector — deep-freezing the
-  // shared vector would corrupt a subsequent direct
-  // loadSamplingVector() call that expects a mutable (but
-  // readonly) reference.
-  return deepFreeze(
-    structuredClone(loadSamplingVector(label)),
-  ) as SamplingVector;
-}
-
-export function canonicalSerialize(value: unknown): string {
-  return canonicalSerializeInner(value, new WeakSet<object>());
-}
-
-function canonicalSerializeInner(
-  value: unknown,
-  ancestors: WeakSet<object>,
-): string {
-  // Reject values that JSON.stringify cannot (or will not)
-  // produce a non-empty string for. JSON.stringify returns
-  // `undefined` for these inputs — propagating that would
-  // violate the "every accepted value returns a string"
-  // contract this function exposes.
-  if (value === undefined) {
-    throw new TypeError(
-      "canonicalSerialize: undefined is not a serializable value",
-    );
-  }
-  if (typeof value === "function" || typeof value === "symbol") {
-    throw new TypeError(
-      `canonicalSerialize: ${typeof value} is not a serializable value`,
-    );
-  }
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value) as string;
-  }
-  // Cycle detection: a value that is already an ancestor of the
-  // current branch would cause a `RangeError: Maximum call stack
-  // size exceeded` recursion. Surface that as an explicit
-  // `TypeError` instead — canonical serializers must never blow
-  // the call stack. The `WeakSet` is per-call (the outer helper
-  // creates a fresh one) so a value that legitimately appears
-  // multiple times in non-cyclic positions still serializes.
-  if (ancestors.has(value as object)) {
-    throw new TypeError("canonicalSerialize: cyclic value is not serializable");
-  }
-  ancestors.add(value as object);
-  if (Array.isArray(value)) {
-    const parts = new Array<string>(value.length);
-    for (let i = 0; i < value.length; i++) {
-      // Reject sparse arrays before serializing any element.
-      // `Array.prototype.map` silently skips holes, which would let a
-      // sparse array sneak through as a shorter array of indices — a
-      // silent contract violation for canonical serializers. Use
-      // `Object.prototype.hasOwnProperty.call` so inherited
-      // array indices (e.g. inherited `.0` from a manual prototype
-      // chain) are NOT treated as present elements — only own
-      // indices are serialized.
-      if (!Object.prototype.hasOwnProperty.call(value, i)) {
-        throw new TypeError(
-          `canonicalSerialize: array contains a hole at index ${i}`,
-        );
-      }
-      const v = value[i];
-      const s = canonicalSerializeInner(v, ancestors);
-      // Defense in depth: any nested rejection (e.g. a
-      // stray function inside an otherwise-valid array)
-      // surfaces here rather than as an empty slot.
-      if (typeof s !== "string" || s.length === 0) {
-        throw new TypeError(
-          `canonicalSerialize: array element is not a non-empty string (${String(v)})`,
-        );
-      }
-      parts[i] = s;
-    }
-    ancestors.delete(value as object);
-    return "[" + parts.join(",") + "]";
-  }
-  const keys = Object.keys(value)
-    .filter((k) => (value as Record<string, unknown>)[k] !== undefined)
-    .sort();
-  const out =
-    "{" +
-    keys
-      .map((k) => {
-        const s = canonicalSerializeInner(
-          (value as Record<string, unknown>)[k],
-          ancestors,
-        );
-        return JSON.stringify(k) + ":" + s;
-      })
-      .join(",") +
-    "}";
-  ancestors.delete(value as object);
-  return out;
-}
+export {
+  deepFreeze,
+  getImmutableSamplingVector,
+  canonicalSerialize,
+} from "./cards.sampling-vector-helpers";

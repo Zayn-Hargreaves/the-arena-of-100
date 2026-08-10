@@ -14,27 +14,15 @@ import {
   ErrorCode,
   RoomError,
   AOE_CAP_PER_ROUND,
+  COMMAND_ID_MAX_LENGTH,
+  MILESTONE_ROUNDS,
   type CardId,
   type CardEffectTemplate,
   getCardDefinition,
   hasCardDefinition,
 } from "@arena/shared";
 
-// ---------------------------------------------------------------------------
-// AOE cap — spec §3.3 "AOE cap = 2 per lobby per round"
-// Re-exported from @arena/shared so the spec contract has a single
-// source of truth. The constant is not redeclared here.
-// ---------------------------------------------------------------------------
-export { AOE_CAP_PER_ROUND };
-
-// `commandId` length cap — same shape as `submissionId` on
-// `submit_answer`. 64 chars is the boundary contract.
-export const COMMAND_ID_MAX_LENGTH = 64;
-
-// Milestone rounds at which the server emits a `CARD_OFFER`
-// (spec §4.3 "milestone trigger at Q5, 12, 20"). The server
-// may extend this set in future phases; UI depends on it.
-export const MILESTONE_ROUNDS: ReadonlySet<number> = new Set([5, 12, 20]);
+export { AOE_CAP_PER_ROUND, COMMAND_ID_MAX_LENGTH, MILESTONE_ROUNDS };
 
 // ---------------------------------------------------------------------------
 // `assertValidCommandId` — required, non-empty, ≤64 chars
@@ -54,13 +42,7 @@ export function assertValidCommandId(
 // `assertCardId` — must be in the v1 18-card catalog
 // ---------------------------------------------------------------------------
 export function assertCardId(cardId: unknown): asserts cardId is CardId {
-  if (typeof cardId !== "string") {
-    throw new RoomError(ErrorCode.CARD_NOT_FOUND);
-  }
-  // Find in the catalog — throws via getCardDefinition if absent.
-  try {
-    getCardDefinition(cardId as CardId);
-  } catch {
+  if (typeof cardId !== "string" || !hasCardDefinition(cardId)) {
     throw new RoomError(ErrorCode.CARD_NOT_FOUND);
   }
 }
@@ -94,14 +76,10 @@ export function isCardAlreadyPlayed(
 // `isCongCard` (or check `classId === "CONG"` directly) when
 // the question is "does this card accept a targetPlayerId".
 export function isAoeCard(cardId: CardId): boolean {
-  const template = getCardDefinition(cardId).effectTemplate;
-  // Only TIMER_MODIFY and DELAY_RENDER carry `targetCount`.
-  // Other templates (OPTION_DISABLE, OPTION_FAKE, OPTION_LOCK,
-  // HINT_REVEAL_TEMPLATE, VISUAL_OVERLAY, SEMANTIC_FLIP,
-  // QUESTION_REPLAY, SHIELD_TEMPLATE, SCORE_MULT,
-  // HAND_DESTROY_TEMPLATE, SECOND_CHANCE) are single-target
-  // or self-only and never count against the AOE cap.
-  if (template.kind === "TIMER_MODIFY" || template.kind === "DELAY_RENDER") {
+  const template = getCardDefinition(cardId).effectTemplate as {
+    targetCount?: number;
+  };
+  if (typeof template.targetCount === "number") {
     return template.targetCount > 1;
   }
   return false;
@@ -119,20 +97,20 @@ export function validateTarget(
   cardId: CardId,
   targetPlayerId: string | undefined,
   rosterPlayerIds: ReadonlySet<string>,
+  actingPlayerId?: string,
 ): void {
   if (isCongCard(cardId)) {
-    // Offensive/CONG cards optionally accept a single-target playerId.
-    // AOE
-    // expansion (targetCount > 1) is handled by the API resolver
-    // when appending the CARD_RESOLVED event.
+    if (!isAoeCard(cardId) && !targetPlayerId) {
+      throw new RoomError(ErrorCode.INVALID_PAYLOAD);
+    }
+    if (targetPlayerId && actingPlayerId && targetPlayerId === actingPlayerId) {
+      throw new RoomError(ErrorCode.INVALID_PAYLOAD);
+    }
     if (targetPlayerId && !rosterPlayerIds.has(targetPlayerId)) {
       throw new RoomError(ErrorCode.PLAYER_NOT_IN_ROOM);
     }
     return;
   }
-  // Defensive/THU cards are self-only — the API rejects any
-  // targetPlayerId
-  // present in the payload. Self-targeting is implicit.
   if (targetPlayerId !== undefined) {
     throw new RoomError(ErrorCode.INVALID_PAYLOAD);
   }
@@ -203,6 +181,7 @@ export function validateCardCommand(args: {
   currentAoeCount: number;
   playedCardIds: ReadonlySet<CardId>;
   pickedCards: readonly CardId[];
+  actingPlayerId?: string;
 }): {
   cardId: CardId;
   template: CardEffectTemplate;
@@ -219,7 +198,12 @@ export function validateCardCommand(args: {
     // Single-use per match (v1 invariant).
     throw new RoomError(ErrorCode.CARD_NOT_IN_HAND);
   }
-  validateTarget(cardId, args.targetPlayerId, args.rosterPlayerIds);
+  validateTarget(
+    cardId,
+    args.targetPlayerId,
+    args.rosterPlayerIds,
+    args.actingPlayerId,
+  );
   validateAoeBudget(cardId, args.currentAoeCount);
   const def = getCardDefinition(cardId);
   return { cardId, template: def.effectTemplate };
@@ -239,5 +223,5 @@ export function isMilestoneRound(roundNo: number): boolean {
 // a Map<CardId, CardDefinition>).
 // ---------------------------------------------------------------------------
 export function catalogHasCard(cardId: unknown): cardId is CardId {
-  return hasCardDefinition(cardId);
+  return typeof cardId === "string" && hasCardDefinition(cardId);
 }

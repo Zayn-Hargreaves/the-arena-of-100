@@ -29,7 +29,9 @@ export interface ClassAssignment {
 // function of `(sortedPlayerIds, seed)` only — the order in
 // which the caller passes playerIds is irrelevant.
 function comparePlayerId(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
 }
 
 /**
@@ -46,8 +48,8 @@ function comparePlayerId(a: string, b: string): number {
  *
  * The roll is deterministic given the seed. Replay the
  * assignments by re-running with the same `seedUsed` — the
- * returned array is sorted by `playerId` (canonical order), so
- * the result is byte-identical across processes.
+ * returned array preserves the order of `drawn` (sorted by roll),
+ * so the result is byte-identical across processes.
  */
 export function assignClasses(
   playerIds: readonly string[],

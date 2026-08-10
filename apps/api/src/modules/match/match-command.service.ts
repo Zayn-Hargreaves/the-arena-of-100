@@ -311,45 +311,9 @@ export class MatchCommandService implements OnModuleDestroy {
     const stream = this.streamKey(matchId);
     let processed = 0;
     try {
-      // Takeover is a failover path gated on CLAIM_MIN_IDLE_MS (30s), so it
-      // does not belong on the per-answer path. An unregistered match (direct
-      // pollOnce call) has no registration to rate-limit against — sweep it.
-      const reg = this.registered.get(matchId);
-      const now = Date.now();
-      if (!reg || now - reg.lastClaimAt >= CLAIM_INTERVAL_MS) {
-        let cursor = "0-0";
-        do {
-          if (signal?.aborted) return processed;
-          const { nextCursor, claimed } = await this.redis.xautoclaim(
-            stream,
-            OWNER_GROUP,
-            this.consumer,
-            CLAIM_MIN_IDLE_MS,
-            cursor,
-            BATCH,
-          );
-          for (const entry of claimed) {
-            if (signal?.aborted) return processed;
-            await this.processEntry(matchId, entry, server);
-            processed++;
-          }
-          cursor = nextCursor;
-        } while (cursor !== "0-0");
-        // Stamp only after the sweep COMPLETES: a Redis/processing error
-        // (caught below) or an abort mid-sweep must leave the timestamp
-        // unchanged so the next iteration retries the takeover instead of
-        // sitting out a full CLAIM_INTERVAL_MS with entries still pending.
-        if (
-          reg &&
-          this.registered.get(matchId) === reg &&
-          !reg.abort.signal.aborted &&
-          !signal?.aborted
-        ) {
-          reg.lastClaimAt = Date.now();
-        }
-      }
-
+      processed += await this.claimIdleEntries(matchId, stream, server, signal);
       if (signal?.aborted) return processed;
+
       const entries = await this.redis.xreadgroup(
         OWNER_GROUP,
         this.consumer,
@@ -369,6 +333,48 @@ export class MatchCommandService implements OnModuleDestroy {
           err instanceof Error ? err.message : String(err)
         }`,
       );
+    }
+    return processed;
+  }
+
+  private async claimIdleEntries(
+    matchId: string,
+    stream: string,
+    server: Server,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    const reg = this.registered.get(matchId);
+    const now = Date.now();
+    if (reg && now - reg.lastClaimAt < CLAIM_INTERVAL_MS) {
+      return 0;
+    }
+    let processed = 0;
+    let cursor = "0-0";
+    do {
+      if (signal?.aborted) return processed;
+      const { nextCursor, claimed } = await this.redis.xautoclaim(
+        stream,
+        OWNER_GROUP,
+        this.consumer,
+        CLAIM_MIN_IDLE_MS,
+        cursor,
+        BATCH,
+      );
+      for (const entry of claimed) {
+        if (signal?.aborted) return processed;
+        await this.processEntry(matchId, entry, server);
+        processed++;
+      }
+      cursor = nextCursor;
+    } while (cursor !== "0-0");
+
+    if (
+      reg &&
+      this.registered.get(matchId) === reg &&
+      !reg.abort.signal.aborted &&
+      !signal?.aborted
+    ) {
+      reg.lastClaimAt = Date.now();
     }
     return processed;
   }
