@@ -16,6 +16,28 @@ export type {
 export { computeRoundScore } from "./scoring";
 export type { RoundScore } from "./scoring";
 
+// Phase 2 — Class + Card Hybrid engines
+export {
+  sampleOffer,
+  resolveCardEffect,
+  resolveOptionDisable,
+  resolveHandDestroy,
+  correctOptionIndex,
+  SAMPLE_OFFER_COUNT,
+} from "./card-engine";
+export type { SamplingStep, SamplingResult } from "./card-engine";
+export { assignClasses } from "./class-engine";
+export type { ClassAssignment } from "./class-engine";
+
+// PRNG primitives
+export {
+  mulberry32,
+  hashStringToSeed,
+  seedFromString,
+  deriveSubstream,
+  sha256Bytes,
+} from "./prng";
+
 // Re-export shared types for convenience
 export {
   MatchStatus,

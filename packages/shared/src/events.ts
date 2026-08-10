@@ -3,6 +3,8 @@
 // Event Sourcing Pattern: All game actions are events
 // ============================================================
 
+import type { CardId } from "./cards";
+import type { ClassId } from "./classes";
 import { MatchStatus, RoomStatus, type RoomType } from "./state";
 import type {
   QuestionSnapshot,
@@ -41,6 +43,21 @@ export enum MatchEventType {
   MATCH_FINISHED = "MATCH_FINISHED",
   PLAYER_RECONNECTED = "PLAYER_RECONNECTED",
   PLAYER_DISCONNECTED = "PLAYER_DISCONNECTED",
+  // Phase 2 — Class + Card Hybrid. Source of truth:
+  // memory-bank/spec/class-cards-phase.md §5.2. These are
+  // append-only event-log entries with stable `seqNo` minted at
+  // append time; replay reads them verbatim and MUST NOT re-run
+  // any RNG (spec §3.3 "Replay MUST NOT re-randomize").
+  CLASS_ASSIGNED = "CLASS_ASSIGNED",
+  CARD_OFFER = "CARD_OFFER",
+  CARD_PICKED = "CARD_PICKED",
+  CARD_RESOLVED = "CARD_RESOLVED",
+  // `CARD_RESOLVED_BATCH` is a Socket.IO transport frame ONLY.
+  // It is NEVER appended to the event log and NEVER used as a
+  // replay cursor; each inner `CARD_RESOLVED` keeps its own
+  // persisted `seqNo` and the batch's `seqNo` is transport
+  // metadata (the last effect's seqNo in the frame).
+  CARD_RESOLVED_BATCH = "CARD_RESOLVED_BATCH",
 }
 
 // Base Event Interface
@@ -210,6 +227,207 @@ export interface PlayerReconnectedPayload {
   reconnectedAt: number;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 2 — Class + Card Hybrid event payloads
+// Source of truth: memory-bank/spec/class-cards-phase.md §5.2
+// (sub-task A — Shared Schema).
+//
+// All `*` fields are append-only event-log entries with stable
+// `seqNo` minted at append time. Replay reads them verbatim and
+// MUST NOT re-run any RNG (§3.3 "Replay MUST NOT re-randomize").
+// ---------------------------------------------------------------------------
+
+// CLASS_ASSIGNED — server-side random per-match assignment.
+// The full map is persisted as ONE event so a diff or replay
+// detects class changes by comparing the maps. The seed that
+// produced the assignment is also persisted so a replay can
+// reproduce (deterministic + auditable).
+export interface ClassAssignedEvent {
+  seqNo: number;
+  type: "CLASS_ASSIGNED";
+  matchId: string;
+  assignments: Array<{ playerId: string; classId: ClassId }>;
+  seedUsed: string;
+}
+
+// CARD_OFFER — emitted at milestone rounds (Q5/12/20 per
+// spec §4.3). The 3-card tuple is a FIXED LENGTH because the v1
+// class pools (8 Offensive/CONG / 10 Defensive/THU, every
+// tier non-empty) always
+// yield 3 unique cards. The spec couples the 3-tuple and the
+// pool sizes as a single contract: shrinking a pool below 3
+// reachable cards MUST widen this to `readonly CardId[]` in the
+// same change (spec §3.3 "Offer size invariant").
+export interface CardOfferEvent {
+  seqNo: number;
+  type: "CARD_OFFER";
+  roundNo: number;
+  playerId: string;
+  offeredCardIds: [CardId, CardId, CardId];
+  seedUsed: string;
+}
+
+// CARD_PICKED — client-driven (`CARD_PICK` socket event). The
+// `offerSeqNo` correlation back-points to the offering
+// CARD_OFFER.seqNo so the validator can verify the picked card
+// was actually offered and not a replayed/foreign card id.
+export interface CardPickedEvent {
+  seqNo: number;
+  type: "CARD_PICKED";
+  roundNo: number;
+  playerId: string;
+  selectedCardId: CardId;
+  offerSeqNo: number;
+}
+
+// ---------------------------------------------------------------------------
+// CardEffectEvent — Track D event-log extension
+// Source of truth: spec §4.2
+//
+// Split into MUTATION (no countdown) and TEMPORARY (carries
+// `expiresAtServer` + `remainingMs`). The rehydrate reducer
+// applies `MUTATION` once regardless of countdown; restores
+// `TEMPORARY` only while `expiresAtServer` is still in the
+// future relative to the trusted `replayServerNow`.
+// ---------------------------------------------------------------------------
+
+export type CardEffectResolution = "MUTATION" | "TEMPORARY";
+
+export type MutationEffect = {
+  seqNo: number;
+  type: "CARD_RESOLVED";
+  matchId: string;
+  roundNo: number;
+  cardId: CardId;
+  offerSeqNo: number;
+  playedByPlayerId: string;
+  targetPlayerIds: string[];
+  effect:
+    | { kind: "TIMER_MODIFY"; deltaMs: number; targetCount: number }
+    | { kind: "DELAY_RENDER"; delayMs: number; targetCount: number }
+    | { kind: "HINT_REVEAL"; partial: string }
+    | { kind: "QUESTION_REPLAY"; extraMs: number }
+    | { kind: "SHIELD"; expiresAtRound: number }
+    | { kind: "SCORE_MULT"; factor: number }
+    | {
+        kind: "HAND_DESTROY";
+        count: number;
+        availableAtResolution: number;
+        destroyedCardIds: CardId[];
+      }
+    | { kind: "SECOND_CHANCE" };
+  resolution: "MUTATION";
+  serverTimestamp: number;
+  expiresAtServer: null;
+  remainingMs: null;
+};
+
+export type TemporaryEffect = {
+  seqNo: number;
+  type: "CARD_RESOLVED";
+  matchId: string;
+  roundNo: number;
+  cardId: CardId;
+  offerSeqNo: number;
+  playedByPlayerId: string;
+  targetPlayerIds: string[];
+  effect:
+    | {
+        kind: "OPTION_DISABLE";
+        indexes: number[];
+        count: number;
+        availableAtResolution: number;
+        durationMs: number;
+      }
+    | { kind: "OPTION_FAKE"; indexes: number[]; durationMs: number }
+    | { kind: "OPTION_LOCK"; durationMs: number }
+    | {
+        kind: "VISUAL_OVERLAY";
+        flag: "BRAIN_FOG" | "DEEP_READ";
+        durationMs: number;
+      }
+    | { kind: "SEMANTIC_FLIP"; durationMs: number };
+  resolution: "TEMPORARY";
+  serverTimestamp: number;
+  expiresAtServer: number;
+  remainingMs: number;
+};
+
+export type CardEffectEvent = MutationEffect | TemporaryEffect;
+
+/**
+ * `CARD_RESOLVED_BATCH` is a Socket.IO transport frame ONLY.
+ * - NEVER appended to the event log.
+ * - NEVER used as a replay cursor.
+ * - Each inner `CardEffectEvent` keeps its own persisted `seqNo`;
+ *   the batch's `seqNo` (last effect's seqNo in the frame) is
+ *   transport metadata and does NOT participate in replay ordering.
+ * - Append→emit SLO: ≤ 50ms (spec §4.5 BATCH_SLO_MS).
+ */
+export interface CardResolvedBatchEvent {
+  type: "CARD_RESOLVED_BATCH";
+  seqNo: number;
+  roundNo: number;
+  effects: CardEffectEvent[];
+  aoeCountInRound: number;
+}
+
+/**
+ * `cardId` + `offerSeqNo` correlation: both fields are immutable
+ * and MUST be validated before appending a `CARD_RESOLVED` event.
+ * The server checks that `offerSeqNo` points to a valid
+ * `CARD_OFFER` event whose `offeredCardIds` contains `cardId`,
+ * and that the player picked that card via a `CARD_PICKED` event.
+ * This correlation is part of the audit/replay contract —
+ * `@arena/shared` owns the event schema; the API boundary enforces
+ * the validation.
+ *
+ * `rolledBack` field removed for v1: replay cannot use it to
+ * reverse already-materialized state. No replay-time skipping
+ * based on a rollback flag. If rollback support is required later,
+ * model it as an explicit compensating event with reducer
+ * semantics — not a boolean on the original event.
+ */
+
+/**
+ * Snapshot fragment for the reconnect rehydrate of card state.
+ * `expiresAtServer` is the AUTHORITATIVE logical expiry
+ * (canonical epoch ms), used for reconnect/failover restore.
+ * `remainingMs` is DERIVED at snapshot time and is informational —
+ * rehydrate recomputes `remainingMs = max(0, expiresAtServer - replayServerNow)`
+ * instead of trusting the persisted `remainingMs`. `persistedDurationMs`
+ * is the original duration cap so restore can clamp to a sane upper
+ * bound (e.g. capped to `durationMs` even if clock skew made a stale
+ * snapshot look like more time remained).
+ */
+export interface ActiveEffectSnapshot {
+  sourceSeqNo: number;
+  effect: TemporaryEffect["effect"];
+  remainingMs: number;
+  persistedDurationMs: number;
+  expiresAtServer: number;
+}
+
+// Per-turn snapshot used by the replay reducer so the rehydrate
+// can re-apply everything from `(snapshotSeqNo, replayServerNow]`
+// deterministically across reconnect / failover.
+export interface CardTurnSnapshot {
+  snapshotSeqNo: number;
+  serverNow: number;
+  playerTurns: Record<string, PlayerTurnSnapshot>;
+  activeEffects: Record<string, ActiveEffectSnapshot[]>;
+}
+
+// Minimal per-player turn state — the Web reducer materializes
+// this from the canonical event log. Full definition lives in
+// the web client; the server only carries the snapshot shape.
+export interface PlayerTurnSnapshot {
+  hand: CardId[];
+  classId: ClassId;
+  pendingPick: CardId | null;
+  shieldSeqNo: number | null;
+}
+
 // Question Snapshot (used in events) — single source of truth is the
 // Zod schema in `schemas.ts` (`QuestionSnapshotSchema`); this re-export
 // keeps the public surface stable for downstream consumers.
@@ -253,7 +471,12 @@ export type MatchEvent =
   | BaseEvent<AnswerSubmittedPayload>
   | BaseEvent<PlayerEliminatedPayload>
   | BaseEvent<MatchFinishedPayload>
-  | BaseEvent<PlayerReconnectedPayload>;
+  | BaseEvent<PlayerReconnectedPayload>
+  | BaseEvent<ClassAssignedEvent>
+  | BaseEvent<CardOfferEvent>
+  | BaseEvent<CardPickedEvent>
+  | BaseEvent<CardEffectEvent>
+  | BaseEvent<CardResolvedBatchEvent>;
 
 // Factory function for creating events (Command Pattern)
 export function createEvent<T>(

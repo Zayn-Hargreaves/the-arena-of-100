@@ -23,6 +23,9 @@ export enum ClientEvent {
   // Match Events
   SUBMIT_ANSWER = "submit_answer",
   REQUEST_SNAPSHOT = "request_snapshot",
+  // Phase 2 — Class + Card Hybrid.
+  CARD_PICK = "card_pick",
+  CARD_PLAY = "card_play",
 
   // Connection Events
   AUTHENTICATE = "authenticate",
@@ -64,6 +67,13 @@ export enum ServerEvent {
   SNAPSHOT = "snapshot",
   EVENT_BATCH = "event_batch",
 
+  // Phase 2 — Class + Card Hybrid (server -> client).
+  CARD_OFFER = "card_offer",
+  CARD_PICKED = "card_picked",
+  CARD_RESOLVED = "card_resolved",
+  CARD_RESOLVED_BATCH = "card_resolved_batch",
+  CLASS_ASSIGNED = "class_assigned",
+
   // Operator Events
   ROOM_TERMINATED = "room_terminated",
 
@@ -89,6 +99,8 @@ export type {
   StartMatchPayload,
   SubmitAnswerPayload,
   RequestSnapshotPayload,
+  CardPickPayload,
+  CardPlayPayload,
   AuthenticatePayload,
   HeartbeatPayload,
 } from "./schemas";

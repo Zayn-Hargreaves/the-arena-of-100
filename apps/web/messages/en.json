@@ -498,5 +498,32 @@
       "MEDIUM": "Medium",
       "HARD": "Hard"
     }
+  },
+  "Cards": {
+    "hand": "Card Hand",
+    "offer": "Choose a card",
+    "select": "Select Target",
+    "cancel": "Cancel",
+    "play": "Play",
+    "noCards": "No cards in hand",
+    "milestoneOffer": "Milestone round — pick a card to play",
+    "classes": {
+      "CONG": "Offensive",
+      "THU": "Defensive"
+    },
+    "tiers": {
+      "COMMON": "Common",
+      "RARE": "Rare",
+      "EPIC": "Epic"
+    },
+    "aoeCapHint": "AOE cap: {used}/{cap} for this round",
+    "aoeExhausted": "AOE cap reached for this round",
+    "errors": {
+      "cardNotInHand": "Card not in your hand",
+      "cardNotFound": "Card not found",
+      "commandIdConflict": "Conflict on this command",
+      "aoeCapExhausted": "AOE cap exhausted",
+      "invalidCommandId": "Invalid command id"
+    }
   }
 }

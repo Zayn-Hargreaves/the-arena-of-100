@@ -24,6 +24,12 @@ export * from "./avatars";
 // Admin Audit API contract (GET /admin/audit-events)
 export * from "./audit";
 
+// Classes (Phase 2 — Class + Card Hybrid, locked 2026-07-30)
+export * from "./classes";
+
+// Cards (Phase 2 — Class + Card Hybrid, locked 2026-07-30)
+export * from "./cards";
+
 // Game Constants (defined in its own file so schemas.ts can
 // import GAME_CONFIG.MAX_ROUNDS without creating a circular
 // dependency through the index barrel).
@@ -46,11 +52,11 @@ export interface RoomCategoryOption {
 }
 
 export const ROOM_CATEGORY_OPTIONS: readonly RoomCategoryOption[] = [
-  { value: "ALL", label: "Tất cả" },
-  { value: "SCIENCE", label: "Khoa học" },
-  { value: "HISTORY", label: "Lịch sử" },
-  { value: "TECHNOLOGY", label: "Công nghệ" },
-  { value: "CULTURE", label: "Văn hóa" },
+  { value: "ALL", label: "All" },
+  { value: "SCIENCE", label: "Science" },
+  { value: "HISTORY", label: "History" },
+  { value: "TECHNOLOGY", label: "Technology" },
+  { value: "CULTURE", label: "Culture" },
 ] as const;
 
 // Room Code Alphabet (excluding ambiguous chars: 0, O, I, 1, l)
@@ -93,4 +99,10 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.SPECTATOR_CANNOT_ANSWER]: "Khán giả không thể gửi câu trả lời",
   [ErrorCode.INVALID_PAYLOAD]: "Dữ liệu gửi lên không hợp lệ",
   [ErrorCode.PLAYER_DISCONNECTED]: "Bạn đã bị ngắt kết nối, vui lòng thử lại",
+  [ErrorCode.COMMAND_ID_CONFLICT]:
+    "commandId đã được sử dụng với một lệnh khác",
+  [ErrorCode.AOE_CAP_EXHAUSTED]: "Đã đạt giới hạn AOE của round này",
+  [ErrorCode.CARD_NOT_IN_HAND]: "Lá bài không có trong tay",
+  [ErrorCode.CARD_NOT_FOUND]: "Không tìm thấy lá bài",
+  [ErrorCode.INVALID_COMMAND_ID]: "commandId không hợp lệ",
 };

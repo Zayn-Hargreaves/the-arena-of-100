@@ -6,8 +6,12 @@ import {
   ErrorCode,
   PlayerStatus,
   RoomStatus,
+  getCardDefinition,
+  type CardId,
   type SubmitAnswerPayload,
   type RequestSnapshotPayload,
+  type CardPickPayload,
+  type CardPlayPayload,
   RoomError,
   ERROR_MESSAGES,
 } from "@arena/shared";
@@ -20,6 +24,11 @@ import {
 } from "../../modules/match/match-command.service";
 import { ClusterService } from "../../modules/cluster/cluster.service";
 import { BaseHandler } from "./base.handler";
+import {
+  assertValidCommandId,
+  validateCardCommand,
+} from "../../modules/match/card-validator";
+import { resolveCardEffect, deriveSubstream } from "@arena/game-core";
 
 @Injectable()
 export class MatchHandler extends BaseHandler {
@@ -238,5 +247,296 @@ export class MatchHandler extends BaseHandler {
         this.emitError(client, code, msg, ClientEvent.REQUEST_SNAPSHOT);
       },
     );
+  }
+
+  // -------------------------------------------------------------------------
+  // Phase 2 — Class + Card Hybrid handlers (sub-task D).
+  // Source of truth: memory-bank/spec/class-cards-phase.md §5.2 sub-task D.
+  //
+  // These are ADDITIVE — they do not touch `handleStartMatch`,
+  // `handleSubmitAnswer`, or `handleRequestSnapshot`. They follow the
+  // same pattern as `handleSubmitAnswer` for the roomId authorization
+  // gate + the durable command-forward path.
+  // -------------------------------------------------------------------------
+
+  // `handleCardPick` — client picked one of the offered cards.
+  // The card is removed from the player's hand (single-use per match).
+  // The event is appended to the event log via the state machine
+  // (`pickCard`); the same shape is broadcast for live viewers.
+  async handleCardPick(
+    client: Socket,
+    server: Server,
+    payload: CardPickPayload,
+  ) {
+    return this.runSafely(
+      client,
+      async () => {
+        const userId = this.requireAuth(client);
+        assertValidCommandId(payload.commandId);
+
+        const roomId = await this.matchService.getRoomIdByMatchId(
+          payload.matchId,
+        );
+        if (!roomId) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
+        if (!client.rooms.has(`room:${roomId}`)) {
+          throw new RoomError(ErrorCode.UNAUTHORIZED);
+        }
+        const stateMachine = await this.matchService.getStateMachine(
+          payload.matchId,
+        );
+        if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
+
+        // The state machine validates the offer correlation
+        // (cardId must be in the player's current hand) and
+        // appends CARD_PICKED.
+        stateMachine.pickCard(userId, payload.cardId, payload.offerSeqNo);
+
+        // Broadcast to the room channel so other clients see the
+        // player's hand update.
+        server.to(`room:${roomId}`).emit(ServerEvent.CARD_PICKED, {
+          matchId: payload.matchId,
+          roundNo: stateMachine.getCurrentRound()?.roundNo ?? 0,
+          playerId: userId,
+          selectedCardId: payload.cardId,
+          offerSeqNo: payload.offerSeqNo,
+        });
+      },
+      (error) => {
+        const code = this.getErrorCode(error);
+        const msg =
+          error instanceof RoomError
+            ? ERROR_MESSAGES[error.code]
+            : this.getErrorMessage(error);
+        client.emit(ServerEvent.ERROR, {
+          code,
+          message: msg,
+          failedEvent: ClientEvent.CARD_PICK,
+          commandId: payload.commandId,
+        });
+      },
+    );
+  }
+
+  // `handleCardPlay` — apply the picked card. The boundary
+  // validates the command, the resolver expands the template
+  // into a concrete `CardEffect`, then the state machine
+  // appends `CARD_RESOLVED` and emits a transport-frame
+  // `CARD_RESOLVED_BATCH` (≤50ms micro-batch per spec §4.5).
+  async handleCardPlay(
+    client: Socket,
+    server: Server,
+    payload: CardPlayPayload,
+  ) {
+    return this.runSafely(
+      client,
+      async () => {
+        const userId = this.requireAuth(client);
+        assertValidCommandId(payload.commandId);
+
+        const roomId = await this.matchService.getRoomIdByMatchId(
+          payload.matchId,
+        );
+        if (!roomId) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
+        if (!client.rooms.has(`room:${roomId}`)) {
+          throw new RoomError(ErrorCode.UNAUTHORIZED);
+        }
+        const stateMachine = await this.matchService.getStateMachine(
+          payload.matchId,
+        );
+        if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
+
+        const state = stateMachine.getState();
+        // The played-card check is the *picked* card (the player
+        // already declared intent via CARD_PICK), NOT the
+        // post-pick hand — `pickCard` has removed the picked
+        // cardId from the hand, so a hand-based check rejects
+        // otherwise-valid plays. The picked set is the
+        // pick-specific data that survives the pick→play gap.
+        const pickedCards = Array.from(stateMachine.getPickedCards(userId));
+        // Resolve the exact `CARD_OFFER` envelope for this player
+        // by `offerSeqNo`. The offer is the canonical source of
+        // the offered 3-tuple; the post-pick hand is a thinner
+        // mirror. A foreign `offerSeqNo` (or one belonging to a
+        // different player) yields `null` and the validator
+        // rejects the play with `CARD_NOT_IN_HAND`.
+        const offeredCardIds =
+          stateMachine.getCardOfferForPlayer(userId, payload.offerSeqNo) ??
+          ([] as CardId[]);
+        const roster = new Set(state.players.keys());
+        // O(1) reads from the state machine's cached counters
+        // (incremental on every pickCard/playCard, rebuilt on
+        // rehydrate). The previous implementation re-scanned the
+        // entire event log twice per `handleCardPlay` call.
+        const playedSet = stateMachine.getPlayedCards(userId);
+        const currentRoundNo = stateMachine.getCurrentRound()?.roundNo ?? 0;
+        const aoeCount = stateMachine.getAoeCountForRound(currentRoundNo);
+
+        const validated = validateCardCommand({
+          cardId: payload.cardId,
+          offeredCardIds,
+          targetPlayerId: payload.targetPlayerId,
+          rosterPlayerIds: roster,
+          currentAoeCount: aoeCount,
+          playedCardIds: playedSet,
+          pickedCards,
+        });
+
+        // Resolve the template server-side (3 cards consume RNG).
+        const resolveRng = this.makeResolveRng(
+          stateMachine.getState().id,
+          payload.offerSeqNo,
+          payload.cardId,
+        );
+
+        const correctAnswer = this.peekCorrectAnswer(stateMachine);
+        const resolved = resolveCardEffect(
+          validated.cardId,
+          validated.template,
+          resolveRng,
+          {
+            targetHand: payload.targetPlayerId
+              ? stateMachine.getHand(payload.targetPlayerId)
+              : undefined,
+            options: stateMachine.getCurrentRound()?.question.options,
+            correctAnswer,
+            currentRoundNo: stateMachine.getCurrentRound()?.roundNo ?? 0,
+            partial: correctAnswer ? correctAnswer[0] : "",
+          },
+        );
+
+        // The target list for the CARD_RESOLVED event:
+        // - Single-target Offensive/CONG card: explicit targetPlayerId
+        // - AOE Offensive/CONG card (targetCount > 1): expand to the
+        //   eligible roster (excluding the player themselves).
+        const targetPlayerIds = this.expandTargets(
+          validated.cardId,
+          userId,
+          payload.targetPlayerId,
+          roster,
+        );
+
+        const serverNow = Date.now();
+        const result = stateMachine.playCard(
+          userId,
+          validated.cardId,
+          payload.offerSeqNo,
+          resolved,
+          targetPlayerIds,
+          serverNow,
+        );
+
+        // Broadcast the per-card CARD_RESOLVED event.
+        server.to(`room:${roomId}`).emit(ServerEvent.CARD_RESOLVED, {
+          seqNo: result.seqNo,
+          matchId: payload.matchId,
+          roundNo: stateMachine.getCurrentRound()?.roundNo ?? 0,
+          cardId: payload.cardId,
+          offerSeqNo: payload.offerSeqNo,
+          playedByPlayerId: userId,
+          targetPlayerIds,
+          effect: resolved,
+          resolution: this.isTemporaryEffect(resolved)
+            ? "TEMPORARY"
+            : "MUTATION",
+          serverTimestamp: serverNow,
+          expiresAtServer: result.expiresAtServer,
+          remainingMs: result.remainingMs,
+        });
+      },
+      (error) => {
+        const code = this.getErrorCode(error);
+        const msg =
+          error instanceof RoomError
+            ? ERROR_MESSAGES[error.code]
+            : this.getErrorMessage(error);
+        client.emit(ServerEvent.ERROR, {
+          code,
+          message: msg,
+          failedEvent: ClientEvent.CARD_PLAY,
+          commandId: payload.commandId,
+        });
+      },
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Internal helpers (sub-task D)
+  // -------------------------------------------------------------------------
+
+  // Helper RNG for the resolver. Mirrors the `mulberry32` body
+  // shared with `@arena/game-core/src/prng.ts` so the API
+  // boundary doesn't need a second package import.
+  private makeResolveRng(
+    matchId: string,
+    offerSeqNo: number,
+    cardId: string,
+  ): () => number {
+    const stream = deriveSubstream(
+      `${matchId}|${offerSeqNo}|${cardId}`,
+      `resolve|${cardId}`,
+    );
+    let local = stream;
+    return () => {
+      local = (local + 0x6d2b79f5) >>> 0;
+      let t = local;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // Peek the correct answer for the in-flight round. The state
+  // machine exposes it via `attachCorrectAnswer` after recovery,
+  // but does NOT expose it directly through the public API for
+  // safety. For server-side resolution we cast through `unknown`
+  // — this is the one and only place server-side reading the
+  // correct answer is intentional.
+  private peekCorrectAnswer(stateMachine: {
+    getCurrentRound: () => unknown;
+  }): string | undefined {
+    const round = stateMachine.getCurrentRound() as {
+      correctAnswer?: string;
+    } | null;
+    return round?.correctAnswer;
+  }
+
+  // Resolve the target list for a CARD_RESOLVED event per spec §4.2:
+  // single-target → exactly the supplied targetPlayerId;
+  // AOE (targetCount > 1) → all eligible roster except the player.
+  private expandTargets(
+    cardId: CardId,
+    playedByPlayerId: string,
+    targetPlayerId: string | undefined,
+    roster: Set<string>,
+  ): string[] {
+    const def = getCardDefinition(cardId);
+    const template = def.effectTemplate as {
+      kind?: string;
+      targetCount?: number;
+    };
+    if (
+      template?.kind === "DELAY_RENDER" ||
+      template?.kind === "TIMER_MODIFY"
+    ) {
+      const count = template.targetCount ?? 1;
+      if (count > 1) {
+        return Array.from(roster)
+          .filter((p) => p !== playedByPlayerId)
+          .slice(0, count);
+      }
+    }
+    if (targetPlayerId) return [targetPlayerId];
+    return [playedByPlayerId];
+  }
+
+  // Is the resolved effect a TEMPORARY kind (carries duration)?
+  private isTemporaryEffect(effect: { kind: string }): boolean {
+    return [
+      "OPTION_DISABLE",
+      "OPTION_FAKE",
+      "OPTION_LOCK",
+      "VISUAL_OVERLAY",
+      "SEMANTIC_FLIP",
+    ].includes(effect.kind);
   }
 }

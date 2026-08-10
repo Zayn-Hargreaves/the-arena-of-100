@@ -498,5 +498,32 @@
       "MEDIUM": "Trung bình",
       "HARD": "Khó"
     }
+  },
+  "Cards": {
+    "hand": "Bộ bài",
+    "offer": "Chọn một lá bài",
+    "select": "Chọn mục tiêu",
+    "cancel": "Hủy",
+    "play": "Sử dụng",
+    "noCards": "Không có lá bài nào",
+    "milestoneOffer": "Round cột mốc — chọn một lá bài để sử dụng",
+    "classes": {
+      "CONG": "Tấn công",
+      "THU": "Phòng thủ"
+    },
+    "tiers": {
+      "COMMON": "Thường",
+      "RARE": "Hiếm",
+      "EPIC": "Sử thi"
+    },
+    "aoeCapHint": "Giới hạn AOE: {used}/{cap} round này",
+    "aoeExhausted": "Đã đạt giới hạn AOE round này",
+    "errors": {
+      "cardNotInHand": "Lá bài không có trong tay",
+      "cardNotFound": "Không tìm thấy lá bài",
+      "commandIdConflict": "Xung đột commandId",
+      "aoeCapExhausted": "Đã đạt giới hạn AOE",
+      "invalidCommandId": "commandId không hợp lệ"
+    }
   }
 }

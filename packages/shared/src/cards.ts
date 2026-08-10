@@ -1,0 +1,535 @@
+// ============================================================
+// Cards - Arena of 100
+// Source of truth: memory-bank/spec/class-cards-phase.md §3, §4.1
+// Locked 2026-07-30 as part of Phase 2 (Class + Card Hybrid).
+//
+// This file owns the SHARED card contract (types, canonical
+// `CardId` ordering, the `CardDefinition` catalog, the
+// template/resolved effect unions, and the PRNG contract version).
+// It does NOT own resolution logic — that lives in
+// `@arena/game-core/src/card-engine.ts` and consumes the explicit
+// types defined here. The API boundary re-validates the resolved
+// `CardEffect` against the schema below before appending anything
+// to the event log.
+// ============================================================
+
+import type { ClassId } from "./classes";
+
+// ---------------------------------------------------------------------------
+// PRNG contract version
+// ---------------------------------------------------------------------------
+//
+// `PRNG_CONTRACT_VERSION` canonically identifies the ENTIRE
+// deterministic card RNG contract — seed derivation, the Mulberry32
+// algorithm, the RNG-consumption order (TIER/CARD float accounting),
+// and the sampling rules. Bumping the version invalidates every
+// existing sampling vector in lockstep across @arena/shared,
+// @arena/game-core, @arena/api, and the replay harness.
+//
+// The constant is referenced by:
+//   - The sampling vectors in `cards.sampling-vectors.ts` (co-located)
+//   - The card-sampling engine in `@arena/game-core/src/card-engine.ts`
+//   - The API boundary validator (`@arena/api`)
+//   - The replay harness
+//
+// It is DISTINCT from `DailyRunHeader.prngVersion` ("sha256-v1") in
+// the Gauntlet design — same field name, different namespace,
+// versioned independently.
+export const PRNG_CONTRACT_VERSION = "mulberry32-substream-v1";
+
+// ---------------------------------------------------------------------------
+// Tier + canonical CardId
+// ---------------------------------------------------------------------------
+
+export type CardTier = "COMMON" | "RARE" | "EPIC";
+
+// Card pool v1 — exactly 18 IDs (8 Offensive/CONG + 10
+// Defensive/THU). No other string is a valid `CardId`: the
+// API boundary rejects anything outside this union at the
+// Zod layer before any resolver is invoked.
+export type CardId =
+  | "CB-1"
+  | "CB-2"
+  | "CB-3"
+  | "CB-4"
+  | "CB-5"
+  | "CB-6"
+  | "CB-7"
+  | "CB-8"
+  | "TN-1"
+  | "TN-2"
+  | "TN-3"
+  | "TN-4"
+  | "TN-5"
+  | "TN-6"
+  | "TN-7"
+  | "TN-8"
+  | "TN-9"
+  | "TN-10";
+
+// Canonical CardId comparator. Spec §3.3 forbids plain `.sort()` /
+// `localeCompare` for `CardId` ordering because the suffixes pass
+// 9 (`TN-10`), so the obvious implementations disagree and
+// `idx = Math.floor(u2 * remainingTierCards)` then indexes into
+// the wrong list — a silent divergence between API, game-core,
+// and replay that byte-identical replay cannot tolerate.
+//
+// Every consumer (loader, sampling engine, API validator, replay
+// harness) MUST import this comparator — no layer may re-implement
+// or re-sort with an ad-hoc comparator.
+//
+// Spec §3.3 "Canonical CardId order" pins the expected 18-ID
+// ordering (suffix ascending, prefix ASCII by string comparison):
+//   CB-1, CB-2, CB-3, CB-4, CB-5, CB-6, CB-7, CB-8,
+//   TN-1, TN-2, TN-3, TN-4, TN-5, TN-6, TN-7, TN-8, TN-9, TN-10
+//
+// A test in `packages/shared/src/cards.spec.ts` pins this exact
+// ordering so adding a two-digit suffix (e.g. `CB-10`) cannot
+// silently reintroduce the lexicographic split.
+export function compareCardId(a: CardId, b: CardId): number {
+  const parse = (id: CardId): { prefix: string; suffix: number } => {
+    const dash = id.indexOf("-");
+    return {
+      prefix: id.slice(0, dash),
+      suffix: Number.parseInt(id.slice(dash + 1), 10),
+    };
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  if (pa.prefix !== pb.prefix) {
+    return pa.prefix < pb.prefix ? -1 : 1;
+  }
+  return pa.suffix - pb.suffix;
+}
+
+// ---------------------------------------------------------------------------
+// CardDefinition — canonical catalog row
+// ---------------------------------------------------------------------------
+
+// Source-of-truth card templates. The catalog is the only place
+// where `backfireRate`, `name`, `description`, and the
+// `effectTemplate` are defined; the API boundary loads each
+// `CardDefinition` by `cardId` and never trusts client-supplied
+// template fields. If a legacy request still carries template-like
+// fields (`extraMs`, `factor`, `indexes`, `durationMs`, ...), the
+// API compares them to the canonical definition and rejects
+// mismatches.
+export interface CardDefinition {
+  id: CardId;
+  classId: ClassId;
+  tier: CardTier;
+  name: string;
+  description: string;
+  // Unresolved template — server-side resolver expands the
+  // template into a concrete `CardEffect` before appending the
+  // `CARD_RESOLVED` event. The client never sees a template.
+  effectTemplate: CardEffectTemplate;
+  // Runtime-validated ∈ [0.0, 0.1]. v1 backfire is a simple
+  // visible animation (no penalty roll) per Decision 13.
+  backfireRate: number;
+  // v1: every card is single-use per match.
+  cooldownPerMatch: 1;
+}
+
+// ---------------------------------------------------------------------------
+// Effect discriminated unions (template → resolved)
+// ---------------------------------------------------------------------------
+//
+// Preserved verbatim from spec §4.1. A `_TEMPLATE` suffix means
+// the server-side resolver replaces the template with concrete
+// runtime values (orbs chosen, wrong-options chosen, hand cards
+// destroyed) BEFORE append — a single name means the template and
+// the resolved shapes are identical (no server-side resolution
+// step).
+//
+// `satisfies never` exhaustive-switch check is enforced at
+// every consumer (`card-engine.ts`, `match-state-machine.ts`,
+// web reducer) — adding a new variant without updating all
+// consumers is a compile-time error.
+
+export type CardEffectTemplate =
+  | { kind: "TIMER_MODIFY"; deltaMs: number; targetCount: number }
+  | {
+      kind: "OPTION_DISABLE_TEMPLATE";
+      count: number;
+      selectionPolicy: "RANDOM_WRONG_OPTIONS";
+      durationMs: number;
+    }
+  | { kind: "OPTION_FAKE"; indexes: number[]; durationMs: number }
+  | { kind: "OPTION_LOCK"; durationMs: number }
+  | {
+      kind: "HINT_REVEAL_TEMPLATE";
+      revealDescriptor: "FIRST_N_CHARS";
+      count: number;
+    }
+  | { kind: "DELAY_RENDER"; delayMs: number; targetCount: number }
+  | {
+      kind: "VISUAL_OVERLAY";
+      flag: "BRAIN_FOG" | "DEEP_READ";
+      durationMs: number;
+    }
+  | { kind: "SEMANTIC_FLIP"; durationMs: number }
+  | { kind: "QUESTION_REPLAY"; extraMs: number }
+  | {
+      kind: "SHIELD_TEMPLATE";
+      expiresAfterRoundOffset: number;
+    }
+  | { kind: "SCORE_MULT"; factor: number }
+  | {
+      kind: "HAND_DESTROY_TEMPLATE";
+      count: number;
+      selectionPolicy: "RANDOM_FROM_TARGET_HAND";
+    }
+  | { kind: "SECOND_CHANCE" };
+
+export type CardEffect =
+  | { kind: "TIMER_MODIFY"; deltaMs: number; targetCount: number }
+  // Resolved: `count` is the REQUESTED number and is never
+  // rewritten; `availableAtResolution` is the wrong-option supply
+  // captured at resolve time. The validator checks
+  // `indexes.length === Math.min(count, availableAtResolution)`
+  // from the payload alone — never from live question state.
+  // Replay reads these indexes verbatim and MUST NOT re-run the
+  // RNG (spec §3.3 "Replay MUST NOT re-randomize").
+  | {
+      kind: "OPTION_DISABLE";
+      indexes: number[];
+      count: number;
+      availableAtResolution: number;
+      durationMs: number;
+    }
+  | { kind: "OPTION_FAKE"; indexes: number[]; durationMs: number }
+  | { kind: "OPTION_LOCK"; durationMs: number }
+  // Resolved: concrete string derived from the current question.
+  | { kind: "HINT_REVEAL"; partial: string }
+  | { kind: "DELAY_RENDER"; delayMs: number; targetCount: number }
+  | {
+      kind: "VISUAL_OVERLAY";
+      flag: "BRAIN_FOG" | "DEEP_READ";
+      durationMs: number;
+    }
+  | { kind: "SEMANTIC_FLIP"; durationMs: number }
+  | { kind: "QUESTION_REPLAY"; extraMs: number }
+  // Resolved: absolute round number derived from persisted roundNo.
+  | { kind: "SHIELD"; expiresAtRound: number }
+  | { kind: "SCORE_MULT"; factor: number }
+  // Resolved: concrete cards chosen server-side. `count` +
+  // `availableAtResolution` carry the canonical cardinality so
+  // `destroyedCardIds.length === Math.min(count, availableAtResolution)`.
+  | {
+      kind: "HAND_DESTROY";
+      count: number;
+      availableAtResolution: number;
+      destroyedCardIds: CardId[];
+    }
+  | { kind: "SECOND_CHANCE" };
+
+// ---------------------------------------------------------------------------
+// Card catalog (v1 — 18 cards)
+// ---------------------------------------------------------------------------
+//
+// Built from spec §3.1 (Offensive/CONG) + §3.2 (Defensive/THU).
+// The 18 cards are wired to the appropriate `CardEffectTemplate`
+// + tier + class. The catalog is the canonical source for both
+// the sampling engine (class-pool partition) and the API
+// boundary (per-card validation).
+
+export const CARD_CATALOG: readonly CardDefinition[] = [
+  // Offensive (CONG) — 8 cards
+  {
+    id: "CB-1",
+    classId: "CONG",
+    tier: "COMMON",
+    name: "Time Freeze",
+    description: "Reduce a target's answer window by 5s.",
+    effectTemplate: { kind: "TIMER_MODIFY", deltaMs: -5000, targetCount: 1 },
+    backfireRate: 0.1,
+    cooldownPerMatch: 1,
+  },
+  {
+    id: "CB-2",
+    classId: "CONG",
+    tier: "COMMON",
+    name: "Sabotage Q",
+    description: "Delay a target's question render by 3s.",
+    effectTemplate: { kind: "DELAY_RENDER", delayMs: 3000, targetCount: 1 },
+    backfireRate: 0.1,
+    cooldownPerMatch: 1,
+  },
+  {
+    id: "CB-3",
+    classId: "CONG",
+    tier: "COMMON",
+    name: "Burn Card",
+    description: "Destroy 1 random card from the target's hand.",
+    effectTemplate: {
+      kind: "HAND_DESTROY_TEMPLATE",
+      count: 1,
+      selectionPolicy: "RANDOM_FROM_TARGET_HAND",
+    },
+    backfireRate: 0.1,
+    cooldownPerMatch: 1,
+  },
+  {
+    id: "CB-4",
+    classId: "CONG",
+    tier: "RARE",
+    name: "Question Lock",
+    description: "Lock a target's options for 2s.",
+    effectTemplate: { kind: "OPTION_LOCK", durationMs: 2000 },
+    backfireRate: 0.1,
+    cooldownPerMatch: 1,
+  },
+  {
+    id: "CB-5",
+    classId: "CONG",
+    tier: "RARE",
+    name: "Brain Fog",
+    description: "Apply Brain Fog visual overlay for 5s.",
+    effectTemplate: {
+      kind: "VISUAL_OVERLAY",
+      flag: "BRAIN_FOG",
+      durationMs: 5000,
+    },
+    backfireRate: 0.1,
+    cooldownPerMatch: 1,
+  },
+  {
+    id: "CB-6",
+    classId: "CONG",
+    tier: "COMMON",
+    name: "Fake Flag",
+    description: "Show 1 fake flag option to a target for 8s.",
+    effectTemplate: { kind: "OPTION_FAKE", indexes: [1], durationMs: 8000 },
+    backfireRate: 0.1,
+    cooldownPerMatch: 1,
+  },
+  {
+    id: "CB-7",
+    classId: "CONG",
+    tier: "COMMON",
+    name: "Question Flip",
+    description: "Flip a target's question semantics for 10s.",
+    effectTemplate: { kind: "SEMANTIC_FLIP", durationMs: 10000 },
+    backfireRate: 0.1,
+    cooldownPerMatch: 1,
+  },
+  {
+    id: "CB-8",
+    classId: "CONG",
+    tier: "EPIC",
+    name: "Mass Distraction",
+    description: "Delay up to 3 targets' question render by 2s.",
+    effectTemplate: { kind: "DELAY_RENDER", delayMs: 2000, targetCount: 3 },
+    backfireRate: 0.1,
+    cooldownPerMatch: 1,
+  },
+  // Defensive (THU) — 10 cards
+  {
+    id: "TN-1",
+    classId: "THU",
+    tier: "COMMON",
+    name: "50:50",
+    description: "Disable 2 random wrong options for the round.",
+    effectTemplate: {
+      kind: "OPTION_DISABLE_TEMPLATE",
+      count: 2,
+      selectionPolicy: "RANDOM_WRONG_OPTIONS",
+      durationMs: 20000,
+    },
+    backfireRate: 0.0,
+    cooldownPerMatch: 1,
+  },
+  {
+    id: "TN-2",
+    classId: "THU",
+    tier: "COMMON",
+    name: "Double Points",
+    description: "Double your score for the next correct answer.",
+    effectTemplate: { kind: "SCORE_MULT", factor: 2 },
+    backfireRate: 0.0,
+    cooldownPerMatch: 1,
+  },
+  {
+    id: "TN-3",
+    classId: "THU",
+    tier: "COMMON",
+    name: "Hint Reveal",
+    description: "Reveal the first character of the correct answer.",
+    effectTemplate: {
+      kind: "HINT_REVEAL_TEMPLATE",
+      revealDescriptor: "FIRST_N_CHARS",
+      count: 1,
+    },
+    backfireRate: 0.0,
+    cooldownPerMatch: 1,
+  },
+  {
+    id: "TN-4",
+    classId: "THU",
+    tier: "RARE",
+    name: "Shield",
+    description: "Block 1 incoming card for the next round.",
+    effectTemplate: {
+      kind: "SHIELD_TEMPLATE",
+      expiresAfterRoundOffset: 1,
+    },
+    backfireRate: 0.0,
+    cooldownPerMatch: 1,
+  },
+  {
+    id: "TN-5",
+    classId: "THU",
+    tier: "COMMON",
+    name: "Time Bonus",
+    description: "Add 5s to your per-question answer deadline.",
+    effectTemplate: { kind: "QUESTION_REPLAY", extraMs: 5000 },
+    backfireRate: 0.0,
+    cooldownPerMatch: 1,
+  },
+  {
+    id: "TN-6",
+    classId: "THU",
+    tier: "COMMON",
+    name: "Second Chance",
+    description: "Allow yourself to re-submit before the deadline.",
+    effectTemplate: { kind: "SECOND_CHANCE" },
+    backfireRate: 0.0,
+    cooldownPerMatch: 1,
+  },
+  {
+    id: "TN-7",
+    classId: "THU",
+    tier: "RARE",
+    name: "Deep Read",
+    description: "Apply Deep Read visual overlay for 5s.",
+    effectTemplate: {
+      kind: "VISUAL_OVERLAY",
+      flag: "DEEP_READ",
+      durationMs: 5000,
+    },
+    backfireRate: 0.0,
+    cooldownPerMatch: 1,
+  },
+  {
+    id: "TN-8",
+    classId: "THU",
+    tier: "RARE",
+    name: "Replay",
+    description: "Re-open the current question for yourself.",
+    effectTemplate: { kind: "QUESTION_REPLAY", extraMs: 5000 },
+    backfireRate: 0.0,
+    cooldownPerMatch: 1,
+  },
+  {
+    id: "TN-9",
+    classId: "THU",
+    tier: "RARE",
+    name: "Brain Burst",
+    description: "×1.5 score for the next correct answer.",
+    effectTemplate: { kind: "SCORE_MULT", factor: 1.5 },
+    backfireRate: 0.0,
+    cooldownPerMatch: 1,
+  },
+  {
+    id: "TN-10",
+    classId: "THU",
+    tier: "EPIC",
+    name: "Perfect Recall",
+    description: "Disable 1 random wrong option for the round.",
+    effectTemplate: {
+      kind: "OPTION_DISABLE_TEMPLATE",
+      count: 1,
+      selectionPolicy: "RANDOM_WRONG_OPTIONS",
+      durationMs: 20000,
+    },
+    backfireRate: 0.0,
+    cooldownPerMatch: 1,
+  },
+];
+
+// Lookup a card by id. Throws if the id is not in the catalog —
+// the API boundary should never reach this with an invalid id, but
+// failing loud beats silent misclassification.
+//
+// Implementation: O(1) via a pre-computed `Map<CardId, CardDefinition>`.
+// The previous `CARD_CATALOG.find(...)` was O(N) and was called
+// from every `pickCard` / `playCard` / `validateCardCommand` path
+// AND from the React `CardHand` component per render per card —
+// at 100 players × 3 cards per render that's 300 calls reduced
+// to 300 hash lookups. The Map is built once at module load.
+const CARD_CATALOG_BY_ID: ReadonlyMap<CardId, CardDefinition> = new Map(
+  CARD_CATALOG.map((c) => [c.id, c] as const),
+);
+
+// Runtime-enforce the catalog invariant on `backfireRate`. The
+// CardDefinition JSDoc claims every entry lies in the inclusive
+// range [0.0, 0.1]; this assertion guarantees that claim is
+// true at module load (so a future catalog edit cannot silently
+// violate it).
+for (const c of CARD_CATALOG) {
+  if (c.backfireRate < 0 || c.backfireRate > 0.1) {
+    throw new Error(
+      `Card catalog invariant violated: ${c.id} backfireRate=${c.backfireRate} not in [0.0, 0.1]`,
+    );
+  }
+}
+
+export function getCardDefinition(id: CardId): CardDefinition {
+  const def = CARD_CATALOG_BY_ID.get(id);
+  if (!def) {
+    throw new Error(`Unknown card id: ${id}`);
+  }
+  return def;
+}
+
+// Pre-computed per-class pool of `CardId`s, sorted by `compareCardId`.
+// The list is the ONLY ordered frozen list the sampling engine
+// indexes into — never re-sort with an ad-hoc comparator.
+//
+// Built once at module load. Each array is deeply frozen so a
+// caller that mutates it via cast does NOT poison the catalog
+// (push / splice / indexed assignment all throw in strict mode
+// and are no-ops otherwise — the contract is `Object.isFrozen`).
+const CARD_CATALOG_BY_CLASS: Readonly<Record<ClassId, readonly CardId[]>> = {
+  CONG: Object.freeze(
+    CARD_CATALOG.filter((c) => c.classId === "CONG")
+      .map((c) => c.id)
+      .slice()
+      .sort(compareCardId),
+  ),
+  THU: Object.freeze(
+    CARD_CATALOG.filter((c) => c.classId === "THU")
+      .map((c) => c.id)
+      .slice()
+      .sort(compareCardId),
+  ),
+};
+
+export function getClassPool(classId: ClassId): readonly CardId[] {
+  return CARD_CATALOG_BY_CLASS[classId];
+}
+
+// Quick membership test exposed for callers that want to avoid
+// the throw-tasting pattern of `getCardDefinition`. Backs the
+// `catalogHasCard` predicate in `card-validator.ts`.
+export function hasCardDefinition(id: string): id is CardId {
+  return CARD_CATALOG_BY_ID.has(id as CardId);
+}
+
+// Tier weights are constants per spec §3.3 (60/30/10 global).
+// Exposed as a single source so the sampling engine, the API
+// boundary, and the replay harness all read the same numbers.
+export const CARD_TIER_WEIGHTS = {
+  COMMON: 0.6,
+  RARE: 0.3,
+  EPIC: 0.1,
+} as const;
+
+// AOE cap = 2 per lobby per round (spec §3.3 "AOE cap"). The
+// cap is a per-(matchId, roundNo) counter, server-enforced at
+// the API boundary. The constant lives in @arena/shared so the
+// API boundary, the live handlers, and the validator all read
+// the same number — a future bump must be made here in one
+// commit and apply to every consumer in lockstep.
+export const AOE_CAP_PER_ROUND = 2;
