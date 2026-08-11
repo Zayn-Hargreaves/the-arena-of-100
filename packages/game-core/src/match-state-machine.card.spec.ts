@@ -200,6 +200,27 @@ describe("pickCard — spending an offered card", () => {
     expect((pick!.payload as Record<string, unknown>).offerSeqNo).toBe(42);
   });
 
+  it("stamps canonical eventId + commandId on the CARD_PICKED payload when supplied", () => {
+    const hand = m.getHand("p1");
+    m.pickCard("p1", hand[0]!, 1, {
+      eventId: "evt-1",
+      commandId: "cmd-1",
+    });
+    const pick = m.getEventLog().find((e) => e.type === "CARD_PICKED");
+    const payload = pick!.payload as Record<string, unknown>;
+    expect(payload.eventId).toBe("evt-1");
+    expect(payload.commandId).toBe("cmd-1");
+  });
+
+  it("omits canonical stamps when no metadata is supplied (back-compat)", () => {
+    const hand = m.getHand("p1");
+    m.pickCard("p1", hand[0]!, 1);
+    const pick = m.getEventLog().find((e) => e.type === "CARD_PICKED");
+    const payload = pick!.payload as Record<string, unknown>;
+    expect("eventId" in payload).toBe(false);
+    expect("commandId" in payload).toBe(false);
+  });
+
   it("throws CARD_NOT_IN_HAND when the card is not in the hand", () => {
     expect(() => m.pickCard("p1", "CB-99" as CardId, 1)).toThrow(RoomError);
     expect(() => m.pickCard("p1", "CB-99" as CardId, 1)).toThrow(
@@ -262,6 +283,27 @@ describe("playCard — card effect resolution", () => {
     expect((resolved!.payload as Record<string, unknown>).resolution).toBe(
       "TEMPORARY",
     );
+  });
+
+  it("stamps canonical eventId + commandId on the CARD_RESOLVED payload when supplied", () => {
+    const m = makeMachine();
+    m.classAssignment(["p1"], "stamp-seed");
+    const cards = m.pickOffer("p1", 5, "stamp-1");
+    const cong = cards.filter((c) => c.startsWith("CB-"))[0]!;
+    m.pickCard("p1", cong, 1);
+    const effect: CardEffect = {
+      kind: "TIMER_MODIFY",
+      deltaMs: -1000,
+      targetCount: 1,
+    };
+    m.playCard("p1", cong, 1, effect, ["p2"], 1000, {
+      eventId: "evt-r-1",
+      commandId: "cmd-r-1",
+    });
+    const resolved = m.getEventLog().find((e) => e.type === "CARD_RESOLVED");
+    const payload = resolved!.payload as Record<string, unknown>;
+    expect(payload.eventId).toBe("evt-r-1");
+    expect(payload.commandId).toBe("cmd-r-1");
   });
 
   it("TEMPORARY effects are tracked per-player in activeEffects", () => {

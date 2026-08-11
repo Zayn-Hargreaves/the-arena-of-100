@@ -14,6 +14,16 @@ import type { RedisService } from "../redis/redis.service";
 import type { MatchService } from "./match.service";
 import type { MatchOwnershipService } from "./match-ownership.service";
 import type { ClusterService } from "../cluster/cluster.service";
+import { MatchStateMachine } from "@arena/game-core";
+import {
+  ClientEvent,
+  ErrorCode,
+  RoomError,
+  ServerEvent,
+  type CardPickBody,
+  type CardPlayBody,
+  PlayerStatus,
+} from "@arena/shared";
 
 type RedisMock = Record<string, ReturnType<typeof vi.fn>>;
 
@@ -1022,4 +1032,312 @@ describe("MatchCommandService (B4a)", () => {
       );
     });
   });
+
+  // ============================================================
+  // Duplicate-recovery paths for card_pick / card_play.
+  // These use real MatchStateMachine objects (via @arena/game-core)
+  // to exercise forEachEvent + the canonical-metadata checks.
+  // ============================================================
+  describe("card_pick / card_play duplicate recovery", () => {
+    const OWNER = { fence: 5, leaseValue: "node-a:5" };
+    const ROOM_ID = "r1";
+    const MATCH_ID = "m1";
+
+    function pickEnv(
+      eventId = "evt-pick-1",
+      commandId = "cmd-pick-1",
+      offerSeqNo = 1,
+    ): CommandEnvelope<CardPickBody> {
+      return {
+        eventId,
+        schemaVersion: 1,
+        matchId: MATCH_ID,
+        emittedByNodeId: "node-b",
+        emittedAt: 1000,
+        body: {
+          type: "card_pick",
+          userId: "p1",
+          commandId,
+          cardId: "CB-1",
+          offerSeqNo,
+        },
+      };
+    }
+
+    function playEnv(
+      eventId = "evt-play-1",
+      commandId = "cmd-play-1",
+      offerSeqNo = 1,
+    ): CommandEnvelope<CardPlayBody> {
+      return {
+        eventId,
+        schemaVersion: 1,
+        matchId: MATCH_ID,
+        emittedByNodeId: "node-b",
+        emittedAt: 1000,
+        body: {
+          type: "card_play",
+          userId: "p1",
+          commandId,
+          cardId: "CB-1",
+          offerSeqNo,
+        },
+      };
+    }
+
+    function pickOfferSm(): MatchStateMachine {
+      const sm = new MatchStateMachine(MATCH_ID, ROOM_ID, [
+        {
+          id: "p1",
+          nickname: "P1",
+          avatarSeed: 1,
+          status: PlayerStatus.ACTIVE,
+        },
+      ]);
+      sm.classAssignment(["p1"], "recovery-seed");
+      sm.pickOffer("p1", 5, "offer-1");
+      return sm;
+    }
+
+    it("recoverDuplicatePickEvent re-broadcasts when eventId + commandId + offerSeqNo all match", async () => {
+      const sm = pickOfferSm();
+      matchService.getStateMachine.mockResolvedValue(sm);
+      const recorder = makeMockServer();
+
+      // First apply: not yet in applied set → persists CARD_PICKED with
+      // stamped metadata, emits one CARD_PICKED, returns APPLIED.
+      redis.sismember.mockResolvedValue(false);
+      const first = await service.applyCardPickAuthoritative(
+        pickEnv(),
+        OWNER,
+        recorder.server,
+      );
+      expect(first).toBe("APPLIED");
+      expect(recorder.callsByEvent(ServerEvent.CARD_PICKED).length).toBe(1);
+
+      // Second apply (redelivery, same eventId): sismember=true → routes
+      // through recoverDuplicatePickEvent. Canonical metadata matches,
+      // so it MUST re-emit CARD_PICKED before ACK as DUPLICATE_EVENT.
+      redis.sismember.mockResolvedValue(true);
+      const second = await service.applyCardPickAuthoritative(
+        pickEnv(),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(second).toBe("DUPLICATE_EVENT");
+      const cardPickedEmits = recorder.callsByEvent(ServerEvent.CARD_PICKED);
+      // 1 from the first apply + 1 from the recovery = 2 total.
+      expect(cardPickedEmits.length).toBe(2);
+    });
+
+    it("recoverDuplicatePickEvent returns DUPLICATE_EVENT (no emit) when canonical metadata is absent", async () => {
+      const sm = pickOfferSm();
+      // Persist a CARD_PICKED without the metadata stamps — simulates a
+      // legacy owner that ran before canonical-identity stamping landed.
+      sm.pickCard("p1", "CB-1", 1);
+      matchService.getStateMachine.mockResolvedValue(sm);
+      redis.sismember.mockResolvedValue(true);
+      const recorder = makeMockServer();
+
+      const outcome = await service.applyCardPickAuthoritative(
+        pickEnv(),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome).toBe("DUPLICATE_EVENT");
+      const cardPickedEmits = recorder.callsByEvent(ServerEvent.CARD_PICKED);
+      expect(cardPickedEmits.length).toBe(0);
+    });
+
+    it("recoverDuplicatePickEvent returns DUPLICATE_EVENT (no emit) on eventId mismatch", async () => {
+      const sm = pickOfferSm();
+      matchService.getStateMachine.mockResolvedValue(sm);
+      const recorder = makeMockServer();
+
+      // First apply stamps eventId=evt-A (persisted into the event log).
+      redis.sismember.mockResolvedValue(false);
+      await service.applyCardPickAuthoritative(
+        pickEnv("evt-A"),
+        OWNER,
+        recorder.server,
+      );
+      const firstCount = recorder.callsByEvent(ServerEvent.CARD_PICKED).length;
+      expect(firstCount).toBe(1);
+
+      // Redelivery carries a DIFFERENT eventId — sismember=true means we
+      // enter recoverDuplicatePickEvent, but the canonical entry stored
+      // `eventId=evt-A` and the incoming is `evt-B`, so the canonical
+      // identity check fails and NO CARD_PICKED is emitted.
+      redis.sismember.mockResolvedValue(true);
+      const outcome = await service.applyCardPickAuthoritative(
+        pickEnv("evt-B"),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome).toBe("DUPLICATE_EVENT");
+      const cardPickedEmits = recorder.callsByEvent(ServerEvent.CARD_PICKED);
+      // Only the first apply should have emitted — no replay for the mismatch.
+      expect(cardPickedEmits.length).toBe(firstCount);
+    });
+
+    it("recoverDuplicatePlayEvent re-broadcasts the canonical CARD_RESOLVED when metadata matches", async () => {
+      const sm = pickOfferSm();
+      sm.pickCard("p1", "CB-1", 1);
+      matchService.getStateMachine.mockResolvedValue(sm);
+      redis.sismember.mockResolvedValue(false); // first apply: not yet applied
+      redis.sadd.mockResolvedValue(1);
+
+      // Pre-seed a CARD_RESOLVED with the same eventId/commandId so the
+      // subsequent redelivery can locate it.
+      const existingSeqNo = sm.playCard(
+        "p1",
+        "CB-1",
+        1,
+        { kind: "TIMER_MODIFY", deltaMs: -1000, targetCount: 1 },
+        ["p2"],
+        1000,
+        { eventId: "evt-play-1", commandId: "cmd-play-1" },
+      ).seqNo;
+
+      const recorder = makeMockServer();
+
+      // Redelivery (eventId already in applied): recovers the canonical event.
+      redis.sismember.mockResolvedValue(true);
+      const outcome = await service.applyCardPlayAuthoritative(
+        playEnv(),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome).toBe("DUPLICATE_EVENT");
+      const cardResolvedEmits = recorder.callsByEvent(
+        ServerEvent.CARD_RESOLVED,
+      );
+      expect(cardResolvedEmits.length).toBeGreaterThanOrEqual(1);
+      // Canonical seqNo round-trips through the payload.
+      expect(cardResolvedEmits[0]?.[1]).toMatchObject({
+        seqNo: existingSeqNo,
+      });
+    });
+
+    it("applyCardPlayAuthoritative recovers + ACKs when validateCardCommand rejects a persisted card", async () => {
+      const sm = pickOfferSm();
+      matchService.getStateMachine.mockResolvedValue(sm);
+      redis.sismember.mockResolvedValue(false);
+      redis.sadd.mockResolvedValue(1);
+
+      const smWithPlayed = pickOfferSm();
+      smWithPlayed.pickCard("p1", "CB-1", 1);
+      // Pre-stamp a CARD_RESOLVED so findCanonicalCardResolved can match.
+      smWithPlayed.playCard(
+        "p1",
+        "CB-1",
+        1,
+        { kind: "TIMER_MODIFY", deltaMs: -1000, targetCount: 1 },
+        ["p2"],
+        1000,
+        { eventId: "evt-play-1", commandId: "cmd-play-1" },
+      );
+      matchService.getStateMachine.mockResolvedValue(smWithPlayed);
+
+      const recorder = makeMockServer();
+
+      const outcome = await service.applyCardPlayAuthoritative(
+        playEnv(),
+        OWNER,
+        recorder.server,
+      );
+
+      // Recovery succeeded → ACK as DUPLICATE_EVENT, not error.
+      expect(outcome).toBe("DUPLICATE_EVENT");
+      const errorEmits = recorder.callsByEvent(ServerEvent.ERROR);
+      expect(errorEmits.length).toBe(0);
+      const cardResolvedEmits = recorder.callsByEvent(
+        ServerEvent.CARD_RESOLVED,
+      );
+      expect(cardResolvedEmits.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("emitPlayerError sanitises non-RoomError messages to a generic INVALID_PAYLOAD key", () => {
+      const recorder = makeMockServer();
+      const warnSpy = vi.spyOn(
+        (service as unknown as { logger: Logger }).logger,
+        "warn",
+      );
+
+      // A raw Error (NOT a RoomError) — raw message MUST NOT leak to the client.
+      service["emitPlayerError"](
+        recorder.server,
+        "p1",
+        ClientEvent.CARD_PLAY,
+        "cmd-1",
+        new Error("internal stack trace / file paths / library names"),
+      );
+
+      const errorEmits = recorder.callsByEvent(ServerEvent.ERROR);
+      expect(errorEmits.length).toBe(1);
+      const payload = errorEmits[0]?.[1] as {
+        code: string;
+        message: string;
+        commandId: string;
+      };
+      expect(payload.code).toBe(ErrorCode.INVALID_PAYLOAD);
+      // Stable, generic key — never the raw Error.message.
+      expect(payload.message).toBe("Errors.INVALID_PAYLOAD");
+      expect(payload.message).not.toContain("internal stack");
+      // Original detail logged server-side.
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("internal"));
+    });
+
+    it("emitPlayerError forwards RoomError.code with the mapped key", () => {
+      const recorder = makeMockServer();
+
+      service["emitPlayerError"](
+        recorder.server,
+        "p1",
+        ClientEvent.CARD_PLAY,
+        "cmd-1",
+        new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER),
+      );
+
+      const errorEmits = recorder.callsByEvent(ServerEvent.ERROR);
+      expect(errorEmits.length).toBe(1);
+      const payload = errorEmits[0]?.[1] as {
+        code: string;
+        message: string;
+      };
+      expect(payload.code).toBe(ErrorCode.SPECTATOR_CANNOT_ANSWER);
+      expect(payload.message).toBe("Errors.SPECTATOR_CANNOT_ANSWER");
+    });
+  });
 });
+
+/**
+ * Minimal Socket.IO mock that captures every `server.to(...).emit(event, payload)`
+ * call. Each `.to(...)` returns a fresh builder, so calls are recorded by
+ * event name even when the same channel is targeted twice. Also implements
+ * `.except(...)` for the sanitized CARD_RESOLVED broadcast.
+ */
+function makeMockServer(): {
+  server: Server;
+  callsByEvent: (event: string) => Array<[string, unknown]>;
+} {
+  const calls: Array<[string, unknown]> = [];
+  const builder = {
+    emit: (event: string, payload: unknown) => {
+      calls.push([event, payload]);
+      return builder;
+    },
+    except: () => builder,
+  };
+  const server = {
+    to: () => builder,
+  } as unknown as Server;
+  return {
+    server,
+    callsByEvent: (event: string) => calls.filter(([e]) => e === event),
+  };
+}

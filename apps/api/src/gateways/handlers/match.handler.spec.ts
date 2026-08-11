@@ -11,7 +11,6 @@ import {
   RoomStatus,
   RoomError,
   ClientEvent,
-  type CardEffectEvent,
   type CardId,
 } from "@arena/shared";
 import { MatchHandler } from "./match.handler";
@@ -32,31 +31,16 @@ describe("MatchHandler", () => {
   let matchCommand: { forward: ReturnType<typeof vi.fn> };
   let client: Socket;
   let server: Server;
-  // Wire frame shape: a `CARD_RESOLVED` event carries the
-  // canonical effect payload plus the immutable `seqNo` allocated
-  // at append time. The discriminator is narrowed via
-  // `CardEffectEvent` so each listener/assertion site is statically
-  // type-checked instead of falling through to `any`.
-  type CardResolvedFrame = CardEffectEvent & { readonly seqNo: number };
-  // Narrow helper for assertions that read `effect.indexes`
-  // directly (OPTION_FAKE / OPTION_DISABLE). Using a single alias
-  // avoids repeating the `Extract` at every assertion site and
-  // keeps the `kind` discriminator explicit at the cast.
-  type IndexesFrame = CardResolvedFrame & {
-    readonly effect: Extract<
-      CardEffectEvent["effect"],
-      { readonly indexes: readonly number[] }
-    >;
-  };
-  const asIndexesFrame = (f: CardResolvedFrame): IndexesFrame =>
-    f as IndexesFrame;
-  // Per-room broadcaster map populated by the `server.to` mock so
+  // Per-room broadcaster list populated by the `server.to` mock so
   // CARD_RESOLVED tests can assert exact destination-specific
-  // payloads (sanitized room vs. full-effect player rooms).
-  let roomOperators: Map<
-    string,
-    { emit: ReturnType<typeof vi.fn>; except: ReturnType<typeof vi.fn> }
-  >;
+  // payloads (sanitized room vs. full-effect player rooms) and
+  // detect repeated `server.to(roomName)` calls or duplicate
+  // broadcasts to the same room.
+  type RoomOperator = {
+    emit: ReturnType<typeof vi.fn>;
+    except: ReturnType<typeof vi.fn>;
+  };
+  let roomOperators: Map<string, RoomOperator[]>;
 
   beforeEach(() => {
     roomService = { getRoom: vi.fn() } as unknown as RoomService;
@@ -79,15 +63,20 @@ describe("MatchHandler", () => {
       { nodeId: "node-a" } as unknown as ClusterService,
     );
     server = {
-      // Per-room broadcaster map so each `server.to(roomName)`
-      // call returns a distinct emitter. CARD_RESOLVED delivery
+      // Per-room broadcaster list so each `server.to(roomName)`
+      // call APPENDS a fresh operator to the per-room list instead
+      // of overwriting the previous one. CARD_RESOLVED delivery
       // routes one sanitized effect to the room channel and one
-      // full effect to each target's private player channel —
-      // tests need to assert against each specific destination.
+      // full effect to each target's private player channel — tests
+      // need to assert against each specific destination AND detect
+      // duplicate `server.to` calls / duplicate broadcasts when the
+      // same room appears more than once.
       to: vi.fn().mockImplementation((roomName: string) => {
         const except = vi.fn().mockReturnValue({ emit: vi.fn() });
         const operator = { emit: vi.fn(), except };
-        roomOperators.set(roomName, operator);
+        const operators = roomOperators.get(roomName) ?? [];
+        operators.push(operator);
+        roomOperators.set(roomName, operators);
         return operator;
       }),
     } as unknown as Server;
@@ -723,32 +712,43 @@ describe("MatchHandler", () => {
       commandId: "cmd-pick-1",
     };
 
-    it("forwards pick to state machine and broadcasts CARD_PICKED to the room", async () => {
+    it("forwards a well-formed card_pick envelope to the owner command channel (no local mutation/broadcast)", async () => {
+      // B4b-style single-writer: the boundary forwards the command
+      // to the owner. The owner applies + persists + broadcasts
+      // CARD_PICKED exactly once (covered by
+      // match-command.service.spec.ts). The handler MUST NOT call
+      // `pickCard` or emit `CARD_PICKED` locally.
       const machine = {
         pickCard: vi.fn(),
-        getCurrentRound: vi.fn().mockReturnValue({ roundNo: 5 }),
         getState: vi.fn().mockReturnValue({
           players: new Map([["u1", { id: "u1", status: PlayerStatus.ACTIVE }]]),
         }),
       } as any;
       vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+      vi.mocked(matchCommand.forward).mockClear();
 
       await handler.handleCardPick(client, server, pickPayload);
 
-      expect(machine.pickCard).toHaveBeenCalledWith(
-        "u1",
-        "CB-1",
-        pickPayload.offerSeqNo,
-      );
-      const roomOp = roomOperators.get("room:r1");
-      expect(roomOp).toBeDefined();
-      expect(roomOp!.emit).toHaveBeenCalledWith(ServerEvent.CARD_PICKED, {
+      // pickCard was never called on the local state machine.
+      expect(machine.pickCard).not.toHaveBeenCalled();
+      expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+      const env = matchCommand.forward.mock.calls[0][0];
+      expect(env).toMatchObject({
+        schemaVersion: 1,
         matchId: "m1",
-        roundNo: 5,
-        playerId: "u1",
-        selectedCardId: "CB-1",
-        offerSeqNo: 1,
+        emittedByNodeId: "node-a",
+        body: {
+          type: "card_pick",
+          userId: "u1",
+          commandId: pickPayload.commandId,
+          cardId: "CB-1",
+          offerSeqNo: 1,
+        },
       });
+      expect(typeof env.eventId).toBe("string");
+      expect(env.eventId.length).toBeGreaterThan(0);
+      // No local room broadcast — owner is the sole emitter.
+      expect(roomOperators.get("room:r1")).toBeUndefined();
     });
 
     it("emits MATCH_NOT_FOUND when the match has no roomId", async () => {
@@ -765,6 +765,7 @@ describe("MatchHandler", () => {
         commandId: pickPayload.commandId,
       });
       expect(matchService.getStateMachine).not.toHaveBeenCalled();
+      expect(matchCommand.forward).not.toHaveBeenCalled();
     });
 
     it("emits UNAUTHORIZED when the socket is not in the room channel", async () => {
@@ -780,6 +781,7 @@ describe("MatchHandler", () => {
         }),
       );
       expect(matchService.getStateMachine).not.toHaveBeenCalled();
+      expect(matchCommand.forward).not.toHaveBeenCalled();
     });
 
     it("emits MATCH_NOT_FOUND when the state machine is null", async () => {
@@ -796,6 +798,7 @@ describe("MatchHandler", () => {
           failedEvent: ClientEvent.CARD_PICK,
         }),
       );
+      expect(matchCommand.forward).not.toHaveBeenCalled();
     });
 
     it.each<{
@@ -835,11 +838,13 @@ describe("MatchHandler", () => {
         } as any;
         vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(machine);
         vi.mocked(client.emit).mockClear();
+        vi.mocked(matchCommand.forward).mockClear();
 
         await handler.handleCardPick(client, server, pickPayload);
 
         // Each iteration isolates its own mock calls so a
-        // failure surfaces only the offending case.
+        // failure surfaces only the offending case. The boundary
+        // rejects before any forwarding happens.
         expect(client.emit).toHaveBeenCalledTimes(1);
         expect(client.emit).toHaveBeenCalledWith(
           ServerEvent.ERROR,
@@ -848,30 +853,9 @@ describe("MatchHandler", () => {
             failedEvent: ClientEvent.CARD_PICK,
           }),
         );
+        expect(matchCommand.forward).not.toHaveBeenCalled();
       },
     );
-
-    it("forwards the state-machine error (e.g. CARD_NOT_IN_HAND) verbatim", async () => {
-      const machine = {
-        pickCard: vi.fn().mockImplementation(() => {
-          throw new RoomError(ErrorCode.CARD_NOT_IN_HAND);
-        }),
-        getCurrentRound: vi.fn().mockReturnValue({ roundNo: 5 }),
-        getState: vi.fn().mockReturnValue({
-          players: new Map([["u1", { id: "u1", status: PlayerStatus.ACTIVE }]]),
-        }),
-      } as any;
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
-
-      await handler.handleCardPick(client, server, pickPayload);
-
-      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
-        code: ErrorCode.CARD_NOT_IN_HAND,
-        message: ERROR_MESSAGES[ErrorCode.CARD_NOT_IN_HAND],
-        failedEvent: ClientEvent.CARD_PICK,
-        commandId: pickPayload.commandId,
-      });
-    });
 
     it("rejects an invalid commandId before any state-machine work", async () => {
       await handler.handleCardPick(client, server, {
@@ -887,14 +871,17 @@ describe("MatchHandler", () => {
         }),
       );
       expect(matchService.getStateMachine).not.toHaveBeenCalled();
+      expect(matchCommand.forward).not.toHaveBeenCalled();
     });
 
-    it("handles non-Error thrown values from the state machine", async () => {
+    it("handles non-Error thrown values from matchCommand.forward", async () => {
+      // The handler no longer touches the state machine directly —
+      // the only in-handler throw site is the durable forward. A
+      // non-Error rejection there must surface as INTERNAL_ERROR.
+      vi.mocked(matchCommand.forward).mockImplementationOnce(() => {
+        throw "string error";
+      });
       const machine = {
-        pickCard: vi.fn().mockImplementation(() => {
-          throw "string error";
-        }),
-        getCurrentRound: vi.fn().mockReturnValue({ roundNo: 5 }),
         getState: vi.fn().mockReturnValue({
           players: new Map([["u1", { id: "u1", status: PlayerStatus.ACTIVE }]]),
         }),
@@ -929,6 +916,7 @@ describe("MatchHandler", () => {
       getCurrentRound: () => any;
       getState: () => any;
       getHand: (playerId: string) => readonly CardId[];
+      getCorrectAnswer: () => string | undefined;
       playCard: (...args: unknown[]) => unknown;
       pickCard: (...args: unknown[]) => unknown;
     }> = {},
@@ -970,188 +958,56 @@ describe("MatchHandler", () => {
       commandId: "cmd-play-1",
     };
 
-    it("validates, resolves, plays, and broadcasts CARD_RESOLVED (MUTATION)", async () => {
+    it("forwards a well-formed card_play envelope to the owner command channel (no local mutation/broadcast)", async () => {
+      // B4b-style single-writer: the boundary forwards the command
+      // to the owner. The owner applies + persists + broadcasts
+      // CARD_RESOLVED exactly once (covered by
+      // match-command.service.spec.ts). The handler MUST NOT call
+      // `playCard` / `resolveCardEffect` or emit `CARD_RESOLVED`
+      // locally — that is the dispatch path's job on the owner.
       const machine = makePlayMachine();
       vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+      vi.mocked(matchCommand.forward).mockClear();
 
       await handler.handleCardPlay(client, server, playPayload);
 
-      expect(machine.getCardOfferForPlayer).toHaveBeenCalledWith("u1", 1);
-      expect(machine.playCard).toHaveBeenCalledTimes(1);
-      const playArgs = machine.playCard.mock.calls[0] as unknown[];
-      expect(playArgs[0]).toBe("u1");
-      expect(playArgs[1]).toBe("CB-1");
-      expect(playArgs[2]).toBe(1);
-      expect(playArgs[3]).toMatchObject({ kind: expect.any(String) });
-      expect(playArgs[4]).toEqual(["p2"]);
-      expect(typeof playArgs[5]).toBe("number");
-
-      // Sanitized MUTATION broadcast goes to the room channel
-      // excluding the target player rooms (here: p2).
-      const roomOp = roomOperators.get("room:r1");
-      expect(roomOp).toBeDefined();
-      const roomEmit = roomOp!.except.mock.results[0].value.emit;
-      expect(roomOp!.except).toHaveBeenCalledWith(["player:p2"]);
-      expect(roomEmit).toHaveBeenCalledWith(
-        ServerEvent.CARD_RESOLVED,
-        expect.objectContaining({
-          seqNo: 10,
-          matchId: "m1",
-          roundNo: 5,
+      // playCard was never called locally.
+      expect(machine.playCard).not.toHaveBeenCalled();
+      expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+      const env = matchCommand.forward.mock.calls[0][0];
+      expect(env).toMatchObject({
+        schemaVersion: 1,
+        matchId: "m1",
+        emittedByNodeId: "node-a",
+        body: {
+          type: "card_play",
+          userId: "u1",
+          commandId: playPayload.commandId,
           cardId: "CB-1",
           offerSeqNo: 1,
-          playedByPlayerId: "u1",
-          resolution: "MUTATION",
-        }),
-      );
-
-      // Full effect must reach the target player room exactly once.
-      const targetOp = roomOperators.get("player:p2");
-      expect(targetOp).toBeDefined();
-      expect(targetOp!.emit).toHaveBeenCalledTimes(1);
-      expect(targetOp!.emit).toHaveBeenCalledWith(
-        ServerEvent.CARD_RESOLVED,
-        expect.objectContaining({
-          seqNo: 10,
-          cardId: "CB-1",
-          playedByPlayerId: "u1",
-        }),
-      );
-
-      // The non-target actor (u1) MUST NOT receive the full effect
-      // via a player-room broadcast — disclosure is restricted to
-      // targetPlayerIds.
+          targetPlayerId: "p2",
+        },
+      });
+      expect(typeof env.eventId).toBe("string");
+      expect(env.eventId.length).toBeGreaterThan(0);
+      // No local room or player broadcasts — owner is the sole emitter.
+      expect(roomOperators.get("room:r1")).toBeUndefined();
+      expect(roomOperators.get("player:p2")).toBeUndefined();
       expect(roomOperators.get("player:u1")).toBeUndefined();
     });
 
-    it("emits sanitized OPTION_DISABLE to the room and full indexes to the target", async () => {
-      // TN-1 resolves to OPTION_DISABLE which carries concrete
-      // indexes derived from the correct answer. Only the target
-      // p2 must receive the concrete indexes; the room and other
-      // players must see the indexes redacted.
+    it("forwards a self-target TN-1 envelope without a targetPlayerId", async () => {
+      // TN-1 is a self-only THU card; the boundary must forward
+      // `targetPlayerId: undefined` verbatim. expandTargets on the
+      // owner side falls back to the actor for self-only cards.
       const machine = makePlayMachine({
         getCardOfferForPlayer: vi
           .fn()
           .mockReturnValue(["TN-1", "CB-1", "CB-2"]),
         getPickedCards: vi.fn().mockReturnValue(new Set<CardId>(["TN-1"])),
-        playCard: vi.fn().mockReturnValue({
-          seqNo: 12,
-          expiresAtServer: 1234567,
-          remainingMs: 5000,
-        }),
       });
       vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
-
-      // TN-1 is a self-only THU card; the validator must accept
-      // it without a targetPlayerId. The handler's expandTargets
-      // then resolves the actor as the recipient (self-only).
-      await handler.handleCardPlay(client, server, {
-        ...playPayload,
-        cardId: "TN-1",
-        targetPlayerId: undefined,
-      });
-
-      const roomOp = roomOperators.get("room:r1");
-      expect(roomOp).toBeDefined();
-      const roomEmit = roomOp!.except.mock.results[0].value.emit;
-      const roomCall = roomEmit.mock.calls.find(
-        (call: unknown[]) =>
-          (call[0] as ServerEvent | undefined) === ServerEvent.CARD_RESOLVED,
-      ) as [ServerEvent, CardResolvedFrame] | undefined;
-      expect(roomCall).toBeDefined();
-      const sanitizedPayload = roomCall![1];
-      expect(sanitizedPayload.resolution).toBe("TEMPORARY");
-      expect(sanitizedPayload.effect.kind).toBe("OPTION_DISABLE");
-      expect(asIndexesFrame(sanitizedPayload).effect.indexes).toEqual([]);
-
-      const targetOp = roomOperators.get("player:u1");
-      expect(targetOp).toBeDefined();
-      const targetCall = targetOp!.emit.mock.calls.find(
-        (call: unknown[]) =>
-          (call[0] as ServerEvent | undefined) === ServerEvent.CARD_RESOLVED,
-      ) as [ServerEvent, CardResolvedFrame] | undefined;
-      expect(targetCall).toBeDefined();
-      expect(targetCall![1].effect.kind).toBe("OPTION_DISABLE");
-      expect(Array.isArray(asIndexesFrame(targetCall![1]).effect.indexes)).toBe(
-        true,
-      );
-      expect(
-        asIndexesFrame(targetCall![1]).effect.indexes.length,
-      ).toBeGreaterThan(0);
-      // The indexes must NOT include the correct answer index.
-      expect(asIndexesFrame(targetCall![1]).effect.indexes).not.toContain(0);
-    });
-
-    it("excludes all target player rooms when sanitizing the room broadcast", async () => {
-      // CB-8 is an AOE card targeting multiple players. The room
-      // broadcast must exclude every target's private room so the
-      // same seqNo is not delivered twice.
-      const machine = makePlayMachine({
-        getCardOfferForPlayer: vi
-          .fn()
-          .mockReturnValue(["CB-8", "CB-1", "CB-2"]),
-        getPickedCards: vi.fn().mockReturnValue(new Set<CardId>(["CB-8"])),
-      });
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
-
-      await handler.handleCardPlay(client, server, {
-        ...playPayload,
-        cardId: "CB-8",
-        targetPlayerId: undefined,
-      });
-
-      const roomOp = roomOperators.get("room:r1");
-      expect(roomOp).toBeDefined();
-      const excludedRooms = roomOp!.except.mock.calls[0][0] as string[];
-      const playArgs = machine.playCard.mock.calls[0] as unknown[];
-      expect(new Set(excludedRooms)).toEqual(
-        new Set(
-          (playArgs[4] as readonly string[]).map(
-            (id: string) => `player:${id}`,
-          ),
-        ),
-      );
-    });
-
-    it("expands AOE targets via expandTargets (TIMER_MODIFY count > 1)", async () => {
-      const machine = makePlayMachine({
-        // CB-8 is an AOE card on the catalog.
-        getCardOfferForPlayer: vi
-          .fn()
-          .mockReturnValue(["CB-8", "CB-1", "CB-2"]),
-        getPickedCards: vi.fn().mockReturnValue(new Set<CardId>(["CB-8"])),
-      });
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
-
-      await handler.handleCardPlay(client, server, {
-        ...playPayload,
-        cardId: "CB-8",
-      });
-
-      const playArgs = machine.playCard.mock.calls[0] as unknown[];
-      // AOE expansion: roster minus player, capped at catalog targetCount (unordered set comparison).
-      expect(new Set(playArgs[4] as readonly string[])).toEqual(
-        new Set(["p2", "p3"]),
-      );
-    });
-
-    it("tags the CARD_RESOLVED event as TEMPORARY for OPTION_DISABLE kinds", async () => {
-      // TN-1 resolves to OPTION_DISABLE which is a TEMPORARY kind
-      // (carries duration for the answer-window countdown). The
-      // handler must tag the broadcast `resolution: "TEMPORARY"`
-      // so clients can opt into the timer-aware UI.
-      const machine = makePlayMachine({
-        getCardOfferForPlayer: vi
-          .fn()
-          .mockReturnValue(["TN-1", "CB-1", "CB-2"]),
-        getPickedCards: vi.fn().mockReturnValue(new Set<CardId>(["TN-1"])),
-        playCard: vi.fn().mockReturnValue({
-          seqNo: 11,
-          expiresAtServer: 1234567,
-          remainingMs: 5000,
-        }),
-      });
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+      vi.mocked(matchCommand.forward).mockClear();
 
       await handler.handleCardPlay(client, server, {
         ...playPayload,
@@ -1159,84 +1015,73 @@ describe("MatchHandler", () => {
         targetPlayerId: undefined,
       });
 
-      const roomOp = roomOperators.get("room:r1");
-      expect(roomOp).toBeDefined();
-      const roomEmit = roomOp!.except.mock.results[0].value.emit;
-      expect(roomEmit).toHaveBeenCalledWith(
-        ServerEvent.CARD_RESOLVED,
-        expect.objectContaining({
-          resolution: "TEMPORARY",
-          expiresAtServer: 1234567,
-          remainingMs: 5000,
-        }),
-      );
-    });
-
-    it("uses the supplied targetPlayerId for a single-target CONG card", async () => {
-      const machine = makePlayMachine();
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
-
-      await handler.handleCardPlay(client, server, {
-        ...playPayload,
-        targetPlayerId: "p2",
+      expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+      const env = matchCommand.forward.mock.calls[0][0];
+      expect(env.body).toMatchObject({
+        type: "card_play",
+        cardId: "TN-1",
+        offerSeqNo: 1,
       });
-
-      const playArgs = machine.playCard.mock.calls[0] as unknown[];
-      expect(playArgs[4]).toEqual(["p2"]);
-    });
-
-    it("rejects when the picked card is not in the picked-cards set", async () => {
-      const machine = makePlayMachine({
-        getPickedCards: vi.fn().mockReturnValue(new Set<CardId>(["CB-2"])),
-      });
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
-
-      await handler.handleCardPlay(client, server, playPayload);
-
-      expect(client.emit).toHaveBeenCalledWith(
-        ServerEvent.ERROR,
-        expect.objectContaining({
-          code: ErrorCode.CARD_NOT_IN_HAND,
-          failedEvent: ClientEvent.CARD_PLAY,
-        }),
-      );
+      // targetPlayerId: undefined is forwarded as-is; the dispatch
+      // path expands self-target cards to the actor.
+      expect(env.body.targetPlayerId).toBeUndefined();
       expect(machine.playCard).not.toHaveBeenCalled();
     });
 
-    it("rejects when the offerSeqNo does not match the player's offer envelope", async () => {
+    it("forwards an AOE card (CB-8) without local target expansion", async () => {
+      // CB-8 is an AOE card targeting up to 3 players. The boundary
+      // forwards the envelope as-is; expandTargets on the owner
+      // side reads the current round roster to expand.
       const machine = makePlayMachine({
+        getCardOfferForPlayer: vi
+          .fn()
+          .mockReturnValue(["CB-8", "CB-1", "CB-2"]),
+        getPickedCards: vi.fn().mockReturnValue(new Set<CardId>(["CB-8"])),
+      });
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+      vi.mocked(matchCommand.forward).mockClear();
+
+      await handler.handleCardPlay(client, server, {
+        ...playPayload,
+        cardId: "CB-8",
+        targetPlayerId: undefined,
+      });
+
+      expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+      const env = matchCommand.forward.mock.calls[0][0];
+      expect(env.body).toMatchObject({
+        type: "card_play",
+        cardId: "CB-8",
+        offerSeqNo: 1,
+      });
+      // No AOE expansion at the boundary; that is the dispatch's job.
+      expect(machine.playCard).not.toHaveBeenCalled();
+    });
+
+    it("does NOT locally validate hand/offer — the dispatch is the validator", async () => {
+      // Hand / offer / target validation lives in
+      // `MatchCommandService.applyCardPlayAuthoritative`, not the
+      // handler. A handler that picks a card not in the player's
+      // current hand must still forward — the dispatch ack-rejects
+      // it as DUPLICATE_SUBMISSION without producing a CARD_RESOLVED
+      // event.
+      const machine = makePlayMachine({
+        getPickedCards: vi.fn().mockReturnValue(new Set<CardId>(["CB-2"])),
         getCardOfferForPlayer: vi.fn().mockReturnValue(null),
       });
       vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+      vi.mocked(matchCommand.forward).mockClear();
 
       await handler.handleCardPlay(client, server, playPayload);
 
-      expect(client.emit).toHaveBeenCalledWith(
-        ServerEvent.ERROR,
-        expect.objectContaining({
-          code: ErrorCode.CARD_NOT_IN_HAND,
-          failedEvent: ClientEvent.CARD_PLAY,
-        }),
-      );
+      expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+      const env = matchCommand.forward.mock.calls[0][0];
+      expect(env.body).toMatchObject({
+        type: "card_play",
+        cardId: "CB-1",
+        offerSeqNo: 1,
+      });
       expect(machine.playCard).not.toHaveBeenCalled();
-    });
-
-    it("forwards state-machine errors (e.g. CARD_NOT_IN_HAND) to the client", async () => {
-      const machine = makePlayMachine({
-        playCard: vi.fn().mockImplementation(() => {
-          throw new RoomError(ErrorCode.CARD_NOT_IN_HAND);
-        }),
-      });
-      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
-
-      await handler.handleCardPlay(client, server, playPayload);
-
-      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
-        code: ErrorCode.CARD_NOT_IN_HAND,
-        message: ERROR_MESSAGES[ErrorCode.CARD_NOT_IN_HAND],
-        failedEvent: ClientEvent.CARD_PLAY,
-        commandId: playPayload.commandId,
-      });
     });
 
     it("emits MATCH_NOT_FOUND when the match has no roomId", async () => {
@@ -1253,6 +1098,7 @@ describe("MatchHandler", () => {
         commandId: playPayload.commandId,
       });
       expect(matchService.getStateMachine).not.toHaveBeenCalled();
+      expect(matchCommand.forward).not.toHaveBeenCalled();
     });
 
     it("emits UNAUTHORIZED when the socket is not in the room channel", async () => {
@@ -1268,6 +1114,24 @@ describe("MatchHandler", () => {
         }),
       );
       expect(matchService.getStateMachine).not.toHaveBeenCalled();
+      expect(matchCommand.forward).not.toHaveBeenCalled();
+    });
+
+    it("emits MATCH_NOT_FOUND when the state machine is null", async () => {
+      vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(
+        undefined as any,
+      );
+
+      await handler.handleCardPlay(client, server, playPayload);
+
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.MATCH_NOT_FOUND,
+          failedEvent: ClientEvent.CARD_PLAY,
+        }),
+      );
+      expect(matchCommand.forward).not.toHaveBeenCalled();
     });
 
     it("rejects an invalid commandId before any state-machine work", async () => {
@@ -1284,14 +1148,16 @@ describe("MatchHandler", () => {
         }),
       );
       expect(matchService.getStateMachine).not.toHaveBeenCalled();
+      expect(matchCommand.forward).not.toHaveBeenCalled();
     });
 
-    it("handles non-Error thrown values from the resolver path", async () => {
-      const machine = makePlayMachine({
-        playCard: vi.fn().mockImplementation(() => {
-          throw "kaboom";
-        }),
+    it("handles non-Error thrown values from matchCommand.forward", async () => {
+      // The handler's only post-boundary work is the durable forward.
+      // A non-Error rejection there must surface as INTERNAL_ERROR.
+      vi.mocked(matchCommand.forward).mockImplementationOnce(() => {
+        throw "kaboom";
       });
+      const machine = makePlayMachine();
       vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
 
       await handler.handleCardPlay(client, server, playPayload);
@@ -1305,12 +1171,15 @@ describe("MatchHandler", () => {
     });
 
     // Real Socket.IO integration: drives handleCardPlay through a
-    // listening server with three real client sockets so that the
-    // room-union / .except() exclusion semantics are exercised by
-    // Socket.IO itself, not by the per-room vi.fn mock. The mock
-    // assertions above only verify the routing call shape; this
-    // test verifies the end-to-end wire behavior.
-    it("routes CARD_RESOLVED through real Socket.IO: target receives full effect once, non-targets receive sanitized frames only", async () => {
+    // listening server with three real client sockets so the H6
+    // gate (`room:r1` channel membership) is exercised by Socket.IO
+    // itself, not by the per-room vi.fn mock. After the single-writer
+    // refactor, handleCardPlay no longer broadcasts locally — the
+    // dispatch path on the owner owns the wire side. This test now
+    // verifies that the handler forwards the envelope and never
+    // touches the wire; end-to-end CARD_RESOLVED delivery is
+    // covered by `match-command.service.spec.ts`'s dispatch tests.
+    it("routes card_play through real Socket.IO: forwards a single envelope, no local wire side", async () => {
       const httpServer: HttpServer = createServer();
       const ioServer = new Server(httpServer, {
         cors: { origin: "*" },
@@ -1347,157 +1216,89 @@ describe("MatchHandler", () => {
 
         // Map each client socket to its server-side socket and
         // join the room channel + per-player channel so the
-        // handler's H6 gate (room:r1) and `.except([...])`
-        // exclusion behave the same as in production.
+        // handler's H6 gate (room:r1) accepts the actor socket —
+        // the same gate production uses.
         const sockets = ioServer.sockets.sockets;
         const actorServerSocket = findSocketForClient(sockets, actorClient.id!);
-        const targetServerSocket = findSocketForClient(
-          sockets,
-          targetClient.id!,
-        );
-        const observerServerSocket = findSocketForClient(
-          sockets,
-          observerClient.id!,
-        );
         expect(actorServerSocket).toBeDefined();
         actorServerSocket!.join("room:r1");
         actorServerSocket!.join("player:u1");
         actorServerSocket!.data = { userId: "u1", username: "Alice" };
-        targetServerSocket!.join("room:r1");
-        targetServerSocket!.join("player:p2");
-        targetServerSocket!.data = { userId: "p2", username: "Bob" };
-        observerServerSocket!.join("room:r1");
-        observerServerSocket!.join("player:p3");
-        observerServerSocket!.data = { userId: "p3", username: "Carla" };
 
         // Make sure the actor socket id from the client is present
         // before we wire assertions — `socket.io-client` types id
         // as `string | undefined` even though it is always set
         // after `connect`.
         expect(actorClient.id).toBeDefined();
-        expect(targetClient.id).toBeDefined();
-        expect(observerClient.id).toBeDefined();
 
-        // Collect every CARD_RESOLVED frame each client receives.
-        const actorFrames: CardResolvedFrame[] = [];
-        const targetFrames: CardResolvedFrame[] = [];
-        const observerFrames: CardResolvedFrame[] = [];
-        actorClient.on(ServerEvent.CARD_RESOLVED, (p: CardResolvedFrame) =>
-          actorFrames.push(p),
-        );
-        targetClient.on(ServerEvent.CARD_RESOLVED, (p: CardResolvedFrame) =>
-          targetFrames.push(p),
-        );
-        observerClient.on(ServerEvent.CARD_RESOLVED, (p: CardResolvedFrame) =>
-          observerFrames.push(p),
-        );
-
-        // CB-6 (OPTION_FAKE) is the canonical disclosure case: the
-        // resolved `indexes` array carries a derived hint at the
-        // correct answer and MUST NOT leak to non-targets through
-        // the room-wide broadcast.
         const machine = makePlayMachine({
           getCardOfferForPlayer: vi
             .fn()
             .mockReturnValue(["CB-6", "CB-1", "CB-2"]),
           getPickedCards: vi.fn().mockReturnValue(new Set<CardId>(["CB-6"])),
-          playCard: vi.fn().mockReturnValue({
-            seqNo: 42,
-            expiresAtServer: 1000,
-            remainingMs: 1000,
-          }),
         });
         vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+        vi.mocked(matchCommand.forward).mockClear();
 
-        // Drive the handler through the real server with the real
-        // actor socket as the `client` argument so the broadcast
-        // targets connected sockets only. The cast drops the
-        // `undefined` half of `findSocketForClient`'s return so
-        // the strict handler signature accepts the value.
         await handler.handleCardPlay(actorServerSocket as Socket, ioServer, {
           ...playPayload,
           cardId: "CB-6",
           targetPlayerId: "p2",
         });
 
-        // Allow the broadcast loop to settle.
-        await waitFor(
-          () =>
-            targetFrames.filter((f) => f.seqNo === 42).length > 0 &&
-            actorFrames.filter((f) => f.seqNo === 42).length > 0 &&
-            observerFrames.filter((f) => f.seqNo === 42).length > 0,
-          1000,
-        );
+        // The handler forwarded exactly one well-formed card_play
+        // envelope to the owner command channel — no local wire
+        // side, no state-machine mutation, no persistence.
+        expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+        const env = matchCommand.forward.mock.calls[0][0];
+        expect(env).toMatchObject({
+          schemaVersion: 1,
+          matchId: "m1",
+          emittedByNodeId: "node-a",
+          body: {
+            type: "card_play",
+            userId: "u1",
+            commandId: playPayload.commandId,
+            cardId: "CB-6",
+            offerSeqNo: 1,
+            targetPlayerId: "p2",
+          },
+        });
+        expect(typeof env.eventId).toBe("string");
+        expect(env.eventId.length).toBeGreaterThan(0);
 
-        // Target receives exactly one frame at the test seqNo.
-        const targetAtSeq = targetFrames.filter((f) => f.seqNo === 42);
-        expect(targetAtSeq).toHaveLength(1);
-        expect(targetAtSeq[0]!.effect.kind).toBe("OPTION_FAKE");
-        const targetIndexes = asIndexesFrame(targetAtSeq[0]!).effect.indexes;
-        expect(Array.isArray(targetIndexes)).toBe(true);
-        expect(targetIndexes.length).toBeGreaterThan(0);
-        // OPTION_FAKE indexes must not include the correct answer
-        // index (correctAnswer "A" options[0] = index 0).
-        expect(targetIndexes).not.toContain(0);
-
-        // Target MUST NOT receive a second sanitized frame with
-        // the same seqNo — the `.except(...)` exclusion must have
-        // stripped the room broadcast.
-        const targetSanitized = targetFrames.filter(
-          (f) =>
-            f.seqNo === 42 &&
-            f.effect.kind === "OPTION_FAKE" &&
-            Array.isArray(asIndexesFrame(f).effect.indexes) &&
-            asIndexesFrame(f).effect.indexes.length === 0,
-        );
-        expect(targetSanitized).toHaveLength(0);
-
-        // Actor and observer receive the sanitized frame only.
-        for (const frames of [actorFrames, observerFrames]) {
-          const atSeq = frames.filter((f) => f.seqNo === 42);
-          expect(atSeq).toHaveLength(1);
-          expect(atSeq[0]!.effect.kind).toBe("OPTION_FAKE");
-          expect(asIndexesFrame(atSeq[0]!).effect.indexes).toEqual([]);
-        }
-
-        // No non-target receives a frame containing indexes.
-        const actorWithIndexes = actorFrames.filter(
-          (f) =>
-            f.seqNo === 42 &&
-            Array.isArray(asIndexesFrame(f).effect.indexes) &&
-            asIndexesFrame(f).effect.indexes.length > 0,
-        );
-        const observerWithIndexes = observerFrames.filter(
-          (f) =>
-            f.seqNo === 42 &&
-            Array.isArray(asIndexesFrame(f).effect.indexes) &&
-            asIndexesFrame(f).effect.indexes.length > 0,
-        );
-        expect(actorWithIndexes).toHaveLength(0);
-        expect(observerWithIndexes).toHaveLength(0);
+        // No CARD_RESOLVED frame leaks from the boundary itself —
+        // any frames the actors / target / observer receive must
+        // come from the owner's dispatch path (covered separately).
+        const receivedAnyCardResolved = await new Promise<boolean>((res) => {
+          let total = 0;
+          const onFrame = () => {
+            total++;
+          };
+          actorClient.on(ServerEvent.CARD_RESOLVED, onFrame);
+          targetClient.on(ServerEvent.CARD_RESOLVED, onFrame);
+          observerClient.on(ServerEvent.CARD_RESOLVED, onFrame);
+          setTimeout(() => {
+            actorClient.off(ServerEvent.CARD_RESOLVED, onFrame);
+            targetClient.off(ServerEvent.CARD_RESOLVED, onFrame);
+            observerClient.off(ServerEvent.CARD_RESOLVED, onFrame);
+            res(total > 0);
+          }, 50);
+        });
+        expect(receivedAnyCardResolved).toBe(false);
       } finally {
         actorClient.disconnect();
         targetClient.disconnect();
         observerClient.disconnect();
+        // Socket.IO's `close()` already tears down the attached HTTP
+        // server, so we do NOT follow it with a separate
+        // `httpServer.close()` — doing so would close the same server
+        // twice and trigger Node's "server is not running" warning.
         await new Promise<void>((resolve) => ioServer.close(() => resolve()));
-        await new Promise<void>((resolve) => httpServer.close(() => resolve()));
       }
     });
   });
 });
-
-async function waitFor(
-  predicate: () => boolean,
-  timeoutMs: number,
-): Promise<void> {
-  const start = Date.now();
-  while (!predicate() && Date.now() - start < timeoutMs) {
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  if (!predicate()) {
-    throw new Error("waitFor: predicate did not become true within timeout");
-  }
-}
 
 function findSocketForClient(
   sockets: Map<string, Socket>,

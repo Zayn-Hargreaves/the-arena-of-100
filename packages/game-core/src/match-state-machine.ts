@@ -821,17 +821,32 @@ export class MatchStateMachine {
   // The `offerSeqNo` correlation back-points to the
   // `CARD_OFFER.seqNo` so the API boundary can verify the picked
   // card was actually offered and not a replayed/foreign card id.
-  pickCard(pickedByPlayerId: string, cardId: CardId, offerSeqNo: number): void {
+  //
+  // Optional `eventId` + `commandId` stamp the persisted event with the
+  // transport-level command identity so `recoverDuplicatePickEvent`
+  // can verify a redelivered command matches the originally-committed
+  // one before re-broadcasting. They are intentionally optional so the
+  // core state machine stays free of any transport concerns; callers
+  // that route through the API boundary always supply them.
+  pickCard(
+    pickedByPlayerId: string,
+    cardId: CardId,
+    offerSeqNo: number,
+    metadata?: { eventId?: string; commandId?: string },
+  ): void {
     const hand = this.playerHands.get(pickedByPlayerId);
     if (!hand?.includes(cardId)) {
       throw new RoomError(ErrorCode.CARD_NOT_IN_HAND);
     }
-    this.logEvent("CARD_PICKED", {
+    const payload: Record<string, unknown> = {
       roundNo: this.currentRound?.roundNo ?? 0,
       playerId: pickedByPlayerId,
       selectedCardId: cardId,
       offerSeqNo,
-    });
+    };
+    if (metadata?.eventId) payload.eventId = metadata.eventId;
+    if (metadata?.commandId) payload.commandId = metadata.commandId;
+    this.logEvent("CARD_PICKED", payload);
     // Spending the card: remove from hand. The card is
     // single-use per match (v1 invariant — spec §3.1).
     this.playerHands.set(
@@ -871,6 +886,7 @@ export class MatchStateMachine {
     resolvedEffect: CardEffect,
     targetPlayerIds: readonly string[],
     serverNow: number,
+    metadata?: { eventId?: string; commandId?: string },
   ): {
     seqNo: number;
     expiresAtServer: number | null;
@@ -888,7 +904,7 @@ export class MatchStateMachine {
     // can reach the envelope via entry.seqNo) BEFORE the push so
     // the stored entry is never mutated post-append.
     const seqNo = this.eventSeqCounter + 1;
-    const payload = {
+    const payload: Record<string, unknown> = {
       seqNo,
       matchId: this.state.id,
       roundNo: this.currentRound?.roundNo ?? 0,
@@ -902,6 +918,8 @@ export class MatchStateMachine {
       expiresAtServer: isTemporary ? expiresAtServer : null,
       remainingMs: isTemporary ? remainingMs : null,
     };
+    if (metadata?.eventId) payload.eventId = metadata.eventId;
+    if (metadata?.commandId) payload.commandId = metadata.commandId;
     const allocatedSeqNo = this.logEvent("CARD_RESOLVED", payload);
     if (allocatedSeqNo !== seqNo) {
       // Defensive: logEvent and the local seqNo MUST agree. If

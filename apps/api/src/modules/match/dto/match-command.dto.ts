@@ -15,9 +15,34 @@ export const playerDisconnectBodySchema = z.object({
   userId: z.string(),
 });
 
+// Card command bodies forwarded to the owner via the durable command
+// channel (see MatchHandler.handleCardPick / handleCardPlay and
+// MatchCommandService.dispatchBuiltin). The handler at the boundary
+// already validated `commandId` (assertValidCommandId) and `cardId`
+// (assertCardId) shape; the owner re-validates authoritative state
+// (hand, target, AOE cap) and performs the single-writer mutation.
+export const cardPickBodySchema = z.object({
+  type: z.literal("card_pick"),
+  userId: z.string(),
+  commandId: z.string(),
+  cardId: z.string(),
+  offerSeqNo: z.number().int().positive(),
+});
+
+export const cardPlayBodySchema = z.object({
+  type: z.literal("card_play"),
+  userId: z.string(),
+  commandId: z.string(),
+  cardId: z.string(),
+  offerSeqNo: z.number().int().positive(),
+  targetPlayerId: z.string().optional(),
+});
+
 export const commandBodySchema = z.discriminatedUnion("type", [
   submitAnswerBodySchema,
   playerDisconnectBodySchema,
+  cardPickBodySchema,
+  cardPlayBodySchema,
 ]);
 
 export const commandEnvelopeSchema = z.object({
@@ -33,6 +58,8 @@ export const commandEnvelopeSchema = z.object({
 
 export type SubmitAnswerBody = z.infer<typeof submitAnswerBodySchema>;
 export type PlayerDisconnectBody = z.infer<typeof playerDisconnectBodySchema>;
+export type CardPickBody = z.infer<typeof cardPickBodySchema>;
+export type CardPlayBody = z.infer<typeof cardPlayBodySchema>;
 export type OwnerCommandBody = z.infer<typeof commandBodySchema>;
 
 export interface CommandEnvelope<

@@ -6,9 +6,6 @@ import {
   ErrorCode,
   PlayerStatus,
   RoomStatus,
-  getCardDefinition,
-  type CardId,
-  type CardEffect,
   type MatchState,
   type SubmitAnswerPayload,
   type RequestSnapshotPayload,
@@ -29,10 +26,7 @@ import { BaseHandler } from "./base.handler";
 import {
   assertValidCommandId,
   assertCardId,
-  validateCardCommand,
 } from "../../modules/match/card-validator";
-import { resolveCardEffect, deriveSubstream } from "@arena/game-core";
-import type { MatchStateMachine } from "@arena/game-core";
 
 @Injectable()
 export class MatchHandler extends BaseHandler {
@@ -260,16 +254,24 @@ export class MatchHandler extends BaseHandler {
   // These are ADDITIVE — they do not touch `handleStartMatch`,
   // `handleSubmitAnswer`, or `handleRequestSnapshot`. They follow the
   // same pattern as `handleSubmitAnswer` for the roomId authorization
-  // gate + the durable command-forward path.
+  // gate + the durable command-forward path: the boundary only
+  // validates + forwards the envelope to the owner command channel,
+  // and the owner's consumer (`MatchCommandService.applyCardPick
+  // Authoritative` / `applyCardPlayAuthoritative`) runs the
+  // authoritative validate → resolve → expand → mutate → persist →
+  // broadcast sequence in ONE serialised consumer step. The handler
+  // never mutates state machine or broadcasts locally, so two blind
+  // writes on two nodes cannot both commit a CARD_PICKED /
+  // CARD_RESOLVED event.
   // -------------------------------------------------------------------------
 
   // `handleCardPick` — client picked one of the offered cards.
-  // The card is removed from the player's hand (single-use per match).
-  // The event is appended to the event log via the state machine
-  // (`pickCard`); the same shape is broadcast for live viewers.
+  // The card is removed from the player's hand on the owner side via
+  // `MatchStateMachine.pickCard`; CARD_PICKED is broadcast by the
+  // owner only.
   async handleCardPick(
     client: Socket,
-    server: Server,
+    _server: Server,
     payload: CardPickPayload,
   ) {
     return this.runSafely(
@@ -294,22 +296,28 @@ export class MatchHandler extends BaseHandler {
         const state = stateMachine.getState();
         this.assertActivePlayer(state, userId);
 
-        // The state machine validates the offer correlation
-        // (cardId must be in the player's current hand) and
-        // appends CARD_PICKED. `assertCardId` already narrows
-        // the schema-bound `payload.cardId` to `CardId`, so the
-        // state-machine call passes the value through directly.
-        stateMachine.pickCard(userId, payload.cardId, payload.offerSeqNo);
+        // B4b-style single-writer: the boundary forwards the command
+        // to the per-match stream; the owner applies + persists +
+        // broadcasts CARD_PICKED exactly once. The handler MUST NOT
+        // call `pickCard` or emit `CARD_PICKED` locally — the dispatch
+        // path on the owner is the only authoritative apply point.
+        await this.matchCommand.forward(
+          makeCommandEnvelope({
+            matchId: payload.matchId,
+            emittedByNodeId: this.cluster.nodeId,
+            body: {
+              type: "card_pick",
+              userId,
+              commandId: payload.commandId,
+              cardId: payload.cardId,
+              offerSeqNo: payload.offerSeqNo,
+            },
+          }),
+        );
 
-        // Broadcast to the room channel so other clients see the
-        // player's hand update.
-        server.to(`room:${roomId}`).emit(ServerEvent.CARD_PICKED, {
-          matchId: payload.matchId,
-          roundNo: stateMachine.getCurrentRound()?.roundNo ?? 0,
-          playerId: userId,
-          selectedCardId: payload.cardId,
-          offerSeqNo: payload.offerSeqNo,
-        });
+        this.logger.log(
+          `Card pick forwarded to owner channel: ${userId} (match ${payload.matchId}, card ${payload.cardId})`,
+        );
       },
       (error) => {
         const code = this.getErrorCode(error);
@@ -331,13 +339,15 @@ export class MatchHandler extends BaseHandler {
     );
   }
 
-  // `handleCardPlay` — apply the picked card. The boundary
-  // validates the command, the resolver expands the template
-  // into a concrete `CardEffect`, then the state machine
-  // appends `CARD_RESOLVED`.
+  // `handleCardPlay` — apply the picked card. The boundary validates
+  // the command and forwards it; the owner reads the current round /
+  // AOE count, runs `validateCardCommand`, resolves the template,
+  // expands targets, calls `MatchStateMachine.playCard`, fenced-persists,
+  // and broadcasts `CARD_RESOLVED` (sanitized to room + full to each
+  // target) — all in ONE serialised consumer step.
   async handleCardPlay(
     client: Socket,
-    server: Server,
+    _server: Server,
     payload: CardPlayPayload,
   ) {
     return this.runSafely(
@@ -345,6 +355,7 @@ export class MatchHandler extends BaseHandler {
       async () => {
         const userId = this.requireAuth(client);
         assertValidCommandId(payload.commandId);
+        assertCardId(payload.cardId);
 
         const roomId = await this.matchService.getRoomIdByMatchId(
           payload.matchId,
@@ -361,113 +372,28 @@ export class MatchHandler extends BaseHandler {
         const state = stateMachine.getState();
         this.assertActivePlayer(state, userId);
 
-        const pickedCards = Array.from(stateMachine.getPickedCards(userId));
-        const offeredCardIds =
-          stateMachine.getCardOfferForPlayer(userId, payload.offerSeqNo) ??
-          ([] as CardId[]);
-        const roster = new Set(state.players.keys());
-        const playedSet = stateMachine.getPlayedCards(userId);
-        const currentRoundNo = stateMachine.getCurrentRound()?.roundNo ?? 0;
-        const aoeCount = stateMachine.getAoeCountForRound(currentRoundNo);
-
-        const validated = validateCardCommand({
-          cardId: payload.cardId,
-          offeredCardIds,
-          targetPlayerId: payload.targetPlayerId,
-          rosterPlayerIds: roster,
-          currentAoeCount: aoeCount,
-          playedCardIds: playedSet,
-          pickedCards,
-          actingPlayerId: userId,
-        });
-
-        // Resolve the template server-side (3 cards consume RNG).
-        const resolveRng = this.makeResolveRng(
-          state.id,
-          userId,
-          currentRoundNo,
-          payload.offerSeqNo,
-          payload.cardId,
+        // Single-writer forward: the boundary does NO state-machine
+        // mutation, NO persistence, and NO broadcast. The owner's
+        // consumer is the sole writer, so two blind writes on two
+        // nodes cannot both commit a CARD_RESOLVED event.
+        await this.matchCommand.forward(
+          makeCommandEnvelope({
+            matchId: payload.matchId,
+            emittedByNodeId: this.cluster.nodeId,
+            body: {
+              type: "card_play",
+              userId,
+              commandId: payload.commandId,
+              cardId: payload.cardId,
+              offerSeqNo: payload.offerSeqNo,
+              targetPlayerId: payload.targetPlayerId,
+            },
+          }),
         );
 
-        const correctAnswer = this.peekCorrectAnswer(stateMachine);
-        const resolved = resolveCardEffect(
-          validated.cardId,
-          validated.template,
-          resolveRng,
-          {
-            targetHand: payload.targetPlayerId
-              ? stateMachine.getHand(payload.targetPlayerId)
-              : undefined,
-            options: stateMachine.getCurrentRound()?.question.options,
-            correctAnswer,
-            currentRoundNo,
-            partial: correctAnswer ? correctAnswer[0] : "",
-          },
+        this.logger.log(
+          `Card play forwarded to owner channel: ${userId} (match ${payload.matchId}, card ${payload.cardId})`,
         );
-
-        const targetPlayerIds = this.expandTargets(
-          validated.cardId,
-          userId,
-          payload.targetPlayerId,
-          stateMachine,
-          resolveRng,
-        );
-
-        const serverNow = Date.now();
-        const result = stateMachine.playCard(
-          userId,
-          validated.cardId,
-          payload.offerSeqNo,
-          resolved,
-          targetPlayerIds,
-          serverNow,
-        );
-
-        const basePayload = {
-          seqNo: result.seqNo,
-          matchId: payload.matchId,
-          roundNo: currentRoundNo,
-          cardId: payload.cardId,
-          offerSeqNo: payload.offerSeqNo,
-          playedByPlayerId: userId,
-          targetPlayerIds,
-          resolution:
-            result.expiresAtServer === null
-              ? ("MUTATION" as const)
-              : ("TEMPORARY" as const),
-          serverTimestamp: serverNow,
-          expiresAtServer: result.expiresAtServer,
-          remainingMs: result.remainingMs,
-        };
-
-        const sanitizedEffect = this.sanitizeEffect(resolved);
-
-        // Full resolved effect is delivered only to the concrete
-        // targetPlayerIds. A self-targeting actor IS already in this
-        // set (expandTargets returns the actor for self-only cards),
-        // so we do not add `userId` separately — that would expose
-        // target-private fields (e.g. OPTION_FAKE.indexes) to a
-        // non-target actor.
-        const fullEffectRooms = targetPlayerIds.map((id) => `player:${id}`);
-
-        // Broadcast sanitized effect to room excluding direct receivers
-        // to avoid duplicate seqNo frames.
-        server
-          .to(`room:${roomId}`)
-          .except(fullEffectRooms)
-          .emit(ServerEvent.CARD_RESOLVED, {
-            ...basePayload,
-            effect: sanitizedEffect,
-          });
-
-        // Broadcast full effect with details to each target player.
-        for (const targetId of targetPlayerIds) {
-          server.to(`player:${targetId}`).emit(ServerEvent.CARD_RESOLVED, {
-            ...basePayload,
-            effect: resolved,
-          });
-        }
       },
       (error) => {
         const code = this.getErrorCode(error);
@@ -492,106 +418,6 @@ export class MatchHandler extends BaseHandler {
   // -------------------------------------------------------------------------
   // Internal helpers (sub-task D)
   // -------------------------------------------------------------------------
-
-  private makeResolveRng(
-    matchId: string,
-    userId: string,
-    roundNo: number,
-    offerSeqNo: number,
-    cardId: string,
-  ): () => number {
-    const stream = deriveSubstream(
-      `${matchId}|${userId}|${roundNo}|${offerSeqNo}|${cardId}`,
-      `resolve|${cardId}`,
-    );
-    let local = stream;
-    return () => {
-      local = (local + 0x6d2b79f5) >>> 0;
-      let t = local;
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-
-  private peekCorrectAnswer(
-    stateMachine: MatchStateMachine,
-  ): string | undefined {
-    return stateMachine.getCorrectAnswer();
-  }
-
-  private expandTargets(
-    cardId: CardId,
-    playedByPlayerId: string,
-    targetPlayerId: string | undefined,
-    stateMachine: MatchStateMachine,
-    rng: () => number,
-  ): string[] {
-    const def = getCardDefinition(cardId);
-    const template = def.effectTemplate as { targetCount?: number };
-    const count = template.targetCount ?? 1;
-
-    if (count > 1) {
-      const players = stateMachine.getState().players;
-      const eligible = Array.from(players.entries())
-        .filter(
-          ([id, p]) =>
-            id !== playedByPlayerId &&
-            p.status !== PlayerStatus.ELIMINATED &&
-            p.status !== PlayerStatus.WINNER &&
-            p.status !== PlayerStatus.DISCONNECTED,
-        )
-        .map(([id]) => id)
-        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-
-      const selected: string[] = [];
-      const numToPick = Math.min(count, eligible.length);
-      const remaining = eligible.slice();
-      for (let i = 0; i < numToPick; i++) {
-        const u = rng();
-        const idx = Math.floor(u * remaining.length);
-        selected.push(remaining[idx]!);
-        remaining.splice(idx, 1);
-      }
-      return selected;
-    }
-    if (targetPlayerId) return [targetPlayerId];
-    return [playedByPlayerId];
-  }
-
-  // Per-kind allowlist for fields that contain data derived from
-  // the correct answer (or otherwise target-private). Anything
-  // listed here is cleared for the room-wide sanitized event;
-  // kinds not listed pass through unchanged. Adding a new
-  // `CardEffect` variant will leave the default branch untouched
-  // until the kind is explicitly classified here.
-  private sanitizeEffect(effect: CardEffect): CardEffect {
-    switch (effect.kind) {
-      case "OPTION_DISABLE":
-        return { ...effect, indexes: [] };
-      case "OPTION_FAKE":
-        return { ...effect, indexes: [] };
-      case "HINT_REVEAL":
-        return { ...effect, partial: "" };
-      case "HAND_DESTROY":
-        return { ...effect, destroyedCardIds: [] };
-      case "TIMER_MODIFY":
-      case "OPTION_LOCK":
-      case "DELAY_RENDER":
-      case "VISUAL_OVERLAY":
-      case "SEMANTIC_FLIP":
-      case "QUESTION_REPLAY":
-      case "SHIELD":
-      case "SCORE_MULT":
-      case "SECOND_CHANCE":
-        return effect;
-      default: {
-        const _exhaustive: never = effect;
-        void _exhaustive;
-        return effect;
-      }
-    }
-  }
 
   private assertActivePlayer(
     state: MatchState | null | undefined,

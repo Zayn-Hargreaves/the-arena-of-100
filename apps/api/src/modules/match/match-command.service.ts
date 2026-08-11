@@ -16,15 +16,35 @@
 import { randomUUID } from "node:crypto";
 import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { Server } from "socket.io";
+import {
+  ServerEvent,
+  ClientEvent,
+  ErrorCode,
+  RoomError,
+  ERROR_MESSAGE_KEYS,
+  PlayerStatus,
+  getCardDefinition,
+  type CardEffect,
+  type CardId,
+} from "@arena/shared";
+import {
+  resolveCardEffect,
+  deriveSubstream,
+  mulberry32,
+} from "@arena/game-core";
+import type { MatchStateMachine } from "@arena/game-core";
 import { RedisService, StreamEntry } from "../redis/redis.service";
 import { MatchService } from "./match.service";
 import { MatchOwnershipService } from "./match-ownership.service";
 import { ClusterService } from "../cluster/cluster.service";
+import { assertCardId, validateCardCommand } from "./card-validator";
 import {
   type CommandEnvelope,
   commandEnvelopeSchema,
   type OwnerCommandBody,
   type SubmitAnswerBody,
+  type CardPickBody,
+  type CardPlayBody,
 } from "./dto/match-command.dto";
 
 export {
@@ -33,6 +53,8 @@ export {
   type OwnerCommandBody,
   type PlayerDisconnectBody,
   type SubmitAnswerBody,
+  type CardPickBody,
+  type CardPlayBody,
 } from "./dto/match-command.dto";
 
 /**
@@ -454,6 +476,26 @@ export class MatchCommandService implements OnModuleDestroy {
         server,
       );
     }
+    // card_pick / card_play → owner-only authoritative apply (sub-task D).
+    // Both run inside the same owner-serialised consumer path as
+    // submit_answer, so two blind writes on two nodes can never both
+    // commit a CARD_PICKED / CARD_RESOLVED event. The apply methods
+    // do their own persistence + broadcast; no `sideEffects` hook is
+    // needed because the owner is already the single writer.
+    if (env.body.type === "card_pick") {
+      return this.applyCardPickAuthoritative(
+        env as CommandEnvelope<CardPickBody>,
+        owner,
+        server,
+      );
+    }
+    if (env.body.type === "card_play") {
+      return this.applyCardPlayAuthoritative(
+        env as CommandEnvelope<CardPlayBody>,
+        owner,
+        server,
+      );
+    }
     // player_disconnect → B5 (optional until wired). eventId dedup mirrors
     // submit_answer so a redelivery / XAUTOCLAIM of an already-applied
     // disconnect is acked without re-broadcasting PLAYER_LEFT.
@@ -647,6 +689,692 @@ export class MatchCommandService implements OnModuleDestroy {
     if (this.ownership.currentFence(env.matchId) == null) return "RETRY";
     await this.sideEffects.checkEarlyTermination(env.matchId, roomId, server);
     return "DUPLICATE_EVENT";
+  }
+
+  private emitPlayerError(
+    server: Server,
+    userId: string,
+    failedEvent: ClientEvent,
+    commandId: string,
+    err: unknown,
+  ): void {
+    if (err instanceof RoomError) {
+      const code = err.code;
+      server.to(`player:${userId}`).emit(ServerEvent.ERROR, {
+        code,
+        message: ERROR_MESSAGE_KEYS[code],
+        failedEvent,
+        commandId,
+      });
+      return;
+    }
+    // Non-RoomError values MUST NOT leak their raw text to clients: arbitrary
+    // `Error.message` or `String(err)` content is an information-leak vector
+    // (stack-internals, third-party library names, internal paths). Log the
+    // original error server-side for operators and emit a stable, generic
+    // `INVALID_PAYLOAD` key so the locale-aware web layer decides the wording.
+    const wrapped =
+      err instanceof Error ? err.message : err == null ? "null" : String(err);
+    this.logger.warn(
+      `emitPlayerError: non-RoomError for ${userId} on ${failedEvent}/${commandId}: ${wrapped}`,
+    );
+    server.to(`player:${userId}`).emit(ServerEvent.ERROR, {
+      code: ErrorCode.INVALID_PAYLOAD,
+      message: ERROR_MESSAGE_KEYS[ErrorCode.INVALID_PAYLOAD],
+      failedEvent,
+      commandId,
+    });
+  }
+
+  /**
+   * Locate the persisted canonical `CARD_PICKED` event for the given
+   * `(playerId, cardId, offerSeqNo)`. Returns the full event entry (or
+   * `null`) without cloning — callers must not mutate. The state machine
+   * is already per-match, so an additional `matchId` filter is redundant.
+   *
+   * `eventId`/`commandId` are stamped at append time by the API
+   * boundary (see `pickCard({ eventId, commandId })`). Events
+   * persisted by an older owner that did not stamp metadata will
+   * not match a same-identity incoming command and `null` is
+   * returned — recovery then short-circuits to DUPLICATE_EVENT
+   * without re-broadcasting, since the canonical source is
+   * unverifiable.
+   */
+  private findCanonicalCardPicked(
+    sm: MatchStateMachine,
+    playerId: string,
+    cardId: string,
+    offerSeqNo: number,
+  ): {
+    payload: Record<string, unknown>;
+    seqNo: number;
+    timestamp: number;
+  } | null {
+    let found: {
+      payload: Record<string, unknown>;
+      seqNo: number;
+      timestamp: number;
+    } | null = null;
+    sm.forEachEvent((entry) => {
+      if (entry.type !== "CARD_PICKED") return;
+      const p = (entry.payload ?? {}) as Record<string, unknown>;
+      if (p.playerId !== playerId) return;
+      if (p.selectedCardId !== cardId) return;
+      if (p.offerSeqNo !== offerSeqNo) return;
+      found = { payload: p, seqNo: entry.seqNo, timestamp: entry.timestamp };
+    });
+    return found;
+  }
+
+  /**
+   * Locate the persisted canonical `CARD_RESOLVED` event for the given
+   * `(playedByPlayerId, cardId, offerSeqNo)`. Same metadata rules as
+   * `findCanonicalCardPicked`: returns `null` when the stored event
+   * lacks the canonical identity stamps, so recovery never republishes
+   * an unverifiable entry.
+   */
+  private findCanonicalCardResolved(
+    sm: MatchStateMachine,
+    playedByPlayerId: string,
+    cardId: string,
+    offerSeqNo: number,
+  ): {
+    payload: Record<string, unknown>;
+    seqNo: number;
+    timestamp: number;
+  } | null {
+    let found: {
+      payload: Record<string, unknown>;
+      seqNo: number;
+      timestamp: number;
+    } | null = null;
+    sm.forEachEvent((entry) => {
+      if (entry.type !== "CARD_RESOLVED") return;
+      const p = (entry.payload ?? {}) as Record<string, unknown>;
+      if (p.playedByPlayerId !== playedByPlayerId) return;
+      if (p.cardId !== cardId) return;
+      if (p.offerSeqNo !== offerSeqNo) return;
+      found = { payload: p, seqNo: entry.seqNo, timestamp: entry.timestamp };
+    });
+    return found;
+  }
+
+  private async recoverDuplicatePickEvent(
+    env: CommandEnvelope<CardPickBody>,
+    server: Server,
+  ): Promise<CommandOutcome> {
+    if (this.ownership.currentFence(env.matchId) == null) return "RETRY";
+    const sm = await this.matchService.getStateMachine(env.matchId);
+    if (!sm) return "DUPLICATE_EVENT";
+    // Re-validate the canonical identity (eventId + commandId + offerSeqNo)
+    // before re-broadcasting. The prior implementation only checked
+    // `getPickedCards(...).has(cardId)`, which is a SUBSET match — a
+    // different (playerId, cardId, offerSeqNo) tuple whose card happens
+    // to already be in the picked set would have been misidentified as
+    // the same command and republished with mismatched metadata.
+    const canonical = this.findCanonicalCardPicked(
+      sm,
+      env.body.userId,
+      env.body.cardId,
+      env.body.offerSeqNo,
+    );
+    if (!canonical) return "DUPLICATE_EVENT";
+    if (
+      canonical.payload.eventId !== env.eventId ||
+      canonical.payload.commandId !== env.body.commandId
+    ) {
+      return "DUPLICATE_EVENT";
+    }
+    if (this.ownership.currentFence(env.matchId) == null) return "RETRY";
+    const roomId = sm.getState().roomId;
+    if (roomId) {
+      server.to(`room:${roomId}`).emit(ServerEvent.CARD_PICKED, {
+        matchId: env.matchId,
+        roundNo: sm.getCurrentRound()?.roundNo ?? 0,
+        playerId: env.body.userId,
+        selectedCardId: env.body.cardId,
+        offerSeqNo: env.body.offerSeqNo,
+      });
+    }
+    return "DUPLICATE_EVENT";
+  }
+
+  private async recoverDuplicatePlayEvent(
+    env: CommandEnvelope<CardPlayBody>,
+    server: Server,
+  ): Promise<CommandOutcome> {
+    if (this.ownership.currentFence(env.matchId) == null) return "RETRY";
+    const sm = await this.matchService.getStateMachine(env.matchId);
+    if (!sm) return "DUPLICATE_EVENT";
+    const canonical = this.findCanonicalCardResolved(
+      sm,
+      env.body.userId,
+      env.body.cardId,
+      env.body.offerSeqNo,
+    );
+    if (!canonical) return "DUPLICATE_EVENT";
+    if (
+      canonical.payload.eventId !== env.eventId ||
+      canonical.payload.commandId !== env.body.commandId
+    ) {
+      return "DUPLICATE_EVENT";
+    }
+    if (this.ownership.currentFence(env.matchId) == null) return "RETRY";
+    this.emitCardResolved(server, sm.getState().roomId, canonical.payload);
+    return "DUPLICATE_EVENT";
+  }
+
+  /**
+   * Re-emit a persisted canonical `CARD_RESOLVED` event using the same
+   * sanitization rules as the live `applyCardPlayAuthoritative` path:
+   * the room-wide broadcast gets the privacy-preserving `sanitizedEffect`,
+   * each target's player room gets the full un-sanitized effect. The
+   * canonical `payload` was deep-frozen at append time, so spreading it
+   * into the emit produces a plain object that downstream consumers can
+   * own without aliasing the event log.
+   */
+  private emitCardResolved(
+    server: Server,
+    roomId: string | undefined,
+    payload: Record<string, unknown>,
+  ): void {
+    const targetPlayerIds =
+      (payload.targetPlayerIds as string[] | undefined) ?? [];
+    const resolvedEffect = payload.effect as
+      | Parameters<typeof MatchCommandService.sanitizeEffect>[0]
+      | undefined;
+    if (!roomId || resolvedEffect == null) return;
+    const sanitizedEffect = MatchCommandService.sanitizeEffect(resolvedEffect);
+    const fullEffectRooms = targetPlayerIds.map((id) => `player:${id}`);
+    server
+      .to(`room:${roomId}`)
+      .except(fullEffectRooms)
+      .emit(ServerEvent.CARD_RESOLVED, {
+        ...payload,
+        effect: sanitizedEffect,
+      });
+    for (const targetId of targetPlayerIds) {
+      server.to(`player:${targetId}`).emit(ServerEvent.CARD_RESOLVED, {
+        ...payload,
+        effect: resolvedEffect,
+      });
+    }
+  }
+
+  /**
+   * Owner-side authoritative apply for `card_pick` envelopes. Symmetric with
+   * `applyAnswerAuthoritative`: eventId dedup → state machine mutate →
+   * fenced persist → broadcast → mark applied. State-machine validation
+   * failures (CARD_NOT_IN_HAND, etc.) and stale-active checks are acked as
+   * `DUPLICATE_SUBMISSION` so the stream entry never loops.
+   */
+  private async applyCardPickAuthoritative(
+    env: CommandEnvelope<CardPickBody>,
+    _owner: { fence: number; leaseValue: string },
+    server: Server,
+  ): Promise<CommandOutcome> {
+    const applied = appliedSetKey(env.matchId);
+
+    let alreadyApplied: boolean;
+    try {
+      alreadyApplied = await this.redis.sismember(applied, env.eventId);
+    } catch (err) {
+      this.logger.warn(
+        `applyCardPickAuthoritative: dedup read failed for ${env.matchId} (RETRY): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return "RETRY";
+    }
+    if (alreadyApplied) return this.recoverDuplicatePickEvent(env, server);
+
+    const sm = await this.matchService.getStateMachine(env.matchId);
+    if (!sm) return "RETRY";
+
+    const state = sm.getState();
+    const userId = env.body.userId;
+    const player = state.players?.get(userId);
+    if (!player) {
+      this.emitPlayerError(
+        server,
+        userId,
+        ClientEvent.CARD_PICK,
+        env.body.commandId,
+        new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER),
+      );
+      return "DUPLICATE_SUBMISSION";
+    }
+    if (
+      player.status === PlayerStatus.ELIMINATED ||
+      player.status === PlayerStatus.WINNER ||
+      player.status === PlayerStatus.DISCONNECTED
+    ) {
+      const code =
+        player.status === PlayerStatus.DISCONNECTED
+          ? ErrorCode.PLAYER_DISCONNECTED
+          : ErrorCode.SPECTATOR_CANNOT_ANSWER;
+      this.emitPlayerError(
+        server,
+        userId,
+        ClientEvent.CARD_PICK,
+        env.body.commandId,
+        new RoomError(code),
+      );
+      return "DUPLICATE_SUBMISSION";
+    }
+
+    try {
+      assertCardId(env.body.cardId);
+      sm.pickCard(userId, env.body.cardId, env.body.offerSeqNo, {
+        eventId: env.eventId,
+        commandId: env.body.commandId,
+      });
+    } catch (err) {
+      if (sm.getPickedCards(userId).has(env.body.cardId as CardId)) {
+        return this.recoverDuplicatePickEvent(env, server);
+      }
+      this.logger.warn(
+        `applyCardPickAuthoritative: pickCard rejected for ${env.matchId}/${userId} (acking as no-op): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      this.emitPlayerError(
+        server,
+        userId,
+        ClientEvent.CARD_PICK,
+        env.body.commandId,
+        err,
+      );
+      return "DUPLICATE_SUBMISSION";
+    }
+
+    const persisted = await this.matchService.persistStateMachine(env.matchId);
+    if (persisted !== "APPLIED") {
+      this.matchService.evictStateMachine(env.matchId);
+      return "RETRY";
+    }
+
+    const roomId = state.roomId;
+    if (roomId) {
+      server.to(`room:${roomId}`).emit(ServerEvent.CARD_PICKED, {
+        matchId: env.matchId,
+        roundNo: sm.getCurrentRound()?.roundNo ?? 0,
+        playerId: userId,
+        selectedCardId: env.body.cardId,
+        offerSeqNo: env.body.offerSeqNo,
+      });
+    } else {
+      this.logger.warn(
+        `applyCardPickAuthoritative: missing roomId for ${env.matchId}, unable to broadcast CARD_PICKED`,
+      );
+    }
+
+    try {
+      await this.redis.sadd(applied, env.eventId);
+    } catch {
+      // Non-fatal: a redelivery is healable via the state machine's no-op path.
+    }
+
+    return "APPLIED";
+  }
+
+  /**
+   * Owner-side authoritative apply for `card_play` envelopes. The full
+   * authoritative path runs here in ONE serialised consumer step: read
+   * current round / AOE count → validate card command → resolve effect
+   * → expand targets → state machine playCard → fenced persist →
+   * broadcast sanitized to room + full to each target → mark applied.
+   *
+   * Returning `DUPLICATE_SUBMISSION` on validation / state-machine
+   * rejection mirrors `applyAnswerAuthoritative`: stale / late / illegal
+   * commands ack no-op so the stream entry never loops. Fenced-persist
+   * failure returns `RETRY` so the next owner reprocesses.
+   */
+  private async applyCardPlayAuthoritative(
+    env: CommandEnvelope<CardPlayBody>,
+    _owner: { fence: number; leaseValue: string },
+    server: Server,
+  ): Promise<CommandOutcome> {
+    const applied = appliedSetKey(env.matchId);
+
+    let alreadyApplied: boolean;
+    try {
+      alreadyApplied = await this.redis.sismember(applied, env.eventId);
+    } catch (err) {
+      this.logger.warn(
+        `applyCardPlayAuthoritative: dedup read failed for ${env.matchId} (RETRY): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return "RETRY";
+    }
+    if (alreadyApplied) return this.recoverDuplicatePlayEvent(env, server);
+
+    const sm = await this.matchService.getStateMachine(env.matchId);
+    if (!sm) return "RETRY";
+
+    const state = sm.getState();
+    const userId = env.body.userId;
+    const player = state.players?.get(userId);
+    if (!player) {
+      this.emitPlayerError(
+        server,
+        userId,
+        ClientEvent.CARD_PLAY,
+        env.body.commandId,
+        new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER),
+      );
+      return "DUPLICATE_SUBMISSION";
+    }
+    if (
+      player.status === PlayerStatus.ELIMINATED ||
+      player.status === PlayerStatus.WINNER ||
+      player.status === PlayerStatus.DISCONNECTED
+    ) {
+      const code =
+        player.status === PlayerStatus.DISCONNECTED
+          ? ErrorCode.PLAYER_DISCONNECTED
+          : ErrorCode.SPECTATOR_CANNOT_ANSWER;
+      this.emitPlayerError(
+        server,
+        userId,
+        ClientEvent.CARD_PLAY,
+        env.body.commandId,
+        new RoomError(code),
+      );
+      return "DUPLICATE_SUBMISSION";
+    }
+
+    const pickedCards = Array.from(sm.getPickedCards(userId));
+    const offeredCardIds =
+      sm.getCardOfferForPlayer(userId, env.body.offerSeqNo) ?? [];
+    const roster = new Set(state.players.keys());
+    const playedSet = sm.getPlayedCards(userId);
+    const currentRoundNo = sm.getCurrentRound()?.roundNo ?? 0;
+    const aoeCount = sm.getAoeCountForRound(currentRoundNo);
+
+    let validated;
+    try {
+      validated = validateCardCommand({
+        cardId: env.body.cardId,
+        offeredCardIds: offeredCardIds as CardId[],
+        targetPlayerId: env.body.targetPlayerId,
+        rosterPlayerIds: roster,
+        currentAoeCount: aoeCount,
+        playedCardIds: playedSet,
+        pickedCards,
+        actingPlayerId: userId,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `applyCardPlayAuthoritative: validateCardCommand rejected for ${env.matchId}/${userId} (acking as no-op): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      // If the card is already in `playedCards`, the prior owner persisted
+      // the resolution but failed to broadcast (or to mark applied). Recover
+      // the canonical event instead of telling the client a new error.
+      if (sm.getPlayedCards(userId).has(env.body.cardId as CardId)) {
+        return this.recoverDuplicatePlayEvent(env, server);
+      }
+      this.emitPlayerError(
+        server,
+        userId,
+        ClientEvent.CARD_PLAY,
+        env.body.commandId,
+        err,
+      );
+      return "DUPLICATE_SUBMISSION";
+    }
+
+    const resolveRng = this.makeResolveRng(
+      env.matchId,
+      userId,
+      currentRoundNo,
+      env.body.offerSeqNo,
+      env.body.cardId,
+    );
+    const correctAnswer = sm.getCorrectAnswer();
+    let resolved: CardEffect;
+    try {
+      resolved = resolveCardEffect(
+        validated.cardId,
+        validated.template,
+        resolveRng,
+        {
+          targetHand: env.body.targetPlayerId
+            ? sm.getHand(env.body.targetPlayerId)
+            : undefined,
+          options: sm.getCurrentRound()?.question.options,
+          correctAnswer,
+          currentRoundNo,
+          partial: correctAnswer ? correctAnswer[0] : "",
+        },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `applyCardPlayAuthoritative: resolveCardEffect rejected for ${env.matchId}/${userId} (acking as no-op): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      this.emitPlayerError(
+        server,
+        userId,
+        ClientEvent.CARD_PLAY,
+        env.body.commandId,
+        err,
+      );
+      return "DUPLICATE_SUBMISSION";
+    }
+
+    const targetPlayerIds = this.expandTargets(
+      env.matchId,
+      validated.cardId,
+      userId,
+      env.body.targetPlayerId,
+      currentRoundNo,
+      env.body.offerSeqNo,
+      sm,
+    );
+
+    const serverNow = Date.now();
+    let result;
+    try {
+      result = sm.playCard(
+        userId,
+        validated.cardId,
+        env.body.offerSeqNo,
+        resolved,
+        targetPlayerIds,
+        serverNow,
+        { eventId: env.eventId, commandId: env.body.commandId },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `applyCardPlayAuthoritative: playCard rejected for ${env.matchId}/${userId} (acking as no-op): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      // If the card is already in `playedCards`, a prior owner persisted
+      // the resolution but failed before the broadcast / applied-marker.
+      // Recover the canonical event instead of returning a generic error.
+      if (sm.getPlayedCards(userId).has(env.body.cardId as CardId)) {
+        return this.recoverDuplicatePlayEvent(env, server);
+      }
+      this.emitPlayerError(
+        server,
+        userId,
+        ClientEvent.CARD_PLAY,
+        env.body.commandId,
+        err,
+      );
+      return "DUPLICATE_SUBMISSION";
+    }
+
+    const persisted = await this.matchService.persistStateMachine(env.matchId);
+    if (persisted !== "APPLIED") {
+      this.matchService.evictStateMachine(env.matchId);
+      return "RETRY";
+    }
+
+    const roomId = state.roomId;
+    if (roomId) {
+      const basePayload = {
+        seqNo: result.seqNo,
+        matchId: env.matchId,
+        roundNo: currentRoundNo,
+        cardId: env.body.cardId,
+        offerSeqNo: env.body.offerSeqNo,
+        playedByPlayerId: userId,
+        targetPlayerIds,
+        resolution:
+          result.expiresAtServer === null
+            ? ("MUTATION" as const)
+            : ("TEMPORARY" as const),
+        serverTimestamp: serverNow,
+        expiresAtServer: result.expiresAtServer,
+        remainingMs: result.remainingMs,
+      };
+      const sanitizedEffect = MatchCommandService.sanitizeEffect(resolved);
+      const fullEffectRooms = targetPlayerIds.map((id) => `player:${id}`);
+
+      server
+        .to(`room:${roomId}`)
+        .except(fullEffectRooms)
+        .emit(ServerEvent.CARD_RESOLVED, {
+          ...basePayload,
+          effect: sanitizedEffect,
+        });
+
+      for (const targetId of targetPlayerIds) {
+        server.to(`player:${targetId}`).emit(ServerEvent.CARD_RESOLVED, {
+          ...basePayload,
+          effect: resolved,
+        });
+      }
+    } else {
+      this.logger.warn(
+        `applyCardPlayAuthoritative: missing roomId for ${env.matchId}, unable to broadcast CARD_RESOLVED`,
+      );
+    }
+
+    try {
+      await this.redis.sadd(applied, env.eventId);
+    } catch {
+      // Non-fatal: a redelivery is healable via the state machine's no-op path.
+    }
+
+    return "APPLIED";
+  }
+
+  /**
+   * Build a deterministic PRNG for the resolver. The seed derives from the
+   * match / user / round / offer / card identity, so the same input always
+   * produces the same float sequence. See the spec §3.3 "Byte-level RNG
+   * consumption" — `mulberry32` is the canonical algorithm and lives in
+   * `@arena/game-core`; we do not duplicate it here.
+   */
+  private makeResolveRng(
+    matchId: string,
+    userId: string,
+    roundNo: number,
+    offerSeqNo: number,
+    cardId: string,
+  ): () => number {
+    const seed = deriveSubstream(
+      `${matchId}|${userId}|${roundNo}|${offerSeqNo}|${cardId}`,
+      `resolve|${cardId}`,
+    );
+    return mulberry32(seed);
+  }
+
+  /**
+   * Expand a card's target set. Single-target cards return either the
+   * explicit `targetPlayerId` or fall back to the actor (self-only). AOE
+   * cards pick `template.targetCount` eligible players using a dedicated
+   * deterministic RNG substream so target selection is independent of
+   * the floats consumed by `resolveCardEffect`.
+   */
+  private expandTargets(
+    matchId: string,
+    cardId: CardId,
+    playedByPlayerId: string,
+    targetPlayerId: string | undefined,
+    roundNo: number,
+    offerSeqNo: number,
+    stateMachine: MatchStateMachine,
+  ): string[] {
+    const def = getCardDefinition(cardId);
+    const template = def.effectTemplate as { targetCount?: number };
+    const count = template.targetCount ?? 1;
+
+    if (count > 1) {
+      const targetRng = mulberry32(
+        deriveSubstream(
+          `${matchId}|${playedByPlayerId}|${roundNo}|${offerSeqNo}|${cardId}`,
+          `targets|${cardId}`,
+        ),
+      );
+
+      const players = stateMachine.getState().players;
+      const eligible = Array.from(players.entries())
+        .filter(
+          ([id, p]) =>
+            id !== playedByPlayerId &&
+            p.status !== PlayerStatus.ELIMINATED &&
+            p.status !== PlayerStatus.WINNER &&
+            p.status !== PlayerStatus.DISCONNECTED,
+        )
+        .map(([id]) => id)
+        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+
+      const selected: string[] = [];
+      const numToPick = Math.min(count, eligible.length);
+      const remaining = eligible.slice();
+      for (let i = 0; i < numToPick; i++) {
+        const u = targetRng();
+        const idx = Math.floor(u * remaining.length);
+        selected.push(remaining[idx]!);
+        remaining.splice(idx, 1);
+      }
+      return selected;
+    }
+    if (targetPlayerId) return [targetPlayerId];
+    return [playedByPlayerId];
+  }
+
+  /**
+   * Per-kind allowlist for fields that contain data derived from the
+   * correct answer (or otherwise target-private). Anything listed here is
+   * cleared for the room-wide sanitized event; kinds not listed pass
+   * through unchanged. Mirrors the original handler-level allowlist.
+   */
+  private static sanitizeEffect(effect: CardEffect): CardEffect {
+    switch (effect.kind) {
+      case "OPTION_DISABLE":
+        return { ...effect, indexes: [] };
+      case "OPTION_FAKE":
+        return { ...effect, indexes: [] };
+      case "HINT_REVEAL":
+        return { ...effect, partial: "" };
+      case "HAND_DESTROY":
+        return { ...effect, destroyedCardIds: [] };
+      case "TIMER_MODIFY":
+      case "OPTION_LOCK":
+      case "DELAY_RENDER":
+      case "VISUAL_OVERLAY":
+      case "SEMANTIC_FLIP":
+      case "QUESTION_REPLAY":
+      case "SHIELD":
+      case "SCORE_MULT":
+      case "SECOND_CHANCE":
+        return effect;
+      default: {
+        const _exhaustive: never = effect;
+        void _exhaustive;
+        return effect;
+      }
+    }
   }
 
   /**

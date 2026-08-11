@@ -250,6 +250,13 @@ export interface CardPickedEvent {
   playerId: string;
   selectedCardId: CardId;
   offerSeqNo: number;
+  // Canonical command identity (populated by the owner when the event is
+  // appended; absent on legacy persisted entries replayed from older
+  // snapshots). Used by the API boundary's `recoverDuplicatePickEvent` to
+  // confirm a redelivery matches the originally-committed command before
+  // re-broadcasting the canonical `CARD_PICKED` event.
+  readonly eventId?: string;
+  readonly commandId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +301,11 @@ export type MutationEffect = {
   readonly serverTimestamp: number;
   readonly expiresAtServer: null;
   readonly remainingMs: null;
+  // Canonical command identity (see `CardPickedEvent` above). Used by
+  // `recoverDuplicatePlayEvent` to confirm the incoming command matches
+  // the originally-committed one before re-broadcasting.
+  readonly eventId?: string;
+  readonly commandId?: string;
 };
 
 export type TemporaryEffect = {
@@ -308,6 +320,11 @@ export type TemporaryEffect = {
   readonly serverTimestamp: number;
   readonly expiresAtServer: number;
   readonly remainingMs: number;
+  // Canonical command identity (see `CardPickedEvent` above). Used by
+  // `recoverDuplicatePlayEvent` to confirm the incoming command matches
+  // the originally-committed one before re-broadcasting.
+  readonly eventId?: string;
+  readonly commandId?: string;
 };
 
 export type CardEffectEvent = MutationEffect | TemporaryEffect;
@@ -447,32 +464,108 @@ export function createEvent<T>(
   };
 }
 
+/**
+ * Recursively clones and deep-freezes a payload so the resulting event tree
+ * owns fresh references for every nested object/array and cannot be mutated
+ * by downstream consumers.
+ *
+ * Contract:
+ *  - Rejects `undefined` at the root OR any nested slot with the same
+ *    `TypeError` shape as `bigint` / `function` / `symbol`: JSON has no
+ *    representation of `undefined`, so dropping a `undefined` value would
+ *    silently rewrite it as `null` on serialization. Callers MUST encode
+ *    optionality explicitly (omitting the key or using `null`).
+ *  - Accepts plain-object payloads whose prototype is `Object.prototype` or
+ *    `null`. Class instances (`Date`, `Map`, `Set`, etc.) are rejected with a
+ *    `TypeError` to keep the event log JSON-serializable.
+ *  - Supports enumerable **string-keyed** properties only. Symbol-keyed
+ *    properties are intentionally omitted — they are not part of the
+ *    serialized wire shape and are excluded by `Object.entries`.
+ *  - Getters are evaluated **once** during cloning; the resulting static
+ *    value is stored on the cloned tree. Side effects from getter invocation
+ *    are not preserved.
+ *  - Arrays are cloned element-by-element and frozen.
+ *  - Already-frozen inputs are still cloned (the returned tree owns fresh
+ *    references for every nested object/array), so callers never have to
+ *    think about whether the input was previously frozen.
+ *  - Circular references are detected (a true cycle returns to an object
+ *    that is still on the current recursion path) and rejected with a
+ *    `TypeError`. Acyclic shared references — two properties pointing at
+ *    the same object — are allowed and are deep-cloned independently, with
+ *    each branch owning its own frozen copy.
+ */
 function cloneAndFreeze<T>(value: T): T {
-  if (value === null || typeof value !== "object") return value;
-  // Always clone first — including for already-frozen inputs —
-  // so the returned tree owns fresh references for every nested
-  // object/array. Returning early on `Object.isFrozen(value)`
-  // would silently alias the caller's frozen reference, allowing
-  // a shallow-frozen parent to keep mutable children reachable
-  // from the returned event payload.
-  if (Array.isArray(value)) {
-    return Object.freeze([...value].map(cloneAndFreeze) as unknown as T[]) as T;
-  }
-  const proto = Object.getPrototypeOf(value);
-  if (proto !== Object.prototype && proto !== null) {
-    const ctor =
-      proto && typeof proto === "object" && "constructor" in proto
-        ? (proto as { constructor?: { name?: string } }).constructor?.name
-        : undefined;
+  if (
+    value === undefined ||
+    typeof value === "bigint" ||
+    typeof value === "function" ||
+    typeof value === "symbol"
+  ) {
     throw new TypeError(
-      `createEvent: ${ctor ?? "class"} instance is not a serializable plain object payload`,
+      `createEvent: ${value === undefined ? "undefined" : typeof value} is not a JSON-serializable value`,
     );
   }
-  const cloned = Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([k, v]) => [
-      k,
-      cloneAndFreeze(v),
-    ]),
-  ) as T;
-  return Object.freeze(cloned) as T;
+  // Path-tracked `seen` set: an object is only "in progress" while its
+  // subtree is being cloned. Removing it in `finally` once cloning
+  // completes lets a legitimate shared reference (two properties pointing
+  // at the same object via different paths) be walked on the second
+  // branch instead of being misreported as a circular reference.
+  const seen = new WeakSet<object>();
+  return cloneAndFreezeInner(value, seen);
+}
+
+function cloneAndFreezeInner<T>(value: T, seen: WeakSet<object>): T {
+  if (
+    value === undefined ||
+    typeof value === "bigint" ||
+    typeof value === "function" ||
+    typeof value === "symbol"
+  ) {
+    throw new TypeError(
+      `createEvent: ${value === undefined ? "undefined" : typeof value} is not a JSON-serializable value`,
+    );
+  }
+  if (value === null || typeof value !== "object") return value;
+
+  if (seen.has(value as unknown as object)) {
+    throw new TypeError("createEvent: circular object reference detected");
+  }
+  seen.add(value as unknown as object);
+  try {
+    // Always clone first — including for already-frozen inputs —
+    // so the returned tree owns fresh references for every nested
+    // object/array. Returning early on `Object.isFrozen(value)`
+    // would silently alias the caller's frozen reference, allowing
+    // a shallow-frozen parent to keep mutable children reachable
+    // from the returned event payload.
+    if (Array.isArray(value)) {
+      return Object.freeze(
+        [...value].map((v) => cloneAndFreezeInner(v, seen)) as unknown as T[],
+      ) as T;
+    }
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) {
+      const ctor =
+        proto && typeof proto === "object" && "constructor" in proto
+          ? (proto as { constructor?: { name?: string } }).constructor?.name
+          : undefined;
+      throw new TypeError(
+        `createEvent: ${ctor ?? "class"} instance is not a serializable plain object payload`,
+      );
+    }
+    // `Object.entries` walks enumerable string-keyed properties and invokes
+    // each accessor (getter) exactly once to capture its return value.
+    // Symbol-keyed and non-enumerable properties are intentionally omitted.
+    const cloned = Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+        k,
+        cloneAndFreezeInner(v, seen),
+      ]),
+    ) as T;
+    return Object.freeze(cloned) as T;
+  } finally {
+    // Drop the object from the recursion path so a sibling reference
+    // sharing the same instance is treated as a fresh walk, not a cycle.
+    seen.delete(value as unknown as object);
+  }
 }

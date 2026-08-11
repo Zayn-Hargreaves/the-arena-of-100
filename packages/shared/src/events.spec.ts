@@ -72,4 +72,62 @@ describe("createEvent — boundary immutability", () => {
     const date = new Date("2026-02-02T00:00:00.000Z");
     expect(() => createEvent<Date>("TEST", date, 1)).toThrow(TypeError);
   });
+
+  it("rejects bigint, function, and symbol primitives", () => {
+    expect(() => createEvent<unknown>("TEST", 10n, 1)).toThrow(TypeError);
+    expect(() => createEvent<unknown>("TEST", () => {}, 1)).toThrow(TypeError);
+    expect(() => createEvent<unknown>("TEST", Symbol("test"), 1)).toThrow(
+      TypeError,
+    );
+    expect(() => createEvent<unknown>("TEST", { a: 10n }, 1)).toThrow(
+      TypeError,
+    );
+  });
+
+  it("rejects undefined at the root and inside nested payloads", () => {
+    expect(() => createEvent<unknown>("TEST", undefined, 1)).toThrow(TypeError);
+    expect(() => createEvent<unknown>("TEST", undefined, 1)).toThrow(
+      /undefined/,
+    );
+    expect(() => createEvent<unknown>("TEST", { value: undefined }, 1)).toThrow(
+      TypeError,
+    );
+    expect(() => createEvent<unknown>("TEST", { value: undefined }, 1)).toThrow(
+      /undefined/,
+    );
+    expect(() =>
+      createEvent<unknown>("TEST", { items: [1, undefined, 3] }, 1),
+    ).toThrow(TypeError);
+  });
+
+  it("detects and rejects circular object references", () => {
+    type CircularFixture = { a: number; self?: CircularFixture };
+    const circular: CircularFixture = { a: 1 };
+    circular.self = circular;
+    expect(() => createEvent<unknown>("TEST", circular, 1)).toThrow(TypeError);
+    expect(() => createEvent<unknown>("TEST", circular, 1)).toThrow(
+      /circular object reference/,
+    );
+  });
+
+  it("clones acyclic shared references independently (two properties, same object)", () => {
+    const shared = { value: 1 };
+    const payload = { left: shared, right: shared };
+    const event = createEvent<{
+      left: { value: number };
+      right: { value: number };
+    }>("TEST", payload, 1);
+
+    expect(event.payload.left).not.toBe(shared);
+    expect(event.payload.right).not.toBe(shared);
+    // Each branch owns its own fresh reference; mutating the original
+    // does not leak into either.
+    shared.value = 999;
+    expect(event.payload.left).toMatchObject({ value: 1 });
+    expect(event.payload.right).toMatchObject({ value: 1 });
+    // The two branches are independent — the references are distinct.
+    expect(event.payload.left).not.toBe(event.payload.right);
+    expect(Object.isFrozen(event.payload.left)).toBe(true);
+    expect(Object.isFrozen(event.payload.right)).toBe(true);
+  });
 });
