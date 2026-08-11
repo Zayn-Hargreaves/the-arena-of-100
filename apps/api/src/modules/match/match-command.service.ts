@@ -37,7 +37,11 @@ import { RedisService, StreamEntry } from "../redis/redis.service";
 import { MatchService } from "./match.service";
 import { MatchOwnershipService } from "./match-ownership.service";
 import { ClusterService } from "../cluster/cluster.service";
-import { assertCardId, validateCardCommand } from "./card-validator";
+import {
+  assertCardId,
+  validateCardCommand,
+  validateOfferCorrelation,
+} from "./card-validator";
 import {
   type CommandEnvelope,
   commandEnvelopeSchema,
@@ -83,6 +87,8 @@ export type CommandOutcome =
   | "DUPLICATE_EVENT"
   | "DUPLICATE_SUBMISSION"
   | "RETRY";
+
+type DuplicatePlayRecovery = "RECOVERED" | "UNVERIFIED" | "RETRY";
 
 /**
  * The authoritative apply dispatcher — wired by B4b (submit_answer) / B5
@@ -756,6 +762,7 @@ export class MatchCommandService implements OnModuleDestroy {
       timestamp: number;
     } | null = null;
     sm.forEachEvent((entry) => {
+      if (found) return;
       if (entry.type !== "CARD_PICKED") return;
       const p = (entry.payload ?? {}) as Record<string, unknown>;
       if (p.playerId !== playerId) return;
@@ -789,6 +796,7 @@ export class MatchCommandService implements OnModuleDestroy {
       timestamp: number;
     } | null = null;
     sm.forEachEvent((entry) => {
+      if (found) return;
       if (entry.type !== "CARD_RESOLVED") return;
       const p = (entry.payload ?? {}) as Record<string, unknown>;
       if (p.playedByPlayerId !== playedByPlayerId) return;
@@ -830,10 +838,10 @@ export class MatchCommandService implements OnModuleDestroy {
     if (roomId) {
       server.to(`room:${roomId}`).emit(ServerEvent.CARD_PICKED, {
         matchId: env.matchId,
-        roundNo: sm.getCurrentRound()?.roundNo ?? 0,
-        playerId: env.body.userId,
-        selectedCardId: env.body.cardId,
-        offerSeqNo: env.body.offerSeqNo,
+        roundNo: canonical.payload.roundNo,
+        playerId: canonical.payload.playerId,
+        selectedCardId: canonical.payload.selectedCardId,
+        offerSeqNo: canonical.payload.offerSeqNo,
       });
     }
     return "DUPLICATE_EVENT";
@@ -842,26 +850,43 @@ export class MatchCommandService implements OnModuleDestroy {
   private async recoverDuplicatePlayEvent(
     env: CommandEnvelope<CardPlayBody>,
     server: Server,
-  ): Promise<CommandOutcome> {
+  ): Promise<DuplicatePlayRecovery> {
     if (this.ownership.currentFence(env.matchId) == null) return "RETRY";
     const sm = await this.matchService.getStateMachine(env.matchId);
-    if (!sm) return "DUPLICATE_EVENT";
+    if (!sm) return "RETRY";
     const canonical = this.findCanonicalCardResolved(
       sm,
       env.body.userId,
       env.body.cardId,
       env.body.offerSeqNo,
     );
-    if (!canonical) return "DUPLICATE_EVENT";
+    if (!canonical) return "UNVERIFIED";
     if (
       canonical.payload.eventId !== env.eventId ||
       canonical.payload.commandId !== env.body.commandId
     ) {
-      return "DUPLICATE_EVENT";
+      return "UNVERIFIED";
     }
     if (this.ownership.currentFence(env.matchId) == null) return "RETRY";
     this.emitCardResolved(server, sm.getState().roomId, canonical.payload);
-    return "DUPLICATE_EVENT";
+    return "RECOVERED";
+  }
+
+  private async handleDuplicatePlayRecovery(
+    env: CommandEnvelope<CardPlayBody>,
+    server: Server,
+  ): Promise<CommandOutcome> {
+    const recovery = await this.recoverDuplicatePlayEvent(env, server);
+    if (recovery === "RECOVERED") return "DUPLICATE_EVENT";
+    if (recovery === "RETRY") return "RETRY";
+    this.emitPlayerError(
+      server,
+      env.body.userId,
+      ClientEvent.CARD_PLAY,
+      env.body.commandId,
+      new RoomError(ErrorCode.COMMAND_ID_CONFLICT),
+    );
+    return "DUPLICATE_SUBMISSION";
   }
 
   /**
@@ -965,6 +990,9 @@ export class MatchCommandService implements OnModuleDestroy {
 
     try {
       assertCardId(env.body.cardId);
+      const offeredCardIds =
+        sm.getCardOfferForPlayer(userId, env.body.offerSeqNo) ?? [];
+      validateOfferCorrelation(env.body.cardId as CardId, offeredCardIds);
       sm.pickCard(userId, env.body.cardId, env.body.offerSeqNo, {
         eventId: env.eventId,
         commandId: env.body.commandId,
@@ -1048,7 +1076,7 @@ export class MatchCommandService implements OnModuleDestroy {
       );
       return "RETRY";
     }
-    if (alreadyApplied) return this.recoverDuplicatePlayEvent(env, server);
+    if (alreadyApplied) return this.handleDuplicatePlayRecovery(env, server);
 
     const sm = await this.matchService.getStateMachine(env.matchId);
     if (!sm) return "RETRY";
@@ -1115,7 +1143,7 @@ export class MatchCommandService implements OnModuleDestroy {
       // the resolution but failed to broadcast (or to mark applied). Recover
       // the canonical event instead of telling the client a new error.
       if (sm.getPlayedCards(userId).has(env.body.cardId as CardId)) {
-        return this.recoverDuplicatePlayEvent(env, server);
+        return this.handleDuplicatePlayRecovery(env, server);
       }
       this.emitPlayerError(
         server,
@@ -1199,7 +1227,7 @@ export class MatchCommandService implements OnModuleDestroy {
       // the resolution but failed before the broadcast / applied-marker.
       // Recover the canonical event instead of returning a generic error.
       if (sm.getPlayedCards(userId).has(env.body.cardId as CardId)) {
-        return this.recoverDuplicatePlayEvent(env, server);
+        return this.handleDuplicatePlayRecovery(env, server);
       }
       this.emitPlayerError(
         server,

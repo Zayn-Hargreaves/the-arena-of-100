@@ -23,16 +23,16 @@ export const playerDisconnectBodySchema = z.object({
 // (hand, target, AOE cap) and performs the single-writer mutation.
 export const cardPickBodySchema = z.object({
   type: z.literal("card_pick"),
-  userId: z.string(),
-  commandId: z.string(),
+  userId: z.string().min(1),
+  commandId: z.string().min(1),
   cardId: z.string(),
   offerSeqNo: z.number().int().positive(),
 });
 
 export const cardPlayBodySchema = z.object({
   type: z.literal("card_play"),
-  userId: z.string(),
-  commandId: z.string(),
+  userId: z.string().min(1),
+  commandId: z.string().min(1),
   cardId: z.string(),
   offerSeqNo: z.number().int().positive(),
   targetPlayerId: z.string().optional(),

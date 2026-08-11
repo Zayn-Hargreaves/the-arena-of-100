@@ -11,7 +11,6 @@ import {
   RoomStatus,
   RoomError,
   ClientEvent,
-  type CardId,
 } from "@arena/shared";
 import { MatchHandler } from "./match.handler";
 import { RoomService } from "../../modules/room/room.service";
@@ -906,19 +905,8 @@ describe("MatchHandler", () => {
   // ---------------------------------------------------------------------------
   function makePlayMachine(
     overrides: Partial<{
-      getCardOfferForPlayer: (
-        userId: string,
-        offerSeqNo: number,
-      ) => readonly CardId[] | null;
-      getPickedCards: (userId: string) => ReadonlySet<CardId>;
-      getPlayedCards: (userId: string) => ReadonlySet<CardId>;
-      getAoeCountForRound: (roundNo: number) => number;
-      getCurrentRound: () => any;
       getState: () => any;
-      getHand: (playerId: string) => readonly CardId[];
-      getCorrectAnswer: () => string | undefined;
       playCard: (...args: unknown[]) => unknown;
-      pickCard: (...args: unknown[]) => unknown;
     }> = {},
   ) {
     const players = new Map([
@@ -927,24 +915,12 @@ describe("MatchHandler", () => {
       ["p3", { id: "p3", status: PlayerStatus.ACTIVE }],
     ]);
     return {
-      getCardOfferForPlayer: vi.fn().mockReturnValue(["CB-1", "CB-2", "CB-3"]),
-      getPickedCards: vi.fn().mockReturnValue(new Set<CardId>(["CB-1"])),
-      getPlayedCards: vi.fn().mockReturnValue(new Set<CardId>()),
-      getAoeCountForRound: vi.fn().mockReturnValue(0),
-      getCurrentRound: vi.fn().mockReturnValue({
-        roundNo: 5,
-        question: { id: "q1", options: ["A", "B", "C", "D"] },
-        correctAnswer: "A",
-      }),
-      getCorrectAnswer: vi.fn().mockReturnValue("A"),
       getState: vi.fn().mockReturnValue({ id: "m1", players }),
-      getHand: vi.fn().mockReturnValue([]),
       playCard: vi.fn().mockReturnValue({
         seqNo: 10,
         expiresAtServer: null,
         remainingMs: null,
       }),
-      pickCard: vi.fn(),
       ...overrides,
     } as any;
   }
@@ -1000,12 +976,7 @@ describe("MatchHandler", () => {
       // TN-1 is a self-only THU card; the boundary must forward
       // `targetPlayerId: undefined` verbatim. expandTargets on the
       // owner side falls back to the actor for self-only cards.
-      const machine = makePlayMachine({
-        getCardOfferForPlayer: vi
-          .fn()
-          .mockReturnValue(["TN-1", "CB-1", "CB-2"]),
-        getPickedCards: vi.fn().mockReturnValue(new Set<CardId>(["TN-1"])),
-      });
+      const machine = makePlayMachine();
       vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
       vi.mocked(matchCommand.forward).mockClear();
 
@@ -1032,12 +1003,7 @@ describe("MatchHandler", () => {
       // CB-8 is an AOE card targeting up to 3 players. The boundary
       // forwards the envelope as-is; expandTargets on the owner
       // side reads the current round roster to expand.
-      const machine = makePlayMachine({
-        getCardOfferForPlayer: vi
-          .fn()
-          .mockReturnValue(["CB-8", "CB-1", "CB-2"]),
-        getPickedCards: vi.fn().mockReturnValue(new Set<CardId>(["CB-8"])),
-      });
+      const machine = makePlayMachine();
       vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
       vi.mocked(matchCommand.forward).mockClear();
 
@@ -1065,10 +1031,7 @@ describe("MatchHandler", () => {
       // current hand must still forward — the dispatch ack-rejects
       // it as DUPLICATE_SUBMISSION without producing a CARD_RESOLVED
       // event.
-      const machine = makePlayMachine({
-        getPickedCards: vi.fn().mockReturnValue(new Set<CardId>(["CB-2"])),
-        getCardOfferForPlayer: vi.fn().mockReturnValue(null),
-      });
+      const machine = makePlayMachine();
       vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
       vi.mocked(matchCommand.forward).mockClear();
 
@@ -1231,12 +1194,7 @@ describe("MatchHandler", () => {
         // after `connect`.
         expect(actorClient.id).toBeDefined();
 
-        const machine = makePlayMachine({
-          getCardOfferForPlayer: vi
-            .fn()
-            .mockReturnValue(["CB-6", "CB-1", "CB-2"]),
-          getPickedCards: vi.fn().mockReturnValue(new Set<CardId>(["CB-6"])),
-        });
+        const machine = makePlayMachine();
         vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
         vi.mocked(matchCommand.forward).mockClear();
 
