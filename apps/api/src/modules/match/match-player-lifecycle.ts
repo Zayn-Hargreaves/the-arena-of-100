@@ -57,6 +57,7 @@ export async function leaveMatchPlayer(
         context.logger.warn(
           `handleMatchPlayerLeft: persist ${outcome} for ${matchId} — no confirmed canonical write, skipping leave broadcast`,
         );
+        context.matchService.evictStateMachine(matchId);
         return;
       }
     }

@@ -29,6 +29,7 @@ export function useGamePageLifecycle({
   const snapshotMatchIdRef = useRef<string | null>(null);
   const terminationNotifiedRef = useRef(false);
   const terminationRedirectRef = useRef<number | null>(null);
+  const resultRedirectRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (snapshotMatchIdRef.current !== matchId) {
@@ -44,6 +45,10 @@ export function useGamePageLifecycle({
     if (!roomTerminated || terminationNotifiedRef.current) return;
     terminationNotifiedRef.current = true;
     clearTimers();
+    if (resultRedirectRef.current !== null) {
+      window.clearTimeout(resultRedirectRef.current);
+      resultRedirectRef.current = null;
+    }
     toast({
       title: tTermination("toastTitle"),
       description: roomTerminationMessage ?? tTermination("toastDefault"),
@@ -76,11 +81,16 @@ export function useGamePageLifecycle({
   );
 
   useEffect(() => {
-    if (matchStatus !== "FINISHED") return;
-    const redirectTimer = setTimeout(
+    if (matchStatus !== "FINISHED" || roomTerminated) return;
+    resultRedirectRef.current = window.setTimeout(
       () => router.push(`/result/${matchId}`),
       3000,
     );
-    return () => clearTimeout(redirectTimer);
-  }, [matchStatus, matchId, router]);
+    return () => {
+      if (resultRedirectRef.current !== null) {
+        window.clearTimeout(resultRedirectRef.current);
+        resultRedirectRef.current = null;
+      }
+    };
+  }, [matchStatus, matchId, roomTerminated, router]);
 }

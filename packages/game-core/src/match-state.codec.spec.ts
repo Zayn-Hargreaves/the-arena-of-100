@@ -540,6 +540,47 @@ describe("match-state.codec v2 + back-compat (B1c)", () => {
       expect(answer?.submissionId).toBe("legacy-p1-1234");
     });
 
+    it("preserves an existing empty submissionId", () => {
+      const parsed = JSON.parse(v1Blob());
+      parsed.currentRound.answers = [
+        [
+          "p1",
+          {
+            playerId: "p1",
+            answer: "A",
+            submissionId: "",
+            isCorrect: true,
+            responseTimeMs: 100,
+            submittedAt: 1234,
+          },
+        ],
+      ];
+
+      const decoded = deserializeMatch(JSON.stringify(parsed));
+      const answer = (
+        decoded.currentRound as { answers: Map<string, AnswerState> }
+      ).answers.get("p1");
+      expect(answer?.submissionId).toBe("");
+    });
+
+    it("rejects an answer whose map key does not match answer.playerId", () => {
+      const parsed = JSON.parse(v1Blob());
+      parsed.currentRound.answers = [
+        [
+          "p1",
+          {
+            playerId: "p2",
+            answer: "A",
+            isCorrect: true,
+            responseTimeMs: 100,
+            submittedAt: 1234,
+          },
+        ],
+      ];
+
+      expect(() => deserializeMatch(JSON.stringify(parsed))).toThrow();
+    });
+
     it("rejects malformed answer entries with the normalized codec error", () => {
       const parsed = JSON.parse(v1Blob());
       parsed.currentRound.answers = [["p1", null]];

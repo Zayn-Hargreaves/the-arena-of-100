@@ -66,6 +66,7 @@ describe("MatchRoundRunner", () => {
     matchService = {
       getStateMachine: vi.fn().mockResolvedValue(stateMachine),
       persistStateMachine: vi.fn().mockResolvedValue("APPLIED"),
+      evictStateMachine: vi.fn(),
       finishMatch: vi.fn().mockResolvedValue({}),
       // H2-style endRound fix: round + answers are persisted
       // atomically in a single $transaction call.
@@ -847,6 +848,7 @@ describe("MatchRoundRunner", () => {
 
       await runner.handleMatchPlayerLeft("match-1", "room-1", "p1", mockServer);
 
+      expect(matchService.evictStateMachine).toHaveBeenCalledWith("match-1");
       expect(emitSpy).not.toHaveBeenCalled();
     });
   });

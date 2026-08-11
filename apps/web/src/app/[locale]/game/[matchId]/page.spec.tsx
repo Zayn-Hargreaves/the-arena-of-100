@@ -133,8 +133,10 @@ function baseState(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function renderPage(matchId = "m1") {
-  const params = Promise.resolve({ matchId, locale: "en" });
+async function renderPage(
+  matchId = "m1",
+  params = Promise.resolve({ matchId, locale: "en" }),
+) {
   let utils!: ReturnType<typeof render>;
   await act(async () => {
     utils = render(
@@ -306,6 +308,32 @@ describe("GamePage — redirects", () => {
       vi.advanceTimersByTime(1500);
     });
     expect(h.push).toHaveBeenCalledWith("/");
+  });
+
+  it("cancels a pending result redirect when room termination wins", async () => {
+    const params = Promise.resolve({ matchId: "m1", locale: "en" });
+    h.state = baseState({ match: matchFixture({ status: "FINISHED" }) });
+    const utils = await renderPage("m1", params);
+
+    h.state = baseState({
+      match: matchFixture({ status: "FINISHED" }),
+      roomTerminated: true,
+      roomTerminationMessage: "closed",
+    });
+    await act(async () => {
+      utils.rerender(
+        <Suspense fallback={<div data-testid="fallback" />}>
+          <GamePage params={params} />
+        </Suspense>,
+      );
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(h.push).toHaveBeenCalledWith("/");
+    expect(h.push).not.toHaveBeenCalledWith("/result/m1");
   });
 });
 

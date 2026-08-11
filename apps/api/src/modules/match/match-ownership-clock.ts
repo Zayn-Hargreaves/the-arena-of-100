@@ -46,18 +46,25 @@ export async function computeMaxClockSkew(
       raw: await redis.get(nodeClockKey(nodeId)),
     })),
   );
-  const staleNodeIds: string[] = [];
+  const staleNodes: Array<{ nodeId: string; raw: null }> = [];
   for (const { nodeId, raw } of values) {
     if (raw === null) {
-      staleNodeIds.push(nodeId);
+      staleNodes.push({ nodeId, raw });
       continue;
     }
     const offset = Number(raw);
     if (Number.isFinite(offset)) offsets.push(offset);
   }
-  if (staleNodeIds.length > 0) {
-    await redis.srem(NODE_CLOCKS_INDEX, ...staleNodeIds);
-  }
+  await Promise.all(
+    staleNodes.map(({ nodeId, raw }) =>
+      redis.removeIndexMemberIfValueUnchanged(
+        nodeClockKey(nodeId),
+        NODE_CLOCKS_INDEX,
+        nodeId,
+        raw,
+      ),
+    ),
+  );
   if (offsets.length < 2) return 0;
   return Math.max(...offsets) - Math.min(...offsets);
 }

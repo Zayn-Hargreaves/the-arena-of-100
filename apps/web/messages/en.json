@@ -237,7 +237,7 @@
     "title": "ARENA RESULTS",
     "matchId": "MATCH ID: {matchId}",
     "championBadge": "ARENA CHAMPION",
-    "championDescription": "Defeated {opponents} opponents to become the arena's sole champion!",
+    "championDescription": "{opponents, plural, =0 {Became the arena's sole champion without facing an opponent!} one {Defeated # opponent to become the arena's sole champion!} other {Defeated # opponents to become the arena's sole champion!}}",
     "metrics": {
       "score": "Score",
       "accuracy": "Accuracy",

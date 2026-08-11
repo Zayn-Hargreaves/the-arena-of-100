@@ -1064,6 +1064,48 @@ describe("RedisService", () => {
       ).resolves.toBe("PRESENT");
     });
 
+    it("removeIndexMemberIfValueUnchanged conditionally removes the indexed member", async () => {
+      client.eval.mockResolvedValueOnce("REMOVED");
+      await expect(
+        service.removeIndexMemberIfValueUnchanged(
+          "node:clock:a",
+          "node:clocks",
+          "a",
+          null,
+        ),
+      ).resolves.toBe("REMOVED");
+
+      const [script, keyCount, valueKey, indexKey, member, observedMissing] =
+        client.eval.mock.calls[0] as unknown[];
+      expect(script).toContain("redis.call('GET', KEYS[1])");
+      expect(script).toContain("redis.call('SREM', KEYS[2], ARGV[1])");
+      expect(keyCount).toBe(2);
+      expect(valueKey).toBe("node:clock:a");
+      expect(indexKey).toBe("node:clocks");
+      expect(member).toBe("a");
+      expect(observedMissing).toBe("1");
+
+      client.eval.mockResolvedValueOnce("CHANGED");
+      await expect(
+        service.removeIndexMemberIfValueUnchanged(
+          "node:clock:a",
+          "node:clocks",
+          "a",
+          "7",
+        ),
+      ).resolves.toBe("CHANGED");
+      expect(client.eval).toHaveBeenNthCalledWith(
+        2,
+        expect.any(String),
+        2,
+        "node:clock:a",
+        "node:clocks",
+        "a",
+        "0",
+        "7",
+      );
+    });
+
     it("removeActiveIfTombstoned returns REMOVED / ABSENT", async () => {
       client.eval.mockResolvedValueOnce("REMOVED");
       await expect(

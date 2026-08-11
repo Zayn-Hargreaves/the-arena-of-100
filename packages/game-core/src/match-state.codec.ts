@@ -287,6 +287,7 @@ function validateCurrentRoundShape(
       }
       return (
         typeof answer.playerId === "string" &&
+        playerId === answer.playerId &&
         typeof answer.answer === "string" &&
         typeof answer.isCorrect === "boolean" &&
         typeof answer.responseTimeMs === "number" &&
@@ -440,12 +441,13 @@ function decodeCurrentRound(
     endsAt: resolvedTiming.endsAt,
     answers: new Map<string, AnswerState>(
       answers.map(([playerId, answer]) => {
-        const decodedAnswer: AnswerState = answer.submissionId
-          ? { ...answer, submissionId: answer.submissionId }
-          : {
-              ...answer,
-              submissionId: `legacy-${playerId}-${answer.submittedAt}`,
-            };
+        const decodedAnswer: AnswerState =
+          typeof answer.submissionId === "string"
+            ? { ...answer, submissionId: answer.submissionId }
+            : {
+                ...answer,
+                submissionId: `legacy-${playerId}-${answer.submittedAt}`,
+              };
         return [playerId, decodedAnswer];
       }),
     ),

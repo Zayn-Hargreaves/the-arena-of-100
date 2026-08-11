@@ -578,6 +578,33 @@ return 'REMOVED'`;
     );
   }
 
+  async removeIndexMemberIfValueUnchanged(
+    valueKey: string,
+    indexKey: string,
+    member: string,
+    observedValue: string | null,
+  ): Promise<"REMOVED" | "CHANGED"> {
+    const script = `
+local current = redis.call('GET', KEYS[1])
+local unchanged = (ARGV[2] == '1' and current == false)
+  or (ARGV[2] == '0' and current == ARGV[3])
+if not unchanged then
+  return 'CHANGED'
+end
+redis.call('SREM', KEYS[2], ARGV[1])
+return 'REMOVED'`;
+    const result = await this.eval(
+      script,
+      [valueKey, indexKey],
+      [member, observedValue === null ? "1" : "0", observedValue ?? ""],
+    );
+    if (result === "REMOVED") return "REMOVED";
+    if (result === "CHANGED") return "CHANGED";
+    throw new Error(
+      `removeIndexMemberIfValueUnchanged: unexpected Lua reply for ${member}: ${JSON.stringify(result)}`,
+    );
+  }
+
   // Atomic conditional removal for the TERMINAL path: SREM `member` from
   // `indexKey` ONLY when the tombstone still exists, re-validated in the same
   // operation so a match that was concurrently requeued (tombstone deleted, id
