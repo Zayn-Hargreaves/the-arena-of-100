@@ -287,8 +287,8 @@ describe("resolveCardEffect — pass-through templates (no RNG consumed)", () =>
   }
 });
 
-describe("resolveCardEffect — HINT_REVEAL_TEMPLATE (TN-3) needs partial ctx", () => {
-  it("resolves to HINT_REVEAL with the supplied partial string", () => {
+describe("resolveCardEffect — HINT_REVEAL_TEMPLATE (TN-3) derives partial from correctAnswer", () => {
+  it("resolves to HINT_REVEAL with the first char of correctAnswer when count=1", () => {
     const template = {
       kind: "HINT_REVEAL_TEMPLATE" as const,
       revealDescriptor: "FIRST_N_CHARS" as const,
@@ -296,9 +296,34 @@ describe("resolveCardEffect — HINT_REVEAL_TEMPLATE (TN-3) needs partial ctx", 
     };
     const rng = mulberry32(0x42);
     const result = resolveCardEffect("TN-3", template, rng, {
-      partial: "B",
+      correctAnswer: "B",
     });
     expect(result).toEqual({ kind: "HINT_REVEAL", partial: "B" });
+  });
+
+  it("resolves to HINT_REVEAL with first N chars when count>1", () => {
+    const template = {
+      kind: "HINT_REVEAL_TEMPLATE" as const,
+      revealDescriptor: "FIRST_N_CHARS" as const,
+      count: 2,
+    };
+    const rng = mulberry32(0x42);
+    const result = resolveCardEffect("TN-3", template, rng, {
+      correctAnswer: "BAT",
+    });
+    expect(result).toEqual({ kind: "HINT_REVEAL", partial: "BA" });
+  });
+
+  it("throws when correctAnswer is missing", () => {
+    const template = {
+      kind: "HINT_REVEAL_TEMPLATE" as const,
+      revealDescriptor: "FIRST_N_CHARS" as const,
+      count: 1,
+    };
+    const rng = mulberry32(0x42);
+    expect(() => resolveCardEffect("TN-3", template, rng, {})).toThrow(
+      /HINT_REVEAL_TEMPLATE requires ctx\.correctAnswer/,
+    );
   });
 });
 
@@ -410,14 +435,14 @@ describe("resolveCardEffect — missing required ctx fields throw", () => {
     );
   });
 
-  it("HINT_REVEAL_TEMPLATE throws without ctx.partial", () => {
+  it("HINT_REVEAL_TEMPLATE throws without ctx.correctAnswer", () => {
     const template = {
       kind: "HINT_REVEAL_TEMPLATE" as const,
       revealDescriptor: "FIRST_N_CHARS" as const,
       count: 1,
     };
     expect(() => resolveCardEffect("TN-3", template, rng, {})).toThrow(
-      /HINT_REVEAL_TEMPLATE requires ctx.partial/,
+      /HINT_REVEAL_TEMPLATE requires ctx\.correctAnswer/,
     );
   });
 

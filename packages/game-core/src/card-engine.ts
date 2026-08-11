@@ -388,15 +388,19 @@ export function resolveCardEffect(
       return { ...template };
     case "HINT_REVEAL_TEMPLATE": {
       // Server-side: resolve to a concrete `HINT_REVEAL` with
-      // `partial` derived from the current question. The caller
-      // MUST supply `partial` via `ctx.partial` (the canonical
-      // first-N-chars of the correct answer). No RNG consumed.
-      if (ctx.partial === undefined) {
+      // `partial` derived from the current question's correct
+      // answer, taking the first `template.count` chars. The
+      // caller MUST supply `correctAnswer` via `ctx.correctAnswer`.
+      // No RNG consumed.
+      if (ctx.correctAnswer === undefined) {
         throw new Error(
-          "card-engine: HINT_REVEAL_TEMPLATE requires ctx.partial",
+          "card-engine: HINT_REVEAL_TEMPLATE requires ctx.correctAnswer",
         );
       }
-      return { kind: "HINT_REVEAL", partial: ctx.partial };
+      return {
+        kind: "HINT_REVEAL",
+        partial: ctx.correctAnswer.slice(0, template.count),
+      };
     }
     case "DELAY_RENDER":
       return { ...template };

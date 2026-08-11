@@ -33,9 +33,9 @@ export const cardPlayBodySchema = z.object({
   type: z.literal("card_play"),
   userId: z.string().min(1),
   commandId: z.string().min(1),
-  cardId: z.string(),
+  cardId: z.string().min(1),
   offerSeqNo: z.number().int().positive(),
-  targetPlayerId: z.string().optional(),
+  targetPlayerId: z.string().min(1).optional(),
 });
 
 export const commandBodySchema = z.discriminatedUnion("type", [

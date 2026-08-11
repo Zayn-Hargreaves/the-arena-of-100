@@ -1472,7 +1472,7 @@ describe("MatchCommandService (B4a)", () => {
       expect(cardPickedEmits.length).toBe(0);
     });
 
-    it("recoverDuplicatePickEvent returns DUPLICATE_EVENT (no emit) on eventId mismatch", async () => {
+    it("recoverDuplicatePickEvent emits COMMAND_ID_CONFLICT on eventId mismatch", async () => {
       const { sm } = makePickOfferSm({
         offeredCardIds: ["CB-1", "CB-2", "CB-3"],
       });
@@ -1493,7 +1493,7 @@ describe("MatchCommandService (B4a)", () => {
       // Redelivery carries a DIFFERENT eventId — sismember=true means we
       // enter recoverDuplicatePickEvent, but the canonical entry stored
       // `eventId=evt-A` and the incoming is `evt-B`, so the canonical
-      // identity check fails and NO CARD_PICKED is emitted.
+      // identity check fails and COMMAND_ID_CONFLICT is surfaced.
       redis.sismember.mockResolvedValue(true);
       const outcome = await applyPickAuthoritative(
         service,
@@ -1502,10 +1502,20 @@ describe("MatchCommandService (B4a)", () => {
         recorder.server,
       );
 
-      expect(outcome).toBe("DUPLICATE_EVENT");
+      expect(outcome).toBe("DUPLICATE_SUBMISSION");
       const cardPickedEmits = recorder.callsByEvent(ServerEvent.CARD_PICKED);
       // Only the first apply should have emitted — no replay for the mismatch.
       expect(cardPickedEmits.length).toBe(firstCount);
+      expect(recorder.callsByEvent(ServerEvent.ERROR)).toEqual([
+        [
+          ServerEvent.ERROR,
+          expect.objectContaining({
+            code: ErrorCode.COMMAND_ID_CONFLICT,
+            failedEvent: ClientEvent.CARD_PICK,
+            commandId: "cmd-pick-1",
+          }),
+        ],
+      ]);
     });
 
     it("recoverDuplicatePlayEvent re-broadcasts the canonical CARD_RESOLVED when metadata matches", async () => {
@@ -2653,7 +2663,6 @@ describe("MatchCommandService (B4a)", () => {
           options: ["A", "B", "C", "D"],
           correctAnswer: "A",
           currentRoundNo,
-          partial: "A",
           // HAND_DESTROY needs the target's hand.
           ...(targetChannel === "player:p2"
             ? { targetHand: sm.getHand("p2") }

@@ -672,7 +672,6 @@ describe("pickOffer — card-engine invariant (sampleOffer returned <3 cards)", 
   // a single card and asserting that the state machine throws.
   it("throws when sampleOffer returns fewer than 3 cards", async () => {
     const cardEngine = await import("./card-engine");
-    const original = cardEngine.sampleOffer;
     const spy = vi
       .spyOn(cardEngine, "sampleOffer")
       .mockReturnValue({ cards: ["CB-1"], steps: [] });
@@ -684,7 +683,6 @@ describe("pickOffer — card-engine invariant (sampleOffer returned <3 cards)", 
       );
     } finally {
       spy.mockRestore();
-      expect(original).toBeDefined();
     }
   });
 });

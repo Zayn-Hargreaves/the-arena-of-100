@@ -1280,12 +1280,23 @@ describe("MatchHandler", () => {
             resolve();
           });
         });
+        const FORWARD_TIMEOUT_MS = 2000;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(
+              new Error(
+                `matchCommand.forward was not invoked within ${FORWARD_TIMEOUT_MS}ms ` +
+                  `(commandId=${playPayload.commandId}, cardId=CB-6)`,
+              ),
+            );
+          }, FORWARD_TIMEOUT_MS);
+        });
         actorClient.emit(ClientEvent.CARD_PLAY, {
           ...playPayload,
           cardId: "CB-6",
           targetPlayerId: "p2",
         });
-        await forwardCalled;
+        await Promise.race([forwardCalled, timeoutPromise]);
 
         // The handler forwarded exactly one well-formed card_play
         // envelope to the owner command channel — no local wire

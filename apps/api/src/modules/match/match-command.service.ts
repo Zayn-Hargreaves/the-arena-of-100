@@ -94,6 +94,12 @@ type DuplicatePlayRecovery =
   | "RETRY"
   | "DUPLICATE_EVENT";
 
+type DuplicatePickRecovery =
+  | "RECOVERED"
+  | "UNVERIFIED"
+  | "RETRY"
+  | "DUPLICATE_EVENT";
+
 /**
  * The authoritative apply dispatcher — wired by B4b (submit_answer) / B5
  * (player_disconnect). Receives the validated envelope + the CURRENT
@@ -153,6 +159,12 @@ const BLOCK_MS = 1_000;
  * player's ANSWER_RESULT is delayed by every read in between.
  */
 const BATCH = 128;
+/**
+ * Cap on entries drained per XAUTOCLAIM sweep inside one `pollOnce`. Once
+ * the cap is hit, the remaining cursor is left for the next poll so the
+ * read loop can pick up new entries instead of starving `xreadgroup`.
+ */
+const MAX_SWEEP_ENTRIES = BATCH * 4;
 /**
  * Safety-net cadence only. The read loop re-arms itself as soon as an
  * iteration completes (see schedulePoll), so this timer exists to restart a
@@ -385,6 +397,7 @@ export class MatchCommandService implements OnModuleDestroy {
     }
     let processed = 0;
     let cursor = "0-0";
+    let drained = false;
     do {
       if (signal?.aborted) return processed;
       const { nextCursor, claimed } = await this.redis.xautoclaim(
@@ -397,18 +410,18 @@ export class MatchCommandService implements OnModuleDestroy {
       );
       for (const entry of claimed) {
         if (signal?.aborted) return processed;
+        if (processed >= MAX_SWEEP_ENTRIES) {
+          cursor = nextCursor;
+          break;
+        }
         await this.processEntry(matchId, entry, server);
         processed++;
       }
       cursor = nextCursor;
-    } while (cursor !== "0-0");
+      if (cursor === "0-0") drained = true;
+    } while (cursor !== "0-0" && processed < MAX_SWEEP_ENTRIES);
 
-    if (
-      reg &&
-      this.registered.get(matchId) === reg &&
-      !reg.abort.signal.aborted &&
-      !signal?.aborted
-    ) {
+    if (drained && !reg.abort.signal.aborted && !signal?.aborted) {
       reg.lastClaimAt = Date.now();
     }
     return processed;
@@ -814,7 +827,7 @@ export class MatchCommandService implements OnModuleDestroy {
   private async recoverDuplicatePickEvent(
     env: CommandEnvelope<CardPickBody>,
     server: Server,
-  ): Promise<CommandOutcome> {
+  ): Promise<DuplicatePickRecovery> {
     if (this.ownership.currentFence(env.matchId) == null) return "RETRY";
     const sm = await this.matchService.getStateMachine(env.matchId);
     if (!sm) return "DUPLICATE_EVENT";
@@ -835,7 +848,7 @@ export class MatchCommandService implements OnModuleDestroy {
       canonical.payload.eventId !== env.eventId ||
       canonical.payload.commandId !== env.body.commandId
     ) {
-      return "DUPLICATE_EVENT";
+      return "UNVERIFIED";
     }
     if (this.ownership.currentFence(env.matchId) == null) return "RETRY";
     const roomId = sm.getState().roomId;
@@ -894,6 +907,24 @@ export class MatchCommandService implements OnModuleDestroy {
     return "DUPLICATE_SUBMISSION";
   }
 
+  private async handleDuplicatePickRecovery(
+    env: CommandEnvelope<CardPickBody>,
+    server: Server,
+  ): Promise<CommandOutcome> {
+    const recovery = await this.recoverDuplicatePickEvent(env, server);
+    if (recovery === "RECOVERED") return "DUPLICATE_EVENT";
+    if (recovery === "RETRY") return "RETRY";
+    if (recovery === "DUPLICATE_EVENT") return "DUPLICATE_EVENT";
+    this.emitPlayerError(
+      server,
+      env.body.userId,
+      ClientEvent.CARD_PICK,
+      env.body.commandId,
+      new RoomError(ErrorCode.COMMAND_ID_CONFLICT),
+    );
+    return "DUPLICATE_SUBMISSION";
+  }
+
   /**
    * Re-emit a persisted canonical `CARD_RESOLVED` event using the same
    * sanitization rules as the live `applyCardPlayAuthoritative` path:
@@ -928,16 +959,29 @@ export class MatchCommandService implements OnModuleDestroy {
     }
     const sanitizedEffect = MatchCommandService.sanitizeEffect(resolvedEffect);
     const fullEffectRooms = targetPlayerIds.map((id) => `player:${id}`);
+    const baseFrame = {
+      matchId,
+      roundNo: payload.roundNo,
+      cardId: payload.cardId as string,
+      offerSeqNo: payload.offerSeqNo,
+      playedByPlayerId: payload.playedByPlayerId as string,
+      targetPlayerIds: targetPlayerIds.slice(),
+      resolution: payload.resolution,
+      serverTimestamp: payload.serverTimestamp,
+      seqNo: payload.seqNo,
+      expiresAtServer: payload.expiresAtServer,
+      remainingMs: payload.remainingMs,
+    };
     server
       .to(`room:${roomId}`)
       .except(fullEffectRooms)
       .emit(ServerEvent.CARD_RESOLVED, {
-        ...payload,
+        ...baseFrame,
         effect: sanitizedEffect,
       });
     for (const targetId of targetPlayerIds) {
       server.to(`player:${targetId}`).emit(ServerEvent.CARD_RESOLVED, {
-        ...payload,
+        ...baseFrame,
         effect: resolvedEffect,
       });
     }
@@ -968,7 +1012,7 @@ export class MatchCommandService implements OnModuleDestroy {
       );
       return "RETRY";
     }
-    if (alreadyApplied) return this.recoverDuplicatePickEvent(env, server);
+    if (alreadyApplied) return this.handleDuplicatePickRecovery(env, server);
 
     const sm = await this.matchService.getStateMachine(env.matchId);
     if (!sm) return "RETRY";
@@ -1016,7 +1060,7 @@ export class MatchCommandService implements OnModuleDestroy {
       });
     } catch (err) {
       if (sm.getPickedCards(userId).has(env.body.cardId as CardId)) {
-        return this.recoverDuplicatePickEvent(env, server);
+        return this.handleDuplicatePickRecovery(env, server);
       }
       this.logger.warn(
         `applyCardPickAuthoritative: pickCard rejected for ${env.matchId}/${userId} (acking as no-op): ${
@@ -1193,7 +1237,6 @@ export class MatchCommandService implements OnModuleDestroy {
           options: sm.getCurrentRound()?.question.options,
           correctAnswer,
           currentRoundNo,
-          partial: correctAnswer ? correctAnswer[0] : "",
         },
       );
     } catch (err) {
