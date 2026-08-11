@@ -1,5 +1,6 @@
 import { Logger } from "@nestjs/common";
 import { MatchRoundRunner } from "./match-round-runner";
+import { getRecoveryEliminatedIdsFromEventLog } from "./match-round-recovery";
 import { MatchService } from "./match.service";
 import { QuestionService } from "../question/question.service";
 import { RoomService } from "../room/room.service";
@@ -2716,19 +2717,13 @@ describe("MatchRoundRunner", () => {
         type: "ROUND_EVALUATED",
         payload: { eliminatedIds: "not-an-array" },
       };
-      const result = (
-        runner as unknown as {
-          getRecoveryEliminatedIdsFromEventLog: (
-            events: unknown[],
-            recoveryRound: { roundNo: number },
-            startingPlayers: string[] | typeof UNAVAILABLE,
-            correctAnswer: string,
-            matchId: string,
-          ) => string[] | null;
-        }
-      ).getRecoveryEliminatedIdsFromEventLog(
+      const result = getRecoveryEliminatedIdsFromEventLog(
+        {
+          logger: (runner as unknown as { logger: Logger }).logger,
+          questionService,
+        },
         [fakeEvent],
-        { roundNo: 1 },
+        { roundNo: 1 } as never,
         ["p1", "p2"],
         "A",
         "match-1",
@@ -2741,19 +2736,13 @@ describe("MatchRoundRunner", () => {
         type: "ROUND_EVALUATED",
         payload: { eliminatedIds: ["p1"] },
       };
-      const result = (
-        runner as unknown as {
-          getRecoveryEliminatedIdsFromEventLog: (
-            events: unknown[],
-            recoveryRound: { roundNo: number },
-            startingPlayers: string[] | typeof UNAVAILABLE,
-            correctAnswer: string,
-            matchId: string,
-          ) => string[] | null;
-        }
-      ).getRecoveryEliminatedIdsFromEventLog(
+      const result = getRecoveryEliminatedIdsFromEventLog(
+        {
+          logger: (runner as unknown as { logger: Logger }).logger,
+          questionService,
+        },
         [fakeEvent],
-        { roundNo: 1 },
+        { roundNo: 1 } as never,
         UNAVAILABLE,
         "A",
         "match-1",

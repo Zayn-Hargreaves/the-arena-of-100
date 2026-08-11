@@ -16,6 +16,7 @@ import type { RedisService } from "../redis/redis.service";
 import type { MatchService } from "./match.service";
 import type { MatchOwnershipService } from "./match-ownership.service";
 import type { ClusterService } from "../cluster/cluster.service";
+import { emitPlayerCommandError } from "./match-card-command.helpers";
 import {
   MatchStateMachine,
   resolveCardEffect,
@@ -1670,7 +1671,8 @@ describe("MatchCommandService (B4a)", () => {
       );
 
       // A raw Error (NOT a RoomError) — raw message MUST NOT leak to the client.
-      service["emitPlayerError"](
+      emitPlayerCommandError(
+        (service as unknown as { logger: Logger }).logger,
         recorder.server,
         "p1",
         ClientEvent.CARD_PLAY,
@@ -1696,7 +1698,8 @@ describe("MatchCommandService (B4a)", () => {
     it("emitPlayerError forwards RoomError.code with the mapped key", () => {
       const recorder = makeMockServer();
 
-      service["emitPlayerError"](
+      emitPlayerCommandError(
+        (service as unknown as { logger: Logger }).logger,
         recorder.server,
         "p1",
         ClientEvent.CARD_PLAY,

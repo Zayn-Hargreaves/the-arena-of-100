@@ -232,6 +232,51 @@
       "infoBody": "Trận đấu đã bắt đầu trước khi bạn vào. Bạn đang xem trực tiếp với tư cách khán giả."
     }
   },
+  "Result": {
+    "reportLabel": "BẢN BÁO CÁO SAU TRẬN ĐẤU",
+    "title": "KẾT QUẢ ĐẤU TRƯỜNG",
+    "matchId": "MATCH ID: {matchId}",
+    "championBadge": "QUÁN QUÂN ĐẤU TRƯỜNG",
+    "championDescription": "Đã đánh bại 99 đối thủ khác để giành ngôi vị quán quân duy nhất!",
+    "metrics": {
+      "score": "Điểm Số",
+      "accuracy": "Tỉ Lệ Đúng",
+      "reaction": "Phản Xạ"
+    },
+    "performance": {
+      "title": "Thành Tích Của Bạn",
+      "rank": "Hạng Chung Cuộc",
+      "score": "Điểm",
+      "eliminatedRound": "Vòng Bị Loại",
+      "roundValue": "Vòng {round}",
+      "accuracy": "Độ Chính Xác",
+      "reactionSpeed": "Tốc Độ Phản Xạ"
+    },
+    "actions": {
+      "rematch": "Tái Đấu Trận Mới",
+      "home": "Về Trang Chủ"
+    },
+    "loadState": {
+      "loading": "Đang tải kết quả trận đấu...",
+      "notFound": {
+        "message": "Không tìm thấy kết quả cho trận đấu này.",
+        "action": "Về Trang Chủ"
+      },
+      "unauthorized": {
+        "message": "Bạn không có quyền xem kết quả trận này.",
+        "action": "Quay Lại"
+      },
+      "networkError": {
+        "message": "Không thể tải dữ liệu trận đấu. Vui lòng thử lại.",
+        "action": "Tải Lại"
+      }
+    },
+    "fallbacks": {
+      "unknownPlayer": "Người Chơi Không Xác Định",
+      "updating": "Đang cập nhật",
+      "guestPlayer": "Khách Đấu Thủ"
+    }
+  },
   "profile": {
     "registeredToday": "ĐĂNG KÝ: HÔM NAY",
     "stats": {

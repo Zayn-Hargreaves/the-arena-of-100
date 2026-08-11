@@ -128,6 +128,16 @@ export interface DecodedMatchState {
   eventLog: EventLogEntry[];
 }
 
+type SupportedStateVersion = 1 | 2;
+
+interface ValidatedTimingFields {
+  startedAt: number | null | undefined;
+  phaseEndsAt: number | null | undefined;
+  roundResultStartedAt: number | null | undefined;
+  currentRoundStartedAt: number | null | undefined;
+  currentRoundEndsAt: number | null | undefined;
+}
+
 /**
  * Serialize match state to a JSON string for Redis persistence.
  *
@@ -182,8 +192,29 @@ export function serializeMatch(
  * corrupt blob never leaks question/answer content into logs.
  */
 export function deserializeMatch(json: string): DecodedMatchState {
-  let data: unknown;
+  const { parsed, version } = parseSerializedMatch(json);
+  const timing = validateMatchTiming(parsed, version, json.length);
+  const state = decodeMatchState(parsed, version, timing);
+  const currentRound = decodeCurrentRound(
+    parsed.currentRound,
+    version,
+    state,
+    timing,
+    json.length,
+  );
 
+  return {
+    state,
+    currentRound,
+    eventLog: backfillEventSequence(parsed.eventLog),
+  };
+}
+
+function parseSerializedMatch(json: string): {
+  parsed: DeserializedMatch;
+  version: SupportedStateVersion;
+} {
+  let data: unknown;
   try {
     data = JSON.parse(json);
   } catch (error) {
@@ -193,270 +224,232 @@ export function deserializeMatch(json: string): DecodedMatchState {
   }
 
   const parsed = data as DeserializedMatch;
-
-  // Version gate FIRST: an unsupported / malformed version throws before any
-  // field is read or copied. After this, the blob is v1 or v2.
   if (!hasSupportedStateVersion(parsed)) {
     throw new Error(
       `Unsupported MatchStateMachine state version (payload omitted; length=${json.length})`,
     );
   }
-  const version = (parsed as { _stateVersion: number })._stateVersion;
+  const version = (parsed as { _stateVersion: SupportedStateVersion })
+    ._stateVersion;
 
   if (
     !parsed.state ||
     !Array.isArray(parsed.state.players) ||
     !Array.isArray(parsed.eventLog)
   ) {
+    throw invalidMatchData(json.length);
+  }
+  if (parsed.currentRound)
+    validateCurrentRoundShape(parsed.currentRound, json.length);
+
+  return { parsed, version };
+}
+
+function validateCurrentRoundShape(
+  round: NonNullable<DeserializedMatch["currentRound"]>,
+  payloadLength: number,
+): void {
+  const question = round.question;
+  const validQuestion =
+    question &&
+    typeof question === "object" &&
+    typeof question.id === "string" &&
+    typeof question.content === "string" &&
+    Array.isArray(question.options);
+  const validStatus =
+    typeof round.status === "string" &&
+    ["PENDING", "ACTIVE", "EVALUATING", "COMPLETED"].includes(round.status);
+  const validCorrectAnswer =
+    round.correctAnswer === undefined ||
+    typeof round.correctAnswer === "string";
+
+  if (
+    !validCorrectAnswer ||
+    !Array.isArray(round.answers) ||
+    !validQuestion ||
+    typeof round.roundNo !== "number" ||
+    !validStatus
+  ) {
+    throw invalidMatchData(payloadLength);
+  }
+}
+
+function validateMatchTiming(
+  parsed: DeserializedMatch,
+  version: SupportedStateVersion,
+  payloadLength: number,
+): ValidatedTimingFields {
+  const timing: ValidatedTimingFields = {
+    startedAt: validateTimingField(parsed.state.startedAt, { allowNull: true }),
+    phaseEndsAt: validateTimingField(parsed.state.phaseEndsAt, {
+      allowNull: true,
+    }),
+    roundResultStartedAt: validateTimingField(
+      parsed.state.roundResultStartedAt,
+      { allowNull: true },
+    ),
+    currentRoundStartedAt: undefined,
+    currentRoundEndsAt: undefined,
+  };
+
+  if (parsed.currentRound) {
+    timing.currentRoundStartedAt = validateTimingField(
+      parsed.currentRound.startedAt,
+      { allowNull: true },
+    );
+    timing.currentRoundEndsAt = validateTimingField(
+      parsed.currentRound.endsAt,
+      {
+        allowNull: true,
+      },
+    );
+  }
+  if (version === 2 && timing.phaseEndsAt === undefined) {
     throw new Error(
-      `Invalid MatchStateMachine data (payload omitted; length=${json.length})`,
+      `Invalid MatchStateMachine data: v2 blob missing phaseEndsAt (payload omitted; length=${payloadLength})`,
     );
   }
 
-  if (parsed.currentRound) {
-    const cr = parsed.currentRound;
-    const isValidQuestion =
-      cr.question &&
-      typeof cr.question === "object" &&
-      typeof cr.question.id === "string" &&
-      typeof cr.question.content === "string" &&
-      Array.isArray(cr.question.options);
+  return timing;
+}
 
-    const isValidStatus =
-      typeof cr.status === "string" &&
-      ["PENDING", "ACTIVE", "EVALUATING", "COMPLETED"].includes(cr.status);
-
-    // L3 fix: `correctAnswer` is optional in the serialized form. The
-    // recovery path re-attaches it from the Question DB row before the
-    // round is evaluated. Validate that, IF present, it is a string —
-    // catching corruption while allowing the new "absent" form.
-    const correctAnswerOk =
-      cr.correctAnswer === undefined || typeof cr.correctAnswer === "string";
-
-    // Note: cr.startedAt / cr.endsAt are validated by the Phase-1 timing
-    // pass below (validateTimingField), which also permits null on the wire.
-    if (
-      !correctAnswerOk ||
-      !Array.isArray(cr.answers) ||
-      !isValidQuestion ||
-      typeof cr.roundNo !== "number" ||
-      !isValidStatus
-    ) {
-      throw new Error(
-        `Invalid MatchStateMachine data (payload omitted; length=${json.length})`,
-      );
-    }
-  }
-
-  // ---- Phase 1: validate every timing field on the raw wire object ----
-  // Throws immediately on any invalid type / non-finite value, before any
-  // backfill or arithmetic. `undefined` = missing; `null` = allowed sentinel.
-  const rawState = parsed.state;
-  const startedAtRaw = validateTimingField(rawState.startedAt, {
-    allowNull: true,
-  });
-  const phaseEndsAtRaw = validateTimingField(rawState.phaseEndsAt, {
-    allowNull: true,
-  });
-  const roundResultStartedAtRaw = validateTimingField(
-    rawState.roundResultStartedAt,
-    { allowNull: true },
-  );
-  let crEndsAtRaw: number | null | undefined;
-  let crStartedAtRaw: number | null | undefined;
-  if (parsed.currentRound) {
-    crEndsAtRaw = validateTimingField(parsed.currentRound.endsAt, {
-      allowNull: true,
-    });
-    crStartedAtRaw = validateTimingField(parsed.currentRound.startedAt, {
-      allowNull: true,
-    });
-  }
-
-  // A v2 blob MUST carry phaseEndsAt (finite number or null). Only v1 blobs
-  // may omit it (undefined) and be backfilled.
-  if (version === 2 && phaseEndsAtRaw === undefined) {
-    throw new Error(
-      `Invalid MatchStateMachine data: v2 blob missing phaseEndsAt (payload omitted; length=${json.length})`,
-    );
-  }
-
-  const status = rawState.status;
-
-  // ---- Phase 2: normalize + v1 backfill (Date.now() is PROHIBITED here) ----
-  // startedAt: preserve finite number; missing/null → null.
-  const startedAt = startedAtRaw === undefined ? null : startedAtRaw;
-
-  // roundResultStartedAt: only meaningful in ROUND_RESULT; forced null
-  // everywhere else so a stale anchor never survives its phase.
+function decodeMatchState(
+  parsed: DeserializedMatch,
+  version: SupportedStateVersion,
+  timing: ValidatedTimingFields,
+): MatchState {
+  const status = parsed.state.status;
   const roundResultStartedAt =
     status === MatchStatus.ROUND_RESULT &&
-    typeof roundResultStartedAtRaw === "number"
-      ? roundResultStartedAtRaw
+    typeof timing.roundResultStartedAt === "number"
+      ? timing.roundResultStartedAt
       : null;
+  let phaseEndsAt =
+    timing.phaseEndsAt !== undefined
+      ? timing.phaseEndsAt
+      : backfillPhaseEndsAt(
+          status,
+          timing.startedAt,
+          timing.currentRoundEndsAt,
+          timing.currentRoundStartedAt,
+          roundResultStartedAt,
+        );
 
-  // phaseEndsAt: pass through when present (v2, or a v1 blob that already had
-  // it); otherwise deterministically backfill a v1 blob from persisted anchors,
-  // failing closed to null (never Date.now()).
-  let phaseEndsAt: number | null;
-  if (phaseEndsAtRaw !== undefined) {
-    phaseEndsAt = phaseEndsAtRaw; // finite number or null, preserved
-  } else {
-    phaseEndsAt = backfillPhaseEndsAt(
-      status,
-      startedAtRaw,
-      crEndsAtRaw,
-      crStartedAtRaw,
-      roundResultStartedAt,
-    );
-  }
-
-  // F18: enforce the ROUND_RESULT timing invariant the writer guarantees
-  // (transition(ROUND_RESULT): phaseEndsAt === roundResultStartedAt +
-  // RESULT_DISPLAY_MS). For a v2 ROUND_RESULT blob the wire phaseEndsAt is
-  // NEVER trusted — it is derived from the result anchor. `roundResultStartedAt`
-  // here is already either a finite number (valid anchor) or null (missing).
-  // Fail closed to null when the anchor is missing OR the derived deadline is
-  // non-finite; only retain the derived deadline when both are finite. v1
-  // backfilling (above) and every other phase are unaffected.
   if (version === 2 && status === MatchStatus.ROUND_RESULT) {
-    if (typeof roundResultStartedAt === "number") {
-      const expected = roundResultStartedAt + GAME_CONFIG.RESULT_DISPLAY_MS;
-      phaseEndsAt = Number.isFinite(expected) ? expected : null;
-    } else {
-      phaseEndsAt = null;
-    }
+    const expected =
+      typeof roundResultStartedAt === "number"
+        ? roundResultStartedAt + GAME_CONFIG.RESULT_DISPLAY_MS
+        : null;
+    phaseEndsAt =
+      typeof expected === "number" && Number.isFinite(expected)
+        ? expected
+        : null;
   }
 
-  const state = {
+  return {
     ...parsed.state,
-    startedAt,
+    startedAt: timing.startedAt === undefined ? null : timing.startedAt,
     phaseEndsAt,
     roundResultStartedAt,
     players: new Map(parsed.state.players),
   } as MatchState;
+}
 
-  let currentRound: RoundWithAnswer | null;
-  if (parsed.currentRound) {
-    const {
-      answers,
-      correctAnswer: _omitCorrectAnswer,
-      ...rest
-    } = parsed.currentRound;
-    void _omitCorrectAnswer;
+function decodeCurrentRound(
+  round: DeserializedMatch["currentRound"],
+  version: SupportedStateVersion,
+  state: MatchState,
+  timing: ValidatedTimingFields,
+  payloadLength: number,
+): RoundWithAnswer | null {
+  if (!round) return null;
 
-    // F16: normalize the round's own timing anchors so a corrupt/legacy blob
-    // never leaves startedAt/endsAt null|undefined once spread into the
-    // in-memory round. These feed the submitAnswer window gate
-    // (serverTimestamp > endsAt), responseTimeMs (serverTimestamp -
-    // startedAt), scoring, and tie-break — a null there yields NaN. Derive a
-    // missing anchor from its sibling (or the reconstructed phaseEndsAt) using
-    // the fixed round duration; never Date.now() (deterministic across
-    // failover). crStartedAtRaw / crEndsAtRaw were Phase-1 validated to a
-    // finite number, null, or undefined.
-    let normStartedAt: number | null =
-      typeof crStartedAtRaw === "number" ? crStartedAtRaw : null;
-    let normEndsAt: number | null =
-      typeof crEndsAtRaw === "number" ? crEndsAtRaw : null;
-    if (normEndsAt === null && normStartedAt !== null) {
-      const derived = normStartedAt + GAME_CONFIG.ROUND_DURATION_MS;
-      normEndsAt = Number.isFinite(derived) ? derived : null;
-    }
-    // Borrow the reconstructed phase deadline for a missing round endsAt ONLY in
-    // ROUND_ACTIVE, where phaseEndsAt IS this round's deadline. In COUNTDOWN /
-    // ROUND_RESULT the phase deadline belongs to a different phase (countdown /
-    // result display), so borrowing it as the gameplay round's endsAt would
-    // corrupt the submit-answer window and responseTimeMs.
-    if (
-      normEndsAt === null &&
-      status === MatchStatus.ROUND_ACTIVE &&
-      typeof phaseEndsAt === "number"
-    ) {
-      normEndsAt = phaseEndsAt;
-    }
-    if (normStartedAt === null && normEndsAt !== null) {
-      const derived = normEndsAt - GAME_CONFIG.ROUND_DURATION_MS;
-      normStartedAt = Number.isFinite(derived) ? derived : null;
-    }
+  let startedAt =
+    typeof timing.currentRoundStartedAt === "number"
+      ? timing.currentRoundStartedAt
+      : null;
+  let endsAt =
+    typeof timing.currentRoundEndsAt === "number"
+      ? timing.currentRoundEndsAt
+      : null;
 
-    // Fail closed rather than assert: if neither anchor nor the reconstructed
-    // phaseEndsAt could supply a finite startedAt AND endsAt, the round is
-    // unusable (the submitAnswer gate / responseTimeMs / scoring would read
-    // null → NaN). Throw instead of returning invalid state via an unsafe cast.
-    if (normStartedAt === null || normEndsAt === null) {
-      throw new Error(
-        `Invalid MatchStateMachine data: currentRound has no reconstructable startedAt/endsAt (payload omitted; length=${json.length})`,
-      );
-    }
-
-    // Cross-field invariant: a round can never end before it starts. A blob
-    // (persisted or reconstructed) with endsAt < startedAt is corrupt — reject
-    // it rather than feed a negative-length window into the submit gate / scoring.
-    if (normEndsAt < normStartedAt) {
-      throw new Error(
-        `Invalid MatchStateMachine data: currentRound endsAt precedes startedAt (payload omitted; length=${json.length})`,
-      );
-    }
-
-    // v2 writer invariant: in ROUND_ACTIVE, phaseEndsAt === currentRound.endsAt
-    // (both are the live round's deadline). A v2 ROUND_ACTIVE blob whose two
-    // anchors disagree is corrupt — reject rather than trust an ambiguous
-    // deadline. (v1 blobs are exempt: their phaseEndsAt is reconstructed, not
-    // persisted, so it is derived from currentRound.endsAt by construction.)
-    if (
-      version === 2 &&
-      status === MatchStatus.ROUND_ACTIVE &&
-      phaseEndsAtRaw !== crEndsAtRaw
-    ) {
-      throw new Error(
-        `Invalid MatchStateMachine data: v2 ROUND_ACTIVE phaseEndsAt does not match currentRound.endsAt (payload omitted; length=${json.length})`,
-      );
-    }
-
-    currentRound = {
-      ...rest,
-      startedAt: normStartedAt,
-      endsAt: normEndsAt,
-      // Backfill any missing `submissionId` on legacy answers
-      // serialized before that field was required on AnswerState.
-      // The replay check elsewhere (`existingAnswer.submissionId ===
-      // payload.submissionId`) would otherwise collapse `undefined
-      // === undefined` to true and treat the first accepted
-      // submission as a replay. The format mirrors `submitAnswer` so
-      // the two paths agree and old in-flight records keep working.
-      answers: new Map(
-        answers.map(([playerId, answer]) => [
-          playerId,
-          answer.submissionId
-            ? answer
-            : {
-                ...answer,
-                submissionId: `legacy-${playerId}-${answer.submittedAt ?? 0}`,
-              },
-        ]),
-      ),
-      // L3: correctAnswer is undefined after deserialize. The recovery
-      // caller MUST invoke attachCorrectAnswer() before any
-      // evaluateRound() / submitAnswer() that depends on it.
-      // Version is guaranteed supported (the gate above threw otherwise),
-      // so v1/v2 startingPlayers semantics are preserved identically.
-      startingPlayers: deserializeStartingPlayers(
-        parsed.currentRound.startingPlayers,
-      ),
-    } as RoundWithAnswer;
-  } else {
-    currentRound = null;
+  if (endsAt === null && startedAt !== null) {
+    const derived = startedAt + GAME_CONFIG.ROUND_DURATION_MS;
+    endsAt = Number.isFinite(derived) ? derived : null;
   }
+  if (
+    endsAt === null &&
+    state.status === MatchStatus.ROUND_ACTIVE &&
+    typeof state.phaseEndsAt === "number"
+  ) {
+    endsAt = state.phaseEndsAt;
+  }
+  if (startedAt === null && endsAt !== null) {
+    const derived = endsAt - GAME_CONFIG.ROUND_DURATION_MS;
+    startedAt = Number.isFinite(derived) ? derived : null;
+  }
+  validateRoundTiming(version, state, timing, startedAt, endsAt, payloadLength);
 
-  // Backfill `seqNo` on legacy entries (snapshots serialized before
-  // delta replay existed). The log is append-only and never truncated,
-  // so array position + 1 is exactly the seqNo the entry would have
-  // been assigned. Entries that already carry a seqNo are left intact.
-  const eventLog = parsed.eventLog.map((entry, index) =>
+  const { answers, correctAnswer: _omitCorrectAnswer, ...rest } = round;
+  void _omitCorrectAnswer;
+  return {
+    ...rest,
+    startedAt: startedAt as number,
+    endsAt: endsAt as number,
+    answers: new Map(
+      answers.map(([playerId, answer]) => [
+        playerId,
+        answer.submissionId
+          ? answer
+          : {
+              ...answer,
+              submissionId: `legacy-${playerId}-${answer.submittedAt ?? 0}`,
+            },
+      ]),
+    ),
+    startingPlayers: deserializeStartingPlayers(round.startingPlayers),
+  } as RoundWithAnswer;
+}
+
+function validateRoundTiming(
+  version: SupportedStateVersion,
+  state: MatchState,
+  timing: ValidatedTimingFields,
+  startedAt: number | null,
+  endsAt: number | null,
+  payloadLength: number,
+): void {
+  if (startedAt === null || endsAt === null) {
+    throw new Error(
+      `Invalid MatchStateMachine data: currentRound has no reconstructable startedAt/endsAt (payload omitted; length=${payloadLength})`,
+    );
+  }
+  if (endsAt < startedAt) {
+    throw new Error(
+      `Invalid MatchStateMachine data: currentRound endsAt precedes startedAt (payload omitted; length=${payloadLength})`,
+    );
+  }
+  if (
+    version === 2 &&
+    state.status === MatchStatus.ROUND_ACTIVE &&
+    timing.phaseEndsAt !== timing.currentRoundEndsAt
+  ) {
+    throw new Error(
+      `Invalid MatchStateMachine data: v2 ROUND_ACTIVE phaseEndsAt does not match currentRound.endsAt (payload omitted; length=${payloadLength})`,
+    );
+  }
+}
+
+function backfillEventSequence(eventLog: EventLogEntry[]): EventLogEntry[] {
+  return eventLog.map((entry, index) =>
     typeof entry.seqNo === "number" ? entry : { ...entry, seqNo: index + 1 },
   );
+}
 
-  return { state, currentRound, eventLog };
+function invalidMatchData(payloadLength: number): Error {
+  return new Error(
+    `Invalid MatchStateMachine data (payload omitted; length=${payloadLength})`,
+  );
 }
 
 /**

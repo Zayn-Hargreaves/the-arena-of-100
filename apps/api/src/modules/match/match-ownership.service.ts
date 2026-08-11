@@ -28,6 +28,12 @@ import {
   addActiveMatch,
   listActiveMatchIds,
 } from "./match-ownership.store";
+import {
+  computeMaxClockSkew,
+  publishClockOffset,
+} from "./match-ownership-clock";
+
+export { NODE_CLOCK_TTL_SEC, NODE_CLOCKS_INDEX } from "./match-ownership-clock";
 
 /** Lease TTL. Heartbeat (B2c) renews it 3× before expiry (every 5s). */
 export const LEASE_TTL_SEC = 15;
@@ -41,11 +47,6 @@ export const RECOVERY_MAX_RETRIES = 5;
  *  UNAVAILABLE renewal is treated as unrecoverable and the match is relinquished
  *  for failover. */
 export const ASSERT_RENEW_ATTEMPTS = 3;
-/** Per-node clock-offset key TTL (short; pruned on read when expired). */
-export const NODE_CLOCK_TTL_SEC = 15;
-/** SET index of live node ids publishing a clock offset. */
-export const NODE_CLOCKS_INDEX = "node:clocks";
-const nodeClockKey = (nodeId: string): string => `node:clock:${nodeId}`;
 /** Canonical match:state blob key (same string MatchService uses). */
 const stateKey = (matchId: string): string => `match:state:${matchId}`;
 
@@ -437,7 +438,10 @@ export class MatchOwnershipService implements OnModuleInit, OnModuleDestroy {
       );
 
       // Health telemetry only after the renewal phase has completed.
-      await this.publishClockOffset();
+      await publishClockOffset(
+        { redis: this.redis, logger: this.logger },
+        this.cluster.nodeId,
+      );
     } finally {
       this.isBeating = false;
     }
@@ -459,51 +463,13 @@ export class MatchOwnershipService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Publish this node's offset from the shared Redis clock (Date.now() minus the
-   * Redis server time), NOT a raw Date.now(). Comparing offsets against a common
-   * reference makes skew independent of heartbeat age, so synchronized nodes
-   * report ~0 skew even when their heartbeats fired a cycle apart.
-   */
-  private async publishClockOffset(): Promise<void> {
-    try {
-      const redisMs = await this.redis.serverTimeMs();
-      const offset = Date.now() - redisMs;
-      await this.redis.set(
-        nodeClockKey(this.cluster.nodeId),
-        String(offset),
-        NODE_CLOCK_TTL_SEC,
-      );
-      await this.redis.sadd(NODE_CLOCKS_INDEX, this.cluster.nodeId);
-    } catch (err) {
-      this.logger.warn(
-        `publishClockOffset failed: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-  }
-
-  /**
    * Max inter-node clock skew across live members = max(offset) - min(offset)
    * (the reference-free peer-to-peer spread, computed identically on every
    * node). Expired clock keys are pruned from the index on read. Returns 0 when
    * fewer than two live members. Surfaced on /health/cluster.
    */
   async computeMaxSkew(): Promise<number> {
-    const members = await this.redis.smembers(NODE_CLOCKS_INDEX);
-    const offsets: number[] = [];
-    for (const nodeId of members) {
-      const raw = await this.redis.get(nodeClockKey(nodeId));
-      if (raw === null) {
-        // Clock key expired ⇒ dead node; prune it from the index.
-        await this.redis.srem(NODE_CLOCKS_INDEX, nodeId);
-        continue;
-      }
-      const offset = Number(raw);
-      if (Number.isFinite(offset)) offsets.push(offset);
-    }
-    if (offsets.length < 2) return 0;
-    return Math.max(...offsets) - Math.min(...offsets);
+    return computeMaxClockSkew(this.redis);
   }
 
   /**
