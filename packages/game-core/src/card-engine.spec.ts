@@ -380,6 +380,58 @@ describe("resolveCardEffect — template kind mismatch throws", () => {
   });
 });
 
+describe("resolveCardEffect — missing required ctx fields throw", () => {
+  // Guardrail: each ctx-gated template MUST throw a specific
+  // error when the caller forgot the runtime context it depends
+  // on. The errors carry the template kind so the boundary can
+  // surface them in logs.
+  const rng = mulberry32(0x42);
+
+  it("OPTION_DISABLE_TEMPLATE throws without options + correctAnswer", () => {
+    const template = {
+      kind: "OPTION_DISABLE_TEMPLATE" as const,
+      count: 1,
+      selectionPolicy: "RANDOM_WRONG_OPTIONS" as const,
+      durationMs: 1000,
+    };
+    expect(() => resolveCardEffect("TN-1", template, rng, {})).toThrow(
+      /OPTION_DISABLE_TEMPLATE requires options \+ correctAnswer/,
+    );
+  });
+
+  it("HAND_DESTROY_TEMPLATE throws without targetHand", () => {
+    const template = {
+      kind: "HAND_DESTROY_TEMPLATE" as const,
+      count: 1,
+      selectionPolicy: "RANDOM_FROM_TARGET_HAND" as const,
+    };
+    expect(() => resolveCardEffect("CB-3", template, rng, {})).toThrow(
+      /HAND_DESTROY_TEMPLATE requires targetHand/,
+    );
+  });
+
+  it("HINT_REVEAL_TEMPLATE throws without ctx.partial", () => {
+    const template = {
+      kind: "HINT_REVEAL_TEMPLATE" as const,
+      revealDescriptor: "FIRST_N_CHARS" as const,
+      count: 1,
+    };
+    expect(() => resolveCardEffect("TN-3", template, rng, {})).toThrow(
+      /HINT_REVEAL_TEMPLATE requires ctx.partial/,
+    );
+  });
+
+  it("SHIELD_TEMPLATE throws without ctx.currentRoundNo", () => {
+    const template = {
+      kind: "SHIELD_TEMPLATE" as const,
+      expiresAfterRoundOffset: 1,
+    };
+    expect(() => resolveCardEffect("TN-4", template, rng, {})).toThrow(
+      /SHIELD_TEMPLATE requires ctx.currentRoundNo/,
+    );
+  });
+});
+
 describe("SAMPLE_OFFER_COUNT constant", () => {
   it("equals 3 (typed-tuple invariant — spec §3.3)", () => {
     expect(SAMPLE_OFFER_COUNT).toBe(3);

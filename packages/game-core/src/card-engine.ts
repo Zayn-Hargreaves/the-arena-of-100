@@ -176,6 +176,9 @@ export function sampleOffer(
     if (drawnCardId === undefined) {
       // Defensive: should be unreachable because the
       // selectTier loop above only exits when `tierList.length > 0`.
+      // `mulberry32` returns `u ∈ [0, 1)` so `Math.floor(u2 * N) ∈ [0, N-1]`
+      // for N > 0 — `tierList[idx]` is therefore always defined.
+      /* c8 ignore next 4 */
       throw new Error(
         `card-engine invariant: tier=${tier} list empty after TIER pick`,
       );
@@ -268,6 +271,10 @@ export function resolveOptionDisable(
     const idx = Math.floor(u * remaining.length);
     const chosen = remaining[idx];
     if (chosen === undefined) {
+      // Unreachable: `mulberry32` returns `u ∈ [0, 1)` so the
+      // floor-driven index stays in `[0, remaining.length - 1]`
+      // and `remaining.length` shrinks by one per iteration.
+      /* c8 ignore next 2 */
       throw new Error(`card-engine invariant: remaining[] drained mid-resolve`);
     }
     picked.push(chosen);
@@ -302,6 +309,9 @@ export function resolveHandDestroy(
     const idx = Math.floor(u * remaining.length);
     const chosen = remaining[idx];
     if (chosen === undefined) {
+      // Unreachable: same arithmetic argument as the
+      // `resolveOptionDisable` guard above.
+      /* c8 ignore next 2 */
       throw new Error(`card-engine invariant: remaining[] drained mid-resolve`);
     }
     destroyed.push(chosen);
@@ -417,7 +427,11 @@ export function resolveCardEffect(
     default: {
       // Exhaustive guard — adding a new CardEffectTemplate variant
       // without updating this switch is a compile-time error
-      // (`template` would no longer narrow to `never`).
+      // (`template` would no longer narrow to `never`). The runtime
+      // throw is a safety net for callers that bypass the type
+      // system (e.g. a JSON-decoded template whose `kind` lost its
+      // discriminator narrowing); unreachable from a typed API.
+      /* c8 ignore next 4 */
       const _exhaustive: never = template;
       throw new Error(
         `card-engine: unhandled CardEffectTemplate kind ${(_exhaustive as { kind: string }).kind}`,

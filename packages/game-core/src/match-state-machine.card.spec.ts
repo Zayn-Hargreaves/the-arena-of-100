@@ -8,7 +8,7 @@
 // (verified at the end of this file).
 // ============================================================
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MatchStateMachine } from "./match-state-machine";
 import {
   MatchStatus,
@@ -660,5 +660,95 @@ describe("getCardOfferForPlayer — pick-specific offer correlation", () => {
       if (entry.type === "CARD_OFFER") offerSeqNo = entry.seqNo;
     });
     expect(m.getCardOfferForPlayer("p2", offerSeqNo)).toBeNull();
+  });
+});
+
+describe("pickOffer — card-engine invariant (sampleOffer returned <3 cards)", () => {
+  // The state-machine `pickOffer` asserts that `sampleOffer` returned
+  // exactly 3 cards. Normally the class pool is large enough to
+  // produce 3 unique cards, but a future regression (e.g. an exhausted
+  // class pool combined with a bug in the retry loop) could push
+  // fewer. We pin the invariant by stubbing `sampleOffer` to return
+  // a single card and asserting that the state machine throws.
+  it("throws when sampleOffer returns fewer than 3 cards", async () => {
+    const cardEngine = await import("./card-engine");
+    const original = cardEngine.sampleOffer;
+    const spy = vi
+      .spyOn(cardEngine, "sampleOffer")
+      .mockReturnValue({ cards: ["CB-1"], steps: [] });
+    try {
+      const m = makeMachine();
+      m.classAssignment(["p1"], "inv-seed");
+      expect(() => m.pickOffer("p1", 1, "inv-1")).toThrow(
+        /card-engine invariant: expected 3 cards, got 1/,
+      );
+    } finally {
+      spy.mockRestore();
+      expect(original).toBeDefined();
+    }
+  });
+});
+
+describe("playCard — seqNo drift guard", () => {
+  // The state machine mirrors `seqNo` into the CARD_RESOLVED payload
+  // BEFORE calling `logEvent`, then asserts the two values agree. A
+  // drift would silently corrupt the payload's envelope seqNo. The
+  // throw is the safety net; we exercise it by replacing the private
+  // `logEvent` with a wrapper that returns a different seqNo.
+  it("throws when logEvent returns a seqNo that disagrees with the payload stamp", () => {
+    const m = makeMachine();
+    m.classAssignment(["p1"], "drift-seed");
+    const cards = m.pickOffer("p1", 5, "drift-1");
+    const card = cards[0]!;
+    m.pickCard("p1", card, 1);
+
+    // Hijack the private logEvent so the next call returns a
+    // seqNo that does NOT match the local seqNo. The cast bypasses
+    // the private access modifier at runtime.
+    const original = (
+      m as unknown as { logEvent: (t: string, p?: unknown) => number }
+    ).logEvent;
+    (
+      m as unknown as { logEvent: (t: string, p?: unknown) => number }
+    ).logEvent = (type: string, payload?: unknown) => {
+      if (type === "CARD_RESOLVED") return 999_999;
+      return original.call(m, type, payload);
+    };
+
+    expect(() =>
+      m.playCard(
+        "p1",
+        card,
+        1,
+        { kind: "TIMER_MODIFY", deltaMs: -1000, targetCount: 1 },
+        ["p2"],
+        1000,
+      ),
+    ).toThrow(/seqNo drift in playCard/);
+  });
+});
+
+describe("logEvent — deepFreeze preserves undefined payloads", () => {
+  // `deepFreezeEventEntry` short-circuits to `undefined` when the
+  // entry's payload is `undefined` (no recursion needed). The
+  // logEvent wrapper around it must therefore preserve the
+  // `undefined` payload on the read-back path. We invoke it
+  // directly via the private cast — the real entry returns a
+  // frozen object whose payload is exactly `undefined`.
+  it("preserves an undefined payload on the returned entry", () => {
+    const m = makeMachine();
+    const logEvent = (
+      m as unknown as { logEvent: (t: string, p?: unknown) => number }
+    ).logEvent.bind(m);
+    const seqNo = logEvent("UNDEFINED_PAYLOAD_TEST", undefined);
+    expect(typeof seqNo).toBe("number");
+    let entry: { payload?: unknown } | undefined;
+    m.forEachEvent((e) => {
+      if (e.type === "UNDEFINED_PAYLOAD_TEST") entry = e;
+    });
+    expect(entry).toBeDefined();
+    expect(Object.prototype.hasOwnProperty.call(entry, "payload")).toBe(true);
+    expect(entry!.payload).toBeUndefined();
+    expect(Object.isFrozen(entry)).toBe(true);
   });
 });

@@ -7,6 +7,8 @@ import {
   CMD_DEAD_LETTER_SET,
   type CommandEnvelope,
   type SubmitAnswerBody,
+  type CardPickBody,
+  type CardPlayBody,
   type CommandDispatcher,
   type CommandOutcome,
 } from "./match-command.service";
@@ -26,10 +28,9 @@ import {
   MatchStatus,
   RoomError,
   ServerEvent,
-  type CardPickBody,
-  type CardPlayBody,
   PlayerStatus,
   getCardDefinition,
+  type CardId,
 } from "@arena/shared";
 
 type RedisMock = Record<string, ReturnType<typeof vi.fn>>;
@@ -44,6 +45,44 @@ function applyPrivate(
   server: Server,
 ): Promise<CommandOutcome> {
   return (svc as unknown as PrivateApplyService).apply(env, server);
+}
+
+type PickAuthoritativeService = {
+  applyCardPickAuthoritative(
+    env: CommandEnvelope<CardPickBody>,
+    owner: { fence: number; leaseValue: string },
+    server: Server,
+  ): Promise<CommandOutcome>;
+};
+
+type PlayAuthoritativeService = {
+  applyCardPlayAuthoritative(
+    env: CommandEnvelope<CardPlayBody>,
+    owner: { fence: number; leaseValue: string },
+    server: Server,
+  ): Promise<CommandOutcome>;
+};
+
+function applyPickAuthoritative(
+  svc: MatchCommandService,
+  env: CommandEnvelope<CardPickBody>,
+  owner: { fence: number; leaseValue: string },
+  server: Server,
+): Promise<CommandOutcome> {
+  return (
+    svc as unknown as PickAuthoritativeService
+  ).applyCardPickAuthoritative(env, owner, server);
+}
+
+function applyPlayAuthoritative(
+  svc: MatchCommandService,
+  env: CommandEnvelope<CardPlayBody>,
+  owner: { fence: number; leaseValue: string },
+  server: Server,
+): Promise<CommandOutcome> {
+  return (
+    svc as unknown as PlayAuthoritativeService
+  ).applyCardPlayAuthoritative(env, owner, server);
 }
 
 function submitEnv(
@@ -812,6 +851,191 @@ describe("MatchCommandService (B4a)", () => {
       // No setSideEffects → no handlePlayerDisconnect → RETRY.
       await expect(applyPrivate(service, env, server)).resolves.toBe("RETRY");
     });
+
+    it("dispatchBuiltin routes card_pick through applyCardPickAuthoritative", async () => {
+      // No injected dispatcher → dispatchBuiltin handles the
+      // envelope directly. The card_pick branch is the second
+      // sub-task-D apply path; pin that it routes (RETRY when SM
+      // is missing is the cheapest way to exercise the branch).
+      const env: CommandEnvelope<CardPickBody> = {
+        eventId: "evt-pick-dispatch",
+        schemaVersion: 1,
+        matchId: "m1",
+        emittedByNodeId: "node-b",
+        emittedAt: 1000,
+        body: {
+          type: "card_pick",
+          userId: "p1",
+          commandId: "cmd-pick-dispatch",
+          cardId: "CB-1",
+          offerSeqNo: 1,
+        },
+      };
+      matchService.getStateMachine.mockResolvedValue(undefined);
+      await expect(applyPrivate(service, env, server)).resolves.toBe("RETRY");
+    });
+
+    it("dispatchBuiltin routes card_play through applyCardPlayAuthoritative", async () => {
+      // Same shape as the card_pick dispatch test but for the
+      // card_play envelope.
+      const env: CommandEnvelope<CardPlayBody> = {
+        eventId: "evt-play-dispatch",
+        schemaVersion: 1,
+        matchId: "m1",
+        emittedByNodeId: "node-b",
+        emittedAt: 1000,
+        body: {
+          type: "card_play",
+          userId: "p1",
+          commandId: "cmd-play-dispatch",
+          cardId: "CB-1",
+          offerSeqNo: 1,
+          targetPlayerId: "p2",
+        },
+      };
+      matchService.getStateMachine.mockResolvedValue(undefined);
+      await expect(applyPrivate(service, env, server)).resolves.toBe("RETRY");
+    });
+  });
+
+  describe("claimed-but-unregistered pollOnce edge", () => {
+    it("claimIdleEntries returns 0 immediately when the match was never registered", async () => {
+      // `pollOnce` calls `claimIdleEntries` first; the helper
+      // short-circuits when no registration is present. The
+      // public `pollOnce` then proceeds to xreadgroup on the
+      // stream (which is the assumed-registered path) but
+      // returns `processed=0` because the upstream skip negated
+      // the autoclaim contribution.
+      const autoclaimBefore = vi.mocked(redis.xautoclaim).mock.calls.length;
+      await expect(service.pollOnce("never-registered", server)).resolves.toBe(
+        0,
+      );
+      // claimIdleEntries short-circuited before calling xautoclaim.
+      expect(vi.mocked(redis.xautoclaim).mock.calls.length).toBe(
+        autoclaimBefore,
+      );
+    });
+
+    it("claimIdleEntries rate-limits: skips xautoclaim when the last sweep was within CLAIM_INTERVAL_MS", async () => {
+      // Pre-register the match with a fresh lastClaimAt, then
+      // immediately invoke pollOnce. The early-return skips
+      // xautoclaim entirely (the rate limiter is the gate).
+      const matchId = "m-rate-limit";
+      const reg = {
+        server,
+        abort: new AbortController(),
+        // lastClaimAt = "now" (the most recent possible value).
+        lastClaimAt: Date.now(),
+      };
+      (
+        service as unknown as {
+          registered: Map<string, typeof reg>;
+        }
+      ).registered.set(matchId, reg);
+
+      const lastClaimAt = reg.lastClaimAt;
+      const autoclaimBefore = vi.mocked(redis.xautoclaim).mock.calls.length;
+      await expect(service.pollOnce(matchId, server)).resolves.toBe(0);
+      // xautoclaim was not called because the rate-limiter
+      // short-circuited claimIdleEntries.
+      expect(vi.mocked(redis.xautoclaim).mock.calls.length).toBe(
+        autoclaimBefore,
+      );
+      // lastClaimAt was NOT updated (the rate-limit
+      // early-return did not run the post-sweep stamp).
+      expect(reg.lastClaimAt).toBe(lastClaimAt);
+    });
+  });
+
+  describe("schedulePoll — re-arm guard on a failing pollOnce", () => {
+    // The `schedulePoll` continuation reschedules the next read
+    // when the iteration consumed real work OR the prior call
+    // took at least MIN_BLOCKING_ITERATION_MS. A rejection that
+    // lands within the 500ms window without any work must NOT
+    // re-arm (otherwise the loop would spin on a failing Redis).
+    //
+    // We exercise both the rejection path (no re-arm) and the
+    // success path (re-arm) by stubbing `pollOnce` to either
+    // reject or resolve with positive work.
+    it("re-arms schedulePoll when pollOnce resolves with positive work", async () => {
+      const matchId = "m-rearm-positive";
+      // Resolve `pollOnce` exactly once with positive work,
+      // then return 0 — the second call would otherwise
+      // re-arm and create an infinite loop. The branch under
+      // test is the FIRST re-arm path.
+      const spy = vi
+        .spyOn(service, "pollOnce")
+        .mockResolvedValueOnce(1)
+        .mockResolvedValue(0);
+      (
+        service as unknown as {
+          registered: Map<
+            string,
+            { server: Server; abort: AbortController; lastClaimAt: number }
+          >;
+        }
+      ).registered.set(matchId, {
+        server,
+        abort: new AbortController(),
+        lastClaimAt: 0,
+      });
+
+      (service as unknown as { dispatchPolls: () => void }).dispatchPolls();
+      // The .then() chain runs three microtasks:
+      //   1. pollOnce resolves with 1 (treated as "work done").
+      //   2. rearm = (processed > 0 || ...) = true.
+      //   3. schedulePoll is re-armed.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(spy).toHaveBeenCalled();
+      const inFlight = (service as unknown as { inFlight: Set<string> })
+        .inFlight;
+      expect(inFlight.has(matchId)).toBe(false);
+      // spy was called at least twice: once for the initial
+      // dispatch + once for the re-arm.
+      expect(spy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("does not re-arm schedulePoll when pollOnce rejects with no work and no blocking window", async () => {
+      // Simulate the rejection path by stubbing `pollOnce` to
+      // reject synchronously. The `(rearm) => ...` resolver
+      // catches the rejection and converts it to `() => false`,
+      // which breaks the re-arm chain.
+      const spy = vi
+        .spyOn(service, "pollOnce")
+        .mockRejectedValue(new Error("redis down"));
+      const matchId = "m-reject-fresh";
+      (
+        service as unknown as {
+          registered: Map<
+            string,
+            { server: Server; abort: AbortController; lastClaimAt: number }
+          >;
+        }
+      ).registered.set(matchId, {
+        server,
+        abort: new AbortController(),
+        lastClaimAt: 0,
+      });
+
+      // Invoke the private schedulePoll through `dispatchPolls`
+      // (the public entry point) and let the rejection fire.
+      (service as unknown as { dispatchPolls: () => void }).dispatchPolls();
+      // Let the unhandled rejection ripple through the .then().
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(spy).toHaveBeenCalled();
+      // The in-flight set MUST be cleared. The .then(rearm)`
+      // sentinel converted the rejection into `() => false`,
+      // which did NOT re-arm.
+      const inFlight = (service as unknown as { inFlight: Set<string> })
+        .inFlight;
+      expect(inFlight.has(matchId)).toBe(false);
+      // No re-arm: spy was called exactly once.
+      expect(spy.mock.calls.length).toBe(1);
+    });
   });
 
   describe("recoverDuplicateEvent edges", () => {
@@ -1073,9 +1297,12 @@ describe("MatchCommandService (B4a)", () => {
 
     const players = playerIds.map((id) => ({
       id,
-      nickname: id,
-      avatarSeed: 1,
+      name: id,
       status: id === actorId ? actorStatus : PlayerStatus.ACTIVE,
+      score: 0,
+      totalResponseTimeMs: 0,
+      correctAnswers: 0,
+      isOnline: true,
     }));
     const sm = new MatchStateMachine(matchId, roomId, players);
     sm.classAssignment([...playerIds], "offer-seed");
@@ -1189,7 +1416,8 @@ describe("MatchCommandService (B4a)", () => {
       // First apply: not yet in applied set → persists CARD_PICKED with
       // stamped metadata, emits one CARD_PICKED, returns APPLIED.
       redis.sismember.mockResolvedValue(false);
-      const first = await service.applyCardPickAuthoritative(
+      const first = await applyPickAuthoritative(
+        service,
         pickEnv(),
         OWNER,
         recorder.server,
@@ -1201,7 +1429,8 @@ describe("MatchCommandService (B4a)", () => {
       // through recoverDuplicatePickEvent. Canonical metadata matches,
       // so it MUST re-emit CARD_PICKED before ACK as DUPLICATE_EVENT.
       redis.sismember.mockResolvedValue(true);
-      const second = await service.applyCardPickAuthoritative(
+      const second = await applyPickAuthoritative(
+        service,
         pickEnv(),
         OWNER,
         recorder.server,
@@ -1231,7 +1460,8 @@ describe("MatchCommandService (B4a)", () => {
       redis.sismember.mockResolvedValue(true);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPickAuthoritative(
+      const outcome = await applyPickAuthoritative(
+        service,
         pickEnv(),
         OWNER,
         recorder.server,
@@ -1251,7 +1481,8 @@ describe("MatchCommandService (B4a)", () => {
 
       // First apply stamps eventId=evt-A (persisted into the event log).
       redis.sismember.mockResolvedValue(false);
-      await service.applyCardPickAuthoritative(
+      await applyPickAuthoritative(
+        service,
         pickEnv("evt-A"),
         OWNER,
         recorder.server,
@@ -1264,7 +1495,8 @@ describe("MatchCommandService (B4a)", () => {
       // `eventId=evt-A` and the incoming is `evt-B`, so the canonical
       // identity check fails and NO CARD_PICKED is emitted.
       redis.sismember.mockResolvedValue(true);
-      const outcome = await service.applyCardPickAuthoritative(
+      const outcome = await applyPickAuthoritative(
+        service,
         pickEnv("evt-B"),
         OWNER,
         recorder.server,
@@ -1299,7 +1531,8 @@ describe("MatchCommandService (B4a)", () => {
 
       // Redelivery (eventId already in applied): recovers the canonical event.
       redis.sismember.mockResolvedValue(true);
-      const outcome = await service.applyCardPlayAuthoritative(
+      const outcome = await applyPlayAuthoritative(
+        service,
         playEnv(),
         OWNER,
         recorder.server,
@@ -1336,7 +1569,8 @@ describe("MatchCommandService (B4a)", () => {
 
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPlayAuthoritative(
+      const outcome = await applyPlayAuthoritative(
+        service,
         playEnv(),
         OWNER,
         recorder.server,
@@ -1370,7 +1604,8 @@ describe("MatchCommandService (B4a)", () => {
       redis.sismember.mockResolvedValue(true);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPlayAuthoritative(
+      const outcome = await applyPlayAuthoritative(
+        service,
         playEnv("evt-replay", "cmd-replay"),
         OWNER,
         recorder.server,
@@ -1388,6 +1623,33 @@ describe("MatchCommandService (B4a)", () => {
           }),
         ],
       ]);
+    });
+
+    it("recoverDuplicatePlayEvent returns DUPLICATE_EVENT (no error) when no canonical CARD_RESOLVED exists", async () => {
+      const { sm } = makePickOfferSm({
+        offeredCardIds: ["CB-1", "CB-2", "CB-3"],
+      });
+      // Pick the card but NEVER playCard → no canonical CARD_RESOLVED
+      // exists for findCanonicalCardResolved to match.
+      sm.pickCard("p1", "CB-1", 1);
+      matchService.getStateMachine.mockResolvedValue(sm);
+      // sismember=true forces the already-applied path → handleDuplicatePlayRecovery.
+      redis.sismember.mockResolvedValue(true);
+      const recorder = makeMockServer();
+
+      const outcome = await applyPlayAuthoritative(
+        service,
+        playEnv(),
+        OWNER,
+        recorder.server,
+      );
+
+      // No canonical event → recoverDuplicatePlayEvent returns "DUPLICATE_EVENT",
+      // which handleDuplicatePlayRecovery must propagate directly without
+      // emitting COMMAND_ID_CONFLICT.
+      expect(outcome).toBe("DUPLICATE_EVENT");
+      expect(recorder.callsByEvent(ServerEvent.ERROR)).toHaveLength(0);
+      expect(recorder.callsByEvent(ServerEvent.CARD_RESOLVED)).toHaveLength(0);
     });
 
     it("emitPlayerError sanitises non-RoomError messages to a generic INVALID_PAYLOAD key", () => {
@@ -1483,7 +1745,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(sm);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPickAuthoritative(
+      const outcome = await applyPickAuthoritative(
+        service,
         pickEnv(),
         OWNER,
         recorder.server,
@@ -1516,7 +1779,8 @@ describe("MatchCommandService (B4a)", () => {
       );
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPickAuthoritative(
+      const outcome = await applyPickAuthoritative(
+        service,
         pickEnv(undefined, undefined, sm.getHeadSeqNo()),
         OWNER,
         recorder.server,
@@ -1537,7 +1801,8 @@ describe("MatchCommandService (B4a)", () => {
       redis.sadd.mockRejectedValueOnce(new Error("sadd boom"));
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPickAuthoritative(
+      const outcome = await applyPickAuthoritative(
+        service,
         pickEnv(),
         OWNER,
         recorder.server,
@@ -1551,7 +1816,7 @@ describe("MatchCommandService (B4a)", () => {
       redis.sismember.mockRejectedValue(new Error("redis down"));
 
       await expect(
-        service.applyCardPickAuthoritative(pickEnv(), OWNER, server),
+        applyPickAuthoritative(service, pickEnv(), OWNER, server),
       ).resolves.toBe("RETRY");
       expect(matchService.getStateMachine).not.toHaveBeenCalled();
       expect(matchService.persistStateMachine).not.toHaveBeenCalled();
@@ -1561,7 +1826,7 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(undefined);
 
       await expect(
-        service.applyCardPickAuthoritative(pickEnv(), OWNER, server),
+        applyPickAuthoritative(service, pickEnv(), OWNER, server),
       ).resolves.toBe("RETRY");
       expect(matchService.persistStateMachine).not.toHaveBeenCalled();
     });
@@ -1573,7 +1838,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(sm);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPickAuthoritative(
+      const outcome = await applyPickAuthoritative(
+        service,
         pickEnv("evt-orphan", "cmd-orphan", 1, "ghost"),
         OWNER,
         recorder.server,
@@ -1602,7 +1868,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(sm);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPickAuthoritative(
+      const outcome = await applyPickAuthoritative(
+        service,
         pickEnv(),
         OWNER,
         recorder.server,
@@ -1624,7 +1891,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(sm);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPickAuthoritative(
+      const outcome = await applyPickAuthoritative(
+        service,
         pickEnv(),
         OWNER,
         recorder.server,
@@ -1645,7 +1913,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.persistStateMachine.mockResolvedValue("RETRY");
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPickAuthoritative(
+      const outcome = await applyPickAuthoritative(
+        service,
         pickEnv(),
         OWNER,
         recorder.server,
@@ -1667,7 +1936,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(sm);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPickAuthoritative(
+      const outcome = await applyPickAuthoritative(
+        service,
         pickEnv("evt-bad", "cmd-bad", 1, "p1", "NOT-A-CARD" as CardId),
         OWNER,
         recorder.server,
@@ -1688,17 +1958,22 @@ describe("MatchCommandService (B4a)", () => {
       });
       // Pre-stamp a CARD_PICKED so the duplicate-recovery branch (card
       // already in pickedCards) fires.
-      sm.pickCard("p1", "CB-1", 1);
+      sm.pickCard("p1", "CB-1", 1, {
+        eventId: "evt-pick-1",
+        commandId: "cmd-pick-1",
+      });
       matchService.getStateMachine.mockResolvedValue(sm);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPickAuthoritative(
-        pickEnv(),
+      const outcome = await applyPickAuthoritative(
+        service,
+        pickEnv(undefined, undefined, 1),
         OWNER,
         recorder.server,
       );
 
       expect(outcome).toBe("DUPLICATE_EVENT");
+      expect(recorder.callsByEvent(ServerEvent.CARD_PICKED).length).toBe(1);
       // No error emit (recovery path doesn't surface the prior throw).
       expect(recorder.callsByEvent(ServerEvent.ERROR).length).toBe(0);
       // No new persistence — recovery only re-broadcasts.
@@ -1767,7 +2042,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(sm);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPlayAuthoritative(
+      const outcome = await applyPlayAuthoritative(
+        service,
         playEnv("evt-cb1", "cmd-cb1", offerSeqNo, "p1", "CB-1", "p2"),
         OWNER,
         recorder.server,
@@ -1784,7 +2060,9 @@ describe("MatchCommandService (B4a)", () => {
       // Room broadcast: sanitized TIMER_MODIFY carries full effect (no
       // privacy-sensitive fields) — both emits use the same payload shape.
       const targets = resolved.map(
-        ([, p]) => (p as Record<string, unknown>).targetPlayerIds,
+        ([, p]) =>
+          (p as unknown as { targetPlayerIds: readonly string[] })
+            .targetPlayerIds,
       );
       // Both broadcasts include p2 as the single target.
       expect(targetsEqual(targets)).toBe(true);
@@ -1800,7 +2078,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(sm);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPlayAuthoritative(
+      const outcome = await applyPlayAuthoritative(
+        service,
         playEnv("evt-cb4", "cmd-cb4", offerSeqNo, "p1", "CB-4", "p2"),
         OWNER,
         recorder.server,
@@ -1828,7 +2107,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(sm);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPlayAuthoritative(
+      const outcome = await applyPlayAuthoritative(
+        service,
         playEnv("evt-cb8", "cmd-cb8", offerSeqNo, "p1", "CB-8", undefined),
         OWNER,
         recorder.server,
@@ -1881,7 +2161,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(sm);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPlayAuthoritative(
+      const outcome = await applyPlayAuthoritative(
+        service,
         playEnv(
           "evt-cb8-cap",
           "cmd-cb8-cap",
@@ -1929,7 +2210,8 @@ describe("MatchCommandService (B4a)", () => {
       );
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPlayAuthoritative(
+      const outcome = await applyPlayAuthoritative(
+        service,
         playEnv("evt-room", "cmd-room", offerSeqNo),
         OWNER,
         recorder.server,
@@ -1948,7 +2230,8 @@ describe("MatchCommandService (B4a)", () => {
       redis.sadd.mockRejectedValueOnce(new Error("sadd boom"));
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPlayAuthoritative(
+      const outcome = await applyPlayAuthoritative(
+        service,
         playEnv("evt-sadd", "cmd-sadd", offerSeqNo),
         OWNER,
         recorder.server,
@@ -1962,7 +2245,7 @@ describe("MatchCommandService (B4a)", () => {
       redis.sismember.mockRejectedValue(new Error("redis down"));
 
       await expect(
-        service.applyCardPlayAuthoritative(playEnv(), OWNER, server),
+        applyPlayAuthoritative(service, playEnv(), OWNER, server),
       ).resolves.toBe("RETRY");
       expect(matchService.getStateMachine).not.toHaveBeenCalled();
       expect(matchService.persistStateMachine).not.toHaveBeenCalled();
@@ -1972,7 +2255,7 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(undefined);
 
       await expect(
-        service.applyCardPlayAuthoritative(playEnv(), OWNER, server),
+        applyPlayAuthoritative(service, playEnv(), OWNER, server),
       ).resolves.toBe("RETRY");
       expect(matchService.persistStateMachine).not.toHaveBeenCalled();
     });
@@ -1982,7 +2265,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(sm);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPlayAuthoritative(
+      const outcome = await applyPlayAuthoritative(
+        service,
         playEnv("evt-ghost", "cmd-ghost", offerSeqNo, "ghost", "CB-1", "p2"),
         OWNER,
         recorder.server,
@@ -2008,7 +2292,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(sm);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPlayAuthoritative(
+      const outcome = await applyPlayAuthoritative(
+        service,
         playEnv(),
         OWNER,
         recorder.server,
@@ -2027,7 +2312,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(sm);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPlayAuthoritative(
+      const outcome = await applyPlayAuthoritative(
+        service,
         playEnv(),
         OWNER,
         recorder.server,
@@ -2046,7 +2332,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(sm);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPlayAuthoritative(
+      const outcome = await applyPlayAuthoritative(
+        service,
         playEnv("evt-cb2", "cmd-cb2", offerSeqNo, "p1", "CB-2", "p2"),
         OWNER,
         recorder.server,
@@ -2058,6 +2345,68 @@ describe("MatchCommandService (B4a)", () => {
       expect((errEmits[0]?.[1] as { code: string }).code).toBe(
         ErrorCode.CARD_NOT_IN_HAND,
       );
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+    });
+
+    it("validateCardCommand catch emits DUPLICATE_SUBMISSION + private error when the card is NOT in playedCards", async () => {
+      // The validate catch has two branches: a recovery branch
+      // (when the card is already in playedCards — covered by the
+      // next test) and an emit-and-return-DUPLICATE_SUBMISSION
+      // branch (when the card is NOT in playedCards). The plan
+      // patches the latter: pin the typed error path so a
+      // regression to the recovery branch (or a missing emit)
+      // would fail loudly.
+      const { sm, offerSeqNo } = pickOfferSmForPlay({ pickedCardId: "CB-1" });
+      matchService.getStateMachine.mockResolvedValue(sm);
+      const recorder = makeMockServer();
+
+      // CB-7 is not in the offered set, so validateCardCommand
+      // throws CARD_NOT_IN_HAND and the card is not in playedCards.
+      const outcome = await applyPlayAuthoritative(
+        service,
+        playEnv("evt-bad", "cmd-bad", offerSeqNo, "p1", "CB-7", "p2"),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome).toBe("DUPLICATE_SUBMISSION");
+      const errEmits = recorder.callsByEvent(ServerEvent.ERROR);
+      expect(errEmits.length).toBe(1);
+      expect((errEmits[0]?.[1] as { code: string }).code).toBe(
+        ErrorCode.CARD_NOT_IN_HAND,
+      );
+      expect(recorder.callsByEvent(ServerEvent.CARD_RESOLVED)).toHaveLength(0);
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+    });
+
+    it("playCard catch emits DUPLICATE_SUBMISSION + private error when playCard throws and the card is NOT in playedCards", async () => {
+      // The `playCard` catch mirrors the validate catch: a
+      // recovery branch (card already in playedCards — covered
+      // by the recoverDuplicatePlayEvent test) and an
+      // emit-and-return DUPLICATE_SUBMISSION branch. Force
+      // `playCard` to throw via a spy and assert the typed
+      // error path runs.
+      const { sm, offerSeqNo } = pickOfferSmForPlay({ pickedCardId: "CB-1" });
+      vi.spyOn(
+        sm as unknown as { playCard: (...args: unknown[]) => unknown },
+        "playCard",
+      ).mockImplementation(() => {
+        throw new Error("playCard synthetic failure");
+      });
+      matchService.getStateMachine.mockResolvedValue(sm);
+      const recorder = makeMockServer();
+
+      const outcome = await applyPlayAuthoritative(
+        service,
+        playEnv("evt-pc-fail", "cmd-pc-fail", offerSeqNo),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome).toBe("DUPLICATE_SUBMISSION");
+      const errEmits = recorder.callsByEvent(ServerEvent.ERROR);
+      expect(errEmits.length).toBe(1);
+      expect(recorder.callsByEvent(ServerEvent.CARD_RESOLVED)).toHaveLength(0);
       expect(matchService.persistStateMachine).not.toHaveBeenCalled();
     });
 
@@ -2079,7 +2428,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(sm);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPlayAuthoritative(
+      const outcome = await applyPlayAuthoritative(
+        service,
         playEnv("evt-recover", "cmd-recover", offerSeqNo),
         OWNER,
         recorder.server,
@@ -2106,7 +2456,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(sm);
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPlayAuthoritative(
+      const outcome = await applyPlayAuthoritative(
+        service,
         playEnv("evt-replay", "cmd-replay", offerSeqNo),
         OWNER,
         recorder.server,
@@ -2132,7 +2483,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.persistStateMachine.mockResolvedValue("RETRY");
       const recorder = makeMockServer();
 
-      const outcome = await service.applyCardPlayAuthoritative(
+      const outcome = await applyPlayAuthoritative(
+        service,
         playEnv("evt-retry", "cmd-retry", offerSeqNo),
         OWNER,
         recorder.server,
@@ -2262,7 +2614,8 @@ describe("MatchCommandService (B4a)", () => {
         matchService.getStateMachine.mockResolvedValue(sm);
         const recorder = makeMockServer();
 
-        const outcome = await service.applyCardPlayAuthoritative(
+        const outcome = await applyPlayAuthoritative(
+          service,
           playEnv(cardId, offerSeqNo),
           OWNER,
           recorder.server,
@@ -2344,7 +2697,8 @@ describe("MatchCommandService (B4a)", () => {
         matchService.getStateMachine.mockResolvedValue(sm);
         const recorder = makeMockServer();
 
-        const outcome = await service.applyCardPlayAuthoritative(
+        const outcome = await applyPlayAuthoritative(
+          service,
           playEnv(cardId, offerSeqNo),
           OWNER,
           recorder.server,
@@ -2400,9 +2754,12 @@ describe("MatchCommandService (B4a)", () => {
       const sm = new MatchStateMachine(MATCH_ID, ROOM_ID, [
         {
           id: "p1",
-          nickname: "P1",
-          avatarSeed: 1,
+          name: "P1",
           status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
         },
       ]);
       sm.classAssignment(["p1"], "recovery-seed");
@@ -2450,7 +2807,8 @@ describe("MatchCommandService (B4a)", () => {
       matchService.getStateMachine.mockResolvedValue(sm);
       redis.sismember.mockResolvedValue(true);
 
-      const outcome = await service.applyCardPlayAuthoritative(
+      const outcome = await applyPlayAuthoritative(
+        service,
         {
           eventId: "evt-recover",
           schemaVersion: 1,
@@ -2489,6 +2847,13 @@ describe("MatchCommandService (B4a)", () => {
       expect((roomPayload.effect as Record<string, unknown>).indexes).toEqual(
         [],
       );
+      const roomCalls = recorder
+        .callsWithExclusion()
+        .filter(
+          (c) =>
+            c.channel === "room:r1" && c.event === ServerEvent.CARD_RESOLVED,
+        );
+      expect(roomCalls[0]?.excluded).toEqual(["player:p1"]);
       // Per-target broadcast: full effect retained so the target
       // can render the option-disable highlights.
       const targetPayload = targetFrames[0]?.[1] as Record<string, unknown>;
@@ -2546,7 +2911,10 @@ function makeMockServer(): {
       calls.push({ channel, event, payload, excluded });
       return builder(channel, excluded);
     },
-    except: (...rooms: string[]) => builder(channel, [...excluded, ...rooms]),
+    except: (...rooms: (string | string[])[]) => {
+      const flat = rooms.flat();
+      return builder(channel, [...excluded, ...flat]);
+    },
   });
   const server = {
     to: (channel: string) => builder(channel),

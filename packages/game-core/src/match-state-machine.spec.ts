@@ -1340,6 +1340,53 @@ describe("MatchStateMachine guard branches", () => {
     );
     expect(round.endsAt).toBe(round.startedAt + customDuration);
   });
+
+  it("getCorrectAnswer returns the current round's correct answer (server-only accessor)", () => {
+    // The accessor returns the round's correct answer (kept on
+    // the internal runtime round). The client-safe `getCurrentRound`
+    // snapshot still returns the answer today — the accessor exists
+    // so the server-side resolver has a stable, named entry point
+    // (vs. reaching into the private field). Pin its behavior so
+    // a refactor does not break the resolver boundary.
+    const machine = new MatchStateMachine("m-corr", "r-corr", makePlayers());
+    expect(machine.getCorrectAnswer()).toBeUndefined();
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    machine.startRound({
+      id: "q1",
+      content: "Q?",
+      options: ["A", "B"],
+      correctAnswer: "B",
+    });
+    expect(machine.getCorrectAnswer()).toBe("B");
+  });
+
+  it("evaluateRound falls back to survivingPlayerIds when startingPlayers is UNAVAILABLE", () => {
+    // The `UNAVAILABLE` sentinel means "the round's starting-player
+    // snapshot is missing (e.g. a legacy round that pre-dates the
+    // startingPlayers snapshot). The fallback uses the match's
+    // current surviving roster as the evaluation population.
+    const machine = new MatchStateMachine("m-unav", "r-unav", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    machine.startRound({
+      id: "q1",
+      content: "Q?",
+      options: ["A", "B"],
+      correctAnswer: "A",
+    });
+    // Stamp the round with UNAVAILABLE to simulate a legacy round.
+    (
+      machine as unknown as {
+        currentRound: { startingPlayers: typeof UNAVAILABLE };
+      }
+    ).currentRound.startingPlayers = UNAVAILABLE;
+
+    const result = machine.evaluateRound();
+    // No one answered, so both roster entries are eliminated.
+    expect(result.eliminatedIds).toEqual(["p1", "p2"]);
+    expect(result.survivingIds).toEqual([]);
+  });
 });
 
 // ============================================================

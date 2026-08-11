@@ -339,6 +339,50 @@ describe("MatchHandler", () => {
         expect.objectContaining({ code: ErrorCode.MATCH_NOT_FOUND }),
       );
     });
+
+    it("emits INTERNAL_ERROR when matchCommand.forward rejects with a non-RoomError", async () => {
+      // A plain Error from the durable forward path is treated as
+      // an internal failure: log it server-side and emit the
+      // INTERNAL_ERROR i18n key (never the raw error message).
+      const errorSpy = vi
+        .spyOn(
+          (
+            handler as unknown as {
+              logger: { error: ReturnType<typeof vi.fn> };
+            }
+          ).logger,
+          "error",
+        )
+        .mockImplementation(() => {});
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        activeMachine(),
+      );
+      vi.mocked(matchCommand.forward).mockRejectedValueOnce(
+        new Error("internal failure"),
+      );
+
+      await handler.handleSubmitAnswer(client, {
+        matchId: "m1",
+        answer: "A",
+        roundNo: 1,
+        submissionId: "s1",
+        clientTimestamp: 1234567890,
+      });
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        "Error submitting answer:",
+        expect.any(Error),
+      );
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.INTERNAL_ERROR,
+          message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
+          failedEvent: ClientEvent.SUBMIT_ANSWER,
+          submissionId: "s1",
+        }),
+      );
+    });
   });
 
   describe("handleRequestSnapshot", () => {
@@ -896,6 +940,29 @@ describe("MatchHandler", () => {
         commandId: pickPayload.commandId,
       });
     });
+
+    it("rejects with SPECTATOR_CANNOT_ANSWER when state.players is undefined (defensive)", async () => {
+      // `assertActivePlayer` is the single source of truth for the
+      // authorise-player gate. The first check (`!state?.players`)
+      // covers a malformed state object. We build a state machine
+      // that returns a state without `players` so the handler
+      // rejects the request as a spectator without forwarding.
+      const machine = {
+        getState: vi.fn().mockReturnValue({ id: "m1" }), // no `players`
+      } as any;
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+
+      await handler.handleCardPick(client, server, pickPayload);
+
+      expect(matchCommand.forward).not.toHaveBeenCalled();
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.SPECTATOR_CANNOT_ANSWER,
+          failedEvent: ClientEvent.CARD_PICK,
+        }),
+      );
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -1150,6 +1217,16 @@ describe("MatchHandler", () => {
       await new Promise<void>((resolve) => httpServer.listen(0, resolve));
       const port = (httpServer.address() as AddressInfo).port;
 
+      ioServer.on("connection", (socket: Socket) => {
+        socket.on(ClientEvent.CARD_PLAY, (payload) => {
+          void handler.handleCardPlay(
+            socket,
+            ioServer,
+            payload as Parameters<typeof handler.handleCardPlay>[2],
+          );
+        });
+      });
+
       const actorClient = ioClient(`http://127.0.0.1:${port}`, {
         autoConnect: false,
         transports: ["websocket"],
@@ -1198,11 +1275,17 @@ describe("MatchHandler", () => {
         vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
         vi.mocked(matchCommand.forward).mockClear();
 
-        await handler.handleCardPlay(actorServerSocket as Socket, ioServer, {
+        const forwardCalled = new Promise<void>((resolve) => {
+          vi.mocked(matchCommand.forward).mockImplementationOnce(async () => {
+            resolve();
+          });
+        });
+        actorClient.emit(ClientEvent.CARD_PLAY, {
           ...playPayload,
           cardId: "CB-6",
           targetPlayerId: "p2",
         });
+        await forwardCalled;
 
         // The handler forwarded exactly one well-formed card_play
         // envelope to the owner command channel — no local wire

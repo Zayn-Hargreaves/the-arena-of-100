@@ -112,4 +112,16 @@ describe("assignClasses — edge cases", () => {
     expect(congCount).toBe(2);
     expect(thuCount).toBe(1);
   });
+
+  it("handles duplicate playerIds — comparePlayerId returns 0 for equal strings", () => {
+    // Coverage for the `comparePlayerId(a, b) === 0` equality
+    // branch in the roll-sorted sort. Duplicate IDs force the
+    // comparator to return 0 at least once; the roll-sorted
+    // assignment must still produce a class for each entry (the
+    // engine trusts the caller for input dedup).
+    const players = ["a", "a", "b"];
+    const result = assignClasses(players, "dup-seed");
+    expect(result).toHaveLength(3);
+    expect(result.map((r) => r.playerId).sort()).toEqual([...players].sort());
+  });
 });

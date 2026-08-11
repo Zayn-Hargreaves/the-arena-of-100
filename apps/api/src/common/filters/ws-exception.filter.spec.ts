@@ -149,4 +149,21 @@ describe("WsExceptionFilter", () => {
 
     expect(client.emit).not.toHaveBeenCalled();
   });
+
+  it("falls back to the INTERNAL_ERROR i18n key when a RoomError code is not in the translation table", () => {
+    // Defensive: a RoomError whose code is outside the i18n
+    // table (e.g. a new code added to shared without a matching
+    // ERROR_MESSAGE_KEYS entry) must NOT silently emit `undefined`
+    // as the message — fall back to the INTERNAL_ERROR key so the
+    // client always renders a known string.
+    const unknownCode = 99999 as unknown as ErrorCode;
+    const err = new RoomError(unknownCode, "unknown cause");
+
+    filter.catch(err, host as unknown as ArgumentsHost);
+
+    expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+      code: unknownCode,
+      message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
+    });
+  });
 });

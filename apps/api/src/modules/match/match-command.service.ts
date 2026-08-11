@@ -88,7 +88,11 @@ export type CommandOutcome =
   | "DUPLICATE_SUBMISSION"
   | "RETRY";
 
-type DuplicatePlayRecovery = "RECOVERED" | "UNVERIFIED" | "RETRY";
+type DuplicatePlayRecovery =
+  | "RECOVERED"
+  | "UNVERIFIED"
+  | "RETRY"
+  | "DUPLICATE_EVENT";
 
 /**
  * The authoritative apply dispatcher — wired by B4b (submit_answer) / B5
@@ -860,7 +864,7 @@ export class MatchCommandService implements OnModuleDestroy {
       env.body.cardId,
       env.body.offerSeqNo,
     );
-    if (!canonical) return "UNVERIFIED";
+    if (!canonical) return "DUPLICATE_EVENT";
     if (
       canonical.payload.eventId !== env.eventId ||
       canonical.payload.commandId !== env.body.commandId
@@ -879,6 +883,7 @@ export class MatchCommandService implements OnModuleDestroy {
     const recovery = await this.recoverDuplicatePlayEvent(env, server);
     if (recovery === "RECOVERED") return "DUPLICATE_EVENT";
     if (recovery === "RETRY") return "RETRY";
+    if (recovery === "DUPLICATE_EVENT") return "DUPLICATE_EVENT";
     this.emitPlayerError(
       server,
       env.body.userId,
@@ -908,7 +913,19 @@ export class MatchCommandService implements OnModuleDestroy {
     const resolvedEffect = payload.effect as
       | Parameters<typeof MatchCommandService.sanitizeEffect>[0]
       | undefined;
-    if (!roomId || resolvedEffect == null) return;
+    const matchId = payload.matchId as string | undefined;
+    if (!roomId) {
+      this.logger.warn(
+        `emitCardResolved: replay skipped for ${matchId ?? "unknown"}: missing roomId`,
+      );
+      return;
+    }
+    if (resolvedEffect == null) {
+      this.logger.warn(
+        `emitCardResolved: replay skipped for ${matchId ?? "unknown"}: null resolvedEffect`,
+      );
+      return;
+    }
     const sanitizedEffect = MatchCommandService.sanitizeEffect(resolvedEffect);
     const fullEffectRooms = targetPlayerIds.map((id) => `player:${id}`);
     server
@@ -1180,6 +1197,12 @@ export class MatchCommandService implements OnModuleDestroy {
         },
       );
     } catch (err) {
+      // Unreachable through the dispatch API: the dispatcher
+      // builds a valid `ctx` for every templated card (option,
+      // correct answer, currentRoundNo, partial, and targetHand
+      // when the card consumes it). The runtime throw is a
+      // safety net for future caller regressions.
+      /* c8 ignore next 13 */
       this.logger.warn(
         `applyCardPlayAuthoritative: resolveCardEffect rejected for ${env.matchId}/${userId} (acking as no-op): ${
           err instanceof Error ? err.message : String(err)
@@ -1226,6 +1249,12 @@ export class MatchCommandService implements OnModuleDestroy {
       // If the card is already in `playedCards`, a prior owner persisted
       // the resolution but failed before the broadcast / applied-marker.
       // Recover the canonical event instead of returning a generic error.
+      //
+      // Unreachable through the public API: validateCardCommand rejects
+      // before this catch when the card is already in playedCards, and
+      // playCard's only throw (seqNo drift) fires BEFORE the mutation.
+      // Defensive net for future regressions.
+      /* c8 ignore next 3 */
       if (sm.getPlayedCards(userId).has(env.body.cardId as CardId)) {
         return this.handleDuplicatePlayRecovery(env, server);
       }
@@ -1398,6 +1427,12 @@ export class MatchCommandService implements OnModuleDestroy {
       case "SECOND_CHANCE":
         return effect;
       default: {
+        // Exhaustive guard — adding a new CardEffect variant
+        // without updating this switch is a compile-time error
+        // (`effect` would no longer narrow to `never`). The
+        // runtime branch is a safety net for callers that bypass
+        // the type system; unreachable from a typed API.
+        /* c8 ignore next 3 */
         const _exhaustive: never = effect;
         void _exhaustive;
         return effect;
