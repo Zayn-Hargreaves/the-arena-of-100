@@ -40,14 +40,23 @@ export async function computeMaxClockSkew(
 ): Promise<number> {
   const members = await redis.smembers(NODE_CLOCKS_INDEX);
   const offsets: number[] = [];
-  for (const nodeId of members) {
-    const raw = await redis.get(nodeClockKey(nodeId));
+  const values = await Promise.all(
+    members.map(async (nodeId) => ({
+      nodeId,
+      raw: await redis.get(nodeClockKey(nodeId)),
+    })),
+  );
+  const staleNodeIds: string[] = [];
+  for (const { nodeId, raw } of values) {
     if (raw === null) {
-      await redis.srem(NODE_CLOCKS_INDEX, nodeId);
+      staleNodeIds.push(nodeId);
       continue;
     }
     const offset = Number(raw);
     if (Number.isFinite(offset)) offsets.push(offset);
+  }
+  if (staleNodeIds.length > 0) {
+    await redis.srem(NODE_CLOCKS_INDEX, ...staleNodeIds);
   }
   if (offsets.length < 2) return 0;
   return Math.max(...offsets) - Math.min(...offsets);

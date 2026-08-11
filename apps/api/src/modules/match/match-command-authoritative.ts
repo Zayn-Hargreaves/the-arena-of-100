@@ -11,8 +11,9 @@ import type {
   CommandEnvelope,
   SubmitAnswerBody,
 } from "./dto/match-command.dto";
+import { appliedSetKey } from "./match-command.keys";
 
-interface AuthoritativeCommandContext {
+export interface AuthoritativeCommandContext {
   redis: RedisService;
   matchService: MatchService;
   ownership: MatchOwnershipService;
@@ -20,14 +21,13 @@ interface AuthoritativeCommandContext {
   logger: Logger;
 }
 
-const appliedSetKey = (matchId: string): string => `match:applied:${matchId}`;
-
 export async function applyDisconnectCommand(
   context: AuthoritativeCommandContext,
   env: CommandEnvelope,
   owner: { fence: number; leaseValue: string },
   server: Server,
 ): Promise<CommandOutcome> {
+  if (!context.sideEffects?.handlePlayerDisconnect) return "RETRY";
   const applied = appliedSetKey(env.matchId);
   let alreadyApplied: boolean;
   try {
@@ -40,7 +40,7 @@ export async function applyDisconnectCommand(
   }
   if (alreadyApplied) return "APPLIED";
 
-  const outcome = await context.sideEffects!.handlePlayerDisconnect!(
+  const outcome = await context.sideEffects.handlePlayerDisconnect(
     env,
     owner,
     server,
@@ -60,6 +60,7 @@ export async function applyAnswerCommand(
   env: CommandEnvelope<SubmitAnswerBody>,
   server: Server,
 ): Promise<CommandOutcome> {
+  if (!context.sideEffects) return "RETRY";
   const applied = appliedSetKey(env.matchId);
   let alreadyApplied: boolean;
   try {
@@ -103,14 +104,8 @@ export async function applyAnswerCommand(
 
   const roomId = stateMachine.getState().roomId;
   const roundNo = round?.roundNo ?? stateMachine.getState().currentRoundNo;
-  context.sideEffects?.publishAnswerResult(
-    env,
-    roomId,
-    result,
-    roundNo,
-    server,
-  );
-  await context.sideEffects?.checkEarlyTermination(env.matchId, roomId, server);
+  context.sideEffects.publishAnswerResult(env, roomId, result, roundNo, server);
+  await context.sideEffects.checkEarlyTermination(env.matchId, roomId, server);
   try {
     await context.redis.sadd(applied, env.eventId);
   } catch (error) {
@@ -126,9 +121,10 @@ export async function recoverDuplicateAnswer(
   env: CommandEnvelope<SubmitAnswerBody>,
   server: Server,
 ): Promise<CommandOutcome> {
+  if (!context.sideEffects) return "RETRY";
   if (context.ownership.currentFence(env.matchId) == null) return "RETRY";
   const stateMachine = await context.matchService.getStateMachine(env.matchId);
-  if (!stateMachine || !context.sideEffects) return "DUPLICATE_EVENT";
+  if (!stateMachine) return "DUPLICATE_EVENT";
   const round = stateMachine.getCurrentRound();
   const answer = round?.answers.get(env.body.userId);
   if (!answer) return "DUPLICATE_EVENT";

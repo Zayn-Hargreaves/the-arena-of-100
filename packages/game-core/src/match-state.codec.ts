@@ -111,15 +111,24 @@ export interface DeserializedMatch {
     roundResultStartedAt?: unknown;
     endedAt: number | null;
   };
-  currentRound:
-    | (RoundState & {
-        correctAnswer?: string;
-        startingPlayers?: unknown;
-        answers: [string, AnswerState][];
-      })
-    | null;
+  currentRound: SerializedRoundState | null;
   eventLog: EventLogEntry[];
 }
+
+type SerializedAnswerState = Omit<AnswerState, "submissionId"> & {
+  submissionId?: string;
+};
+
+type SerializedRoundState = Omit<
+  RoundState,
+  "answers" | "startedAt" | "endsAt"
+> & {
+  startedAt?: unknown;
+  endsAt?: unknown;
+  correctAnswer?: string;
+  startingPlayers?: unknown;
+  answers: Array<[string, SerializedAnswerState]>;
+};
 
 /** Plain (Map-reconstructed) data ready to load into a MatchStateMachine. */
 export interface DecodedMatchState {
@@ -239,14 +248,16 @@ function parseSerializedMatch(json: string): {
   ) {
     throw invalidMatchData(json.length);
   }
-  if (parsed.currentRound)
-    validateCurrentRoundShape(parsed.currentRound, json.length);
+  if (parsed.currentRound) {
+    validateCurrentRoundShape(parsed.currentRound, version, json.length);
+  }
 
   return { parsed, version };
 }
 
 function validateCurrentRoundShape(
   round: NonNullable<DeserializedMatch["currentRound"]>,
+  version: SupportedStateVersion,
   payloadLength: number,
 ): void {
   const question = round.question;
@@ -262,10 +273,34 @@ function validateCurrentRoundShape(
   const validCorrectAnswer =
     round.correctAnswer === undefined ||
     typeof round.correctAnswer === "string";
+  const validAnswers =
+    Array.isArray(round.answers) &&
+    round.answers.every((entry) => {
+      if (!Array.isArray(entry) || entry.length !== 2) return false;
+      const [playerId, answer] = entry;
+      if (
+        typeof playerId !== "string" ||
+        answer == null ||
+        typeof answer !== "object"
+      ) {
+        return false;
+      }
+      return (
+        typeof answer.playerId === "string" &&
+        typeof answer.answer === "string" &&
+        typeof answer.isCorrect === "boolean" &&
+        typeof answer.responseTimeMs === "number" &&
+        Number.isFinite(answer.responseTimeMs) &&
+        typeof answer.submittedAt === "number" &&
+        Number.isFinite(answer.submittedAt) &&
+        (typeof answer.submissionId === "string" ||
+          (version === 1 && answer.submissionId === undefined))
+      );
+    });
 
   if (
     !validCorrectAnswer ||
-    !Array.isArray(round.answers) ||
+    !validAnswers ||
     !validQuestion ||
     typeof round.roundNo !== "number" ||
     !validStatus
@@ -388,27 +423,35 @@ function decodeCurrentRound(
     const derived = endsAt - GAME_CONFIG.ROUND_DURATION_MS;
     startedAt = Number.isFinite(derived) ? derived : null;
   }
-  validateRoundTiming(version, state, timing, startedAt, endsAt, payloadLength);
+  const resolvedTiming = validateRoundTiming(
+    version,
+    state,
+    timing,
+    startedAt,
+    endsAt,
+    payloadLength,
+  );
 
   const { answers, correctAnswer: _omitCorrectAnswer, ...rest } = round;
   void _omitCorrectAnswer;
-  return {
+  const decoded: RoundWithAnswer = {
     ...rest,
-    startedAt: startedAt as number,
-    endsAt: endsAt as number,
-    answers: new Map(
-      answers.map(([playerId, answer]) => [
-        playerId,
-        answer.submissionId
-          ? answer
+    startedAt: resolvedTiming.startedAt,
+    endsAt: resolvedTiming.endsAt,
+    answers: new Map<string, AnswerState>(
+      answers.map(([playerId, answer]) => {
+        const decodedAnswer: AnswerState = answer.submissionId
+          ? { ...answer, submissionId: answer.submissionId }
           : {
               ...answer,
-              submissionId: `legacy-${playerId}-${answer.submittedAt ?? 0}`,
-            },
-      ]),
+              submissionId: `legacy-${playerId}-${answer.submittedAt}`,
+            };
+        return [playerId, decodedAnswer];
+      }),
     ),
     startingPlayers: deserializeStartingPlayers(round.startingPlayers),
-  } as RoundWithAnswer;
+  };
+  return decoded;
 }
 
 function validateRoundTiming(
@@ -418,7 +461,7 @@ function validateRoundTiming(
   startedAt: number | null,
   endsAt: number | null,
   payloadLength: number,
-): void {
+): { startedAt: number; endsAt: number } {
   if (startedAt === null || endsAt === null) {
     throw new Error(
       `Invalid MatchStateMachine data: currentRound has no reconstructable startedAt/endsAt (payload omitted; length=${payloadLength})`,
@@ -432,12 +475,13 @@ function validateRoundTiming(
   if (
     version === 2 &&
     state.status === MatchStatus.ROUND_ACTIVE &&
-    timing.phaseEndsAt !== timing.currentRoundEndsAt
+    timing.phaseEndsAt !== endsAt
   ) {
     throw new Error(
       `Invalid MatchStateMachine data: v2 ROUND_ACTIVE phaseEndsAt does not match currentRound.endsAt (payload omitted; length=${payloadLength})`,
     );
   }
+  return { startedAt, endsAt };
 }
 
 function backfillEventSequence(eventLog: EventLogEntry[]): EventLogEntry[] {

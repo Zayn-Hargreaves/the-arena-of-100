@@ -2,7 +2,7 @@ import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import type { ResultLoadState as LoadState } from "@/hooks/use-match-results";
 import { useTranslations } from "next-intl";
 
-export function ResultLoadState({
+export function ResultLoadStateView({
   state,
   onHome,
   onRetry,
@@ -45,6 +45,7 @@ export function ResultLoadState({
           {message}
         </p>
         <button
+          type="button"
           onClick={state === "network_error" ? onRetry : onHome}
           className={`h-11 px-6 ${background} text-candy-ink border-[3px] border-candy-ink rounded-2xl font-display font-black text-xs uppercase`}
         >

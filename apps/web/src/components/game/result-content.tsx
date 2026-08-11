@@ -7,32 +7,20 @@ import {
   Trophy,
   Zap,
 } from "lucide-react";
-import { cloneElement, type ReactElement, type ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { AnimatedSprite } from "@/components/ui/animated-sprite";
 import { Avatar } from "@/components/ui/avatar";
-
-interface WinnerViewModel {
-  name: string;
-  spritesheet: string;
-  isAnimated: boolean;
-  totalScore: number;
-  averageSpeed: string;
-  accuracy: string;
-}
-
-interface PerformanceViewModel {
-  rank: number;
-  score: number;
-  speed: string;
-  accuracy: string;
-  eliminatedRound?: number | null;
-}
+import type {
+  PerformanceViewModel,
+  WinnerViewModel,
+} from "@/hooks/use-match-results";
 
 interface ResultContentProps {
   matchId: string;
   winner: WinnerViewModel;
   performance: PerformanceViewModel;
+  opponents: number;
   onRematch: () => void;
   onHome: () => void;
 }
@@ -41,6 +29,7 @@ export function ResultContent({
   matchId,
   winner,
   performance,
+  opponents,
   onRematch,
   onHome,
 }: ResultContentProps) {
@@ -91,10 +80,10 @@ export function ResultContent({
               {winner.name}
             </h2>
             <p className="font-sans font-bold text-sm text-candy-ink/75 leading-relaxed">
-              {t("championDescription")}
+              {t("championDescription", { opponents })}
             </p>
           </div>
-          <div className="grid grid-cols-3 gap-3 text-center">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
             <Metric
               label={t("metrics.score")}
               value={winner.totalScore}
@@ -110,6 +99,11 @@ export function ResultContent({
               value={winner.averageSpeed}
               color="mint"
             />
+            <Metric
+              label={t("metrics.survivedRounds")}
+              value={winner.survivedRounds}
+              color="blue"
+            />
           </div>
         </div>
       </div>
@@ -118,12 +112,12 @@ export function ResultContent({
         <div className="p-6 rounded-3xl border-[3.5px] border-candy-ink bg-white shadow-[6px_6px_0_0_#2B2D42] space-y-4 md:col-span-2">
           <h3 className="font-display font-black text-base text-candy-ink uppercase tracking-wider flex items-center gap-2 border-b-[3px] border-candy-ink pb-2">
             <Swords className="w-5 h-5 text-candy-pink stroke-[2.5]" />
-            {t("performance.title")}
+            {t("performance.title")} · {performance.name}
           </h3>
           <div className="grid grid-cols-2 gap-4">
             <PerformanceCard
               label={t("performance.rank")}
-              value={`#${performance.rank}`}
+              value={performance.rank === null ? "--" : `#${performance.rank}`}
               color="pink"
               icon={<Trophy className="w-4 h-4 text-candy-pink stroke-[2.5]" />}
             />
@@ -164,10 +158,10 @@ export function ResultContent({
         </div>
 
         <div className="p-6 rounded-3xl border-[3.5px] border-candy-ink bg-candy-cloud flex flex-col justify-center gap-4 shadow-[6px_6px_0_0_#2B2D42]">
-          <ActionButton onClick={onRematch} color="pink" icon={<RotateCcw />}>
+          <ActionButton onClick={onRematch} color="pink" icon={RotateCcw}>
             {t("actions.rematch")}
           </ActionButton>
-          <ActionButton onClick={onHome} color="blue" icon={<Home />}>
+          <ActionButton onClick={onHome} color="blue" icon={Home}>
             {t("actions.home")}
           </ActionButton>
         </div>
@@ -243,16 +237,17 @@ function ActionButton({
 }: {
   onClick: () => void;
   color: "pink" | "blue";
-  icon: ReactElement<{ className?: string }>;
+  icon: ComponentType<{ className?: string }>;
   children: ReactNode;
 }) {
+  const Icon = icon;
   const background = color === "pink" ? "bg-candy-pink" : "bg-candy-blue";
   return (
     <button
       onClick={onClick}
       className={`w-full h-12 ${background} text-candy-ink border-[3px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42] rounded-2xl hover:translate-y-[-1.5px] hover:shadow-[5px_5px_0_0_#2B2D42] active:translate-y-[2.5px] active:shadow-[1.5px_1.5px_0_0_#2B2D42] font-display font-black text-xs tracking-wider uppercase flex items-center justify-center cursor-pointer transition-all outline-none`}
     >
-      {cloneElement(icon, { className: "w-4 h-4 mr-2 stroke-[2.5]" })}
+      <Icon className="w-4 h-4 mr-2 stroke-[2.5]" />
       {children}
     </button>
   );

@@ -1473,6 +1473,15 @@ describe("MatchCommandService (B4a)", () => {
       expect(cardPickedEmits.length).toBe(0);
     });
 
+    it("recoverDuplicatePickEvent returns RETRY when the state machine cannot be loaded", async () => {
+      matchService.getStateMachine.mockResolvedValue(undefined);
+      redis.sismember.mockResolvedValue(true);
+
+      await expect(
+        applyPickAuthoritative(service, pickEnv(), OWNER, server),
+      ).resolves.toBe("RETRY");
+    });
+
     it("recoverDuplicatePickEvent emits COMMAND_ID_CONFLICT on eventId mismatch", async () => {
       const { sm } = makePickOfferSm({
         offeredCardIds: ["CB-1", "CB-2", "CB-3"],

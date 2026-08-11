@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { API_URL } from "@/lib/api";
 
@@ -38,10 +38,30 @@ export type ResultLoadState =
   | "unauthorized"
   | "network_error";
 
+export interface WinnerViewModel {
+  name: string;
+  spritesheet: string;
+  isAnimated: boolean;
+  totalScore: number;
+  averageSpeed: string;
+  accuracy: string;
+  survivedRounds: string;
+}
+
+export interface PerformanceViewModel {
+  name: string;
+  rank: number | null;
+  score: number;
+  speed: string;
+  accuracy: string;
+  eliminatedRound?: number | null;
+}
+
 export function useMatchResults(matchId: string, userId: string | null) {
   const t = useTranslations("Result.fallbacks");
   const [loadState, setLoadState] = useState<ResultLoadState>("loading");
   const [payload, setPayload] = useState<MatchResultApiResponse | null>(null);
+  const [retryToken, setRetryToken] = useState(0);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -79,7 +99,9 @@ export function useMatchResults(matchId: string, userId: string | null) {
 
     void fetchResults();
     return () => abortController.abort();
-  }, [matchId]);
+  }, [matchId, retryToken]);
+
+  const retry = useCallback(() => setRetryToken((token) => token + 1), []);
 
   const players = useMemo(
     () =>
@@ -95,7 +117,7 @@ export function useMatchResults(matchId: string, userId: string | null) {
     [players],
   );
 
-  const winner = useMemo(() => {
+  const winner = useMemo<WinnerViewModel>(() => {
     const topPlayer = sortedPlayers[0];
     return {
       name:
@@ -113,11 +135,11 @@ export function useMatchResults(matchId: string, userId: string | null) {
     };
   }, [payload?.winner, sortedPlayers, t]);
 
-  const yourPerformance = useMemo(() => {
+  const yourPerformance = useMemo<PerformanceViewModel>(() => {
     if (payload?.yourPerformance) {
       return {
         name: payload.yourPerformance.name ?? t("guestPlayer"),
-        rank: payload.yourPerformance.rank ?? 0,
+        rank: payload.yourPerformance.rank ?? null,
         score: payload.yourPerformance.score ?? 0,
         speed: payload.yourPerformance.speed ?? "--",
         accuracy: payload.yourPerformance.accuracy ?? "--",
@@ -131,8 +153,8 @@ export function useMatchResults(matchId: string, userId: string | null) {
       name: currentPlayer?.name ?? t("guestPlayer"),
       rank: currentPlayer
         ? sortedPlayers.findIndex((player) => player.id === currentPlayer.id) +
-          1
-        : 0,
+            1 || null
+        : null,
       score: currentPlayer?.score ?? 0,
       speed: "--",
       accuracy: "--",
@@ -140,7 +162,12 @@ export function useMatchResults(matchId: string, userId: string | null) {
     };
   }, [payload?.yourPerformance, players, sortedPlayers, t, userId]);
 
-  return { loadState, winner, yourPerformance };
+  const winnerId = payload?.winner?.userId ?? payload?.winnerId;
+  const opponents = winnerId
+    ? players.filter((player) => player.id !== winnerId).length
+    : Math.max(0, players.length - 1);
+
+  return { loadState, winner, yourPerformance, opponents, retry };
 }
 
 async function fetchResultResponse(
@@ -153,7 +180,14 @@ async function fetchResultResponse(
   ];
   let response: Response | null = null;
   for (const endpoint of endpoints) {
-    response = await fetch(endpoint, { credentials: "include", signal });
+    const requestSignal = AbortSignal.any([
+      signal,
+      AbortSignal.timeout(10_000),
+    ]);
+    response = await fetch(endpoint, {
+      credentials: "include",
+      signal: requestSignal,
+    });
     if (response.status !== 404) break;
   }
   return response;

@@ -23,6 +23,11 @@ describe("MatchRoundRunner", () => {
   let roomService: RoomService;
   let mockServer: Server;
   let stateMachine: MatchStateMachine;
+  const recoveryLogger = {
+    log: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  } as unknown as Logger;
 
   afterEach(() => {
     // Guard against tests that call vi.useFakeTimers() but bail out
@@ -31,6 +36,7 @@ describe("MatchRoundRunner", () => {
     // hook, every later suite in the file would inherit a fake
     // Date/setTimeout and either hang on flush or skew ordering.
     vi.useRealTimers();
+    vi.clearAllMocks();
   });
 
   beforeEach(() => {
@@ -830,6 +836,18 @@ describe("MatchRoundRunner", () => {
           reason: "LEFT",
         }),
       );
+    });
+
+    it("skips PLAYER_LEFT when the disconnect mutation is not canonically persisted", async () => {
+      vi.mocked(matchService.persistStateMachine).mockResolvedValueOnce(
+        "RETRY",
+      );
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+      await runner.handleMatchPlayerLeft("match-1", "room-1", "p1", mockServer);
+
+      expect(emitSpy).not.toHaveBeenCalled();
     });
   });
 
@@ -2719,7 +2737,7 @@ describe("MatchRoundRunner", () => {
       };
       const result = getRecoveryEliminatedIdsFromEventLog(
         {
-          logger: (runner as unknown as { logger: Logger }).logger,
+          logger: recoveryLogger,
           questionService,
         },
         [fakeEvent],
@@ -2738,7 +2756,7 @@ describe("MatchRoundRunner", () => {
       };
       const result = getRecoveryEliminatedIdsFromEventLog(
         {
-          logger: (runner as unknown as { logger: Logger }).logger,
+          logger: recoveryLogger,
           questionService,
         },
         [fakeEvent],

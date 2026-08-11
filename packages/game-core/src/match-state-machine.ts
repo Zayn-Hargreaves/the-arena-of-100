@@ -702,10 +702,17 @@ export class MatchStateMachine {
       readonly payload?: unknown;
       readonly timestamp: number;
       readonly seqNo: number;
-    }) => void,
+    }) => void | boolean,
+    direction: "forward" | "reverse" = "forward",
   ): void {
-    for (const e of this.eventLog) {
-      callback(e);
+    if (direction === "reverse") {
+      for (let index = this.eventLog.length - 1; index >= 0; index--) {
+        if (callback(this.eventLog[index]!) === false) break;
+      }
+      return;
+    }
+    for (const entry of this.eventLog) {
+      if (callback(entry) === false) break;
     }
   }
 

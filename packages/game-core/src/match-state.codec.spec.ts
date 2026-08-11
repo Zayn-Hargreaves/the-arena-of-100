@@ -524,6 +524,7 @@ describe("match-state.codec v2 + back-compat (B1c)", () => {
         [
           "p1",
           {
+            playerId: "p1",
             answer: "A",
             isCorrect: true,
             responseTimeMs: 100,
@@ -537,6 +538,36 @@ describe("match-state.codec v2 + back-compat (B1c)", () => {
         decoded.currentRound as { answers: Map<string, AnswerState> }
       ).answers.get("p1");
       expect(answer?.submissionId).toBe("legacy-p1-1234");
+    });
+
+    it("rejects malformed answer entries with the normalized codec error", () => {
+      const parsed = JSON.parse(v1Blob());
+      parsed.currentRound.answers = [["p1", null]];
+      const payload = JSON.stringify(parsed);
+
+      expect(() => deserializeMatch(payload)).toThrow(
+        `Invalid MatchStateMachine data (payload omitted; length=${payload.length})`,
+      );
+    });
+
+    it("reconstructs v2 ROUND_ACTIVE timing from phaseEndsAt", () => {
+      const state = buildState();
+      state.status = "ROUND_ACTIVE" as MatchState["status"];
+      state.phaseEndsAt = 16_000;
+      const round = buildRound({
+        startedAt: 1000,
+        endsAt: 16_000,
+        status: "ACTIVE",
+      });
+      const parsed = JSON.parse(serializeMatch(state, round, []));
+      delete parsed.currentRound.startedAt;
+      delete parsed.currentRound.endsAt;
+
+      const decoded = deserializeMatch(JSON.stringify(parsed));
+      expect(decoded.currentRound?.endsAt).toBe(16_000);
+      expect(decoded.currentRound?.startedAt).toBe(
+        16_000 - GAME_CONFIG.ROUND_DURATION_MS,
+      );
     });
 
     it("borrows reconstructed phaseEndsAt as the round endsAt on a v1 ROUND_ACTIVE blob missing both round anchors", () => {

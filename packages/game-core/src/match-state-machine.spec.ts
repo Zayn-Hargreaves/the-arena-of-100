@@ -1819,6 +1819,7 @@ describe("MatchStateMachine score accumulation (B2)", () => {
       machine.submitAnswer("p1", "A", round.startedAt + 100, "s1");
 
       const parsed = JSON.parse(machine.serialize());
+      parsed._stateVersion = 1;
       delete parsed.currentRound.answers[0][1].submissionId;
 
       const restored = MatchStateMachine.deserialize(JSON.stringify(parsed));

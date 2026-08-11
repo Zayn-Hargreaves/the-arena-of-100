@@ -237,11 +237,12 @@
     "title": "ARENA RESULTS",
     "matchId": "MATCH ID: {matchId}",
     "championBadge": "ARENA CHAMPION",
-    "championDescription": "Defeated 99 opponents to become the arena's sole champion!",
+    "championDescription": "Defeated {opponents} opponents to become the arena's sole champion!",
     "metrics": {
       "score": "Score",
       "accuracy": "Accuracy",
-      "reaction": "Reaction"
+      "reaction": "Reaction",
+      "survivedRounds": "Rounds Survived"
     },
     "performance": {
       "title": "Your Performance",

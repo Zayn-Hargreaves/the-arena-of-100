@@ -26,9 +26,15 @@ export function useGamePageLifecycle({
   const { toast } = useToast();
   const tTermination = useTranslations("Game.termination");
   const snapshotHydratedRef = useRef(false);
+  const snapshotMatchIdRef = useRef<string | null>(null);
   const terminationNotifiedRef = useRef(false);
+  const terminationRedirectRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (snapshotMatchIdRef.current !== matchId) {
+      snapshotMatchIdRef.current = matchId;
+      snapshotHydratedRef.current = false;
+    }
     if (snapshotHydratedRef.current || !matchId) return;
     snapshotHydratedRef.current = true;
     requestSnapshot(matchId, useSocketStore.getState().lastSeenSeqNo);
@@ -43,14 +49,10 @@ export function useGamePageLifecycle({
       description: roomTerminationMessage ?? tTermination("toastDefault"),
       variant: "error",
     });
-    const redirectTimer = window.setTimeout(() => router.push("/"), 1500);
-    return () => {
-      window.clearTimeout(redirectTimer);
-      useSocketStore.setState({
-        roomTerminated: false,
-        roomTerminationMessage: null,
-      });
-    };
+    terminationRedirectRef.current = window.setTimeout(
+      () => router.push("/"),
+      1500,
+    );
   }, [
     roomTerminated,
     roomTerminationMessage,
@@ -59,6 +61,19 @@ export function useGamePageLifecycle({
     tTermination,
     clearTimers,
   ]);
+
+  useEffect(
+    () => () => {
+      if (terminationRedirectRef.current !== null) {
+        window.clearTimeout(terminationRedirectRef.current);
+      }
+      useSocketStore.setState({
+        roomTerminated: false,
+        roomTerminationMessage: null,
+      });
+    },
+    [],
+  );
 
   useEffect(() => {
     if (matchStatus !== "FINISHED") return;

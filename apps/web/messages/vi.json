@@ -235,13 +235,14 @@
   "Result": {
     "reportLabel": "BẢN BÁO CÁO SAU TRẬN ĐẤU",
     "title": "KẾT QUẢ ĐẤU TRƯỜNG",
-    "matchId": "MATCH ID: {matchId}",
+    "matchId": "MÃ TRẬN: {matchId}",
     "championBadge": "QUÁN QUÂN ĐẤU TRƯỜNG",
-    "championDescription": "Đã đánh bại 99 đối thủ khác để giành ngôi vị quán quân duy nhất!",
+    "championDescription": "Đã đánh bại {opponents} đối thủ khác để giành ngôi vị quán quân duy nhất!",
     "metrics": {
       "score": "Điểm Số",
       "accuracy": "Tỉ Lệ Đúng",
-      "reaction": "Phản Xạ"
+      "reaction": "Phản Xạ",
+      "survivedRounds": "Số Vòng Trụ Lại"
     },
     "performance": {
       "title": "Thành Tích Của Bạn",
@@ -273,8 +274,8 @@
     },
     "fallbacks": {
       "unknownPlayer": "Người Chơi Không Xác Định",
-      "updating": "Đang cập nhật",
-      "guestPlayer": "Khách Đấu Thủ"
+      "updating": "Đang cập nhật...",
+      "guestPlayer": "Người Chơi Khách"
     }
   },
   "profile": {

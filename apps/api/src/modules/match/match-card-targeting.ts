@@ -26,11 +26,25 @@ export function expandCardTargets(
   stateMachine: MatchStateMachine,
 ): string[] {
   const definition = getCardDefinition(cardId);
-  const template = definition.effectTemplate as { targetCount?: number };
-  const count = template.targetCount ?? 1;
+  const template = definition.effectTemplate;
+  const count =
+    template.kind === "TIMER_MODIFY" || template.kind === "DELAY_RENDER"
+      ? template.targetCount
+      : 1;
+
+  const isEligible = (id: string): boolean => {
+    const player = stateMachine.getState().players.get(id);
+    return Boolean(
+      player &&
+      player.status !== PlayerStatus.ELIMINATED &&
+      player.status !== PlayerStatus.WINNER &&
+      player.status !== PlayerStatus.DISCONNECTED,
+    );
+  };
 
   if (count <= 1) {
-    return targetPlayerId ? [targetPlayerId] : [playedByPlayerId];
+    const targetId = targetPlayerId ?? playedByPlayerId;
+    return isEligible(targetId) ? [targetId] : [];
   }
 
   const targetRng = mulberry32(

@@ -28,9 +28,9 @@ import {
   emitCardResolved,
   emitPlayerCommandError,
   findCanonicalCardEvent,
-  sanitizeCardEffect,
 } from "./match-card-command.helpers";
 import { expandCardTargets, makeCardResolveRng } from "./match-card-targeting";
+import { appliedSetKey } from "./match-command.keys";
 
 interface CardCommandContext {
   redis: RedisService;
@@ -45,8 +45,6 @@ type DuplicateRecovery =
   | "RETRY"
   | "DUPLICATE_EVENT";
 
-const appliedSetKey = (matchId: string): string => `match:applied:${matchId}`;
-
 async function recoverDuplicatePickEvent(
   context: CardCommandContext,
   env: CommandEnvelope<CardPickBody>,
@@ -54,7 +52,7 @@ async function recoverDuplicatePickEvent(
 ): Promise<DuplicateRecovery> {
   if (context.ownership.currentFence(env.matchId) == null) return "RETRY";
   const stateMachine = await context.matchService.getStateMachine(env.matchId);
-  if (!stateMachine) return "DUPLICATE_EVENT";
+  if (!stateMachine) return "RETRY";
   const canonical = findCanonicalCardEvent(
     stateMachine,
     "CARD_PICKED",
@@ -80,13 +78,14 @@ async function recoverDuplicatePickEvent(
       offerSeqNo: canonical.payload.offerSeqNo,
     });
   }
-  return "DUPLICATE_EVENT";
+  return "RECOVERED";
 }
 
 async function recoverDuplicatePlayEvent(
   context: CardCommandContext,
   env: CommandEnvelope<CardPlayBody>,
   server: Server,
+  cardId: string = env.body.cardId,
 ): Promise<DuplicateRecovery> {
   if (context.ownership.currentFence(env.matchId) == null) return "RETRY";
   const stateMachine = await context.matchService.getStateMachine(env.matchId);
@@ -95,7 +94,7 @@ async function recoverDuplicatePlayEvent(
     stateMachine,
     "CARD_RESOLVED",
     env.body.userId,
-    env.body.cardId,
+    cardId,
     env.body.offerSeqNo,
   );
   if (!canonical) return "DUPLICATE_EVENT";
@@ -140,8 +139,14 @@ async function handleDuplicatePlayRecovery(
   context: CardCommandContext,
   env: CommandEnvelope<CardPlayBody>,
   server: Server,
+  cardId?: CardId,
 ): Promise<CommandOutcome> {
-  const recovery = await recoverDuplicatePlayEvent(context, env, server);
+  const recovery = await recoverDuplicatePlayEvent(
+    context,
+    env,
+    server,
+    cardId,
+  );
   if (recovery === "RECOVERED" || recovery === "DUPLICATE_EVENT") {
     return "DUPLICATE_EVENT";
   }
@@ -362,7 +367,7 @@ export async function applyCardPlayCommand(
     userId,
     currentRoundNo,
     env.body.offerSeqNo,
-    env.body.cardId,
+    validated.cardId,
   );
   let resolved: CardEffect;
   try {
@@ -421,8 +426,13 @@ export async function applyCardPlayCommand(
       `applyCardPlayAuthoritative: playCard rejected for ${env.matchId}/${userId} (acking as no-op): ${error instanceof Error ? error.message : String(error)}`,
     );
     /* c8 ignore next 3 */
-    if (stateMachine.getPlayedCards(userId).has(env.body.cardId as CardId)) {
-      return handleDuplicatePlayRecovery(context, env, server);
+    if (stateMachine.getPlayedCards(userId).has(validated.cardId)) {
+      return handleDuplicatePlayRecovery(
+        context,
+        env,
+        server,
+        validated.cardId,
+      );
     }
     emitPlayerCommandError(
       context.logger,
@@ -441,43 +451,20 @@ export async function applyCardPlayCommand(
     return "RETRY";
   }
 
-  const roomId = state.roomId;
-  if (roomId) {
-    const basePayload = {
-      seqNo: result.seqNo,
-      matchId: env.matchId,
-      roundNo: currentRoundNo,
-      cardId: env.body.cardId,
-      offerSeqNo: env.body.offerSeqNo,
-      playedByPlayerId: userId,
-      targetPlayerIds,
-      resolution:
-        result.expiresAtServer === null
-          ? ("MUTATION" as const)
-          : ("TEMPORARY" as const),
-      serverTimestamp: serverNow,
-      expiresAtServer: result.expiresAtServer,
-      remainingMs: result.remainingMs,
-    };
-    const fullEffectRooms = targetPlayerIds.map((id) => `player:${id}`);
-    server
-      .to(`room:${roomId}`)
-      .except(fullEffectRooms)
-      .emit(ServerEvent.CARD_RESOLVED, {
-        ...basePayload,
-        effect: sanitizeCardEffect(resolved),
-      });
-    for (const targetId of targetPlayerIds) {
-      server.to(`player:${targetId}`).emit(ServerEvent.CARD_RESOLVED, {
-        ...basePayload,
-        effect: resolved,
-      });
-    }
-  } else {
-    context.logger.warn(
-      `applyCardPlayAuthoritative: missing roomId for ${env.matchId}, unable to broadcast CARD_RESOLVED`,
-    );
-  }
+  emitCardResolved(context.logger, server, state.roomId, {
+    seqNo: result.seqNo,
+    matchId: env.matchId,
+    roundNo: currentRoundNo,
+    cardId: validated.cardId,
+    offerSeqNo: env.body.offerSeqNo,
+    playedByPlayerId: userId,
+    targetPlayerIds,
+    resolution: result.expiresAtServer === null ? "MUTATION" : "TEMPORARY",
+    serverTimestamp: serverNow,
+    expiresAtServer: result.expiresAtServer,
+    remainingMs: result.remainingMs,
+    effect: resolved,
+  });
 
   try {
     await context.redis.sadd(applied, env.eventId);

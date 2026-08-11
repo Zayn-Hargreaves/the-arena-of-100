@@ -25,7 +25,7 @@ export function findCanonicalCardEvent(
 ): CanonicalCardEvent | null {
   let found: CanonicalCardEvent | null = null;
   stateMachine.forEachEvent((entry) => {
-    if (found || entry.type !== type) return;
+    if (entry.type !== type) return;
     const payload = (entry.payload ?? {}) as Record<string, unknown>;
     const eventPlayerId =
       type === "CARD_PICKED" ? payload.playerId : payload.playedByPlayerId;
@@ -43,7 +43,8 @@ export function findCanonicalCardEvent(
       seqNo: entry.seqNo,
       timestamp: entry.timestamp,
     };
-  });
+    return false;
+  }, "reverse");
   return found;
 }
 
@@ -71,7 +72,7 @@ export function emitPlayerCommandError(
         ? "null"
         : String(error);
   logger.warn(
-    `emitPlayerError: non-RoomError for ${userId} on ${failedEvent}/${commandId}: ${detail}`,
+    `emitPlayerCommandError: non-RoomError for ${userId} on ${failedEvent}/${commandId}: ${detail}`,
   );
   server.to(`player:${userId}`).emit(ServerEvent.ERROR, {
     code: ErrorCode.INVALID_PAYLOAD,

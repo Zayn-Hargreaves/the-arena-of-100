@@ -31,11 +31,13 @@ import {
 import {
   applyAnswerCommand,
   applyDisconnectCommand,
+  type AuthoritativeCommandContext,
 } from "./match-command-authoritative";
 import {
   applyCardPickCommand,
   applyCardPlayCommand,
 } from "./match-card-command-authoritative";
+import { appliedSetKey } from "./match-command.keys";
 
 export {
   type CommandEnvelope,
@@ -117,9 +119,7 @@ export interface CommandSideEffects {
   ): Promise<CommandOutcome>;
 }
 
-/** Owner-scoped set of applied transport eventIds (dedup). Deleted on finish. */
-export const appliedSetKey = (matchId: string): string =>
-  `match:applied:${matchId}`;
+export { appliedSetKey } from "./match-command.keys";
 
 export const OWNER_GROUP = "owners";
 /** Min-idle before a pending entry is eligible for takeover (XAUTOCLAIM). */
@@ -554,7 +554,7 @@ export class MatchCommandService implements OnModuleDestroy {
    * returns RETRY (the consumer leaves the stream entry pending and the new
    * owner heals via DUPLICATE_EVENT on its own re-apply).
    */
-  private authoritativeContext() {
+  private authoritativeContext(): AuthoritativeCommandContext {
     return {
       redis: this.redis,
       matchService: this.matchService,

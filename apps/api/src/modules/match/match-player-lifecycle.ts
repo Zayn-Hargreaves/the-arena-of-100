@@ -52,7 +52,13 @@ export async function leaveMatchPlayer(
     const player = stateMachine.getState().players.get(userId);
     if (player) {
       stateMachine.disconnectPlayer(userId);
-      await context.matchService.persistStateMachine(matchId);
+      const outcome = await context.matchService.persistStateMachine(matchId);
+      if (outcome !== "APPLIED") {
+        context.logger.warn(
+          `handleMatchPlayerLeft: persist ${outcome} for ${matchId} — no confirmed canonical write, skipping leave broadcast`,
+        );
+        return;
+      }
     }
   } else {
     context.logger.warn(

@@ -77,6 +77,13 @@ export function useGameRoundState({
     }
   }, []);
 
+  const clearCountdownTimer = useCallback(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     if (!activePendingAnswer) return;
     setSelectedAnswer(activePendingAnswer.answer);
@@ -95,32 +102,21 @@ export function useGameRoundState({
 
   useEffect(() => {
     if (roundCompleted) return;
-    clearTimers();
+    clearCountdownTimer();
     setTimeLeft(calculateTimeLeft());
     intervalRef.current = setInterval(() => {
       setTimeLeft(calculateTimeLeft());
     }, 1000);
-    return clearTimers;
-  }, [calculateTimeLeft, roundCompleted, clearTimers, match?.roundEndTime]);
+    return clearCountdownTimer;
+  }, [calculateTimeLeft, roundCompleted, clearCountdownTimer]);
 
   const isRoundResultPhase =
     match?.status === MatchStatus.ROUND_RESULT && match.roundEndTime === null;
   useEffect(() => {
-    if (!isRoundResultPhase || roundCompleted) return;
+    if (!isRoundResultPhase) return;
 
     clearTimers();
     setRoundCompleted(true);
-    if (lastAnswerResult?.correctAnswer) {
-      const answerCodes = ["A", "B", "C", "D"];
-      const rawAnswer = lastAnswerResult.correctAnswer;
-      const matchedIndex = options.indexOf(rawAnswer);
-      setRevealedCorrectAnswer(
-        answerCodes.includes(rawAnswer) || matchedIndex < 0
-          ? rawAnswer
-          : (answerCodes[matchedIndex] ?? rawAnswer),
-      );
-    }
-
     roundResultRevealRef.current = setTimeout(() => {
       roundResultContinueRef.current = setTimeout(() => {
         setTimeLeft(roundDuration);
@@ -131,14 +127,19 @@ export function useGameRoundState({
     }, 1000);
 
     return clearTimers;
-  }, [
-    isRoundResultPhase,
-    lastAnswerResult,
-    roundCompleted,
-    clearTimers,
-    roundDuration,
-    options,
-  ]);
+  }, [isRoundResultPhase, activeRoundNo, clearTimers, roundDuration]);
+
+  useEffect(() => {
+    if (!isRoundResultPhase || !activeAnswerResult?.correctAnswer) return;
+    const answerCodes = ["A", "B", "C", "D"];
+    const rawAnswer = activeAnswerResult.correctAnswer;
+    const matchedIndex = options.indexOf(rawAnswer);
+    setRevealedCorrectAnswer(
+      answerCodes.includes(rawAnswer) || matchedIndex < 0
+        ? rawAnswer
+        : (answerCodes[matchedIndex] ?? rawAnswer),
+    );
+  }, [isRoundResultPhase, activeAnswerResult, options]);
 
   useEffect(() => clearTimers, [clearTimers]);
 
