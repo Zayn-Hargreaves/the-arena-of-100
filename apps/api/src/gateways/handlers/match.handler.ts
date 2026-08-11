@@ -6,10 +6,13 @@ import {
   ErrorCode,
   PlayerStatus,
   RoomStatus,
+  type MatchState,
   type SubmitAnswerPayload,
   type RequestSnapshotPayload,
+  type CardPickPayload,
+  type CardPlayPayload,
   RoomError,
-  ERROR_MESSAGES,
+  ERROR_MESSAGE_KEYS,
 } from "@arena/shared";
 import { RoomService } from "../../modules/room/room.service";
 import { MatchService } from "../../modules/match/match.service";
@@ -20,6 +23,10 @@ import {
 } from "../../modules/match/match-command.service";
 import { ClusterService } from "../../modules/cluster/cluster.service";
 import { BaseHandler } from "./base.handler";
+import {
+  assertValidCommandId,
+  assertCardId,
+} from "../../modules/match/card-validator";
 
 @Injectable()
 export class MatchHandler extends BaseHandler {
@@ -70,11 +77,11 @@ export class MatchHandler extends BaseHandler {
         const code = this.getErrorCode(error);
         let msg =
           error instanceof RoomError
-            ? ERROR_MESSAGES[error.code]
+            ? ERROR_MESSAGE_KEYS[error.code]
             : this.getErrorMessage(error);
         if (code === ErrorCode.INTERNAL_ERROR) {
           this.logger.error("Error starting match:", error);
-          msg = "Internal server error";
+          msg = ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR];
         }
         this.emitError(client, code, msg);
       },
@@ -108,7 +115,7 @@ export class MatchHandler extends BaseHandler {
         // offline. The frontend can use PLAYER_DISCONNECTED to drive
         // a reconnect flow instead of an error toast.
         const player = stateMachine.getState().players.get(userId);
-        if (player && player.status === PlayerStatus.DISCONNECTED) {
+        if (player?.status === PlayerStatus.DISCONNECTED) {
           throw new RoomError(ErrorCode.PLAYER_DISCONNECTED);
         }
 
@@ -141,10 +148,10 @@ export class MatchHandler extends BaseHandler {
       (error) => {
         const rawCode = error instanceof RoomError ? error.code : null;
         const code = rawCode ?? this.getErrorCode(error);
-        let msg = ERROR_MESSAGES[code] ?? this.getErrorMessage(error);
+        let msg = ERROR_MESSAGE_KEYS[code] ?? this.getErrorMessage(error);
         if (code === ErrorCode.INTERNAL_ERROR) {
           this.logger.error("Error submitting answer:", error);
-          msg = "Internal server error";
+          msg = ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR];
         }
         client.emit(ServerEvent.ERROR, {
           code,
@@ -229,14 +236,208 @@ export class MatchHandler extends BaseHandler {
         const code = this.getErrorCode(error);
         let msg =
           error instanceof RoomError
-            ? ERROR_MESSAGES[error.code]
+            ? ERROR_MESSAGE_KEYS[error.code]
             : this.getErrorMessage(error);
         if (code === ErrorCode.INTERNAL_ERROR) {
           this.logger.error("Error sending snapshot:", error);
-          msg = "Internal server error";
+          msg = ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR];
         }
         this.emitError(client, code, msg, ClientEvent.REQUEST_SNAPSHOT);
       },
     );
+  }
+
+  // -------------------------------------------------------------------------
+  // Phase 2 — Class + Card Hybrid handlers (sub-task D).
+  // Source of truth: memory-bank/spec/class-cards-phase.md §5.2 sub-task D.
+  //
+  // These are ADDITIVE — they do not touch `handleStartMatch`,
+  // `handleSubmitAnswer`, or `handleRequestSnapshot`. They follow the
+  // same pattern as `handleSubmitAnswer` for the roomId authorization
+  // gate + the durable command-forward path: the boundary only
+  // validates + forwards the envelope to the owner command channel,
+  // and the owner's consumer (`MatchCommandService.applyCardPick
+  // Authoritative` / `applyCardPlayAuthoritative`) runs the
+  // authoritative validate → resolve → expand → mutate → persist →
+  // broadcast sequence in ONE serialised consumer step. The handler
+  // never mutates state machine or broadcasts locally, so two blind
+  // writes on two nodes cannot both commit a CARD_PICKED /
+  // CARD_RESOLVED event.
+  // -------------------------------------------------------------------------
+
+  // `handleCardPick` — client picked one of the offered cards.
+  // The card is removed from the player's hand on the owner side via
+  // `MatchStateMachine.pickCard`; CARD_PICKED is broadcast by the
+  // owner only.
+  async handleCardPick(
+    client: Socket,
+    _server: Server,
+    payload: CardPickPayload,
+  ) {
+    return this.runSafely(
+      client,
+      async () => {
+        const userId = this.requireAuth(client);
+        assertValidCommandId(payload.commandId);
+        assertCardId(payload.cardId);
+
+        const roomId = await this.matchService.getRoomIdByMatchId(
+          payload.matchId,
+        );
+        if (!roomId) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
+        if (!client.rooms.has(`room:${roomId}`)) {
+          throw new RoomError(ErrorCode.UNAUTHORIZED);
+        }
+        const stateMachine = await this.matchService.getStateMachine(
+          payload.matchId,
+        );
+        if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
+
+        const state = stateMachine.getState();
+        this.assertActivePlayer(state, userId);
+
+        // B4b-style single-writer: the boundary forwards the command
+        // to the per-match stream; the owner applies + persists +
+        // broadcasts CARD_PICKED exactly once. The handler MUST NOT
+        // call `pickCard` or emit `CARD_PICKED` locally — the dispatch
+        // path on the owner is the only authoritative apply point.
+        await this.matchCommand.forward(
+          makeCommandEnvelope({
+            matchId: payload.matchId,
+            emittedByNodeId: this.cluster.nodeId,
+            body: {
+              type: "card_pick",
+              userId,
+              commandId: payload.commandId,
+              cardId: payload.cardId,
+              offerSeqNo: payload.offerSeqNo,
+            },
+          }),
+        );
+
+        this.logger.log(
+          `Card pick forwarded to owner channel: ${userId} (match ${payload.matchId}, card ${payload.cardId})`,
+        );
+      },
+      (error) => {
+        const code = this.getErrorCode(error);
+        let msg =
+          error instanceof RoomError
+            ? ERROR_MESSAGE_KEYS[error.code]
+            : this.getErrorMessage(error);
+        if (code === ErrorCode.INTERNAL_ERROR) {
+          this.logger.error("Error handling card pick:", error);
+          msg = ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR];
+        }
+        client.emit(ServerEvent.ERROR, {
+          code,
+          message: msg,
+          failedEvent: ClientEvent.CARD_PICK,
+          commandId: payload.commandId,
+        });
+      },
+    );
+  }
+
+  // `handleCardPlay` — apply the picked card. The boundary validates
+  // the command and forwards it; the owner reads the current round /
+  // AOE count, runs `validateCardCommand`, resolves the template,
+  // expands targets, calls `MatchStateMachine.playCard`, fenced-persists,
+  // and broadcasts `CARD_RESOLVED` (sanitized to room + full to each
+  // target) — all in ONE serialised consumer step.
+  async handleCardPlay(
+    client: Socket,
+    _server: Server,
+    payload: CardPlayPayload,
+  ) {
+    return this.runSafely(
+      client,
+      async () => {
+        const userId = this.requireAuth(client);
+        assertValidCommandId(payload.commandId);
+        assertCardId(payload.cardId);
+
+        const roomId = await this.matchService.getRoomIdByMatchId(
+          payload.matchId,
+        );
+        if (!roomId) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
+        if (!client.rooms.has(`room:${roomId}`)) {
+          throw new RoomError(ErrorCode.UNAUTHORIZED);
+        }
+        const stateMachine = await this.matchService.getStateMachine(
+          payload.matchId,
+        );
+        if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
+
+        const state = stateMachine.getState();
+        this.assertActivePlayer(state, userId);
+
+        // Single-writer forward: the boundary does NO state-machine
+        // mutation, NO persistence, and NO broadcast. The owner's
+        // consumer is the sole writer, so two blind writes on two
+        // nodes cannot both commit a CARD_RESOLVED event.
+        await this.matchCommand.forward(
+          makeCommandEnvelope({
+            matchId: payload.matchId,
+            emittedByNodeId: this.cluster.nodeId,
+            body: {
+              type: "card_play",
+              userId,
+              commandId: payload.commandId,
+              cardId: payload.cardId,
+              offerSeqNo: payload.offerSeqNo,
+              targetPlayerId: payload.targetPlayerId,
+            },
+          }),
+        );
+
+        this.logger.log(
+          `Card play forwarded to owner channel: ${userId} (match ${payload.matchId}, card ${payload.cardId})`,
+        );
+      },
+      (error) => {
+        const code = this.getErrorCode(error);
+        let msg =
+          error instanceof RoomError
+            ? ERROR_MESSAGE_KEYS[error.code]
+            : this.getErrorMessage(error);
+        if (code === ErrorCode.INTERNAL_ERROR) {
+          this.logger.error("Error handling card play:", error);
+          msg = ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR];
+        }
+        client.emit(ServerEvent.ERROR, {
+          code,
+          message: msg,
+          failedEvent: ClientEvent.CARD_PLAY,
+          commandId: payload.commandId,
+        });
+      },
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Internal helpers (sub-task D)
+  // -------------------------------------------------------------------------
+
+  private assertActivePlayer(
+    state: MatchState | null | undefined,
+    userId: string,
+  ): void {
+    if (!state?.players) {
+      throw new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER);
+    }
+    const player = state.players.get(userId);
+    if (!player) {
+      throw new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER);
+    }
+    if (
+      player.status === PlayerStatus.ELIMINATED ||
+      player.status === PlayerStatus.WINNER
+    ) {
+      throw new RoomError(ErrorCode.SPECTATOR_CANNOT_ANSWER);
+    }
+    if (player.status === PlayerStatus.DISCONNECTED) {
+      throw new RoomError(ErrorCode.PLAYER_DISCONNECTED);
+    }
   }
 }

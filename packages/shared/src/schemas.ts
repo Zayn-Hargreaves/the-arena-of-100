@@ -20,6 +20,7 @@
 
 import { z } from "zod";
 import { GAME_CONFIG } from "./game-config";
+import { COMMAND_ID_MAX_LENGTH } from "./cards";
 import { MatchStatus } from "./state";
 
 // Helper: roomId / matchId are server-issued CUIDs. The client never
@@ -153,6 +154,43 @@ export type RequestSnapshotPayload = z.infer<
   typeof RequestSnapshotPayloadSchema
 >;
 
+// CARD_PICK / CARD_PLAY (Phase 2 — Class + Card Hybrid) ----------------------
+// Source of truth: memory-bank/spec/class-cards-phase.md §5.2 sub-task D.
+//
+// `commandId` is REQUIRED (spec §4.5 "Command-level idempotency"):
+// the same shape as `submissionId` on `submit_answer` — non-empty, ≤64
+// chars. The boundary rejects a missing/malformed `commandId` BEFORE
+// any resolver work via `INVALID_COMMAND_ID`.
+//
+// `cardId` is a string at the boundary (the client sends a plain string)
+// — the server looks up the canonical `CardId` from the catalog and
+// rejects with `CARD_NOT_FOUND` if it isn't in the v1 18-card pool.
+//
+// `targetPlayerId` is optional — present for single-target / AOE cards
+// (CB-1, CB-2, CB-3, CB-4, CB-5, CB-6, CB-7, CB-8), absent for self-only
+// cards (TN-1..TN-10). The server validates per-card visibility.
+const CARD_ID_MAX_LENGTH = 16;
+
+export const CardPickPayloadSchema = z.object({
+  matchId: idSchema,
+  cardId: z.string().min(1).max(CARD_ID_MAX_LENGTH),
+  offerSeqNo: z.number().int().positive(),
+  commandId: z.string().min(1).max(COMMAND_ID_MAX_LENGTH),
+});
+export type CardPickPayload = z.infer<typeof CardPickPayloadSchema>;
+
+export const CardPlayPayloadSchema = z.object({
+  matchId: idSchema,
+  cardId: z.string().min(1).max(CARD_ID_MAX_LENGTH),
+  offerSeqNo: z.number().int().positive(),
+  // targetId is optional — present only for single-target / AOE cards.
+  // The server validates the target's playerId against the current
+  // match roster and the card's targetPolicy / `targetCount`.
+  targetPlayerId: idSchema.optional(),
+  commandId: z.string().min(1).max(COMMAND_ID_MAX_LENGTH),
+});
+export type CardPlayPayload = z.infer<typeof CardPlayPayloadSchema>;
+
 // HEARTBEAT ------------------------------------------------------------------
 
 export const HeartbeatPayloadSchema = z.object({
@@ -174,6 +212,8 @@ export const CLIENT_EVENT_SCHEMAS = {
   start_match: StartMatchPayloadSchema,
   submit_answer: SubmitAnswerPayloadSchema,
   request_snapshot: RequestSnapshotPayloadSchema,
+  card_pick: CardPickPayloadSchema,
+  card_play: CardPlayPayloadSchema,
   heartbeat: HeartbeatPayloadSchema,
 } as const;
 
@@ -261,7 +301,6 @@ export const ReplayEventSchema = z.discriminatedUnion("type", [
 // single declaration. Adding a new event type means adding a branch
 // to ReplayEventSchema — the type updates automatically.
 export type ReplayEvent = z.infer<typeof ReplayEventSchema>;
-export type ReplayEventParsed = ReplayEvent;
 
 // Per-event-type payload types — exported so consumers (events.ts,
 // web fold) can reference them by name. The schema above is the
@@ -303,5 +342,4 @@ type AssertReplayPayloadShape = {
 }[ReplayEvent["type"]] extends true
   ? true
   : false;
-const _replayPayloadShapeCheck: AssertReplayPayloadShape = true;
-void _replayPayloadShapeCheck;
+export const _replayPayloadShapeCheck: AssertReplayPayloadShape = true;

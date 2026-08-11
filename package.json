@@ -24,6 +24,7 @@
     "docker:multi:build": "docker compose -f infrastructure/docker-compose.multi.yml build",
     "docker:multi:up": "docker compose -f infrastructure/docker-compose.multi.yml up -d",
     "docker:multi:down": "docker compose -f infrastructure/docker-compose.multi.yml down",
+    "gen:sampling-vectors": "tmp=packages/shared/src/cards.sampling-vectors.ts.tmp && rm -f \"$tmp\" && pnpm -r build && node _gen-vectors.mjs > \"$tmp\" && mv \"$tmp\" packages/shared/src/cards.sampling-vectors.ts",
     "test:db:up": "bash infrastructure/scripts/test-db-up.sh",
     "test:db:down": "bash infrastructure/scripts/test-db-down.sh",
     "test:db:reset": "pnpm test:db:down && pnpm test:db:up",

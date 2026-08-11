@@ -26,7 +26,12 @@
 
 import { ArgumentsHost, Catch, ExceptionFilter, Logger } from "@nestjs/common";
 import { Socket } from "socket.io";
-import { ServerEvent, ErrorCode, RoomError } from "@arena/shared";
+import {
+  ServerEvent,
+  ErrorCode,
+  RoomError,
+  ERROR_MESSAGE_KEYS,
+} from "@arena/shared";
 import { WsValidationError } from "../pipes/ws-validation.pipe";
 
 @Catch()
@@ -43,17 +48,28 @@ export class WsExceptionFilter implements ExceptionFilter {
     const client = host.switchToWs().getClient<Socket>();
 
     if (exception instanceof WsValidationError) {
+      // Translate the key client-side; the wire contract is
+      // `Errors.INVALID_PAYLOAD` so locale-aware code can render
+      // the matching translation. Per-field validation details
+      // travel in `details` so forms can render field-level
+      // feedback (e.g. "matchId: required").
       client.emit(ServerEvent.ERROR, {
         code: ErrorCode.INVALID_PAYLOAD,
-        message: exception.message,
+        message: ERROR_MESSAGE_KEYS[ErrorCode.INVALID_PAYLOAD],
+        details: exception.message,
       });
       return;
     }
 
     if (exception instanceof RoomError) {
+      // Emit the stable i18n key (NOT exception.message) so the
+      // locale-aware web layer decides what to display. The raw
+      // exception message is only meaningful to operators.
       client.emit(ServerEvent.ERROR, {
         code: exception.code,
-        message: exception.message,
+        message:
+          ERROR_MESSAGE_KEYS[exception.code] ??
+          ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
       });
       return;
     }
@@ -66,7 +82,7 @@ export class WsExceptionFilter implements ExceptionFilter {
     );
     client.emit(ServerEvent.ERROR, {
       code: ErrorCode.INTERNAL_ERROR,
-      message: "Internal server error",
+      message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
     });
   }
 }

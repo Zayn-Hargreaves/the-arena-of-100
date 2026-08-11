@@ -24,6 +24,17 @@ export * from "./avatars";
 // Admin Audit API contract (GET /admin/audit-events)
 export * from "./audit";
 
+// Classes (Phase 2 — Class + Card Hybrid, locked 2026-07-30)
+export * from "./classes";
+
+// Cards (Phase 2 — Class + Card Hybrid, locked 2026-07-30)
+export * from "./cards";
+export {
+  deepFreeze,
+  getImmutableSamplingVector,
+  canonicalSerialize,
+} from "./cards.sampling-vector-helpers";
+
 // Game Constants (defined in its own file so schemas.ts can
 // import GAME_CONFIG.MAX_ROUNDS without creating a circular
 // dependency through the index barrel).
@@ -46,11 +57,11 @@ export interface RoomCategoryOption {
 }
 
 export const ROOM_CATEGORY_OPTIONS: readonly RoomCategoryOption[] = [
-  { value: "ALL", label: "Tất cả" },
-  { value: "SCIENCE", label: "Khoa học" },
-  { value: "HISTORY", label: "Lịch sử" },
-  { value: "TECHNOLOGY", label: "Công nghệ" },
-  { value: "CULTURE", label: "Văn hóa" },
+  { value: "ALL", label: "profile.roomCategory.ALL" },
+  { value: "SCIENCE", label: "profile.roomCategory.SCIENCE" },
+  { value: "HISTORY", label: "profile.roomCategory.HISTORY" },
+  { value: "TECHNOLOGY", label: "profile.roomCategory.TECHNOLOGY" },
+  { value: "CULTURE", label: "profile.roomCategory.CULTURE" },
 ] as const;
 
 // Room Code Alphabet (excluding ambiguous chars: 0, O, I, 1, l)
@@ -60,10 +71,11 @@ export const ROOM_CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 export function generateRoomCode(
   length = GAME_CONFIG.ROOM_CODE_LENGTH,
 ): string {
+  const array = new Uint32Array(length);
+  crypto.getRandomValues(array);
   let code = "";
   for (let i = 0; i < length; i++) {
-    const randomIndex = Math.floor(Math.random() * ROOM_CODE_CHARS.length);
-    code += ROOM_CODE_CHARS[randomIndex];
+    code += ROOM_CODE_CHARS[array[i]! % ROOM_CODE_CHARS.length];
   }
   return code;
 }
@@ -72,25 +84,39 @@ export function generateRoomCode(
 export { ErrorCode } from "./error-codes";
 import { ErrorCode } from "./error-codes";
 
-// Error Messages (Vietnamese)
-export const ERROR_MESSAGES: Record<ErrorCode, string> = {
-  [ErrorCode.ROOM_NOT_FOUND]: "Không tìm thấy phòng",
-  [ErrorCode.ROOM_FULL]: "Phòng đã đầy",
-  [ErrorCode.ROOM_ALREADY_STARTED]: "Trận đấu đã bắt đầu",
-  [ErrorCode.PLAYER_NOT_IN_ROOM]: "Bạn không ở trong phòng này",
-  [ErrorCode.MATCH_NOT_FOUND]: "Không tìm thấy trận đấu",
-  [ErrorCode.MATCH_ALREADY_STARTED]: "Trận đấu đã bắt đầu",
-  [ErrorCode.ROUND_NOT_ACTIVE]: "Câu hỏi không còn hoạt động",
-  [ErrorCode.ALREADY_ANSWERED]: "Bạn đã trả lời rồi",
-  [ErrorCode.ANSWER_SUBMISSION_CLOSED]: "Hết thời gian trả lời",
-  [ErrorCode.UNAUTHORIZED]: "Chưa xác thực",
-  [ErrorCode.INVALID_TOKEN]: "Token không hợp lệ",
-  [ErrorCode.RATE_LIMITED]: "Quá nhiều yêu cầu, vui lòng thử lại sau",
-  [ErrorCode.INTERNAL_ERROR]: "Lỗi hệ thống",
-  [ErrorCode.NOT_ROOM_HOST]: "Chỉ chủ phòng mới có thể bắt đầu",
-  [ErrorCode.NOT_ENOUGH_PLAYERS]: "Cần ít nhất 2 người chơi",
-  [ErrorCode.INVALID_ROOM_TYPE]: "Loại phòng không hợp lệ",
-  [ErrorCode.SPECTATOR_CANNOT_ANSWER]: "Khán giả không thể gửi câu trả lời",
-  [ErrorCode.INVALID_PAYLOAD]: "Dữ liệu gửi lên không hợp lệ",
-  [ErrorCode.PLAYER_DISCONNECTED]: "Bạn đã bị ngắt kết nối, vui lòng thử lại",
+// Error Messages (Vietnamese) — i18n keys, NOT display strings.
+// Every server-side emitter writes the matching key into
+// `ErrorPayload.message` and the client translates by code at
+// the locale-aware layer. This avoids hardcoded English leaking
+// into localized UIs and keeps the wire contract a stable set of
+// `Errors.*` / `Cards.errors.*` keys.
+export const ERROR_MESSAGE_KEYS: Record<ErrorCode, string> = {
+  [ErrorCode.ROOM_NOT_FOUND]: "Errors.ROOM_NOT_FOUND",
+  [ErrorCode.ROOM_FULL]: "Errors.ROOM_FULL",
+  [ErrorCode.ROOM_ALREADY_STARTED]: "Errors.ROOM_ALREADY_STARTED",
+  [ErrorCode.PLAYER_NOT_IN_ROOM]: "Errors.PLAYER_NOT_IN_ROOM",
+  [ErrorCode.MATCH_NOT_FOUND]: "Errors.MATCH_NOT_FOUND",
+  [ErrorCode.MATCH_ALREADY_STARTED]: "Errors.MATCH_ALREADY_STARTED",
+  [ErrorCode.ROUND_NOT_ACTIVE]: "Errors.ROUND_NOT_ACTIVE",
+  [ErrorCode.ALREADY_ANSWERED]: "Errors.ALREADY_ANSWERED",
+  [ErrorCode.ANSWER_SUBMISSION_CLOSED]: "Errors.ANSWER_SUBMISSION_CLOSED",
+  [ErrorCode.UNAUTHORIZED]: "Errors.UNAUTHORIZED",
+  [ErrorCode.INVALID_TOKEN]: "Errors.INVALID_TOKEN",
+  [ErrorCode.RATE_LIMITED]: "Errors.RATE_LIMITED",
+  [ErrorCode.INTERNAL_ERROR]: "Errors.INTERNAL_ERROR",
+  [ErrorCode.NOT_ROOM_HOST]: "Errors.NOT_ROOM_HOST",
+  [ErrorCode.NOT_ENOUGH_PLAYERS]: "Errors.NOT_ENOUGH_PLAYERS",
+  [ErrorCode.INVALID_ROOM_TYPE]: "Errors.INVALID_ROOM_TYPE",
+  [ErrorCode.SPECTATOR_CANNOT_ANSWER]: "Errors.SPECTATOR_CANNOT_ANSWER",
+  [ErrorCode.INVALID_PAYLOAD]: "Errors.INVALID_PAYLOAD",
+  [ErrorCode.PLAYER_DISCONNECTED]: "Errors.PLAYER_DISCONNECTED",
+  [ErrorCode.COMMAND_ID_CONFLICT]: "Cards.errors.commandIdConflict",
+  [ErrorCode.AOE_CAP_EXHAUSTED]: "Cards.errors.aoeCapExhausted",
+  [ErrorCode.CARD_NOT_IN_HAND]: "Cards.errors.cardNotInHand",
+  [ErrorCode.CARD_NOT_FOUND]: "Cards.errors.cardNotFound",
+  [ErrorCode.INVALID_COMMAND_ID]: "Cards.errors.invalidCommandId",
 };
+
+// Backwards-compatible alias — callers still see ERROR_MESSAGES
+// even though the contract is now a key-based contract.
+export const ERROR_MESSAGES = ERROR_MESSAGE_KEYS;

@@ -33,4 +33,25 @@ export enum ErrorCode {
   // use this distinct code to show "Bạn đã bị ngắt kết nối" and
   // trigger a reconnect flow.
   PLAYER_DISCONNECTED = "PLAYER_DISCONNECTED",
+  // Phase 2 — a `commandId` was reused for a different command
+  // (different `cardId`, `targetId`, `playerId`, or current
+  // `roundNo`). Mirrors the `ALREADY_ANSWERED` pattern from
+  // `submitAnswer` when `submissionId` matches but the answer
+  // differs. Source of truth: memory-bank/spec/class-cards-phase.md
+  // §4.5 "Command-level idempotency".
+  COMMAND_ID_CONFLICT = "COMMAND_ID_CONFLICT",
+  // Phase 2 — AOE cap exhausted for the current round
+  // (≤ AOE_CAP_PER_ROUND per `(matchId, roundNo)`). Returned by
+  // the API boundary with a structured payload so the client can
+  // show "AOE cap full, try again next round".
+  AOE_CAP_EXHAUSTED = "AOE_CAP_EXHAUSTED",
+  // Phase 2 — `cardId` is not in the player's current hand (already
+  // spent, not in the offer, or wrong class).
+  CARD_NOT_IN_HAND = "CARD_NOT_IN_HAND",
+  // Phase 2 — `cardId` is not in the catalog (catalog tampering or
+  // version skew between client and server).
+  CARD_NOT_FOUND = "CARD_NOT_FOUND",
+  // Phase 2 — `commandId` is missing or malformed (≤64 chars,
+  // non-empty). The API boundary rejects BEFORE any resolver work.
+  INVALID_COMMAND_ID = "INVALID_COMMAND_ID",
 }

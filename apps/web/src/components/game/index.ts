@@ -23,3 +23,21 @@ export {
   type LeaveMatchButtonProps,
 } from "./leave-match-button";
 export { MatchFinishedOverlay } from "./match-finished-overlay";
+
+// Phase 2 — Class + Card Hybrid UI.
+export {
+  CardTile,
+  CARD_TIE_BORDER_STYLES,
+  type CardTileProps,
+} from "./card-tile";
+export { CardHand, type CardHandProps } from "./card-hand";
+export {
+  CardTargetPicker,
+  type CardTargetPickerProps,
+} from "./card-target-picker";
+export { CardAnimation, type CardAnimationProps } from "./card-animation";
+export { ClassBadge, type ClassBadgeProps } from "./class-badge";
+export {
+  AoeCapIndicator,
+  type AoeCapIndicatorProps,
+} from "./aoe-cap-indicator";

@@ -34,6 +34,18 @@
     "MATCH_ALREADY_STARTED": "The match has already started and cannot be joined!",
     "USER_ALREADY_EXISTS": "This nickname is already taken in the room!",
     "ROOM_NOT_FOUND": "Requested match room was not found!",
+    "CARD_NOT_IN_HAND": "Card is not in your hand!",
+    "INVALID_CARD_TARGET": "Invalid target for this card!",
+    "AOE_CAP_REACHED": "AOE card limit reached for this round!",
+    "COMMAND_ID_CONFLICT": "This command has already been processed!",
+    "CARD_NOT_FOUND": "Card definition not found!",
+    "INVALID_COMMAND_ID": "Invalid command ID format!",
+    "SPECTATOR_CANNOT_ANSWER": "Spectators are not allowed to answer questions!",
+    "PLAYER_DISCONNECTED": "Player is currently disconnected!",
+    "MATCH_NOT_FOUND": "Match not found!",
+    "UNAUTHORIZED": "Unauthorized action!",
+    "INVALID_PAYLOAD": "Invalid request payload!",
+    "INTERNAL_ERROR": "An internal error occurred. Please try again!",
     "UNKNOWN_ERROR": "An unknown error occurred. Please try again!"
   },
   "admin": {
@@ -497,6 +509,33 @@
       "EASY": "Easy",
       "MEDIUM": "Medium",
       "HARD": "Hard"
+    }
+  },
+  "Cards": {
+    "hand": "Card Hand",
+    "offer": "Choose a card",
+    "select": "Select Target",
+    "cancel": "Cancel",
+    "play": "Play",
+    "noCards": "No cards in hand",
+    "milestoneOffer": "Milestone round — pick a card to play",
+    "classes": {
+      "CONG": "Offensive",
+      "THU": "Defensive"
+    },
+    "tiers": {
+      "COMMON": "Common",
+      "RARE": "Rare",
+      "EPIC": "Epic"
+    },
+    "aoeCapHint": "AOE cap: {used}/{cap} for this round",
+    "aoeExhausted": "AOE cap reached for this round",
+    "errors": {
+      "cardNotInHand": "Card not in your hand",
+      "cardNotFound": "Card not found",
+      "commandIdConflict": "Conflict on this command",
+      "aoeCapExhausted": "AOE cap exhausted",
+      "invalidCommandId": "Invalid command id"
     }
   }
 }

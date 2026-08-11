@@ -1,8 +1,12 @@
 import { Socket, Server } from "socket.io";
+import { createServer, type Server as HttpServer } from "node:http";
+import { AddressInfo } from "node:net";
+import { io as ioClient, type Socket as ClientSocket } from "socket.io-client";
 import {
   ServerEvent,
   ErrorCode,
   ERROR_MESSAGES,
+  ERROR_MESSAGE_KEYS,
   PlayerStatus,
   RoomStatus,
   RoomError,
@@ -26,6 +30,16 @@ describe("MatchHandler", () => {
   let matchCommand: { forward: ReturnType<typeof vi.fn> };
   let client: Socket;
   let server: Server;
+  // Per-room broadcaster list populated by the `server.to` mock so
+  // CARD_RESOLVED tests can assert exact destination-specific
+  // payloads (sanitized room vs. full-effect player rooms) and
+  // detect repeated `server.to(roomName)` calls or duplicate
+  // broadcasts to the same room.
+  type RoomOperator = {
+    emit: ReturnType<typeof vi.fn>;
+    except: ReturnType<typeof vi.fn>;
+  };
+  let roomOperators: Map<string, RoomOperator[]>;
 
   beforeEach(() => {
     roomService = { getRoom: vi.fn() } as unknown as RoomService;
@@ -39,6 +53,7 @@ describe("MatchHandler", () => {
       forceStartRoomMatch: vi.fn().mockResolvedValue({ id: "m1" }),
     };
     matchCommand = { forward: vi.fn().mockResolvedValue(undefined) };
+    roomOperators = new Map();
     handler = new MatchHandler(
       roomService,
       matchService,
@@ -47,7 +62,22 @@ describe("MatchHandler", () => {
       { nodeId: "node-a" } as unknown as ClusterService,
     );
     server = {
-      to: vi.fn().mockReturnValue({ emit: vi.fn() }),
+      // Per-room broadcaster list so each `server.to(roomName)`
+      // call APPENDS a fresh operator to the per-room list instead
+      // of overwriting the previous one. CARD_RESOLVED delivery
+      // routes one sanitized effect to the room channel and one
+      // full effect to each target's private player channel — tests
+      // need to assert against each specific destination AND detect
+      // duplicate `server.to` calls / duplicate broadcasts when the
+      // same room appears more than once.
+      to: vi.fn().mockImplementation((roomName: string) => {
+        const except = vi.fn().mockReturnValue({ emit: vi.fn() });
+        const operator = { emit: vi.fn(), except };
+        const operators = roomOperators.get(roomName) ?? [];
+        operators.push(operator);
+        roomOperators.set(roomName, operators);
+        return operator;
+      }),
     } as unknown as Server;
     client = {
       emit: vi.fn(),
@@ -147,7 +177,7 @@ describe("MatchHandler", () => {
       await handler.handleStartMatch(client, server, { roomId: "r1" });
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: "Internal server error",
+        message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
       });
     });
 
@@ -307,6 +337,50 @@ describe("MatchHandler", () => {
       expect(client.emit).toHaveBeenCalledWith(
         ServerEvent.ERROR,
         expect.objectContaining({ code: ErrorCode.MATCH_NOT_FOUND }),
+      );
+    });
+
+    it("emits INTERNAL_ERROR when matchCommand.forward rejects with a non-RoomError", async () => {
+      // A plain Error from the durable forward path is treated as
+      // an internal failure: log it server-side and emit the
+      // INTERNAL_ERROR i18n key (never the raw error message).
+      const errorSpy = vi
+        .spyOn(
+          (
+            handler as unknown as {
+              logger: { error: ReturnType<typeof vi.fn> };
+            }
+          ).logger,
+          "error",
+        )
+        .mockImplementation(() => {});
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(
+        activeMachine(),
+      );
+      vi.mocked(matchCommand.forward).mockRejectedValueOnce(
+        new Error("internal failure"),
+      );
+
+      await handler.handleSubmitAnswer(client, {
+        matchId: "m1",
+        answer: "A",
+        roundNo: 1,
+        submissionId: "s1",
+        clientTimestamp: 1234567890,
+      });
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        "Error submitting answer:",
+        expect.any(Error),
+      );
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.INTERNAL_ERROR,
+          message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
+          failedEvent: ClientEvent.SUBMIT_ANSWER,
+          submissionId: "s1",
+        }),
       );
     });
   });
@@ -485,7 +559,7 @@ describe("MatchHandler", () => {
 
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: "Internal server error",
+        message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
         failedEvent: ClientEvent.REQUEST_SNAPSHOT,
       });
     });
@@ -512,7 +586,7 @@ describe("MatchHandler", () => {
 
       expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
         code: ErrorCode.INTERNAL_ERROR,
-        message: "Internal server error",
+        message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
         failedEvent: ClientEvent.REQUEST_SNAPSHOT,
       });
     });
@@ -672,4 +746,618 @@ describe("MatchHandler", () => {
       expect(mockMachine.getSnapshot).not.toHaveBeenCalled();
     });
   });
+
+  describe("handleCardPick", () => {
+    const pickPayload = {
+      matchId: "m1",
+      cardId: "CB-1",
+      offerSeqNo: 1,
+      commandId: "cmd-pick-1",
+    };
+
+    it("forwards a well-formed card_pick envelope to the owner command channel (no local mutation/broadcast)", async () => {
+      // B4b-style single-writer: the boundary forwards the command
+      // to the owner. The owner applies + persists + broadcasts
+      // CARD_PICKED exactly once (covered by
+      // match-command.service.spec.ts). The handler MUST NOT call
+      // `pickCard` or emit `CARD_PICKED` locally.
+      const machine = {
+        pickCard: vi.fn(),
+        getState: vi.fn().mockReturnValue({
+          players: new Map([["u1", { id: "u1", status: PlayerStatus.ACTIVE }]]),
+        }),
+      } as any;
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+      vi.mocked(matchCommand.forward).mockClear();
+
+      await handler.handleCardPick(client, server, pickPayload);
+
+      // pickCard was never called on the local state machine.
+      expect(machine.pickCard).not.toHaveBeenCalled();
+      expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+      const env = matchCommand.forward.mock.calls[0][0];
+      expect(env).toMatchObject({
+        schemaVersion: 1,
+        matchId: "m1",
+        emittedByNodeId: "node-a",
+        body: {
+          type: "card_pick",
+          userId: "u1",
+          commandId: pickPayload.commandId,
+          cardId: "CB-1",
+          offerSeqNo: 1,
+        },
+      });
+      expect(typeof env.eventId).toBe("string");
+      expect(env.eventId.length).toBeGreaterThan(0);
+      // No local room broadcast — owner is the sole emitter.
+      expect(roomOperators.get("room:r1")).toBeUndefined();
+    });
+
+    it("emits MATCH_NOT_FOUND when the match has no roomId", async () => {
+      vi.mocked(matchService.getRoomIdByMatchId).mockResolvedValueOnce(
+        undefined,
+      );
+
+      await handler.handleCardPick(client, server, pickPayload);
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.MATCH_NOT_FOUND,
+        message: ERROR_MESSAGES[ErrorCode.MATCH_NOT_FOUND],
+        failedEvent: ClientEvent.CARD_PICK,
+        commandId: pickPayload.commandId,
+      });
+      expect(matchService.getStateMachine).not.toHaveBeenCalled();
+      expect(matchCommand.forward).not.toHaveBeenCalled();
+    });
+
+    it("emits UNAUTHORIZED when the socket is not in the room channel", async () => {
+      (client.rooms as Set<string>).clear();
+
+      await handler.handleCardPick(client, server, pickPayload);
+
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.UNAUTHORIZED,
+          failedEvent: ClientEvent.CARD_PICK,
+        }),
+      );
+      expect(matchService.getStateMachine).not.toHaveBeenCalled();
+      expect(matchCommand.forward).not.toHaveBeenCalled();
+    });
+
+    it("emits MATCH_NOT_FOUND when the state machine is null", async () => {
+      vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(
+        undefined as any,
+      );
+
+      await handler.handleCardPick(client, server, pickPayload);
+
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.MATCH_NOT_FOUND,
+          failedEvent: ClientEvent.CARD_PICK,
+        }),
+      );
+      expect(matchCommand.forward).not.toHaveBeenCalled();
+    });
+
+    it.each<{
+      label: string;
+      status: PlayerStatus | "ABSENT";
+      expectedCode: ErrorCode;
+    }>([
+      {
+        label: "spectator (not in roster)",
+        status: "ABSENT",
+        expectedCode: ErrorCode.SPECTATOR_CANNOT_ANSWER,
+      },
+      {
+        label: "eliminated player",
+        status: PlayerStatus.ELIMINATED,
+        expectedCode: ErrorCode.SPECTATOR_CANNOT_ANSWER,
+      },
+      {
+        label: "winner",
+        status: PlayerStatus.WINNER,
+        expectedCode: ErrorCode.SPECTATOR_CANNOT_ANSWER,
+      },
+      {
+        label: "disconnected player",
+        status: PlayerStatus.DISCONNECTED,
+        expectedCode: ErrorCode.PLAYER_DISCONNECTED,
+      },
+    ])(
+      "rejects $label for pick with $expectedCode",
+      async ({ status, expectedCode }) => {
+        const players =
+          status === "ABSENT"
+            ? new Map()
+            : new Map([["u1", { id: "u1", status }]]);
+        const machine = {
+          getState: vi.fn().mockReturnValue({ players }),
+        } as any;
+        vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(machine);
+        vi.mocked(client.emit).mockClear();
+        vi.mocked(matchCommand.forward).mockClear();
+
+        await handler.handleCardPick(client, server, pickPayload);
+
+        // Each iteration isolates its own mock calls so a
+        // failure surfaces only the offending case. The boundary
+        // rejects before any forwarding happens.
+        expect(client.emit).toHaveBeenCalledTimes(1);
+        expect(client.emit).toHaveBeenCalledWith(
+          ServerEvent.ERROR,
+          expect.objectContaining({
+            code: expectedCode,
+            failedEvent: ClientEvent.CARD_PICK,
+          }),
+        );
+        expect(matchCommand.forward).not.toHaveBeenCalled();
+      },
+    );
+
+    it("rejects an invalid commandId before any state-machine work", async () => {
+      await handler.handleCardPick(client, server, {
+        ...pickPayload,
+        commandId: "",
+      });
+
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.INVALID_COMMAND_ID,
+          failedEvent: ClientEvent.CARD_PICK,
+        }),
+      );
+      expect(matchService.getStateMachine).not.toHaveBeenCalled();
+      expect(matchCommand.forward).not.toHaveBeenCalled();
+    });
+
+    it("handles non-Error thrown values from matchCommand.forward", async () => {
+      // The handler no longer touches the state machine directly —
+      // the only in-handler throw site is the durable forward. A
+      // non-Error rejection there must surface as INTERNAL_ERROR.
+      vi.mocked(matchCommand.forward).mockImplementationOnce(() => {
+        throw "string error";
+      });
+      const machine = {
+        getState: vi.fn().mockReturnValue({
+          players: new Map([["u1", { id: "u1", status: PlayerStatus.ACTIVE }]]),
+        }),
+      } as any;
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+
+      await handler.handleCardPick(client, server, pickPayload);
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
+        failedEvent: ClientEvent.CARD_PICK,
+        commandId: pickPayload.commandId,
+      });
+    });
+
+    it("rejects with SPECTATOR_CANNOT_ANSWER when state.players is undefined (defensive)", async () => {
+      // `assertActivePlayer` is the single source of truth for the
+      // authorise-player gate. The first check (`!state?.players`)
+      // covers a malformed state object. We build a state machine
+      // that returns a state without `players` so the handler
+      // rejects the request as a spectator without forwarding.
+      const machine = {
+        getState: vi.fn().mockReturnValue({ id: "m1" }), // no `players`
+      } as any;
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+
+      await handler.handleCardPick(client, server, pickPayload);
+
+      expect(matchCommand.forward).not.toHaveBeenCalled();
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.SPECTATOR_CANNOT_ANSWER,
+          failedEvent: ClientEvent.CARD_PICK,
+        }),
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // `handleCardPlay` — the API boundary for resolving a picked card.
+  // The mock state machine is set up with the minimum surface the
+  // handler reads: getter shape mirrors the real MatchStateMachine.
+  // ---------------------------------------------------------------------------
+  function makePlayMachine(
+    overrides: Partial<{
+      getState: () => any;
+      playCard: (...args: unknown[]) => unknown;
+    }> = {},
+  ) {
+    const players = new Map([
+      ["u1", { id: "u1", status: PlayerStatus.ACTIVE }],
+      ["p2", { id: "p2", status: PlayerStatus.ACTIVE }],
+      ["p3", { id: "p3", status: PlayerStatus.ACTIVE }],
+    ]);
+    return {
+      getState: vi.fn().mockReturnValue({ id: "m1", players }),
+      playCard: vi.fn().mockReturnValue({
+        seqNo: 10,
+        expiresAtServer: null,
+        remainingMs: null,
+      }),
+      ...overrides,
+    } as any;
+  }
+
+  describe("handleCardPlay", () => {
+    const playPayload = {
+      matchId: "m1",
+      cardId: "CB-1",
+      targetPlayerId: "p2",
+      offerSeqNo: 1,
+      commandId: "cmd-play-1",
+    };
+
+    it("forwards a well-formed card_play envelope to the owner command channel (no local mutation/broadcast)", async () => {
+      // B4b-style single-writer: the boundary forwards the command
+      // to the owner. The owner applies + persists + broadcasts
+      // CARD_RESOLVED exactly once (covered by
+      // match-command.service.spec.ts). The handler MUST NOT call
+      // `playCard` / `resolveCardEffect` or emit `CARD_RESOLVED`
+      // locally — that is the dispatch path's job on the owner.
+      const machine = makePlayMachine();
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+      vi.mocked(matchCommand.forward).mockClear();
+
+      await handler.handleCardPlay(client, server, playPayload);
+
+      // playCard was never called locally.
+      expect(machine.playCard).not.toHaveBeenCalled();
+      expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+      const env = matchCommand.forward.mock.calls[0][0];
+      expect(env).toMatchObject({
+        schemaVersion: 1,
+        matchId: "m1",
+        emittedByNodeId: "node-a",
+        body: {
+          type: "card_play",
+          userId: "u1",
+          commandId: playPayload.commandId,
+          cardId: "CB-1",
+          offerSeqNo: 1,
+          targetPlayerId: "p2",
+        },
+      });
+      expect(typeof env.eventId).toBe("string");
+      expect(env.eventId.length).toBeGreaterThan(0);
+      // No local room or player broadcasts — owner is the sole emitter.
+      expect(roomOperators.get("room:r1")).toBeUndefined();
+      expect(roomOperators.get("player:p2")).toBeUndefined();
+      expect(roomOperators.get("player:u1")).toBeUndefined();
+    });
+
+    it("forwards a self-target TN-1 envelope without a targetPlayerId", async () => {
+      // TN-1 is a self-only THU card; the boundary must forward
+      // `targetPlayerId: undefined` verbatim. expandTargets on the
+      // owner side falls back to the actor for self-only cards.
+      const machine = makePlayMachine();
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+      vi.mocked(matchCommand.forward).mockClear();
+
+      await handler.handleCardPlay(client, server, {
+        ...playPayload,
+        cardId: "TN-1",
+        targetPlayerId: undefined,
+      });
+
+      expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+      const env = matchCommand.forward.mock.calls[0][0];
+      expect(env.body).toMatchObject({
+        type: "card_play",
+        cardId: "TN-1",
+        offerSeqNo: 1,
+      });
+      // targetPlayerId: undefined is forwarded as-is; the dispatch
+      // path expands self-target cards to the actor.
+      expect(env.body.targetPlayerId).toBeUndefined();
+      expect(machine.playCard).not.toHaveBeenCalled();
+    });
+
+    it("forwards an AOE card (CB-8) without local target expansion", async () => {
+      // CB-8 is an AOE card targeting up to 3 players. The boundary
+      // forwards the envelope as-is; expandTargets on the owner
+      // side reads the current round roster to expand.
+      const machine = makePlayMachine();
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+      vi.mocked(matchCommand.forward).mockClear();
+
+      await handler.handleCardPlay(client, server, {
+        ...playPayload,
+        cardId: "CB-8",
+        targetPlayerId: undefined,
+      });
+
+      expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+      const env = matchCommand.forward.mock.calls[0][0];
+      expect(env.body).toMatchObject({
+        type: "card_play",
+        cardId: "CB-8",
+        offerSeqNo: 1,
+      });
+      // No AOE expansion at the boundary; that is the dispatch's job.
+      expect(machine.playCard).not.toHaveBeenCalled();
+    });
+
+    it("does NOT locally validate hand/offer — the dispatch is the validator", async () => {
+      // Hand / offer / target validation lives in
+      // `MatchCommandService.applyCardPlayAuthoritative`, not the
+      // handler. A handler that picks a card not in the player's
+      // current hand must still forward — the dispatch ack-rejects
+      // it as DUPLICATE_SUBMISSION without producing a CARD_RESOLVED
+      // event.
+      const machine = makePlayMachine();
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+      vi.mocked(matchCommand.forward).mockClear();
+
+      await handler.handleCardPlay(client, server, playPayload);
+
+      expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+      const env = matchCommand.forward.mock.calls[0][0];
+      expect(env.body).toMatchObject({
+        type: "card_play",
+        cardId: "CB-1",
+        offerSeqNo: 1,
+      });
+      expect(machine.playCard).not.toHaveBeenCalled();
+    });
+
+    it("emits MATCH_NOT_FOUND when the match has no roomId", async () => {
+      vi.mocked(matchService.getRoomIdByMatchId).mockResolvedValueOnce(
+        undefined,
+      );
+
+      await handler.handleCardPlay(client, server, playPayload);
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.MATCH_NOT_FOUND,
+        message: ERROR_MESSAGES[ErrorCode.MATCH_NOT_FOUND],
+        failedEvent: ClientEvent.CARD_PLAY,
+        commandId: playPayload.commandId,
+      });
+      expect(matchService.getStateMachine).not.toHaveBeenCalled();
+      expect(matchCommand.forward).not.toHaveBeenCalled();
+    });
+
+    it("emits UNAUTHORIZED when the socket is not in the room channel", async () => {
+      (client.rooms as Set<string>).clear();
+
+      await handler.handleCardPlay(client, server, playPayload);
+
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.UNAUTHORIZED,
+          failedEvent: ClientEvent.CARD_PLAY,
+        }),
+      );
+      expect(matchService.getStateMachine).not.toHaveBeenCalled();
+      expect(matchCommand.forward).not.toHaveBeenCalled();
+    });
+
+    it("emits MATCH_NOT_FOUND when the state machine is null", async () => {
+      vi.mocked(matchService.getStateMachine).mockResolvedValueOnce(
+        undefined as any,
+      );
+
+      await handler.handleCardPlay(client, server, playPayload);
+
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.MATCH_NOT_FOUND,
+          failedEvent: ClientEvent.CARD_PLAY,
+        }),
+      );
+      expect(matchCommand.forward).not.toHaveBeenCalled();
+    });
+
+    it("rejects an invalid commandId before any state-machine work", async () => {
+      await handler.handleCardPlay(client, server, {
+        ...playPayload,
+        commandId: "",
+      });
+
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.INVALID_COMMAND_ID,
+          failedEvent: ClientEvent.CARD_PLAY,
+        }),
+      );
+      expect(matchService.getStateMachine).not.toHaveBeenCalled();
+      expect(matchCommand.forward).not.toHaveBeenCalled();
+    });
+
+    it("handles non-Error thrown values from matchCommand.forward", async () => {
+      // The handler's only post-boundary work is the durable forward.
+      // A non-Error rejection there must surface as INTERNAL_ERROR.
+      vi.mocked(matchCommand.forward).mockImplementationOnce(() => {
+        throw "kaboom";
+      });
+      const machine = makePlayMachine();
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+
+      await handler.handleCardPlay(client, server, playPayload);
+
+      expect(client.emit).toHaveBeenCalledWith(ServerEvent.ERROR, {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR],
+        failedEvent: ClientEvent.CARD_PLAY,
+        commandId: playPayload.commandId,
+      });
+    });
+
+    // Real Socket.IO integration: drives handleCardPlay through a
+    // listening server with three real client sockets so the H6
+    // gate (`room:r1` channel membership) is exercised by Socket.IO
+    // itself, not by the per-room vi.fn mock. After the single-writer
+    // refactor, handleCardPlay no longer broadcasts locally — the
+    // dispatch path on the owner owns the wire side. This test now
+    // verifies that the handler forwards the envelope and never
+    // touches the wire; end-to-end CARD_RESOLVED delivery is
+    // covered by `match-command.service.spec.ts`'s dispatch tests.
+    it("routes card_play through real Socket.IO: forwards a single envelope, no local wire side", async () => {
+      const httpServer: HttpServer = createServer();
+      const ioServer = new Server(httpServer, {
+        cors: { origin: "*" },
+      });
+      await new Promise<void>((resolve) => httpServer.listen(0, resolve));
+      const port = (httpServer.address() as AddressInfo).port;
+
+      ioServer.on("connection", (socket: Socket) => {
+        socket.on(ClientEvent.CARD_PLAY, (payload) => {
+          void handler.handleCardPlay(
+            socket,
+            ioServer,
+            payload as Parameters<typeof handler.handleCardPlay>[2],
+          );
+        });
+      });
+
+      const actorClient = ioClient(`http://127.0.0.1:${port}`, {
+        autoConnect: false,
+        transports: ["websocket"],
+      });
+      const targetClient = ioClient(`http://127.0.0.1:${port}`, {
+        autoConnect: false,
+        transports: ["websocket"],
+      });
+      const observerClient = ioClient(`http://127.0.0.1:${port}`, {
+        autoConnect: false,
+        transports: ["websocket"],
+      });
+
+      const connect = (c: ClientSocket) =>
+        new Promise<void>((resolve, reject) => {
+          c.once("connect", () => resolve());
+          c.once("connect_error", (err) => reject(err));
+          c.connect();
+        });
+
+      try {
+        await Promise.all([
+          connect(actorClient),
+          connect(targetClient),
+          connect(observerClient),
+        ]);
+
+        // Map each client socket to its server-side socket and
+        // join the room channel + per-player channel so the
+        // handler's H6 gate (room:r1) accepts the actor socket —
+        // the same gate production uses.
+        const sockets = ioServer.sockets.sockets;
+        const actorServerSocket = findSocketForClient(sockets, actorClient.id!);
+        expect(actorServerSocket).toBeDefined();
+        actorServerSocket!.join("room:r1");
+        actorServerSocket!.join("player:u1");
+        actorServerSocket!.data = { userId: "u1", username: "Alice" };
+
+        // Make sure the actor socket id from the client is present
+        // before we wire assertions — `socket.io-client` types id
+        // as `string | undefined` even though it is always set
+        // after `connect`.
+        expect(actorClient.id).toBeDefined();
+
+        const machine = makePlayMachine();
+        vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+        vi.mocked(matchCommand.forward).mockClear();
+
+        const forwardCalled = new Promise<void>((resolve) => {
+          vi.mocked(matchCommand.forward).mockImplementationOnce(async () => {
+            resolve();
+          });
+        });
+        const FORWARD_TIMEOUT_MS = 2000;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(
+              new Error(
+                `matchCommand.forward was not invoked within ${FORWARD_TIMEOUT_MS}ms ` +
+                  `(commandId=${playPayload.commandId}, cardId=CB-6)`,
+              ),
+            );
+          }, FORWARD_TIMEOUT_MS);
+        });
+        actorClient.emit(ClientEvent.CARD_PLAY, {
+          ...playPayload,
+          cardId: "CB-6",
+          targetPlayerId: "p2",
+        });
+        await Promise.race([forwardCalled, timeoutPromise]);
+
+        // The handler forwarded exactly one well-formed card_play
+        // envelope to the owner command channel — no local wire
+        // side, no state-machine mutation, no persistence.
+        expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+        const env = matchCommand.forward.mock.calls[0][0];
+        expect(env).toMatchObject({
+          schemaVersion: 1,
+          matchId: "m1",
+          emittedByNodeId: "node-a",
+          body: {
+            type: "card_play",
+            userId: "u1",
+            commandId: playPayload.commandId,
+            cardId: "CB-6",
+            offerSeqNo: 1,
+            targetPlayerId: "p2",
+          },
+        });
+        expect(typeof env.eventId).toBe("string");
+        expect(env.eventId.length).toBeGreaterThan(0);
+
+        // No CARD_RESOLVED frame leaks from the boundary itself —
+        // any frames the actors / target / observer receive must
+        // come from the owner's dispatch path (covered separately).
+        const receivedAnyCardResolved = await new Promise<boolean>((res) => {
+          let total = 0;
+          const onFrame = () => {
+            total++;
+          };
+          actorClient.on(ServerEvent.CARD_RESOLVED, onFrame);
+          targetClient.on(ServerEvent.CARD_RESOLVED, onFrame);
+          observerClient.on(ServerEvent.CARD_RESOLVED, onFrame);
+          setTimeout(() => {
+            actorClient.off(ServerEvent.CARD_RESOLVED, onFrame);
+            targetClient.off(ServerEvent.CARD_RESOLVED, onFrame);
+            observerClient.off(ServerEvent.CARD_RESOLVED, onFrame);
+            res(total > 0);
+          }, 50);
+        });
+        expect(receivedAnyCardResolved).toBe(false);
+      } finally {
+        actorClient.disconnect();
+        targetClient.disconnect();
+        observerClient.disconnect();
+        // Socket.IO's `close()` already tears down the attached HTTP
+        // server, so we do NOT follow it with a separate
+        // `httpServer.close()` — doing so would close the same server
+        // twice and trigger Node's "server is not running" warning.
+        await new Promise<void>((resolve) => ioServer.close(() => resolve()));
+      }
+    });
+  });
 });
+
+function findSocketForClient(
+  sockets: Map<string, Socket>,
+  clientId: string,
+): Socket | undefined {
+  for (const [, s] of sockets) {
+    if (s.id === clientId) return s;
+  }
+  return undefined;
+}

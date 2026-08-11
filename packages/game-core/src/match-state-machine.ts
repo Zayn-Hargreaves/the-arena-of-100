@@ -6,10 +6,14 @@
 import {
   MatchStatus,
   PlayerStatus,
+  type CardId,
+  type CardEffect,
+  type ClassId,
   type MatchState,
   type PlayerInfo,
   type RoundState,
   type AnswerState,
+  type ActiveEffectSnapshot,
   GAME_CONFIG,
   ErrorCode,
   RoomError,
@@ -22,6 +26,8 @@ import {
   UNAVAILABLE,
   type RoundStartingPlayers,
 } from "./round-elimination";
+import { assignClasses } from "./class-engine";
+import { sampleOffer } from "./card-engine";
 
 type RoundRuntimeState = RoundState & {
   correctAnswer?: string;
@@ -66,6 +72,42 @@ export class MatchStateMachine {
   // anything yet" cursor. Restored from the max persisted seqNo in
   // `deserialize` so seqNo keeps increasing across Redis rehydrate.
   private eventSeqCounter = 0;
+  // Phase 2 — Class + Card Hybrid state. Stored privately so
+  // (a) the existing public API stays unchanged, and (b) the
+  // codec retains the only `serializeMatch` / `deserializeMatch`
+  // boundary. Survives across `serialize`/`deserialize` via
+  // the state machine's restore path (added below).
+  private readonly playerClasses: Map<string, ClassId> = new Map();
+  private readonly playerHands: Map<string, CardId[]> = new Map();
+  // Per-player active card effects. Each entry tracks the
+  // (serverNow, expiresAtServer) pair so reconnect/rehydrate
+  // can compute `remainingMs = max(0, expiresAtServer - serverNow)`
+  // from the AUTHORITATIVE `expiresAtServer` (spec §4.4).
+  private readonly activeEffects: Map<
+    string,
+    Array<{
+      sourceSeqNo: number;
+      effect: CardEffect;
+      expiresAtServer: number;
+      persistedDurationMs: number;
+    }>
+  > = new Map();
+  // Per-player played cards — used by the API boundary's
+  // single-use-per-match validator (spec §3.1 invariant). Maintained
+  // incrementally on `playCard` / `rehydrateCardStateFromEventLog`.
+  // O(1) reads instead of a per-call O(N) scan of the event log.
+  private readonly playerPlayedCards: Map<string, Set<CardId>> = new Map();
+  // Per-player picked-but-not-yet-played cards. Distinct from
+  // `playerPlayedCards`: a card only counts as "played" after
+  // the resolved CARD_RESOLVED event lands. A pick that never
+  // resolves (e.g. validator rejects, client disconnects) is
+  // cleared by the next offer — see `pickOffer`.
+  private readonly playerPickedCards: Map<string, Set<CardId>> = new Map();
+  // Per-round AOE counter — used by the API boundary's
+  // AOE-cap validator (spec §3.3 "AOE cap = 2 per round").
+  // Incremental on `playCard` / `onEndRound`; rebuilt on
+  // `rehydrateCardStateFromEventLog`. O(1) reads.
+  private readonly aoeCountByRound: Map<number, number> = new Map();
 
   constructor(matchId: string, roomId: string, players: PlayerInfo[]) {
     this.state = {
@@ -123,6 +165,15 @@ export class MatchStateMachine {
     }
 
     return round;
+  }
+
+  // Server-only accessor for the current round's correct answer.
+  // The client-safe public `RoundState` (snapshot/replay) omits
+  // it by design — only the server-side resolver needs the
+  // value, and it MUST go through this accessor so a future
+  // rename of the internal field surfaces at the call site.
+  getCorrectAnswer(): string | undefined {
+    return this.currentRound?.correctAnswer;
   }
 
   // Validate Transition (Guard)
@@ -279,7 +330,7 @@ export class MatchStateMachine {
     }
 
     const player = this.state.players.get(playerId);
-    if (!player || player.status !== PlayerStatus.ACTIVE) {
+    if (player?.status !== PlayerStatus.ACTIVE) {
       throw new RoomError(ErrorCode.PLAYER_NOT_IN_ROOM);
     }
 
@@ -573,21 +624,30 @@ export class MatchStateMachine {
     };
   }
 
-  // Event Logger
-  private logEvent(type: string, payload: unknown): void {
-    this.eventLog.push({
+  // Event Logger. Returns the allocated seqNo so callers (e.g.
+  // `playCard`) can reference it without having to manually
+  // increment the counter and risk drift between the assigned
+  // value and the value stored on the entry. The pushed entry
+  // is deeply frozen so a callback that accidentally mutates the
+  // payload (e.g. `payload.seqNo = ...`) cannot poison later
+  // reads.
+  private logEvent(type: string, payload: unknown): number {
+    const seqNo = ++this.eventSeqCounter;
+    const entry = deepFreezeEventEntry({
       type,
       payload,
       timestamp: Date.now(),
-      seqNo: ++this.eventSeqCounter,
+      seqNo,
     });
+    this.eventLog.push(entry);
+    return seqNo;
   }
 
   // seqNo of the most recent logged event, or 0 when the log is empty.
   // Used by the reconnect handler as the full-snapshot cursor and to
   // bound the delta window.
   getHeadSeqNo(): number {
-    const last = this.eventLog[this.eventLog.length - 1];
+    const last = this.eventLog.at(-1);
     return last ? last.seqNo : 0;
   }
 
@@ -633,6 +693,22 @@ export class MatchStateMachine {
     return this.eventLog.map((e) => structuredClone(e));
   }
 
+  // `forEachEvent` — non-cloning iterator over the event log.
+  // Callers MUST NOT mutate the supplied entry (callbacks receive
+  // live internal event records, which are deep-frozen by logEvent).
+  forEachEvent(
+    callback: (entry: {
+      readonly type: string;
+      readonly payload?: unknown;
+      readonly timestamp: number;
+      readonly seqNo: number;
+    }) => void,
+  ): void {
+    for (const e of this.eventLog) {
+      callback(e);
+    }
+  }
+
   // Serialize state to JSON string for Redis persistence. Delegates
   // to the pure `serializeMatch` codec (see ./match-state.codec.ts),
   // which enforces the L3 invariant that the sensitive `correctAnswer`
@@ -663,6 +739,434 @@ export class MatchStateMachine {
     ).correctAnswer = correctAnswer;
   }
 
+  // -------------------------------------------------------------------------
+  // Phase 2 — Class + Card Hybrid methods
+  // Source of truth: memory-bank/spec/class-cards-phase.md §5.2 sub-task C.
+  //
+  // All four methods are ADDITIVE — they do not touch the existing
+  // public API (`submitAnswer`, `evaluateRound`, `finishMatch`,
+  // `getSnapshot`, etc.). The CRITICAL blast radius on MatchStateMachine
+  // is preserved by leaving every existing method signature and
+  // behavior unchanged.
+  // -------------------------------------------------------------------------
+
+  // `classAssignment` — server-side random per-match class
+  // assignment. The full map is persisted as ONE `CLASS_ASSIGNED`
+  // event so a diff or replay detects class changes by comparing
+  // the maps. The seed that produced the assignment is also
+  // persisted so a replay can reproduce.
+  //
+  // Acceptance contract (spec §5.2 Architectural commitments):
+  //   - The immutable CLASS_ASSIGNED event is the authoritative
+  //     source for that player's class — NOT in-memory state.
+  //   - Replay/rehydrate restores the same class for each player
+  //     from the event log, preserving idempotency.
+  //   - A second call with the same `seedUsed` produces the
+  //     same assignment (deterministic).
+  classAssignment(
+    playerIds: readonly string[],
+    seedUsed: string,
+  ): Array<{ playerId: string; classId: ClassId }> {
+    const assignments = assignClasses(playerIds, seedUsed);
+    this.logEvent("CLASS_ASSIGNED", {
+      matchId: this.state.id,
+      assignments,
+      seedUsed,
+    });
+    // In-memory mirror — the LOG is the source of truth, this
+    // exists only for fast lookup. A rehydrate from event log
+    // will overwrite this map.
+    for (const a of assignments) {
+      this.playerClasses.set(a.playerId, a.classId);
+    }
+    return assignments;
+  }
+
+  // `pickOffer` — milestone card offer (Q5/12/20). Runs the
+  // canonical sampling (spec §3.3) + emits a `CARD_OFFER` event
+  // + populates the player's hand. The 3-tuple size is
+  // type-pinned — see the invariant note in
+  // `CardOfferEvent.offeredCardIds`.
+  pickOffer(
+    playerId: string,
+    roundNo: number,
+    seedUsed: string,
+  ): [CardId, CardId, CardId] {
+    const classId = this.playerClasses.get(playerId);
+    if (!classId) {
+      throw new RoomError(ErrorCode.PLAYER_NOT_IN_ROOM);
+    }
+    const { cards } = sampleOffer(classId, seedUsed);
+    if (cards.length !== 3) {
+      throw new Error(
+        `card-engine invariant: expected 3 cards, got ${cards.length}`,
+      );
+    }
+    const [a, b, c] = cards as [CardId, CardId, CardId];
+    this.logEvent("CARD_OFFER", {
+      roundNo,
+      playerId,
+      offeredCardIds: [a, b, c],
+      seedUsed,
+    });
+    this.playerHands.set(playerId, [a, b, c]);
+    // Reset the picked-cards cache: a fresh offer supersedes
+    // any prior pick that did not resolve. Played cards stay
+    // (they survive across offers — single-use per match).
+    this.playerPickedCards.delete(playerId);
+    return [a, b, c];
+  }
+
+  // `pickCard` — the player picked one of the offered cards.
+  // The `offerSeqNo` correlation back-points to the
+  // `CARD_OFFER.seqNo` so the API boundary can verify the picked
+  // card was actually offered and not a replayed/foreign card id.
+  //
+  // Optional `eventId` + `commandId` stamp the persisted event with the
+  // transport-level command identity so `recoverDuplicatePickEvent`
+  // can verify a redelivered command matches the originally-committed
+  // one before re-broadcasting. They are intentionally optional so the
+  // core state machine stays free of any transport concerns; callers
+  // that route through the API boundary always supply them.
+  pickCard(
+    pickedByPlayerId: string,
+    cardId: CardId,
+    offerSeqNo: number,
+    metadata?: { eventId?: string; commandId?: string },
+  ): void {
+    const hand = this.playerHands.get(pickedByPlayerId);
+    if (!hand?.includes(cardId)) {
+      throw new RoomError(ErrorCode.CARD_NOT_IN_HAND);
+    }
+    const payload: Record<string, unknown> = {
+      roundNo: this.currentRound?.roundNo ?? 0,
+      playerId: pickedByPlayerId,
+      selectedCardId: cardId,
+      offerSeqNo,
+    };
+    if (metadata?.eventId) payload.eventId = metadata.eventId;
+    if (metadata?.commandId) payload.commandId = metadata.commandId;
+    this.logEvent("CARD_PICKED", payload);
+    // Spending the card: remove from hand. The card is
+    // single-use per match (v1 invariant — spec §3.1).
+    this.playerHands.set(
+      pickedByPlayerId,
+      hand.filter((c) => c !== cardId),
+    );
+    // Maintain the per-player picked-cards cache (O(1) lookup).
+    // The card only joins `playerPlayedCards` once the matching
+    // CARD_RESOLVED event is appended in `playCard`.
+    let set = this.playerPickedCards.get(pickedByPlayerId);
+    if (!set) {
+      set = new Set();
+      this.playerPickedCards.set(pickedByPlayerId, set);
+    }
+    set.add(cardId);
+  }
+
+  // `playCard` — apply a resolved card effect. The resolver
+  // runs server-side in the API boundary (sub-task D) before
+  // calling this method; this method only applies the persisted
+  // outcome and appends the `CARD_RESOLVED` event.
+  //
+  // Effect split (spec §4.2):
+  //   - `MUTATION` — no countdown, applies once.
+  //   - `TEMPORARY` — carries `expiresAtServer`; the rehydrate
+  //     reducer restores only while `expiresAtServer > replayServerNow`.
+  //
+  // `serverNow` is the TRUSTED current server time captured at
+  // the call site (one capture per request). It is used
+  // UNCONDITIONALLY for both `remainingMs` (transport metadata
+  // — never trusted by the client for countdown) and for
+  // TEMPORARY `expiresAtServer` derivation.
+  playCard(
+    playedByPlayerId: string,
+    cardId: CardId,
+    offerSeqNo: number,
+    resolvedEffect: CardEffect,
+    targetPlayerIds: readonly string[],
+    serverNow: number,
+    metadata?: { eventId?: string; commandId?: string },
+  ): {
+    seqNo: number;
+    expiresAtServer: number | null;
+    remainingMs: number | null;
+  } {
+    const isTemporary = isTemporaryEffectKind(resolvedEffect.kind);
+    const expiresAtServer = isTemporary
+      ? serverNow + getDurationMs(resolvedEffect)
+      : 0;
+    const remainingMs = isTemporary ? expiresAtServer - serverNow : 0;
+
+    // `logEvent` returns the allocated seqNo — we mirror it into
+    // the payload here (the only call site that exposes seqNo on
+    // the payload itself; rehydrate reducers / replay log readers
+    // can reach the envelope via entry.seqNo) BEFORE the push so
+    // the stored entry is never mutated post-append.
+    const seqNo = this.eventSeqCounter + 1;
+    const payload: Record<string, unknown> = {
+      seqNo,
+      matchId: this.state.id,
+      roundNo: this.currentRound?.roundNo ?? 0,
+      cardId,
+      offerSeqNo,
+      playedByPlayerId,
+      targetPlayerIds: [...targetPlayerIds],
+      effect: resolvedEffect,
+      resolution: isTemporary ? "TEMPORARY" : "MUTATION",
+      serverTimestamp: serverNow,
+      expiresAtServer: isTemporary ? expiresAtServer : null,
+      remainingMs: isTemporary ? remainingMs : null,
+    };
+    if (metadata?.eventId) payload.eventId = metadata.eventId;
+    if (metadata?.commandId) payload.commandId = metadata.commandId;
+    const allocatedSeqNo = this.logEvent("CARD_RESOLVED", payload);
+    if (allocatedSeqNo !== seqNo) {
+      // Defensive: logEvent and the local seqNo MUST agree. If
+      // they ever drift, the entry's payload.seqNo would lie
+      // about its own envelope seqNo.
+      throw new Error(
+        `match-state-machine: seqNo drift in playCard (local=${seqNo}, logEvent=${allocatedSeqNo})`,
+      );
+    }
+
+    if (isTemporary) {
+      const list = this.activeEffects.get(playedByPlayerId) ?? [];
+      list.push({
+        sourceSeqNo: seqNo,
+        effect: resolvedEffect,
+        // `isTemporary` above already gated on `isTemporaryEffectKind`,
+        // so `expiresAtServer` is the (serverNow + durationMs) sum —
+        // never the `0` fallback used for MUTATION effects.
+        expiresAtServer,
+        persistedDurationMs: getDurationMs(resolvedEffect),
+      });
+      this.activeEffects.set(playedByPlayerId, list);
+    }
+
+    // Maintain the per-round AOE counter (incremental, O(1)).
+    // Single-target resolutions don't count toward the AOE cap;
+    // only resolutions with `targetPlayerIds.length > 1` do,
+    // matching the spec's `AOE_CAP_PER_ROUND` rule (spec §3.3).
+    if (targetPlayerIds.length > 1) {
+      const roundNo = this.currentRound?.roundNo ?? 0;
+      const current = this.aoeCountByRound.get(roundNo) ?? 0;
+      this.aoeCountByRound.set(roundNo, current + 1);
+    }
+
+    // Promote the picked card to "played" only after the
+    // resolved event has been appended. A pick that the
+    // validator rejects (or that the client never plays) stays
+    // in `playerPickedCards` until the next `pickOffer` clears
+    // it — which is fine, because the API boundary uses
+    // `playerPlayedCards` (not `playerPickedCards`) for the
+    // single-use-per-match invariant.
+    let played = this.playerPlayedCards.get(playedByPlayerId);
+    if (!played) {
+      played = new Set();
+      this.playerPlayedCards.set(playedByPlayerId, played);
+    }
+    played.add(cardId);
+    this.playerPickedCards.get(playedByPlayerId)?.delete(cardId);
+
+    return {
+      seqNo,
+      expiresAtServer: isTemporary ? expiresAtServer : null,
+      remainingMs: isTemporary ? remainingMs : null,
+    };
+  }
+
+  // Get a player's current hand (off the in-memory mirror —
+  // the EVENT LOG is the source of truth).
+  getHand(playerId: string): readonly CardId[] {
+    return this.playerHands.get(playerId) ?? [];
+  }
+
+  // Resolve the `CARD_OFFER` envelope that produced the picked
+  // card. The API boundary calls this with `offerSeqNo` from the
+  // client to validate the play against the offer that actually
+  // targeted this player — NOT against the current hand (which
+  // `pickCard` has already mutated by removing the picked card).
+  // Returns `null` if no matching `CARD_OFFER` for this player
+  // exists, so the API boundary can reject a foreign
+  // `offerSeqNo` with `CARD_NOT_IN_HAND`.
+  getCardOfferForPlayer(
+    playerId: string,
+    offerSeqNo: number,
+  ): readonly CardId[] | null {
+    for (const e of this.eventLog) {
+      if (e.type !== "CARD_OFFER") continue;
+      if (e.seqNo !== offerSeqNo) continue;
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      if (payload.playerId !== playerId) continue;
+      const ids = (payload.offeredCardIds ?? []) as CardId[];
+      if (ids.length !== 3) return null;
+      return ids;
+    }
+    return null;
+  }
+
+  // Get the set of cardIds the player has picked but not yet
+  // resolved (incremental, O(1)). Distinct from `getPlayedCards`:
+  // picked cards include any card the player selected via
+  // `pickCard` even if `playCard` was never reached (validator
+  // rejection, client disconnect, ...). The next `pickOffer`
+  // replaces this set wholesale.
+  getPickedCards(playerId: string): ReadonlySet<CardId> {
+    return this.playerPickedCards.get(playerId) ?? EMPTY_CARD_SET;
+  }
+
+  // Get the set of cardIds the player has already played this
+  // match (single-use invariant, spec §3.1). Backs the API
+  // boundary's `validateCardCommand` playedCardIds argument.
+  // O(1) read — incrementally maintained by `playCard`.
+  getPlayedCards(playerId: string): ReadonlySet<CardId> {
+    return this.playerPlayedCards.get(playerId) ?? EMPTY_CARD_SET;
+  }
+
+  // Get the AOE-resolution count for the current round.
+  // O(1) read — incrementally maintained by `playCard`.
+  // The callback path uses this directly to enforce the
+  // `AOE_CAP_PER_ROUND` cap without re-scanning the event log.
+  getAoeCountForRound(roundNo: number): number {
+    return this.aoeCountByRound.get(roundNo) ?? 0;
+  }
+
+  // Get a player's active card effects as a snapshot
+  // (clock-drift safe rehydrate, spec §4.4):
+  //   `remainingMs = max(0, expiresAtServer - serverNow)`
+  // materialised at the supplied `serverNow`. If
+  // `expiresAtServer <= serverNow` the effect has expired and is
+  // NOT included in the snapshot.
+  getActiveEffects(
+    playerId: string,
+    serverNow: number,
+  ): readonly ActiveEffectSnapshot[] {
+    const list = this.activeEffects.get(playerId) ?? [];
+    return list
+      .map((e) => {
+        const remainingMs = Math.max(0, e.expiresAtServer - serverNow);
+        return {
+          sourceSeqNo: e.sourceSeqNo,
+          effect: extractTemporaryEffect(e.effect),
+          remainingMs,
+          persistedDurationMs: e.persistedDurationMs,
+          expiresAtServer: e.expiresAtServer,
+        };
+      })
+      .filter((e) => e.remainingMs > 0);
+  }
+
+  // -------------------------------------------------------------------------
+  // Internal helpers
+  // -------------------------------------------------------------------------
+
+  // Restore `playerClasses` / `playerHands` / `activeEffects` from
+  // the event log. Called by the rehydrate path in `deserialize`
+  // after the codec has loaded the canonical event log. The log
+  // is the only authoritative source — drift is impossible
+  // because the in-memory state is rebuilt verbatim from the
+  // log on every recovery.
+  private rehydrateCardStateFromEventLog(): void {
+    this.playerClasses.clear();
+    this.playerHands.clear();
+    this.activeEffects.clear();
+    this.playerPlayedCards.clear();
+    this.playerPickedCards.clear();
+    this.aoeCountByRound.clear();
+    for (const e of this.eventLog) {
+      this.rehydrateEvent(e);
+    }
+  }
+
+  private rehydrateEvent(e: {
+    type: string;
+    payload?: unknown;
+    seqNo: number;
+  }): void {
+    const payload = (e.payload ?? {}) as Record<string, unknown>;
+    switch (e.type) {
+      case "CLASS_ASSIGNED":
+        this.rehydrateClassAssigned(payload);
+        break;
+      case "CARD_OFFER":
+        this.rehydrateCardOffer(payload);
+        break;
+      case "CARD_PICKED":
+        this.rehydrateCardPicked(payload);
+        break;
+      case "CARD_RESOLVED":
+        this.rehydrateCardResolved(e.seqNo, payload);
+        break;
+    }
+  }
+
+  private rehydrateClassAssigned(payload: Record<string, unknown>): void {
+    const assignments = (payload.assignments ?? []) as Array<{
+      playerId: string;
+      classId: ClassId;
+    }>;
+    for (const a of assignments) {
+      this.playerClasses.set(a.playerId, a.classId);
+    }
+  }
+
+  private rehydrateCardOffer(payload: Record<string, unknown>): void {
+    const playerId = payload.playerId as string;
+    const ids = (payload.offeredCardIds ?? []) as CardId[];
+    if (ids.length === 3) {
+      this.playerHands.set(playerId, ids);
+      this.playerPickedCards.delete(playerId);
+    }
+  }
+
+  private rehydrateCardPicked(payload: Record<string, unknown>): void {
+    const playerId = payload.playerId as string;
+    const cardId = payload.selectedCardId as CardId;
+    const hand = this.playerHands.get(playerId) ?? [];
+    this.playerHands.set(
+      playerId,
+      hand.filter((c) => c !== cardId),
+    );
+    let set = this.playerPickedCards.get(playerId);
+    if (!set) {
+      set = new Set();
+      this.playerPickedCards.set(playerId, set);
+    }
+    set.add(cardId);
+  }
+
+  private rehydrateCardResolved(
+    seqNo: number,
+    payload: Record<string, unknown>,
+  ): void {
+    const playedBy = payload.playedByPlayerId as string;
+    const cardId = payload.cardId as CardId;
+    let played = this.playerPlayedCards.get(playedBy);
+    if (!played) {
+      played = new Set();
+      this.playerPlayedCards.set(playedBy, played);
+    }
+    played.add(cardId);
+    this.playerPickedCards.get(playedBy)?.delete(cardId);
+    if (payload.resolution === "TEMPORARY") {
+      const list = this.activeEffects.get(playedBy) ?? [];
+      list.push({
+        sourceSeqNo: seqNo,
+        effect: payload.effect as CardEffect,
+        expiresAtServer: payload.expiresAtServer as number,
+        persistedDurationMs: getDurationMs(payload.effect as CardEffect),
+      });
+      this.activeEffects.set(playedBy, list);
+    }
+    const targets = (payload.targetPlayerIds ?? []) as string[];
+    if (targets.length > 1) {
+      const roundNo = payload.roundNo as number;
+      const current = this.aoeCountByRound.get(roundNo) ?? 0;
+      this.aoeCountByRound.set(roundNo, current + 1);
+    }
+  }
+
   // Restore MatchStateMachine from serialized JSON string. Parsing,
   // validation, and Map reconstruction live in the pure
   // `deserializeMatch` codec; here we only load the decoded data onto
@@ -683,10 +1187,115 @@ export class MatchStateMachine {
     // logged after rehydrate keep increasing and never collide with an
     // already-emitted seqNo (which would corrupt a client's delta cursor).
     instance.eventSeqCounter = eventLog.reduce(
-      (max, e) => (e.seqNo > max ? e.seqNo : max),
+      (max, e) => Math.max(e.seqNo, max),
       0,
     );
+    // Phase 2 — rebuild class/card state from the event log.
+    // The log is the source of truth; this just mirrors the
+    // latest persisted state for fast lookup.
+    instance.rehydrateCardStateFromEventLog();
 
     return instance;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers (file-scoped, no MatchStateMachine state)
+// ---------------------------------------------------------------------------
+
+// Frozen empty set returned by `getPlayedCards` for players
+// with no plays yet. Sharing one reference avoids the per-call
+// allocation that a fresh `new Set()` would incur.
+const EMPTY_CARD_SET: ReadonlySet<CardId> = new Set<CardId>();
+
+// CardEffect kinds that carry a temporary visual countdown
+// (spec §4.2 "TemporaryEffect" branch). Single authoritative
+// source for both `isTemporaryEffectKind` and `getDurationMs` —
+// every kind listed here MUST return its `durationMs` from
+// `getDurationMs`, and any kind not listed returns `0`.
+const TEMPORARY_KINDS = [
+  "OPTION_DISABLE",
+  "OPTION_FAKE",
+  "OPTION_LOCK",
+  "VISUAL_OVERLAY",
+  "SEMANTIC_FLIP",
+] as const;
+const TEMPORARY_KINDS_SET: ReadonlySet<string> = new Set(TEMPORARY_KINDS);
+
+function isTemporaryEffectKind(kind: CardEffect["kind"]): boolean {
+  return TEMPORARY_KINDS_SET.has(kind);
+}
+
+function getDurationMs(effect: CardEffect): number {
+  if (!isTemporaryEffectKind(effect.kind)) return 0;
+  // Safe because `isTemporaryEffectKind` only returns true for
+  // kinds whose CardEffect shape carries `durationMs`.
+  return (effect as { durationMs: number }).durationMs;
+}
+
+function extractTemporaryEffect(
+  effect: CardEffect,
+): ActiveEffectSnapshot["effect"] {
+  // The snapshot only carries TEMPORARY effects (the only kind
+  // we add to `activeEffects`). The cast is safe because
+  // `isTemporaryEffectKind` gates the insertion above.
+  return effect as ActiveEffectSnapshot["effect"];
+}
+
+// Deep-freeze an event-log entry. We recurse into the payload
+// (which is the only mutable field on a frozen entry) so a
+// callback that accidentally writes `entry.payload.x = ...`
+// also throws. `undefined` payloads are preserved.
+function deepFreezeEventEntry<
+  E extends {
+    type: string;
+    payload?: unknown;
+    timestamp: number;
+    seqNo: number;
+  },
+>(entry: E): Readonly<E> {
+  const frozenPayload =
+    entry.payload === undefined
+      ? undefined
+      : deepFreezeValue(entry.payload, new WeakSet());
+  return Object.freeze({
+    ...entry,
+    payload: frozenPayload,
+  }) as Readonly<E>;
+}
+
+// `deepFreezeValue` walks `value` and freezes every reachable
+// object/array recursively. Two corrections vs the previous
+// short-circuit on `Object.isFrozen`:
+//
+// 1. `playCard` pre-freezes the outer payload before pushing it
+//    through `logEvent`; the previous short-circuit meant nested
+//    `targetPlayerIds`, `effect`, and effect-internal arrays stayed
+//    mutable. We now check the visitor `seen` WeakSet instead, so
+//    already-frozen objects are still traversed on first visit and
+//    their nested children get frozen exactly once.
+//
+// 2. The `seen` set prevents infinite recursion on cyclic payloads
+//    (a future payload shape could include a self-reference).
+function deepFreezeValue(value: unknown, seen: WeakSet<object>): unknown {
+  if (value === null || typeof value !== "object") return value;
+  // `seen` is a per-call cache so an object that legitimately
+  // appears at multiple NON-cyclic points still gets walked
+  // recursively — but a cycle folds back to the already-visited
+  // object and stops.
+  if (seen.has(value as object)) return value;
+  seen.add(value as object);
+  if (!Object.isFrozen(value)) Object.freeze(value);
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      if (Object.hasOwn(value, i)) {
+        deepFreezeValue(value[i], seen);
+      }
+    }
+    return value;
+  }
+  for (const k of Object.keys(value as Record<string, unknown>)) {
+    deepFreezeValue((value as Record<string, unknown>)[k], seen);
+  }
+  return value;
 }

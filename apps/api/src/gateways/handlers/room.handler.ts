@@ -12,7 +12,7 @@ import {
   type RoomPlayerJoinedPayload,
   type RoomPlayerLeftPayload,
   RoomError,
-  ERROR_MESSAGES,
+  ERROR_MESSAGE_KEYS,
   asRoomType,
 } from "@arena/shared";
 import { RoomService } from "../../modules/room/room.service";
@@ -95,11 +95,11 @@ export class RoomHandler extends BaseHandler {
         let msg =
           error instanceof RoomError
             ? /* c8 ignore next */
-              (ERROR_MESSAGES[error.code] ?? this.getErrorMessage(error))
+              (ERROR_MESSAGE_KEYS[error.code] ?? this.getErrorMessage(error))
             : this.getErrorMessage(error);
         if (code === ErrorCode.INTERNAL_ERROR) {
           this.logger.error("Error creating room:", error);
-          msg = "Internal server error";
+          msg = ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR];
         }
         this.emitError(client, code, msg);
       },
@@ -223,11 +223,11 @@ export class RoomHandler extends BaseHandler {
         let msg =
           error instanceof RoomError
             ? /* c8 ignore next */
-              (ERROR_MESSAGES[error.code] ?? this.getErrorMessage(error))
+              (ERROR_MESSAGE_KEYS[error.code] ?? this.getErrorMessage(error))
             : this.getErrorMessage(error);
         if (code === ErrorCode.INTERNAL_ERROR) {
           this.logger.error("Error joining room:", error);
-          msg = "Internal server error";
+          msg = ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR];
         }
         this.emitError(client, code, msg);
       },
@@ -297,11 +297,11 @@ export class RoomHandler extends BaseHandler {
         let msg =
           error instanceof RoomError
             ? /* c8 ignore next */
-              (ERROR_MESSAGES[error.code] ?? this.getErrorMessage(error))
+              (ERROR_MESSAGE_KEYS[error.code] ?? this.getErrorMessage(error))
             : this.getErrorMessage(error);
         if (code === ErrorCode.INTERNAL_ERROR) {
           this.logger.error("Error leaving room:", error);
-          msg = "Internal server error";
+          msg = ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR];
         }
         this.emitError(client, code, msg);
       },
