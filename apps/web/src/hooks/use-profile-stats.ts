@@ -27,17 +27,63 @@ export interface ProfileStatsResponse {
   stats: ProfileStats;
 }
 
+// Use the non-secret username as the cache key separator between users
+// so React Query Devtools + snapshots do not log access tokens. The
+// token is still attached to each request inside queryFn via the
+// socket store (read at request time, not in the cache key).
 export function useProfileStats() {
-  const accessToken = useSocketStore((state) => state.accessToken);
+  const username = useSocketStore((state) => state.username);
 
   return useQuery({
-    queryKey: ["profile", "stats", accessToken],
-    queryFn: () =>
-      apiGetJson<ProfileStatsResponse>(
+    queryKey: ["profile", "stats", username],
+    queryFn: () => {
+      const token = useSocketStore.getState().accessToken;
+      return apiGetJson<ProfileStatsResponse>(
         "/api/v1/users/me/stats",
-        accessToken ?? undefined,
-      ),
-    enabled: Boolean(accessToken),
+        token ?? undefined,
+      );
+    },
+    enabled: Boolean(username),
+    staleTime: 60_000,
+  });
+}
+
+// ============================================================
+// Phase 3 — class winrate + streak + sabotage count hook
+// ============================================================
+
+export interface ClassWinrate {
+  plays: number;
+  wins: number;
+  winRate: number;
+}
+
+export interface Phase3Stats {
+  classWinrate: {
+    CONG?: ClassWinrate;
+    THU?: ClassWinrate;
+  };
+  currentStreak: number;
+  sabotageCount: number;
+}
+
+export interface Phase3StatsResponse {
+  stats: Phase3Stats;
+}
+
+export function usePhase3Stats() {
+  const username = useSocketStore((state) => state.username);
+
+  return useQuery({
+    queryKey: ["profile", "phase3-stats", username],
+    queryFn: () => {
+      const token = useSocketStore.getState().accessToken;
+      return apiGetJson<Phase3StatsResponse>(
+        "/api/v1/users/me/phase3-stats",
+        token ?? undefined,
+      );
+    },
+    enabled: Boolean(username),
     staleTime: 60_000,
   });
 }

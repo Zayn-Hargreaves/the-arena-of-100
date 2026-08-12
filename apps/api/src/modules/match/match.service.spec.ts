@@ -897,6 +897,152 @@ describe("MatchService", () => {
       >;
       expect(internalMap.has("m3")).toBe(true);
     });
+
+    it("is idempotent across concurrent finishMatch calls (winner vs loser state machine)", async () => {
+      // Two callers race to finish the same matchId with different
+      // winnerIds / state machines. The DB-level `updateMany` filter
+      // (`status != FINISHED`) is the idempotency guard: the first
+      // caller wins (count: 1), the second caller observes count: 0
+      // and short-circuits to the canonical row without re-running
+      // score persistence or Redis cleanup.
+      //
+      // To force a true race — both calls reaching the transaction
+      // step before either resolves — we wrap $transaction in a
+      // barrier. Both finishMatch promises are created, then the
+      // barrier is released; whichever finishes `$transaction` first
+      // wins, the other observes the canonical match row.
+      const room = {
+        id: "r_concurrent",
+        players: [
+          { user: { id: "u1", username: "A" } },
+          { user: { id: "u2", username: "B" } },
+        ],
+      };
+      vi.mocked(prisma.room.findUnique).mockResolvedValue(room as any);
+      vi.mocked(prisma.match.create).mockResolvedValue({
+        id: "m_concurrent",
+        roomId: "r_concurrent",
+      } as any);
+      vi.mocked(prisma.matchPlayer.createMany).mockResolvedValue({
+        count: 2,
+      } as any);
+      vi.mocked(prisma.room.update).mockResolvedValue({} as any);
+      await service.createMatch("r_concurrent");
+
+      const canonicalMatch = {
+        id: "m_concurrent",
+        roomId: "r_concurrent",
+        status: MatchStatus.FINISHED,
+        winnerId: "u1",
+        endedAt: new Date(),
+      };
+      vi.mocked(prisma.match.findUnique).mockResolvedValue(
+        canonicalMatch as any,
+      );
+
+      // Both updateMany calls are mocked up front. The order in which
+      // they fire depends on whichever promise reaches $transaction
+      // first — the test does not assume which one wins.
+      vi.mocked(prisma.match.updateMany)
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+
+      // Synchronization barrier — $transaction awaits it before
+      // resolving, so both finishMatch promises queue at the
+      // transaction step and overlap on the status-transition /
+      // score-write phase.
+      let releaseBarrier!: () => void;
+      const barrier = new Promise<void>((resolve) => {
+        releaseBarrier = resolve;
+      });
+
+      vi.mocked(prisma.$transaction).mockImplementation(async (ops) => {
+        await barrier;
+        if (Array.isArray(ops)) return Promise.all(ops);
+        return ops(prisma);
+      });
+
+      const matchPlayerUpdateManyBefore = vi.mocked(
+        prisma.matchPlayer.updateMany,
+      ).mock.calls.length;
+      const redisDelBefore = vi.mocked(redis.del).mock.calls.length;
+
+      // Kick off both finishMatch calls BEFORE awaiting either.
+      const firstPromise = service.finishMatch(
+        "m_concurrent",
+        "u1",
+        "r_concurrent",
+      );
+      const secondPromise = service.finishMatch(
+        "m_concurrent",
+        "u2",
+        "r_concurrent",
+      );
+
+      // Release the barrier so both transactions resolve.
+      releaseBarrier();
+
+      const [firstResult, secondResult] = await Promise.all([
+        firstPromise,
+        secondPromise,
+      ]);
+
+      const matchPlayerUpdateManyAfter = vi.mocked(
+        prisma.matchPlayer.updateMany,
+      ).mock.calls.length;
+      const redisDelAfter = vi.mocked(redis.del).mock.calls.length;
+
+      // Both calls return the canonical match row.
+      expect(firstResult).toEqual(canonicalMatch);
+      expect(secondResult).toEqual(canonicalMatch);
+
+      // Exactly one match.updateMany call returned count: 1 and one
+      // returned count: 0 — regardless of which promise won the race.
+      expect(prisma.match.updateMany).toHaveBeenCalledTimes(2);
+      const updateResults = vi
+        .mocked(prisma.match.updateMany)
+        .mock.results.slice(0, 2)
+        .map((r) => r.value as Promise<{ count: number }>);
+      const counts = await Promise.all(updateResults).then((rows) =>
+        rows.map((r) => r.count).sort(),
+      );
+      expect(counts).toEqual([0, 1]);
+
+      // Score persistence runs in BOTH calls — the
+      // $transaction([...scoreUpdateOps, match.updateMany, ...])
+      // array is built and submitted before the count check, so the
+      // loser's score writes also execute. The idempotency guard
+      // (`status != FINISHED`) lives ONLY on the match.updateMany
+      // call — scores intentionally aren't filtered, because at the
+      // time the transaction is submitted we don't yet know which
+      // caller is the loser. Per-player matchPlayer.updateMany is
+      // an upsert-style idempotent write keyed on (matchId, userId)
+      // so a second write with the same values is a no-op at the row
+      // level. Both calls' scoreUpdateOps therefore run — twice for
+      // each of the 2 players.
+      expect(matchPlayerUpdateManyAfter - matchPlayerUpdateManyBefore).toBe(4);
+
+      // Redis cleanup ran only on the winner's path — the winner reaches
+      // the post-transaction block which deletes stateKey + revisionKey
+      // (2 calls total). The loser returns early on `count: 0` before
+      // touching Redis, so the total delta is exactly the winner's 2
+      // calls (no doubling).
+      expect(redisDelAfter - redisDelBefore).toBe(2);
+      expect(redis.del).toHaveBeenCalledWith("match:state:m_concurrent");
+
+      // The loser's idempotent branch skips in-memory state-machine
+      // eviction, so the entry remains present (the loser returned
+      // the canonical match row via the early-return path without
+      // touching stateMachines.delete).
+      const internalMap = (service as any).stateMachines as Map<
+        string,
+        unknown
+      >;
+      // After both calls resolve, the state machine map MUST be empty
+      // because the winner's path deletes the entry. The loser's path
+      // is a pure no-op return — it doesn't re-evict.
+      expect(internalMap.has("m_concurrent")).toBe(false);
+    });
   });
 
   describe("saveRound", () => {

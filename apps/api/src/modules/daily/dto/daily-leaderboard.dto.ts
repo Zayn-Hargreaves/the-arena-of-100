@@ -39,6 +39,10 @@ export const dailyLeaderboardItemSchema = z.object({
   correctCount: z.number().int().nonnegative(),
   streakAfter: z.number().int().nonnegative(),
   completedAt: z.string(),
+  // Phase 3 — count of CARD_RESOLVED events the user triggered across
+  // all FINISHED matches in the rolling 7-day window ending today.
+  // Aggregated at query time from MatchPlayer.cardsPlayed.
+  cardsPlayedThisWeek: z.number().int().nonnegative(),
 });
 
 export type DailyLeaderboardItem = z.infer<typeof dailyLeaderboardItemSchema>;
@@ -96,6 +100,14 @@ export class DailyLeaderboardItemDto implements DailyLeaderboardItem {
 
   @ApiProperty({ example: "2026-08-09T10:15:00.000Z" })
   completedAt!: string;
+
+  @ApiProperty({
+    example: 12,
+    description:
+      "Phase 3 — CARD_RESOLVED events triggered by this user across " +
+      "FINISHED matches in the rolling 7-day window ending today",
+  })
+  cardsPlayedThisWeek!: number;
 }
 
 export class DailyLeaderboardResponseDto implements DailyLeaderboardResponse {

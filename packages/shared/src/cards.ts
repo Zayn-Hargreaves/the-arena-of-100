@@ -560,3 +560,73 @@ export const AOE_CAP_PER_ROUND = 2;
 export const COMMAND_ID_MAX_LENGTH = 64;
 
 export const MILESTONE_ROUNDS: ReadonlySet<number> = new Set([5, 12, 20]);
+
+// ---------------------------------------------------------------------------
+// Phase 3 — Card variant cosmetics (streak ≥ 7 unlock)
+// ---------------------------------------------------------------------------
+//
+// Spec §2 Decision 19: "Daily streak ≥ 7 unlock 1 card variant
+// (border/glow, no effect change)". The variant is cosmetic only —
+// it swaps the card's visual border/glow in the UI; it does NOT
+// change any card effect, tier, or gameplay property.
+//
+// `CardVariantKey` is the canonical union. It mirrors the Prisma
+// `CardVariantKey` enum — the two MUST stay in lockstep. A test in
+// `cards.spec.ts` pins the mapping so a future enum bump on either
+// side cannot silently diverge.
+export type CardVariantKey = "DEFAULT" | "NEON" | "GOLD";
+
+// Ordered by unlock tier — `DEFAULT` is the starting variant every
+// player has implicitly; `NEON` is the first unlock (streak 7);
+// `GOLD` is the second unlock (streak 14). The array is the single
+// source of truth for "which variant comes next" — both the API
+// (which decides which variant to grant) and the UI (which knows
+// the order for display) import it.
+export const CARD_VARIANT_ORDER: readonly CardVariantKey[] = [
+  "DEFAULT",
+  "NEON",
+  "GOLD",
+];
+
+// Streak threshold: every multiple of 7 unlocks the next variant
+// (spec §2 Decision 19). The constant is shared so the service
+// (trigger), the DTO (response shape), and the UI (display) all
+// agree on when an unlock fires.
+export const CARD_VARIANT_STREAK_THRESHOLD = 7;
+
+// Pick the next variant to unlock for a user, given the variants
+// they already own. Returns `null` when the user already owns
+// every variant (v1: DEFAULT + NEON + GOLD = 3, so after 2
+// unlocks there is nothing more to grant).
+//
+// Pure function — no IO, no side effects — so it is unit-tested
+// directly and stays deterministic across the API boundary.
+export function nextCardVariant(
+  ownedVariants: ReadonlySet<CardVariantKey>,
+): CardVariantKey | null {
+  for (const key of CARD_VARIANT_ORDER) {
+    if (key === "DEFAULT") continue;
+    if (!ownedVariants.has(key)) return key;
+  }
+  return null;
+}
+
+// Pick the card to attach the unlock to. v1 strategy: rotate
+// through the user's class-pool cards deterministically by streak
+// count, so consecutive unlocks target different cards. The exact
+// card chosen is cosmetic (no effect), so a simple rotation is
+// sufficient — no RNG, no persistence of "last unlock index"
+// beyond the owned-variant rows themselves.
+//
+// Falls back to the first card in the CONG pool if the classId
+// has no pool (unreachable in v1 — both pools are non-empty).
+export function pickCardForVariantUnlock(
+  classId: ClassId,
+  unlockIndex: number,
+): CardId {
+  const pool = getClassPool(classId);
+  if (pool.length === 0) {
+    return CARD_CATALOG[0].id;
+  }
+  return pool[unlockIndex % pool.length];
+}

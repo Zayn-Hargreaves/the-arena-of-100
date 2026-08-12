@@ -82,6 +82,7 @@ describe("DailyService", () => {
   let prisma: {
     dailyQuestion: { findFirst: any; findUnique: any };
     dailyAttempt: { count: any; create: any; findUnique: any };
+    userCardVariant: { findMany: any; upsert: any };
     $queryRaw: any;
   };
   let redis: {
@@ -112,6 +113,10 @@ describe("DailyService", () => {
     prisma = {
       dailyQuestion: { findFirst: vi.fn(), findUnique: vi.fn() },
       dailyAttempt: { count: vi.fn(), create: vi.fn(), findUnique: vi.fn() },
+      userCardVariant: {
+        findMany: vi.fn().mockResolvedValue([]),
+        upsert: vi.fn(),
+      },
       $queryRaw: vi.fn(),
     };
     redis = {
@@ -844,6 +849,95 @@ describe("DailyService", () => {
         );
 
         expect(result.score).toBe(DAILY_SCORE_BASE_CORRECT * 4);
+      });
+    });
+
+    // Phase 3 — card variant cosmetic unlock on streak milestones.
+    describe("card variant unlock (Phase 3)", () => {
+      it("does NOT unlock when streakAfter is below 7", async () => {
+        prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 5 });
+
+        const result = await service.submit("user-1", submitInput());
+
+        expect(result.streakAfter).toBe(6);
+        expect(result.unlockedVariant).toBeUndefined();
+        expect(prisma.userCardVariant.upsert).not.toHaveBeenCalled();
+      });
+
+      it("does NOT unlock when streakAfter === 0 (streak reset)", async () => {
+        prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 0 });
+
+        const result = await service.submit(
+          "user-1",
+          submitInput([
+            { answer: "A", responseTimeMs: 1000 },
+            { answer: "A", responseTimeMs: 1000 }, // wrong
+            { answer: "A", responseTimeMs: 1000 },
+            { answer: "B", responseTimeMs: 1000 },
+            { answer: "A", responseTimeMs: 1000 },
+          ]),
+        );
+
+        expect(result.streakAfter).toBe(0);
+        expect(result.unlockedVariant).toBeUndefined();
+        expect(prisma.userCardVariant.upsert).not.toHaveBeenCalled();
+      });
+
+      it("unlocks NEON when streakAfter hits 7 (first milestone)", async () => {
+        prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 6 });
+        // user owns only DEFAULT — nextCardVariant returns NEON.
+        prisma.userCardVariant.findMany.mockResolvedValue([]);
+        prisma.userCardVariant.upsert.mockResolvedValue({});
+
+        const result = await service.submit("user-1", submitInput());
+
+        expect(result.streakAfter).toBe(7);
+        expect(result.unlockedVariant).toEqual(
+          expect.objectContaining({ variantKey: "NEON" }),
+        );
+        expect(prisma.userCardVariant.upsert).toHaveBeenCalledTimes(1);
+      });
+
+      it("unlocks GOLD when streakAfter hits 14 (second milestone, NEON already owned)", async () => {
+        prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 13 });
+        prisma.userCardVariant.findMany.mockResolvedValue([
+          { variantKey: "DEFAULT" },
+          { variantKey: "NEON" },
+        ]);
+        prisma.userCardVariant.upsert.mockResolvedValue({});
+
+        const result = await service.submit("user-1", submitInput());
+
+        expect(result.streakAfter).toBe(14);
+        expect(result.unlockedVariant).toEqual(
+          expect.objectContaining({ variantKey: "GOLD" }),
+        );
+      });
+
+      it("returns NO unlockedVariant when user already owns every variant (cap)", async () => {
+        prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 20 });
+        prisma.userCardVariant.findMany.mockResolvedValue([
+          { variantKey: "DEFAULT" },
+          { variantKey: "NEON" },
+          { variantKey: "GOLD" },
+        ]);
+
+        const result = await service.submit("user-1", submitInput());
+
+        expect(result.streakAfter).toBe(21);
+        expect(result.unlockedVariant).toBeUndefined();
+        expect(prisma.userCardVariant.upsert).not.toHaveBeenCalled();
+      });
+
+      it("submit still succeeds when the unlock path throws (DB error)", async () => {
+        prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 6 });
+        prisma.userCardVariant.findMany.mockRejectedValue(new Error("DB down"));
+
+        // The submit MUST NOT fail — the unlock is best-effort.
+        const result = await service.submit("user-1", submitInput());
+
+        expect(result.streakAfter).toBe(7);
+        expect(result.unlockedVariant).toBeUndefined();
       });
     });
 

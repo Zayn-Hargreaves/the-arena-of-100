@@ -23,6 +23,13 @@ import { RedisService } from "../redis/redis.service";
 import { AuthService } from "../auth/auth.service";
 import { CACHE_TTL } from "../../common/config/cache-ttl";
 import {
+  CARD_VARIANT_STREAK_THRESHOLD,
+  nextCardVariant,
+  pickCardForVariantUnlock,
+  type CardId,
+  type CardVariantKey,
+} from "@arena/shared";
+import {
   DAILY_LEADERBOARD_DEFAULT_LIMIT,
   storedDailyQuestionsSchema,
   type DailyLeaderboardItem,
@@ -94,6 +101,7 @@ interface RawLeaderboardRow {
   correct_count: number | bigint;
   streak_after: number | bigint;
   completed_at: Date;
+  cards_played_this_week: number | bigint;
 }
 
 @Injectable()
@@ -279,6 +287,15 @@ export class DailyService {
       // Best-effort: a stale leaderboard is acceptable, a failed submit is not.
       await this.invalidateLeaderboardCache(dateKey);
 
+      // Phase 3 — streak-based card variant unlock (spec §2 Decision 19).
+      // Fires when streakAfter is a positive multiple of 7. The unlock is
+      // best-effort: a failure here (DB error, already-owned variant) MUST
+      // NOT fail the submit — the attempt is already committed.
+      const unlockedVariant = await this.maybeUnlockCardVariant(
+        userId,
+        streakAfter,
+      );
+
       return {
         dateKey,
         version: set.version,
@@ -290,6 +307,7 @@ export class DailyService {
         streakAfter,
         results,
         completedAt: attempt.completedAt.toISOString(),
+        ...(unlockedVariant ? { unlockedVariant } : {}),
       };
     } catch (error) {
       // P2002 = unique([dateKey, userId]): the day is already spent. Surfacing
@@ -600,10 +618,31 @@ export class DailyService {
    * into `score` via the speed bonus. Ordering on it would either rank NULLs
    * arbitrarily or count the same speed twice.
    */
+  /**
+   * Ranking: score desc, then more correct answers, then earliest completion,
+   * then id — fully deterministic so equal datasets always produce equal ranks.
+   *
+   * Deliberately does NOT tie-break on `elapsedMs`: it is nullable (unpinned
+   * sessions have no measured duration), and session speed is already priced
+   * into `score` via the speed bonus. Ordering on it would either rank NULLs
+   * arbitrarily or count the same speed twice.
+   *
+   * Phase 3 — cross-shows `cardsPlayedThisWeek`: count of CARD_RESOLVED events
+   * the user triggered across FINISHED matches in the rolling 7-day window
+   * ending at `dateKey`. Aggregated from MatchPlayer.cardsPlayed (persisted
+   * at finishMatch). The lateral join keeps one query per leaderboard row
+   * — O(N) where N is `limit`, bounded by the SQL planner's index use on
+   * `match_players(userId, matchId)`.
+   */
   private async computeLeaderboard(
     dateKey: string,
     limit: number,
   ): Promise<DailyLeaderboardItem[]> {
+    // The 7-day window is computed against `dateKey` itself, not "today",
+    // so the leaderboard for a past date still cross-shows the right window.
+    const windowEnd = new Date(`${dateKey}T23:59:59.999Z`);
+    const windowStart = new Date(windowEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
+
     const rows = await this.prisma.$queryRaw<RawLeaderboardRow[]>`
       SELECT a."userId"       AS user_id,
              u."username"     AS username,
@@ -611,9 +650,19 @@ export class DailyService {
              a."score"        AS score,
              a."correctCount" AS correct_count,
              a."streakAfter"  AS streak_after,
-             a."completedAt"  AS completed_at
+             a."completedAt"  AS completed_at,
+             COALESCE(cards.agg_cards, 0) AS cards_played_this_week
       FROM "daily_attempts" a
       JOIN "users" u ON u.id = a."userId"
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(mp."cardsPlayed"), 0)::bigint AS agg_cards
+        FROM "match_players" mp
+        JOIN "matches" m ON m."id" = mp."matchId"
+        WHERE mp."userId" = a."userId"
+          AND m."status" = 'FINISHED'
+          AND m."endedAt" >= ${windowStart}::timestamp
+          AND m."endedAt" <= ${windowEnd}::timestamp
+      ) cards ON true
       WHERE a."dateKey" = ${dateKey}
       ORDER BY a."score" DESC,
                a."correctCount" DESC,
@@ -631,6 +680,7 @@ export class DailyService {
       correctCount: Number(row.correct_count),
       streakAfter: Number(row.streak_after),
       completedAt: row.completed_at.toISOString(),
+      cardsPlayedThisWeek: Number(row.cards_played_this_week),
     }));
   }
 
@@ -681,6 +731,102 @@ export class DailyService {
       this.logger.warn(
         `Redis DEL failed for daily leaderboard ${dateKey}: ${message}`,
       );
+    }
+  }
+
+  // ---------------------------------------------------------
+  // Phase 3 — Card variant cosmetic unlock (streak ≥ 7)
+  // ---------------------------------------------------------
+
+  /**
+   * Fires when `streakAfter` is a positive multiple of
+   * `CARD_VARIANT_STREAK_THRESHOLD` (7). Grants the next variant the
+   * user does not yet own, attached to a card chosen by rotation.
+   *
+   * Best-effort: the attempt is already committed by the time this
+   * runs, so any failure (DB error, user already owns every variant)
+   * is logged and returns `null` — the submit response still
+   * succeeds. This mirrors the leaderboard cache invalidation's
+   * "stale is acceptable, failed submit is not" stance.
+   *
+   * Idempotent: the (userId, cardId, variantKey) unique constraint
+   * means a replay of the same streak-unlock (e.g. a retried submit
+   * that somehow reached this path twice) is a no-op — the `upsert`
+   * uses `createOnly` semantics, so an existing row is left as-is.
+   */
+  private async maybeUnlockCardVariant(
+    userId: string,
+    streakAfter: number,
+  ): Promise<{ cardId: string; variantKey: CardVariantKey } | null> {
+    // Only fire on a positive multiple of the threshold (7, 14, 21, …).
+    // `streakAfter === 0` means the streak reset (not all correct), so
+    // no unlock should fire even though 0 % 7 === 0.
+    if (streakAfter <= 0 || streakAfter % CARD_VARIANT_STREAK_THRESHOLD !== 0) {
+      return null;
+    }
+
+    let nextVariant: CardVariantKey | null = null;
+    try {
+      // Load every variant the user already owns so we can pick the
+      // next one deterministically. `nextCardVariant` is a pure
+      // function over the owned set — no RNG, no IO.
+      const ownedRows = await this.prisma.userCardVariant.findMany({
+        where: { userId },
+        select: { variantKey: true, cardId: true },
+      });
+      const ownedVariants = new Set<CardVariantKey>(
+        ownedRows.map((r) => r.variantKey as CardVariantKey),
+      );
+
+      nextVariant = nextCardVariant(ownedVariants);
+      if (nextVariant === null) {
+        // User already owns every variant above DEFAULT — nothing to grant.
+        return null;
+      }
+
+      // Pick the card to attach the unlock to. `unlockIndex` is the
+      // count of non-DEFAULT variants the user owns, so it rotates
+      // through the class pool deterministically.
+      const unlockIndex = ownedVariants.size;
+      // v1: we don't have a persisted class for daily-challenge users
+      // (class assignment is match-scoped). Default to CONG pool for
+      // cosmetic variety — the card chosen has no gameplay impact.
+      const cardId = pickCardForVariantUnlock("CONG", unlockIndex) as CardId;
+
+      // Idempotent upsert: if the row already exists (replayed unlock),
+      // `update` is a no-op. The unique constraint on
+      // (userId, cardId, variantKey) is the real guard.
+      await this.prisma.userCardVariant.upsert({
+        where: {
+          userId_cardId_variantKey: {
+            userId,
+            cardId,
+            variantKey: nextVariant,
+          },
+        },
+        create: {
+          userId,
+          cardId,
+          variantKey: nextVariant,
+        },
+        update: {},
+      });
+
+      return { cardId, variantKey: nextVariant };
+    } catch (error) {
+      // Best-effort: the submit must not fail because a cosmetic
+      // unlock failed. Log and move on.
+      const message = error instanceof Error ? error.message : String(error);
+      // Use a non-identifying internal label instead of userId so the
+      // operator log carries no PII. Use the grant code when the
+      // unlock path got far enough to compute one; otherwise use the
+      // generic `unlock` label. Streak + DB error preserved for
+      // diagnostics.
+      const grantLabel = nextVariant ?? "unlock";
+      this.logger.warn(
+        `Card variant unlock failed for grant ${grantLabel} streak ${streakAfter}: ${message}`,
+      );
+      return null;
     }
   }
 }

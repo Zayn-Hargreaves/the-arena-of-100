@@ -553,10 +553,51 @@ export class MatchService {
     }
     const playerScores = stateMachine.getPlayerScores();
     if (playerScores.length === 0) return [];
+
+    // Phase 3 — count CARD_RESOLVED events per player from the event
+    // log so the daily leaderboard can aggregate "most cards played
+    // this week". Read-only traversal of the in-memory event log; the
+    // state machine is NOT modified.
+    const cardsPlayedByUser = new Map<string, number>();
+    // Phase 3 — class assignment per match, derived from the
+    // CLASS_ASSIGNED event emitted by MatchStateMachine.classAssignment.
+    // Stored on MatchPlayer.classId so the profile page can compute
+    // class winrate (per spec §2 Decision 19 follow-up: class-specific
+    // winrate is part of Phase 3 reporting). Players with no
+    // CLASS_ASSIGNED event (legacy / admin-terminated matches) keep
+    // classId = NULL.
+    const classByUser = new Map<string, string>();
+    for (const entry of stateMachine.getEventLog()) {
+      if (entry.type === "CARD_RESOLVED") {
+        const payload = entry.payload as
+          | { playedByPlayerId?: string }
+          | undefined;
+        const playerId = payload?.playedByPlayerId;
+        if (playerId) {
+          cardsPlayedByUser.set(
+            playerId,
+            (cardsPlayedByUser.get(playerId) ?? 0) + 1,
+          );
+        }
+      } else if (entry.type === "CLASS_ASSIGNED") {
+        const payload = entry.payload as
+          | { assignments?: Array<{ playerId: string; classId: string }> }
+          | undefined;
+        const assignments = payload?.assignments ?? [];
+        for (const a of assignments) {
+          classByUser.set(a.playerId, a.classId);
+        }
+      }
+    }
+
     return playerScores.map((p) =>
       this.prisma.matchPlayer.updateMany({
         where: { matchId, userId: p.userId },
-        data: { score: p.score },
+        data: {
+          score: p.score,
+          cardsPlayed: cardsPlayedByUser.get(p.userId) ?? 0,
+          classId: classByUser.get(p.userId) ?? null,
+        },
       }),
     );
   }

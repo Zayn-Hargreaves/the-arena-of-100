@@ -1,5 +1,7 @@
 export type DailyDifficulty = "EASY" | "MEDIUM" | "HARD";
 
+import type { CardVariantKey } from "@arena/shared";
+
 export interface DailyQuestionPublic {
   content: string;
   options: string[];
@@ -46,6 +48,10 @@ export interface DailySubmitResponse {
   streakAfter: number;
   results: DailyAnswerResult[];
   completedAt: string;
+  unlockedVariant?: {
+    cardId: string;
+    variantKey: CardVariantKey;
+  };
 }
 
 export interface DailyLeaderboardItem {
@@ -57,6 +63,7 @@ export interface DailyLeaderboardItem {
   correctCount: number;
   streakAfter: number;
   completedAt: string;
+  cardsPlayedThisWeek: number;
 }
 
 export interface DailyLeaderboardResponse {

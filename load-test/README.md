@@ -248,6 +248,63 @@ This section is the direct input to decision **P2** in
 
 ---
 
+## C3 — Card-batch failover oracle (Phase 3)
+
+Chaos-tested gate that proves a node kill at any of the three
+`CARD_RESOLVED` lifecycle checkpoints does not lose or double-apply
+effects.
+
+### Module
+
+`load-test/lib/card-batch-verdict.mjs` — pure oracle (no k6 / no I/O).
+Accepts a `*.card-batch.json` artifact and returns
+`PASS | FAIL` along with a `reasons[]` ledger that pin
+exactly which invariant was violated.
+
+### Helper taxonomy
+
+| Helper                                | Purpose                                                                                                                                                                            |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dedupeEffects(raw)`                  | Drops malformed entries + collapses repeats by the canonical `(playerId, effectId, seqNo)` triple, keeping earliest `t`                                                            |
+| `detectEffectConflicts(raw)`          | Flags `(playerId, effectId)` pairs seen with two distinct `seqNos` — zombie / split-brain fingerprint                                                                              |
+| `findDuplicateObservations(raw)`      | Surfaces transport frames that observed the same canonical `(playerId, effectId, seqNo)` triple more than once — distinct from `dedupeEffects`, which only collapses them silently |
+| `diffEffects(expected, observed)`     | Surfaces dropped (in expected, not seen) + extra (seen, not expected) effects                                                                                                      |
+| `evaluateCardBatchFailover(artifact)` | Top-level oracle; timeline sanity + dedupe + conflict + duplicate + diff + recovery oracle                                                                                         |
+
+### Tests
+
+```bash
+node_modules/.bin/vitest run --config load-test/vitest.config.mjs \
+  lib/card-batch-verdict.test.mjs
+```
+
+17 cases:
+
+- 3 checkpoint PASS scenarios: `append_pre_emit`, `mid_batch_flush`,
+  `pre_ack`
+- 5 negative cases: invalid checkpoint label, broken timeline
+  (`t_kill >= t_owner_flip`), recovery before owner flip
+  (`t_recover < t_owner_flip`), missing `observed_effects`,
+  invalid artifact shape (null / undefined / array)
+- 3 chaos-fingerprint cases: `lost_effect` (one expected effect missing
+  from transport), `double_apply` (zombie re-emit with conflicting
+  `seqNo`), `duplicate_observation` (same canonical triple observed
+  twice)
+- 5 helper unit tests: dedupe, conflict detection, diff,
+  `findDuplicateObservations`, helper unit coverage of the canonical
+  triple key
+
+### Distinct from C3-owner-failover
+
+> Spec §7 DoD explicitly forbids conflating the two gates. The
+> owner-failover oracle (`load-test/lib/failover-verdict.mjs`) covers
+> the owner-lease flip during steady-state rounds and dedupes by
+> round `eventId`. The card-batch oracle covers a narrower window
+> (mid-batch-failover) and dedupes by effect `seqNo`. They never
+> share an artifact or verdict.
+
+---
+
 ## Notes & limitations
 
 - **Match length is elimination-bound.** The server never sends the correct

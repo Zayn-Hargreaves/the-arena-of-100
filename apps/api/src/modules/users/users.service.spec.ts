@@ -10,16 +10,22 @@ describe("UsersService", () => {
   let service: UsersService;
   let prisma: {
     user: { findUnique: any; update: any };
-    matchPlayer: { groupBy: any; findMany: any };
+    matchPlayer: { groupBy: any; findMany: any; aggregate: any };
     match: { count: any };
+    dailyAttempt: { findFirst: any };
     $queryRaw: any;
   };
 
   beforeEach(() => {
     prisma = {
       user: { findUnique: vi.fn(), update: vi.fn() },
-      matchPlayer: { groupBy: vi.fn(), findMany: vi.fn() },
+      matchPlayer: {
+        groupBy: vi.fn(),
+        findMany: vi.fn(),
+        aggregate: vi.fn(),
+      },
       match: { count: vi.fn() },
+      dailyAttempt: { findFirst: vi.fn() },
       $queryRaw: vi.fn(),
     };
     service = new UsersService(prisma as unknown as PrismaService);
@@ -625,6 +631,109 @@ describe("UsersService", () => {
         data: { avatar: "tux" },
         select: { id: true, username: true, avatar: true, role: true },
       });
+    });
+  });
+
+  // Phase 3 — class winrate + streak + sabotage count
+  describe("getPhase3Stats", () => {
+    const mockUser = { id: "u1" };
+
+    it("throws NotFoundException when user does not exist", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+      await expect(service.getPhase3Stats("missing")).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it("returns zeroed stats when user has no matches + no daily attempts", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
+      vi.mocked(prisma.dailyAttempt.findFirst).mockResolvedValue(null);
+      vi.mocked(prisma.matchPlayer.aggregate).mockResolvedValue({
+        _sum: { cardsPlayed: null },
+      });
+
+      const result = await service.getPhase3Stats("u1");
+
+      expect(result.stats.classWinrate).toEqual({});
+      expect(result.stats.currentStreak).toBe(0);
+      expect(result.stats.sabotageCount).toBe(0);
+    });
+
+    it("aggregates per-class winrate from FINISHED matches with non-null classId", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { class_id: "CONG", plays: 10n, wins: 3n },
+        { class_id: "THU", plays: 5n, wins: 2n },
+      ]);
+      vi.mocked(prisma.dailyAttempt.findFirst).mockResolvedValue({
+        streakAfter: 7,
+      });
+      vi.mocked(prisma.matchPlayer.aggregate).mockResolvedValue({
+        _sum: { cardsPlayed: 28 },
+      });
+
+      const result = await service.getPhase3Stats("u1");
+
+      // Phase 3 — the sabotage count must be filtered by match.status =
+      // FINISHED so the aggregate only sums finished matches. This is
+      // the authoritative source-of-truth scope (cardsPlayed is
+      // persisted at finishMatch, so pre-FINISHED matches have no
+      // cardsPlayed row yet, but the filter is still required for
+      // correctness after the match.status transition is reverted).
+      const aggregateCall = vi.mocked(prisma.matchPlayer.aggregate).mock
+        .calls[0]?.[0];
+      expect(aggregateCall?.where).toEqual({
+        userId: "u1",
+        match: { status: FINISHED },
+      });
+      expect(aggregateCall?._sum).toEqual({ cardsPlayed: true });
+
+      expect(result.stats.classWinrate.CONG).toEqual({
+        plays: 10,
+        wins: 3,
+        winRate: 0.3,
+      });
+      expect(result.stats.classWinrate.THU).toEqual({
+        plays: 5,
+        wins: 2,
+        winRate: 0.4,
+      });
+      expect(result.stats.currentStreak).toBe(7);
+      expect(result.stats.sabotageCount).toBe(28);
+    });
+
+    it("skips class rows whose class_id is not CONG or THU (defensive)", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { class_id: "BOGUS", plays: 10n, wins: 5n },
+      ]);
+      vi.mocked(prisma.dailyAttempt.findFirst).mockResolvedValue(null);
+      vi.mocked(prisma.matchPlayer.aggregate).mockResolvedValue({
+        _sum: { cardsPlayed: 0 },
+      });
+
+      const result = await service.getPhase3Stats("u1");
+
+      expect(result.stats.classWinrate).toEqual({});
+    });
+
+    it("treats zero plays as winRate = 0 (not NaN)", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { class_id: "CONG", plays: 0n, wins: 0n },
+      ]);
+      vi.mocked(prisma.dailyAttempt.findFirst).mockResolvedValue(null);
+      vi.mocked(prisma.matchPlayer.aggregate).mockResolvedValue({
+        _sum: { cardsPlayed: 0 },
+      });
+
+      const result = await service.getPhase3Stats("u1");
+
+      expect(result.stats.classWinrate.CONG?.winRate).toBe(0);
+      expect(
+        Number.isFinite(result.stats.classWinrate.CONG?.winRate ?? NaN),
+      ).toBe(true);
     });
   });
 });

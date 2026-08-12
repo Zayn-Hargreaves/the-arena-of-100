@@ -235,3 +235,59 @@ describe("classes (spec §2)", () => {
     expect(new Set(CLASS_IDS)).toEqual(new Set<ClassId>(["CONG", "THU"]));
   });
 });
+
+// ============================================================
+// Phase 3 — card variant cosmetic unlock (spec §2 Decision 19)
+// ============================================================
+
+import {
+  CARD_VARIANT_ORDER,
+  CARD_VARIANT_STREAK_THRESHOLD,
+  nextCardVariant,
+  pickCardForVariantUnlock,
+} from "./cards";
+
+describe("card variant unlock (Phase 3)", () => {
+  it("CARD_VARIANT_ORDER is exactly DEFAULT, NEON, GOLD", () => {
+    expect(CARD_VARIANT_ORDER).toEqual(["DEFAULT", "NEON", "GOLD"]);
+  });
+
+  it("CARD_VARIANT_STREAK_THRESHOLD is 7", () => {
+    expect(CARD_VARIANT_STREAK_THRESHOLD).toBe(7);
+  });
+
+  it("nextCardVariant returns NEON for a fresh user (owns only DEFAULT)", () => {
+    expect(nextCardVariant(new Set(["DEFAULT"]))).toBe("NEON");
+  });
+
+  it("nextCardVariant returns NEON when owned set is empty (first-ever unlock)", () => {
+    expect(nextCardVariant(new Set())).toBe("NEON");
+  });
+
+  it("nextCardVariant returns GOLD after NEON is owned", () => {
+    expect(nextCardVariant(new Set(["DEFAULT", "NEON"]))).toBe("GOLD");
+  });
+
+  it("nextCardVariant returns null when every variant above DEFAULT is owned", () => {
+    expect(nextCardVariant(new Set(["DEFAULT", "NEON", "GOLD"]))).toBe(null);
+  });
+
+  it("pickCardForVariantUnlock rotates through the CONG pool deterministically", () => {
+    const pool = getClassPool("CONG");
+    expect(pool.length).toBeGreaterThan(0);
+    // Every unlock index maps to a card in the CONG pool.
+    for (const idx of [0, 1, 2, 3, 5, 7]) {
+      const card = pickCardForVariantUnlock("CONG", idx);
+      expect(pool).toContain(card);
+    }
+  });
+
+  it("pickCardForVariantUnlock is deterministic for a given classId + index", () => {
+    expect(pickCardForVariantUnlock("CONG", 0)).toBe(
+      pickCardForVariantUnlock("CONG", 0),
+    );
+    expect(pickCardForVariantUnlock("THU", 2)).toBe(
+      pickCardForVariantUnlock("THU", 2),
+    );
+  });
+});

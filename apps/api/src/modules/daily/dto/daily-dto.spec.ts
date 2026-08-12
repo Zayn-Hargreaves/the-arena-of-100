@@ -366,6 +366,7 @@ describe("daily DTO schemas", () => {
         correctCount: 5,
         streakAfter: 7,
         completedAt: "2026-08-09T10:15:00.000Z",
+        cardsPlayedThisWeek: 12,
       };
 
       expect(dailyLeaderboardItemSchema.safeParse(item).success).toBe(true);

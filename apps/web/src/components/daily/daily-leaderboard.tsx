@@ -9,6 +9,25 @@ import { StreakGlyph } from "./daily-glyph";
 import { DAILY_QUESTION_COUNT, isValidAvatarSeed } from "@arena/shared";
 import { avatars, findAvatarBySeed } from "@/lib/avatars";
 
+// Phase 3 — tier boundaries for the "cards played this week" cross-show.
+// Common = light runner, Rare = active player, Epic = card-slinging shark.
+// Mirrors the daily-challenge visual language so the badge sits cleanly
+// next to the score column.
+const CARDS_PLAYED_TIERS = {
+  COMMON: { max: 5, className: "bg-slate-100 text-slate-600" },
+  RARE: { max: 15, className: "bg-sky-100 text-sky-700" },
+  EPIC: {
+    max: Number.POSITIVE_INFINITY,
+    className: "bg-amber-100 text-amber-700",
+  },
+} as const;
+
+function cardsPlayedTier(count: number): keyof typeof CARDS_PLAYED_TIERS {
+  if (count <= CARDS_PLAYED_TIERS.COMMON.max) return "COMMON";
+  if (count <= CARDS_PLAYED_TIERS.RARE.max) return "RARE";
+  return "EPIC";
+}
+
 interface DailyLeaderboardProps {
   items: DailyLeaderboardItem[];
 }
@@ -35,6 +54,7 @@ export function DailyLeaderboard({ items }: Readonly<DailyLeaderboardProps>) {
           const avatar = isValidAvatarSeed(item.avatar)
             ? findAvatarBySeed(item.avatar)
             : (avatars[0] ?? null);
+          const tier = cardsPlayedTier(item.cardsPlayedThisWeek);
           return (
             <li
               key={item.userId}
@@ -70,6 +90,17 @@ export function DailyLeaderboard({ items }: Readonly<DailyLeaderboardProps>) {
               <span className="font-mono text-[10px] text-candy-ink/60 shrink-0 inline-flex items-center gap-0.5">
                 <StreakGlyph className="text-candy-pink" size={10} />
                 {item.streakAfter}
+              </span>
+              {/* Phase 3 — cross-show "Most cards played this week".
+                  Tier badge (Common / Rare / Epic) gives at-a-glance rank
+                  without forcing a sort on the metric itself. */}
+              <span
+                className={`shrink-0 font-mono text-[10px] font-semibold px-1.5 py-0.5 rounded ${CARDS_PLAYED_TIERS[tier].className}`}
+                title={t("leaderboard.cardsThisWeek")}
+              >
+                {t("leaderboard.cardsLabel", {
+                  count: item.cardsPlayedThisWeek,
+                })}
               </span>
             </li>
           );

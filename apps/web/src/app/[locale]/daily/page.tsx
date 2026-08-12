@@ -28,6 +28,7 @@ import { DailyLeaderboard } from "@/components/daily/daily-leaderboard";
 import { DailyNicknameGate } from "@/components/daily/daily-nickname-gate";
 import { DailyShareButton } from "@/components/daily/daily-share-button";
 import { DailyStreakBadge } from "@/components/daily/daily-streak-badge";
+import { CardVariantUnlockModal } from "@/components/daily/card-variant-unlock-modal";
 
 /**
  * Tracks which user action opened the nickname gate. The gate is
@@ -101,6 +102,12 @@ export default function DailyPage() {
   const [nicknameGateOpen, setNicknameGateOpen] = React.useState(false);
   const [nicknameIntent, setNicknameIntent] =
     React.useState<NicknameIntent>(null);
+  // Phase 3 — fires when the submit response carries `unlockedVariant`.
+  // Captured into a separate piece of state so the modal can read the
+  // snapshot at the moment of unlock (a later state change shouldn't
+  // mutate the modal payload).
+  const [unlockedAt, setUnlockedAt] =
+    React.useState<DailySubmitResponse | null>(null);
 
   // Per-question start timestamp — `responseTimeMs` is advisory only;
   // scoring derives from the server-side sessionToken clock, not from
@@ -194,6 +201,13 @@ export default function DailyPage() {
         body: { sessionToken: data.sessionToken, answers },
       });
       setResult(response);
+      // Phase 3 — fire the share modal when a cosmetic variant
+      // unlocks. Only fires on a fresh streak-threshold crossing —
+      // safe to ignore for replays (server is idempotent: a replay
+      // returns the same response without unlocking anything new).
+      if (response.unlockedVariant) {
+        setUnlockedAt(response);
+      }
     } catch (e) {
       setSubmitError(statusFromError(e));
     } finally {
@@ -391,6 +405,28 @@ export default function DailyPage() {
           ctaLabel={t("gate.cta")}
           cancelLabel={t("gate.cancel")}
         />
+
+        {unlockedAt?.unlockedVariant ? (
+          <CardVariantUnlockModal
+            result={unlockedAt}
+            onClose={() => setUnlockedAt(null)}
+            title={t("cardVariant.unlockedTitle")}
+            subtitle={t("cardVariant.unlockedSubtitle")}
+            shareLabel={t("share.result")}
+            copyLabel={t("share.copy")}
+            copiedLabel={t("share.copied")}
+            closeLabel={t("cardVariant.close")}
+            unlockHeadlineTemplate={t("cardVariant.headline", {
+              variant: "__VARIANT__",
+              cardName: "__CARD_NAME__",
+            })}
+            shareHeadline={t("cardVariant.shareHeadline")}
+            shareScoreLine={(score, correct, total) =>
+              t("share.textScore", { score, correct, total })
+            }
+            shareStreakLine={(streak) => t("share.textStreak", { streak })}
+          />
+        ) : null}
       </div>
     </AppShellLayout>
   );

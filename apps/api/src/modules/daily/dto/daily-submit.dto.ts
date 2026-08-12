@@ -76,6 +76,18 @@ export const dailySubmitResponseSchema = z.object({
   streakAfter: z.number().int().nonnegative(),
   results: z.array(dailyAnswerResultSchema),
   completedAt: z.string(),
+  /**
+   * Phase 3 — present when this attempt crossed a streak threshold (7, 14, …)
+   * and the server unlocked a new card variant cosmetic for the user.
+   * `undefined` when no unlock fired (streak did not cross a threshold, or
+   * the user already owns every available variant).
+   */
+  unlockedVariant: z
+    .object({
+      cardId: z.string(),
+      variantKey: z.enum(["DEFAULT", "NEON", "GOLD"]),
+    })
+    .optional(),
 });
 
 export type DailySubmitResponse = z.infer<typeof dailySubmitResponseSchema>;
@@ -158,4 +170,13 @@ export class DailySubmitResponseDto implements DailySubmitResponse {
 
   @ApiProperty({ example: "2026-08-09T10:15:00.000Z" })
   completedAt!: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      "Phase 3 — present when this attempt crossed a streak threshold " +
+      "(7, 14, …) and the server unlocked a new card variant cosmetic.",
+    example: { cardId: "CB-1", variantKey: "NEON" },
+  })
+  unlockedVariant?: { cardId: string; variantKey: "DEFAULT" | "NEON" | "GOLD" };
 }

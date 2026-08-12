@@ -18,7 +18,7 @@ import {
   formatResponseMs,
 } from "@/lib/formatters";
 import { useMatchHistory } from "@/hooks/use-match-history";
-import { useProfileStats } from "@/hooks/use-profile-stats";
+import { usePhase3Stats, useProfileStats } from "@/hooks/use-profile-stats";
 import { useSocketStore } from "@/stores/socket-store";
 import type { Locale } from "@/i18n/routing";
 
@@ -355,6 +355,187 @@ function HistorySection({
 }
 
 // -----------------------------------------------------------------------
+// Phase 3 — class winrate + streak + sabotage count
+// -----------------------------------------------------------------------
+
+interface Phase3StatsSectionProps {
+  isUnauthorized: boolean;
+  phase3Query: ReturnType<typeof usePhase3Stats>;
+  t: ReturnType<typeof useTranslations>;
+}
+
+// Tier colour for class badges — CONG leans warm/red (offensive),
+// THU leans cool/blue (defensive). Reads at a glance even before
+// the player knows the class system. Labels are localized at render
+// time via the `profile.phase3.class.*` next-intl keys.
+const CLASS_BADGE: Record<string, { className: string }> = {
+  CONG: {
+    className: "bg-candy-red text-white border-candy-ink",
+  },
+  THU: {
+    className: "bg-candy-blue text-white border-candy-ink",
+  },
+};
+
+function Phase3StatsSection({
+  isUnauthorized,
+  phase3Query,
+  t,
+}: Readonly<Phase3StatsSectionProps>) {
+  const handleRetry = useCallback(() => {
+    phase3Query.refetch();
+  }, [phase3Query]);
+
+  if (isUnauthorized) {
+    return <MessageCard message={t("error.signinRequired")} />;
+  }
+  if (phase3Query.error) {
+    return <QueryErrorCard onRetry={handleRetry} t={t} />;
+  }
+
+  const data = phase3Query.data?.stats;
+  const cong = data?.classWinrate.CONG;
+  const thu = data?.classWinrate.THU;
+  const hasAnyClassData = Boolean(cong || thu);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        {/* Streak chip — separate so it stands out as the "Daily Challenge" reward loop. */}
+        <div className="bg-candy-pink border-[3px] border-candy-ink rounded-2xl p-4 text-center space-y-1 shadow-[4px_4px_0_0_#2B2D42] hover:-translate-y-0.5 transition-transform">
+          <span className="text-xs font-mono font-black uppercase text-white">
+            {t("phase3.streak")}
+          </span>
+          <div className="font-display font-black text-3xl text-white flex items-center justify-center gap-2">
+            <MiniGlyph variant="streak" className="w-6 h-6 text-white" />
+            <StatValue
+              isLoading={phase3Query.isLoading}
+              value={data?.currentStreak ?? 0}
+            />
+          </div>
+          <p className="text-[10px] font-mono font-black uppercase text-white/80">
+            {t("phase3.streakHint")}
+          </p>
+        </div>
+
+        {/* Sabotage / aggression counter — total CARD_RESOLVED events */}
+        <div className="bg-white border-[3px] border-candy-ink rounded-2xl p-4 text-center space-y-1 shadow-[4px_4px_0_0_#2B2D42] hover:-translate-y-0.5 transition-transform">
+          <span className="text-xs font-mono font-black uppercase text-candy-ink/75">
+            {t("phase3.sabotage")}
+          </span>
+          <div className="font-display font-black text-3xl text-candy-red flex items-center justify-center gap-2">
+            <MiniGlyph variant="target" className="w-6 h-6 text-candy-red" />
+            <StatValue
+              isLoading={phase3Query.isLoading}
+              value={data?.sabotageCount ?? 0}
+            />
+          </div>
+          <p className="text-[10px] font-mono font-black uppercase text-candy-ink/60">
+            {t("phase3.sabotageHint")}
+          </p>
+        </div>
+
+        {/* Best class winrate placeholder for grid symmetry — shows when user has any class data */}
+        <div className="bg-candy-yellow border-[3px] border-candy-ink rounded-2xl p-4 text-center space-y-1 shadow-[4px_4px_0_0_#2B2D42] hover:-translate-y-0.5 transition-transform">
+          <span className="text-xs font-mono font-black uppercase text-candy-ink">
+            {t("phase3.bestClass")}
+          </span>
+          <div className="font-display font-black text-xl text-candy-ink flex items-center justify-center gap-2">
+            {hasAnyClassData && (cong?.plays ?? 0) + (thu?.plays ?? 0) > 0 ? (
+              (() => {
+                // Consider only classes whose corresponding cong/thu
+                // row has plays > 0; exclude unplayed classes before
+                // comparing win rates. Tie behavior preserved: if both
+                // classes have plays, the higher win rate wins (ties go
+                // to CONG to keep the original order).
+                const candidates: Array<"CONG" | "THU"> = [];
+                if ((cong?.plays ?? 0) > 0) candidates.push("CONG");
+                if ((thu?.plays ?? 0) > 0) candidates.push("THU");
+                if (candidates.length === 0) {
+                  return (
+                    <StatValue isLoading={phase3Query.isLoading} value="—" />
+                  );
+                }
+                const best = candidates.reduce((a, b) => {
+                  const aRate =
+                    (a === "CONG" ? cong?.winRate : thu?.winRate) ?? 0;
+                  const bRate =
+                    (b === "CONG" ? cong?.winRate : thu?.winRate) ?? 0;
+                  return aRate >= bRate ? a : b;
+                });
+                const bestRate =
+                  (best === "CONG" ? cong?.winRate : thu?.winRate) ?? 0;
+                const badge = CLASS_BADGE[best];
+                return (
+                  <>
+                    {badge && (
+                      <span
+                        className={`px-2 py-1 rounded border-2 text-xs font-mono font-black ${badge.className}`}
+                      >
+                        {t(`phase3.class.${best}`)}
+                      </span>
+                    )}
+                    <span>
+                      <StatValue
+                        isLoading={phase3Query.isLoading}
+                        value={formatPercent(bestRate)}
+                      />
+                    </span>
+                  </>
+                );
+              })()
+            ) : (
+              <StatValue isLoading={phase3Query.isLoading} value="—" />
+            )}
+          </div>
+          <p className="text-[10px] font-mono font-black uppercase text-candy-ink/70">
+            {t("phase3.bestClassHint")}
+          </p>
+        </div>
+      </div>
+
+      {/* Class winrate breakdown — one row per class the user has played */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {(["CONG", "THU"] as const).map((classId) => {
+          const row = classId === "CONG" ? cong : thu;
+          const badge = CLASS_BADGE[classId];
+          return (
+            <div
+              key={classId}
+              className="bg-candy-cloud border-[2.5px] border-candy-ink rounded-2xl p-3 shadow-[3px_3px_0_0_#2B2D42]"
+            >
+              <div className="flex items-center justify-between">
+                {badge && (
+                  <span
+                    className={`px-2 py-1 rounded border-2 text-[10px] font-mono font-black ${badge.className}`}
+                  >
+                    {t(`phase3.class.${classId}`)}
+                  </span>
+                )}
+                <span className="font-display font-black text-lg text-candy-ink">
+                  {row
+                    ? formatPercent(row.winRate)
+                    : phase3Query.isLoading
+                      ? "--"
+                      : "0%"}
+                </span>
+              </div>
+              <p className="text-[10px] font-mono font-black uppercase text-candy-ink/60 mt-1">
+                {row
+                  ? `${row.wins} / ${row.plays} ${t("phase3.matchesWon")}`
+                  : phase3Query.isLoading
+                    ? "--"
+                    : t("phase3.noClassMatches")}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------
 
 export default function ProfilePage() {
   const { username, accessToken } = useSocketStore();
@@ -362,6 +543,7 @@ export default function ProfilePage() {
   const t = useTranslations("profile");
   const statsQuery = useProfileStats();
   const historyQuery = useMatchHistory({ limit: 20 });
+  const phase3Query = usePhase3Stats();
 
   const profile = statsQuery.data;
   const activeName = profile?.user.username || username || "Khách_Đấu_Thủ";
@@ -445,6 +627,15 @@ export default function ProfilePage() {
             categoryLabels={categoryLabels}
             statusLabels={statusLabels}
             locale={locale}
+            t={t}
+          />
+        </div>
+
+        <div className="space-y-4 pt-2">
+          <DashboardSectionTitle title={t("phase3.title")} glyph="streak" />
+          <Phase3StatsSection
+            isUnauthorized={isUnauthorized}
+            phase3Query={phase3Query}
             t={t}
           />
         </div>

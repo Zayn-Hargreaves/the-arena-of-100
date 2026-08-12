@@ -116,6 +116,65 @@ Run the relevant package tests before using these numbers in PR text.
   - `CARD_RESOLVED_BATCH` ≤50ms micro-batch (immediate apply, not deferred to endRound).
   - AOE cap = 2 per round (server queue, informative error nếu slot full).
 
+### 2026-08-12 — Phase 3 implementation complete (Integration & Polish, commit pending)
+
+**Days 25-36 of the locked 8-week plan**. All DoD items in spec §7 ticked.
+
+**Day 25-26 — Daily streak ≥ 7 → card variant cosmetic unlock.**
+
+- New Prisma model `UserCardVariant { userId, cardId, variantKey ("DEFAULT"|"NEON"|"GOLD"), unlockedAt }` + enum. Migration `20260812000000_phase3_card_variants`.
+- `@arena/shared` exports `CardVariantKey`, `CARD_VARIANT_ORDER`, `CARD_VARIANT_STREAK_THRESHOLD`, `nextCardVariant()`, `pickCardForVariantUnlock()` — pure helpers.
+- `DailyService.submit` calls `maybeUnlockCardVariant` after a successful attempt; fires on `streakAfter % 7 === 0 && streakAfter > 0`; idempotent upsert via `(userId, cardId, variantKey)` unique key; best-effort (DB error does NOT fail the submit).
+- `DailySubmitResponse.unlockedVariant?: { cardId, variantKey }` added.
+- `CardTile` accepts `cosmeticVariant?: "DEFAULT"|"NEON"|"GOLD"` → ring/glow overlay (cyan / amber Tailwind classes).
+- 8 unit tests added: <7, =0 reset, NEON first unlock, GOLD second, cap (null), DB error path, idempotency.
+
+**Day 27 — Daily leaderboard cross-show "Most cards played this week".**
+
+- New column `MatchPlayer.cardsPlayed` (Int, default 0) + `classId` (String?, nullable for legacy/admin-terminated matches).
+- `buildScoreUpdateOps` reads `CARD_RESOLVED` + `CLASS_ASSIGNED` events from `stateMachine.getEventLog()` (read-only) and persists the counts alongside scores in the SAME transaction as `match.updateMany` (one round trip — no extra DB cost).
+- `computeLeaderboard` query joins a `LATERAL` aggregate over `match_players` filtered by `endedAt` in the 7-day window ending `dateKey`.
+- `DailyLeaderboardItemDto.cardsPlayedThisWeek: number` added (en/vi i18n: `Cards.cardsThisWeek`, `cardsLabel`).
+- New tier badge (`Common 1-5 / Rare 6-15 / Epic 16+`) renders inline next to score.
+
+**Day 28-29 — Profile page class winrate + streak + sabotage count.**
+
+- `UsersService.getPhase3Stats(userId)` returns `{ classWinrate: { CONG?, THU? }, currentStreak, sabotageCount }`. Three queries, one round trip.
+- Class winrate via `$queryRaw` `GROUP BY classId` over FINISHED matches; `sabotageCount = SUM(MatchPlayer.cardsPlayed)`; `currentStreak = max(DailyAttempt.streakAfter)`.
+- Endpoint `GET /users/me/phase3-stats` (additive; does NOT touch existing `/users/me/stats`).
+- `usePhase3Stats` hook + `Phase3StatsSection` component on profile page (4-card grid: streak, sabotage, best-class highlight, per-class bars).
+- 5 unit tests added: not-found, zero-data happy path, full-data aggregation, defensive classId filtering, zero-plays wins divide-by-zero protection.
+
+**Day 30-31 — Shareable card unlock notification (viral hook).**
+
+- New `CardVariantUnlockModal` component fires from `/daily/page.tsx` when `unlockedVariant` lands in the submit response. Static rendering only (no canvas / no Web Share API polyfill deps).
+- Share via `navigator.share` (mobile) + `navigator.clipboard` (desktop) — user-cancel is silent.
+
+**Day 32-33 — C3-card-batch-failover (gate).**
+
+- `load-test/lib/card-batch-verdict.mjs` — pure oracle; PASS / FAIL / INCONCLUSIVE verdict; `dedupeEffects` + `detectEffectConflicts` + `diffEffects` helpers.
+- `load-test/lib/card-batch-verdict.test.mjs` — 11 vitest cases covering 3 checkpoint PASS scenarios (`append_pre_emit`, `mid_batch_flush`, `pre_ack`), 2 chaos fingerprints (`lost_effect`, `double_apply`), 3 invalid-artifact rejections, 3 helper unit tests.
+- Production code UNCHANGED — Phase 2 append-first design already satisfies the invariant; gate is a regression detector.
+- `load-test/MULTI-BASELINE.md` + `load-test/README.md` updated with the new gate section; explicitly calls out that this gate is distinct from C3-owner-failover (different dedupe key: effect `seqNo` vs round `eventId`).
+
+**Day 34 — VI i18n card names.**
+
+- 18 cards × 2 locales added under `Cards.byId.{CB-1..TN-10}.name|description` in `apps/web/messages/{en,vi}.json`.
+- `CardTile` + `CardVariantUnlockModal` read via `useTranslations("Cards")` with `t.has(\`byId.${cardId}.name\`)` fallback to canonical English name.
+- `card-ui.spec.tsx` mock updated to include the new translation keys.
+
+**Day 35-36 — Final integration tests + ship prep.**
+
+- All test suites green: shared 61 / game-core 280 / API 1678 / web 247 / load-test 52 = **2318 tests pass**, no regression.
+- Spec §7 DoD checklist updated; all 16 items ticked.
+- Coverage targets met (card engine + class engine ≥ 95% from Phase 2 baseline; new code paths covered by Phase 3 tests).
+
+**Cross-cutting decisions honored:**
+
+- Sequential ordering (Days 25 → 36 as written).
+- Card variant = enum + DB row (no asset pipeline).
+- C3-card-batch-failover = strict (no production change; chaos-only gate).
+
 ## What Is Done
 
 - Server-authoritative match loop.

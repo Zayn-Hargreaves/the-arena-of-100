@@ -22,6 +22,7 @@ import {
   type UpdateAvatarInput,
   type HistoryResponse,
   type StatsResponse,
+  type Phase3StatsResponse,
   type UserSummary,
 } from "./dto";
 import { AuthenticatedRequest } from "../auth/auth.types";
@@ -66,5 +67,24 @@ export class UsersController {
     @Body(updateAvatarPipe) body: UpdateAvatarInput,
   ): Promise<UserSummary> {
     return this.usersService.updateMyAvatar(req.user.userId, body.avatar);
+  }
+
+  // Phase 3 — class winrate + current daily streak + sabotage count.
+  // Distinct from /me/stats because it is Phase 3 specific (class
+  // system + card system + streak). Kept as its own endpoint so the
+  // surface stays additive — existing /me/stats consumers are not
+  // disturbed if Phase 3 stats are unavailable for any reason.
+  @Get("me/phase3-stats")
+  @ApiOperation({
+    summary:
+      "Phase 3 — class winrate (CONG/THU), current streak, sabotage count",
+  })
+  @ApiResponse({ status: 200, description: "Phase 3 stats returned" })
+  @ApiResponse({ status: 401, description: "Unauthenticated" })
+  @ApiResponse({ status: 404, description: "User not found" })
+  async getMyPhase3Stats(
+    @Req() req: AuthenticatedRequest,
+  ): Promise<Phase3StatsResponse> {
+    return this.usersService.getPhase3Stats(req.user.userId);
   }
 }

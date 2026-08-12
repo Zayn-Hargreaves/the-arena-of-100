@@ -16,6 +16,12 @@ enum Role {
   ADMIN
 }
 
+enum CardVariantKey {
+  DEFAULT
+  NEON
+  GOLD
+}
+
 enum Difficulty {
   EASY
   MEDIUM
@@ -50,6 +56,7 @@ model User {
   answers        Answer[]
   wonMatches     Match[]         @relation("MatchWinner")
   dailyAttempts  DailyAttempt[]
+  cardVariants   UserCardVariant[]
   // PR 3 (Admin Audit): inverse side of EventLog.adminUser. Optional FK
   // (onDelete: SetNull on the EventLog side) so a deleted admin user
   // does not cascade-delete their own audit trail.
@@ -120,16 +127,32 @@ model Match {
 
 // Match Players
 model MatchPlayer {
-  id      String @id @default(cuid())
-  matchId String
-  userId  String
-  score   Int    @default(0)
+  id         String @id @default(cuid())
+  matchId    String
+  userId     String
+  score      Int    @default(0)
+  // Phase 3 — count of CARD_RESOLVED events the player triggered.
+  // Persisted at finishMatch so the daily leaderboard can aggregate
+  // "most cards played this week" without re-reading the event log
+  // (which is in-memory/Redis only and gone after the match ends).
+  cardsPlayed Int   @default(0)
+  // Phase 3 — class assigned for this match (CONG / THU). NULL when
+  // the CLASS_ASSIGNED event was never emitted (legacy match or
+  // admin-terminated match that bypassed assignment). Read-only on
+  // the API surface: derived from the event log at finishMatch.
+  classId     String?
 
   // Relations
   match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([matchId, userId])
+  // Phase 3 — speeds up the LATERAL aggregate in daily leaderboard +
+  // profile stats, both of which filter by mp."userId" and join on
+  // mp."matchId". The existing (matchId, userId) UNIQUE index supports
+  // matchId-leading lookups but cannot be used efficiently for
+  // userId-leading lookups.
+  @@index([userId, matchId], map: "match_players_user_id_match_id_idx")
   @@map("match_players")
 }
 
@@ -315,4 +338,36 @@ model DailyAttempt {
   @@index([dateKey, score])   // leaderboard query
   @@index([dailyQuestionId])
   @@map("daily_attempts")
+}
+
+// ============================================================
+// Phase 3 — Daily streak reward: card variant cosmetic unlock
+//
+// A row is created when a user's daily streak reaches a multiple of 7
+// (Decision 19 in spec §2). The variant is cosmetic only — it swaps the
+// card's visual border/glow in the UI; it does NOT change any effect.
+//
+// `variantKey` is an enum (not a free string) so the set of cosmetic
+// variants stays closed and auditable. `cardId` references the canonical
+// shared `CardId` union (string), not a Prisma relation — the card
+// catalog lives in `@arena/shared` and is intentionally not mirrored as
+// a DB table.
+//
+// The (userId, cardId, variantKey) unique constraint makes the upsert
+// idempotent: a replayed streak-unlock attempt cannot create a second
+// row for the same triple. The trigger path in `DailyService.submit`
+// uses `upsert` (createOnly) so a row that already exists is a no-op.
+// ============================================================
+model UserCardVariant {
+  id         String          @id @default(cuid())
+  userId     String
+  cardId     String
+  variantKey CardVariantKey  @default(DEFAULT)
+  unlockedAt DateTime        @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, cardId, variantKey])
+  @@index([userId])
+  @@map("user_card_variants")
 }
