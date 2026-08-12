@@ -171,6 +171,12 @@ end`;
 // Revision bootstrap: a missing revision key is accepted ONLY when
 // expectedRevision is "0" (INITIAL_STATE_REVISION); the first write creates
 // it atomically. (eventId / submissionId dedup outcomes are added in B4.)
+//
+// The script is registered via ioredis `defineCommand` so normal executions
+// use EVALSHA with automatic EVAL fallback on NOSCRIPT (Redis SCRIPT FLUSH
+// invalidates the cached SHA). The module-level guard ensures `defineCommand`
+// runs at most once per RedisService instance; subsequent invocations reuse
+// the generated command method.
 export async function fencedStateSet(
   redis: RedisService,
   ownerKey: string,
@@ -210,18 +216,55 @@ end
 redis.call('SET', KEYS[3], ARGV[3], 'EX', ARGV[4])
 redis.call('SET', KEYS[4], ARGV[6], 'EX', ARGV[4])
 return 'APPLIED'`;
-  const result = await redis.eval(
-    script,
-    [ownerKey, fenceKey, stateKey, revisionKey],
-    [
+  const client = redis.getClient();
+  const useRegisteredCommand = ensureFencedStateSetCommand(client, script);
+  let result: unknown;
+  if (useRegisteredCommand) {
+    result = await (
+      client as unknown as {
+        fencedStateSet: (
+          ownerKey: string,
+          fenceKey: string,
+          stateKey: string,
+          revisionKey: string,
+          leaseValue: string,
+          expectedFence: string,
+          blob: string,
+          ttlSec: string,
+          expectedRevision: string,
+          nextRevision: string,
+        ) => Promise<unknown>;
+      }
+    ).fencedStateSet(
+      ownerKey,
+      fenceKey,
+      stateKey,
+      revisionKey,
       opts.leaseValue,
       String(opts.expectedFence),
       opts.blob,
       String(opts.ttlSec),
       String(opts.expectedRevision),
       String(opts.nextRevision),
-    ],
-  );
+    );
+  } else {
+    // Fallback path: the underlying client has no `defineCommand`
+    // (test mocks, partial Redis stubs). Run the script through the
+    // standard `redis.eval` facade so fenced writes still take the
+    // same atomic Lua transaction — just without the EVALSHA cache.
+    result = await redis.eval(
+      script,
+      [ownerKey, fenceKey, stateKey, revisionKey],
+      [
+        opts.leaseValue,
+        String(opts.expectedFence),
+        opts.blob,
+        String(opts.ttlSec),
+        String(opts.expectedRevision),
+        String(opts.nextRevision),
+      ],
+    );
+  }
   // The script returns exactly "APPLIED" or "RETRY". Any other reply is a
   // contract violation (wrong script cached, Redis returned an error object,
   // a partial write) — do NOT silently collapse it to "RETRY" (a CAS miss),
@@ -229,9 +272,38 @@ return 'APPLIED'`;
   // were merely contended. Surface it as an infrastructure error instead.
   return expectLuaOutcomes(
     result,
-    ["APPLIED", "RETRY"],
+    ["APPLIED", "RETRY"] as const,
     `fencedStateSet: unexpected Lua reply for ${stateKey} (state may be inconsistent)`,
   );
+}
+
+const FENCED_STATE_SET_COMMAND = "fencedStateSet";
+const registeredFencedStateSetClients = new WeakSet<object>();
+
+function ensureFencedStateSetCommand(
+  client: {
+    defineCommand?: (
+      name: string,
+      def: { lua: string; numberOfKeys: number },
+    ) => void;
+  },
+  script: string,
+): boolean {
+  if (registeredFencedStateSetClients.has(client as object)) return true;
+  if (typeof client.defineCommand !== "function") {
+    // No custom-command support on this client (test mock, partial
+    // Redis stub). Caller MUST fall back to `redis.eval` — do NOT
+    // mark this client as registered, otherwise the fallback branch
+    // would be permanently skipped and we'd hit
+    // `TypeError: client.fencedStateSet is not a function`.
+    return false;
+  }
+  client.defineCommand(FENCED_STATE_SET_COMMAND, {
+    lua: script,
+    numberOfKeys: 4,
+  });
+  registeredFencedStateSetClients.add(client as object);
+  return true;
 }
 
 // Fenced cleanup of the canonical match:state + revision (B2c). In ONE Lua
@@ -364,7 +436,7 @@ return 'REMOVED'`;
   const result = await redis.eval(script, [stateKey, indexKey], [member]);
   return expectLuaOutcomes(
     result,
-    ["REMOVED", "PRESENT"],
+    ["REMOVED", "PRESENT"] as const,
     `removeActiveIfStateAbsent: unexpected Lua reply for ${member}`,
   );
 }
@@ -403,7 +475,7 @@ return 'REMOVED'`;
   );
   return expectLuaOutcomes(
     result,
-    ["REMOVED", "CHANGED"],
+    ["REMOVED", "CHANGED"] as const,
     `removeIndexMemberIfValueUnchanged: unexpected Lua reply for ${member}`,
   );
 }
@@ -429,7 +501,7 @@ return 'REMOVED'`;
   const result = await redis.eval(script, [tombstoneKey, indexKey], [member]);
   return expectLuaOutcomes(
     result,
-    ["REMOVED", "ABSENT"],
+    ["REMOVED", "ABSENT"] as const,
     `removeActiveIfTombstoned: unexpected Lua reply for ${member}`,
   );
 }
@@ -487,7 +559,7 @@ return 'FINALIZED'`;
   );
   return expectLuaOutcomes(
     result,
-    ["FINALIZED", "STALE"],
+    ["FINALIZED", "STALE"] as const,
     `finalizeMatchTombstone: unexpected Lua reply for ${member} (state may be inconsistent)`,
   );
 }
@@ -580,7 +652,7 @@ return 'REQUEUED'`;
       "FINALIZED",
       "NO_STATE",
       "CONFLICT",
-    ],
+    ] as const,
     `requeueDeadLetter: unexpected Lua reply for ${member}`,
   );
 }

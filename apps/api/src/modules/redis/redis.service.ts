@@ -10,36 +10,15 @@ import * as core from "./redis.core";
 import * as lease from "./redis.lease";
 import * as streams from "./redis.streams";
 import * as pubsub from "./redis.pubsub";
+import type { RequeueDeadLetterKeys } from "./redis.lease";
 
-export { RequeueDeadLetterKeys } from "./redis.lease";
+export type { RequeueDeadLetterKeys } from "./redis.lease";
 export type { OpMarker, MessageHandler } from "./redis.internal";
 export type {
   StreamEntry,
   XPendingSummary,
   XPendingEntry,
 } from "./redis.streams";
-
-/** One Redis Stream entry: its id + the decoded envelope payload string (B4a). */
-export interface StreamEntry {
-  readonly id: string;
-  readonly data: string;
-}
-
-/** XPENDING summary (group-wide): total pending + id range (diagnostics only). */
-export interface XPendingSummary {
-  readonly count: number;
-  readonly minId: string | null;
-  readonly maxId: string | null;
-  readonly consumers: ReadonlyArray<{ consumer: string; count: number }>;
-}
-
-/** XPENDING per-entry detail: idle ms + delivery count for fine-grained claim. */
-export interface XPendingEntry {
-  readonly id: string;
-  readonly consumer: string;
-  readonly idleMs: number;
-  readonly deliveryCount: number;
-}
 
 @Injectable()
 export class RedisService implements OnModuleDestroy {
@@ -78,7 +57,6 @@ export class RedisService implements OnModuleDestroy {
   private resetPending = false;
   // Already-admitted (past-barrier) lifecycle ops, for the reset drain.
   private readonly inFlight = new Set<OpMarker>();
-  private static readonly RECONCILE_RETRIES = 3;
 
   constructor(private readonly configService: ConfigService) {
     this.client = core.createRedisClient(this.configService);

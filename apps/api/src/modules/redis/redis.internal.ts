@@ -35,6 +35,9 @@ export interface OpMarker {
  * object, partial write) — never silently collapses to a default outcome,
  * which would mask corruption and let the caller proceed as if the write
  * were merely contended.
+ *
+ * Callers MUST pass `as const` on the literal-string array so `T` is locked
+ * to the literal union (e.g. `"APPLIED" | "RETRY"`), not widened to `string`.
  */
 export function expectLuaOutcomes<T extends string>(
   result: unknown,

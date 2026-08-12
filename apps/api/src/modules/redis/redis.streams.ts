@@ -69,11 +69,15 @@ export function acquireBlockingReader(
     return Promise.resolve(idle);
   }
   if (refs.inUse.size < BLOCKING_READER_POOL_MAX) {
-    const minted = client.duplicate();
+    const minted = client.duplicate({ maxRetriesPerRequest: null });
     // Log-only error listener so a mid-BLOCK socket error on a fresh
     // duplicate does not surface as an unhandled EventEmitter warning. The
     // minted instance is added to inUse exactly once, after the listener is
     // attached, preserving the idle+in-use ≤ MAX invariant.
+    // `maxRetriesPerRequest: null` keeps XREADGROUP BLOCK from being
+    // aborted after the primary client's retry ceiling (default 3); a
+    // blocking read can legitimately wait beyond that ceiling and must
+    // not be torn down by the inherited retry policy.
     minted.on("error", (err) => {
       logger.warn(
         `blocking reader error (mid-XREADGROUP): ${
@@ -229,6 +233,11 @@ export async function xadd(
  * `blockMs`. Cancellable: if `signal` is already aborted the call resolves to
  * `[]` immediately without a blocked read, so ownership loss / shutdown does
  * not leave a read pinning the stream.
+ *
+ * The await is bounded by a grace window slightly longer than `blockMs` so
+ * a disconnected Redis command eventually settles. If the grace window
+ * elapses without a reply, the reader is discarded (NOT returned to the
+ * idle pool) because its underlying socket is presumed broken.
  */
 export async function xreadgroup(
   redis: RedisService,
@@ -249,25 +258,39 @@ export async function xreadgroup(
   );
   if (!reader) return [];
   let failed = false;
+  // Grace ceiling: enough headroom over `blockMs` for Redis to flush a
+  // legitimate slow reply (network round-trip, etc.) but short enough to
+  // bound how long a hung socket can pin a pooled reader.
+  const graceMs = blockMs + 1000;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const graceRejection = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error("xreadgroup grace timeout"));
+    }, graceMs);
+  });
   try {
-    const reply = (await reader.xreadgroup(
-      "GROUP",
-      group,
-      consumer,
-      "COUNT",
-      count,
-      "BLOCK",
-      blockMs,
-      "STREAMS",
-      stream,
-      ">",
-    )) as [string, [string, string[]][]][] | null;
+    const reply = (await Promise.race([
+      reader.xreadgroup(
+        "GROUP",
+        group,
+        consumer,
+        "COUNT",
+        count,
+        "BLOCK",
+        blockMs,
+        "STREAMS",
+        stream,
+        ">",
+      ),
+      graceRejection,
+    ])) as [string, [string, string[]][]][] | null;
     return parseStreamReply(reply, stream);
   } catch {
     failed = true;
     discardBlockingReader(refs, reader);
     return [];
   } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
     if (!failed) releaseBlockingReader(refs, reader);
   }
 }

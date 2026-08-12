@@ -101,6 +101,7 @@ function submitEnv(
       answer: "A",
       submissionId: "sub-1",
       clientTs: 900,
+      commandId: "cmd-1",
     },
     ...overrides,
   };
@@ -2472,24 +2473,30 @@ describe("MatchCommandService (B4a)", () => {
     it("Recover via recoverDuplicatePlayEvent on playCard throw + card already played", async () => {
       // The playCard catch mirrors the validate catch's two-branch
       // shape: a `getPlayedCards(userId).has(cardId)` recovery branch
+      // (handled by handleDuplicatePlayRecovery via recoverDuplicatePlayEvent)
       // and an emit-and-return DUPLICATE_SUBMISSION branch. The
-      // recovery branch here covers lines 432-436 of
-      // match-card-command-authoritative.ts (the `c8 ignore next 3`
+      // recovery branch here covers the playCard-catch playedCards.has
+      // guard in applyCardPlayCommand (the `c8 ignore next 3`
       // above hides the branch header).
       //
-      // To reach it, validation must pass (so we get past line 347
-      // and into the playCard try at line 414) AND
-      // `getPlayedCards(userId).has(cardId)` must be true when the
-      // catch checks at line 429. We achieve this by:
+      // To reach it, validation must pass — i.e. validateCardCommand
+      // must observe an empty playedCards set — AND
+      // `stateMachine.getPlayedCards(userId).has(validated.cardId)`
+      // must be true inside the playCard catch's branch check. We
+      // achieve this by:
       //   1. Stamping a CARD_RESOLVED via the private logEvent so
       //      handleDuplicatePlayRecovery has canonical metadata to
       //      re-broadcast — but without going through playCard
       //      (which would strip CB-1 from `pickedCards` and break
       //      validatePickedCard).
-      //   2. Stubbing getPlayedCards so the FIRST call (validation
-      //      at line 343) returns an empty set — validation passes —
-      //      and all subsequent calls return a set containing CB-1 —
-      //      the catch's branch check hits the recovery path.
+      //   2. Stubbing getPlayedCards using observable state rather
+      //      than call-order: the stub returns an empty set while
+      //      validation is running (so validateCardCommand passes)
+      //      and the played-card set once the playCard failure catch
+      //      is reached (so the catch's branch check hits the
+      //      recovery path). The transition is driven by the playCard
+      //      spy itself flipping a flag, which keeps the test
+      //      resilient to internal call-count changes.
       //   3. Spying playCard to throw so the catch fires.
       const { sm, offerSeqNo } = pickOfferSmForPlay({ pickedCardId: "CB-1" });
       (
@@ -2511,19 +2518,21 @@ describe("MatchCommandService (B4a)", () => {
         commandId: "cmd-recover-pc",
       });
       const playedWithCard = new Set<CardId>(["CB-1"]);
-      let playedCalls = 0;
+      let phase: "validation" | "playCardFailed" = "validation";
       vi.spyOn(sm, "getPlayedCards").mockImplementation(() => {
-        playedCalls++;
-        // First call is `playedCardIds: ...` inside validateCardCommand.
-        // We need an empty set so validation passes (CB-1 NOT marked
-        // as already played yet).
-        if (playedCalls === 1) return new Set<CardId>();
+        // While validation is running, the stub reports CB-1 as NOT
+        // yet played (so validateCardCommand passes). Once playCard
+        // has been invoked (and thrown), the stub reports CB-1 as
+        // already played, matching the post-mutation state the
+        // playCard catch's branch check expects.
+        if (phase === "validation") return new Set<CardId>();
         return playedWithCard;
       });
       vi.spyOn(
         sm as unknown as { playCard: (...args: unknown[]) => unknown },
         "playCard",
       ).mockImplementation(() => {
+        phase = "playCardFailed";
         throw new Error("playCard synthetic");
       });
       matchService.getStateMachine.mockResolvedValue(sm);
@@ -2538,9 +2547,26 @@ describe("MatchCommandService (B4a)", () => {
 
       expect(outcome).toBe("DUPLICATE_EVENT");
       expect(recorder.callsByEvent(ServerEvent.ERROR).length).toBe(0);
-      expect(
-        recorder.callsByEvent(ServerEvent.CARD_RESOLVED).length,
-      ).toBeGreaterThan(0);
+      // Strengthen: the replayed CARD_RESOLVED must carry the
+      // canonical fields from emitCardResolved's base frame so a
+      // regression that drops the payload or omits cardId /
+      // playedByPlayerId / targetPlayerIds fails loudly.
+      const resolvedEmits = recorder.callsByEvent(ServerEvent.CARD_RESOLVED);
+      expect(resolvedEmits.length).toBeGreaterThan(0);
+      const resolvedPayload = resolvedEmits[0]?.[1] as {
+        matchId: string;
+        cardId: string;
+        offerSeqNo: number;
+        playedByPlayerId: string;
+        targetPlayerIds: string[];
+        effect: { kind: string };
+      };
+      expect(resolvedPayload.matchId).toBe("m1");
+      expect(resolvedPayload.cardId).toBe("CB-1");
+      expect(resolvedPayload.offerSeqNo).toBe(offerSeqNo);
+      expect(resolvedPayload.playedByPlayerId).toBe("p1");
+      expect(resolvedPayload.targetPlayerIds).toEqual(["p2"]);
+      expect(resolvedPayload.effect.kind).toBe("TIMER_MODIFY");
     });
 
     it("Recover via recoverDuplicatePlayEvent on validate rejection + card already played", async () => {

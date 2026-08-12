@@ -161,23 +161,64 @@ describe("findCanonicalCardEvent", () => {
     expect(found).toBeNull();
   });
 
-  it("skips non-matching CARD_PICKED entries (wrong playerId / cardId / offerSeqNo) and returns null", () => {
+  it("skips non-matching CARD_PICKED entries and returns null when only playerId mismatches", () => {
     const sm = makeSm();
     sm.classAssignment(["p1"], "seed");
-    const cards = sm.pickOffer("p1", 5, "offer-skip");
+    const cards = sm.pickOffer("p1", 5, "offer-skip-pid");
     const offerSeqNo = sm.getHeadSeqNo();
-    const mismatchedCard = cards[1]!;
-    sm.pickCard("p1", mismatchedCard, offerSeqNo);
+    const matchedCard = cards[0]!;
+    sm.pickCard("p1", matchedCard, offerSeqNo);
 
-    // The log has exactly one CARD_PICKED — but it doesn't match
-    // (playerId, selectedCardId, offerSeqNo). The helper walks the
-    // log in reverse, sees a type match, falls into the mismatch
-    // guard, returns undefined, and keeps iterating until empty.
+    // playerId is the ONLY mismatching criterion; cardId and offerSeqNo
+    // match. The helper's per-criterion guard must reject the entry
+    // and return null.
     const found = findCanonicalCardEvent(
       sm,
       "CARD_PICKED",
       "p2",
-      cards[0]!,
+      matchedCard,
+      offerSeqNo,
+    );
+    expect(found).toBeNull();
+  });
+
+  it("skips non-matching CARD_PICKED entries and returns null when only selectedCardId mismatches", () => {
+    const sm = makeSm();
+    sm.classAssignment(["p1"], "seed");
+    const cards = sm.pickOffer("p1", 5, "offer-skip-cid");
+    const offerSeqNo = sm.getHeadSeqNo();
+    const pickedCardId = cards[0]!;
+    sm.pickCard("p1", pickedCardId, offerSeqNo);
+
+    // selectedCardId is the ONLY mismatching criterion; playerId and
+    // offerSeqNo match. The per-criterion guard must reject and
+    // return null.
+    const found = findCanonicalCardEvent(
+      sm,
+      "CARD_PICKED",
+      "p1",
+      cards[1]!,
+      offerSeqNo,
+    );
+    expect(found).toBeNull();
+  });
+
+  it("skips non-matching CARD_PICKED entries and returns null when only offerSeqNo mismatches", () => {
+    const sm = makeSm();
+    sm.classAssignment(["p1"], "seed");
+    const cards = sm.pickOffer("p1", 5, "offer-skip-seq");
+    const offerSeqNo = sm.getHeadSeqNo();
+    const pickedCardId = cards[0]!;
+    sm.pickCard("p1", pickedCardId, offerSeqNo);
+
+    // offerSeqNo is the ONLY mismatching criterion; playerId and
+    // selectedCardId match. The per-criterion guard must reject and
+    // return null.
+    const found = findCanonicalCardEvent(
+      sm,
+      "CARD_PICKED",
+      "p1",
+      pickedCardId,
       offerSeqNo + 999,
     );
     expect(found).toBeNull();
@@ -225,7 +266,7 @@ describe("emitPlayerCommandError", () => {
       recorder.server,
       "p1",
       ClientEvent.CARD_PLAY,
-      "cmd-null",
+      "cmd-trigger-undefined",
       null,
     );
 
@@ -238,9 +279,16 @@ describe("emitPlayerCommandError", () => {
     };
     expect(payload.code).toBe(ErrorCode.INVALID_PAYLOAD);
     expect(payload.failedEvent).toBe(ClientEvent.CARD_PLAY);
-    expect(payload.commandId).toBe("cmd-null");
+    expect(payload.commandId).toBe("cmd-trigger-undefined");
     expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0]?.[0] as string).toContain("null");
+    const warnLine = warnSpy.mock.calls[0]?.[0] as string;
+    // Pin the `error == null ? "null" : String(error)` arm: the
+    // detail portion after the final `: ` must be exactly "null".
+    // A regression that drops the null branch (e.g. to String(null)
+    // which yields "") or falls through to the wrong branch (e.g.
+    // emits a different suffix) will fail this assertion.
+    const detail = warnLine.slice(warnLine.lastIndexOf(": ") + 2);
+    expect(detail).toBe("null");
   });
 
   it("emits ServerEvent.ERROR with INVALID_PAYLOAD and warns with the String(error) of a non-Error value", () => {

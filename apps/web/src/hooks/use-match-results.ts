@@ -63,10 +63,28 @@ function buildRequestSignal(
   };
 }
 
-export async function fetchResultResponse(
+/**
+ * Fetch the match result in a single round-trip with a SHARED abort
+ * controller. The same controller is wired into `fetch()` and is
+ * consulted by the body reader downstream, so a timeout (or an external
+ * abort) propagates through BOTH the network request and the response
+ * body read — the in-flight `ReadableStream` sees the abort, not just
+ * the surrounding `Promise.race` wrapper.
+ *
+ * Returns the response + parsed payload + whether the request timed
+ * out. A network-phase timeout surfaces as `{ response, data: null,
+ * wasTimeout: true }` (same response shape as a body-phase timeout);
+ * the caller does not need to distinguish the two — both are "the user
+ * should retry" outcomes.
+ */
+export async function fetchResult(
   matchId: string,
   signal: AbortSignal,
-): Promise<{ response: Response | null; wasTimeout: boolean }> {
+): Promise<{
+  response: Response | null;
+  data: MatchResultApiResponse | null;
+  wasTimeout: boolean;
+}> {
   const endpoint = `${API_URL}/matches/${encodeURIComponent(matchId)}`;
   const request = buildRequestSignal(signal, 10_000);
   try {
@@ -74,13 +92,25 @@ export async function fetchResultResponse(
       credentials: "include",
       signal: request.signal,
     });
-    return { response, wasTimeout: false };
+    // If the timer fired during fetch, the controller is already
+    // aborted. Skip body parsing — `response.json()` would either
+    // reject immediately (if the body is already locked) or hang
+    // (if the body is still streaming). Either way we treat it as
+    // a timeout outcome.
+    if (request.signal.aborted) {
+      return { response, data: null, wasTimeout: true };
+    }
+    const data = (await response.json()) as MatchResultApiResponse;
+    return { response, data, wasTimeout: false };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      return { response: null, wasTimeout: request.wasTimeout() };
+      return { response: null, data: null, wasTimeout: request.wasTimeout() };
     }
     throw error;
   } finally {
+    // Runs AFTER both phases settle (network + body parse). Until
+    // this point, `request.signal` remains live so a timer-driven
+    // abort can still cancel the streaming body reader.
     request.cancel();
   }
 }
@@ -97,7 +127,7 @@ export function useMatchResults(matchId: string, userId: string | null) {
     async function fetchResults() {
       setLoadState("loading");
       try {
-        const { response, wasTimeout } = await fetchResultResponse(
+        const { response, data, wasTimeout } = await fetchResult(
           matchId,
           abortController.signal,
         );
@@ -125,14 +155,18 @@ export function useMatchResults(matchId: string, userId: string | null) {
           setLoadState("network_error");
           return;
         }
-        // Guard both sides of response.json(): abort may fire while parsing.
+        // External abort between status check and now — skip silently.
         if (abortController.signal.aborted) return;
-        const data = (await response.json()) as MatchResultApiResponse;
-        if (abortController.signal.aborted) return;
+        if (!data) {
+          setLoadState("network_error");
+          return;
+        }
         setPayload(data);
         setLoadState("ready");
       } catch {
-        setLoadState("network_error");
+        if (!abortController.signal.aborted) {
+          setLoadState("network_error");
+        }
       }
     }
 
@@ -161,17 +195,33 @@ export function useMatchResults(matchId: string, userId: string | null) {
     const winnerFromServer = winnerId
       ? players.find((player) => player.id === winnerId)
       : undefined;
-    const topPlayer = winnerFromServer ?? sortedPlayers[0];
+    // Only honor a server-provided winnerId that resolves to a known
+    // player. A missing `payload.winnerId` (incomplete payload, race
+    // with the finalization broadcast) or an unmatched id leaves the
+    // view-model in the "updating" placeholder state — never infer a
+    // champion from `sortedPlayers[0]`, which would fabricate a winner
+    // the server has not declared.
+    if (!winnerFromServer) {
+      return {
+        name: t("updating"),
+        spritesheet: "/arena_of_100/jellyfrog_spritesheet.webp",
+        isAnimated: true,
+        totalScore: 0,
+        averageSpeed: "--",
+        accuracy: "--",
+        survivedRounds: "--",
+      };
+    }
     return {
-      name: topPlayer?.name ?? t("updating"),
+      name: winnerFromServer.name ?? t("updating"),
       spritesheet: "/arena_of_100/jellyfrog_spritesheet.webp",
       isAnimated: true,
-      totalScore: topPlayer?.score ?? 0,
+      totalScore: winnerFromServer.score ?? 0,
       averageSpeed: "--",
       accuracy: "--",
       survivedRounds: "--",
     };
-  }, [sortedPlayers, players, payload?.winnerId, t]);
+  }, [players, payload?.winnerId, t]);
 
   const yourPerformance = useMemo<PerformanceViewModel>(() => {
     const currentPlayer = userId

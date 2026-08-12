@@ -54,13 +54,27 @@ function chain(
 ): Promise<void> {
   const prev = refs.channelChains.get(channel) ?? Promise.resolve();
   const next = prev.then(fn, fn);
-  refs.channelChains.set(
-    channel,
-    next.then(
-      () => undefined,
-      () => undefined,
-    ),
+  const tracked = next.then(
+    () => undefined,
+    () => undefined,
   );
+  refs.channelChains.set(channel, tracked);
+  // After this chain settles, drop the map entry IF AND ONLY IF it
+  // still points at this chain. A newer operation may have replaced
+  // `tracked` with its own promise (e.g. another subscribe raced in
+  // before we settled); in that case the newer chain is responsible
+  // for its own cleanup, and deleting here would lose per-channel
+  // ordering. The handlers map + removeHandler flow is the source of
+  // truth for channel liveness — the chain map only sequences ops.
+  // The cleanup is fire-and-forget: it must not block `chain()`'s
+  // caller or surface as an unhandled rejection. The finally callback
+  // itself never throws, so swallowing the promise with `void` is the
+  // correct way to mark it intentionally unobserved.
+  void tracked.finally(() => {
+    if (refs.channelChains.get(channel) === tracked) {
+      refs.channelChains.delete(channel);
+    }
+  });
   return next;
 }
 

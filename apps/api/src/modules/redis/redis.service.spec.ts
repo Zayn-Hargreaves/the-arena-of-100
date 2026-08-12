@@ -33,6 +33,8 @@ type RedisClientMock = {
   incr: ReturnType<typeof vi.fn>;
   publish: ReturnType<typeof vi.fn>;
   eval: ReturnType<typeof vi.fn>;
+  defineCommand: ReturnType<typeof vi.fn>;
+  fencedStateSet: ReturnType<typeof vi.fn>;
   time: ReturnType<typeof vi.fn>;
   duplicate: ReturnType<typeof vi.fn>;
   xadd: ReturnType<typeof vi.fn>;
@@ -98,6 +100,8 @@ describe("RedisService", () => {
       incr: vi.fn().mockResolvedValue(1),
       publish: vi.fn().mockResolvedValue(1),
       eval: vi.fn(),
+      defineCommand: vi.fn(),
+      fencedStateSet: vi.fn(),
       time: vi.fn().mockResolvedValue(["1000", "500000"]),
       duplicate: vi.fn(() => subscriber as unknown as Redis),
       xadd: vi.fn().mockResolvedValue("1-0"),
@@ -535,7 +539,7 @@ describe("RedisService", () => {
     });
 
     it("fencedStateSet passes owner/fence/state/revision keys and maps outcome", async () => {
-      client.eval.mockResolvedValueOnce("APPLIED");
+      client.fencedStateSet.mockResolvedValueOnce("APPLIED");
       await expect(
         service.fencedStateSet(
           "match:owner:m1",
@@ -553,9 +557,30 @@ describe("RedisService", () => {
         ),
       ).resolves.toBe("APPLIED");
 
-      const [script, keyCount, k1, k2, k3, k4, lease, fence] = client.eval.mock
-        .calls[0] as unknown[];
-      expect(keyCount).toBe(4);
+      // defineCommand registers the script once; the generated
+      // `fencedStateSet` command is then invoked with the keys +
+      // args in declaration order. The script is the canonical fenced
+      // CAS — assert it still reads the current owner/fence/revision,
+      // compares against the expected snapshot, and conditionally
+      // writes the new state + revision. A regression that drops any
+      // of those CAS operations (e.g. removes the fence check, skips
+      // the revision monotonicity guard, or omits the state SET) will
+      // fail one of these substring assertions.
+      const [, defineArgs] = client.defineCommand.mock.calls[0] as unknown[];
+      const lua = (defineArgs as { lua: string }).lua;
+      expect(client.defineCommand).toHaveBeenCalledWith(
+        "fencedStateSet",
+        expect.objectContaining({ numberOfKeys: 4, lua }),
+      );
+      expect(lua).toContain("redis.call('GET', KEYS[1])"); // current owner
+      expect(lua).toContain("redis.call('GET', KEYS[2])"); // current fence
+      expect(lua).toContain("redis.call('GET', KEYS[4])"); // current revision
+      expect(lua).toContain("~= ARGV[1]"); // expected-owner compare
+      expect(lua).toContain("~= ARGV[2]"); // expected-fence compare
+      expect(lua).toContain("redis.call('SET', KEYS[3]"); // state SET
+      expect(lua).toContain("redis.call('SET', KEYS[4]"); // revision SET
+      const [k1, k2, k3, k4, lease, fence, , ttl, revision, nextRevision] =
+        client.fencedStateSet.mock.calls[0] as unknown[];
       expect([k1, k2, k3, k4]).toEqual([
         "match:owner:m1",
         "match:fence:m1",
@@ -564,11 +589,13 @@ describe("RedisService", () => {
       ]);
       expect(lease).toBe("node-a:3");
       expect(fence).toBe("3");
-      expect(script).toContain("APPLIED");
+      expect(ttl).toBe("86400");
+      expect(revision).toBe("0");
+      expect(nextRevision).toBe("1");
     });
 
     it("fencedStateSet returns RETRY on an explicit RETRY reply", async () => {
-      client.eval.mockResolvedValueOnce("RETRY");
+      client.fencedStateSet.mockResolvedValueOnce("RETRY");
       await expect(
         service.fencedStateSet("o", "f", "s", "r", {
           leaseValue: "n:1",
@@ -584,7 +611,7 @@ describe("RedisService", () => {
     it("fencedStateSet throws on a contract-violating (non APPLIED/RETRY) Lua reply", async () => {
       // The script returns exactly "APPLIED" or "RETRY". Anything else is a
       // contract violation and must NOT be silently collapsed to a CAS miss.
-      client.eval.mockResolvedValueOnce("UNEXPECTED");
+      client.fencedStateSet.mockResolvedValueOnce("UNEXPECTED");
       await expect(
         service.fencedStateSet("o", "f", "s", "r", {
           leaseValue: "n:1",
@@ -903,6 +930,61 @@ describe("RedisService", () => {
       await expect(
         service.xreadgroup("owners", "node-a", "match:cmd:m1", 16, 1000),
       ).resolves.toEqual([]);
+    });
+
+    it("xreadgroup discards the reader when the BLOCK read does not settle within blockMs + 1000ms", async () => {
+      // The grace ceiling (blockMs + 1000) bounds how long a hung socket
+      // can pin a pooled reader. We simulate a never-resolving BLOCK by
+      // handing `xreadgroup` a Promise that we keep pending, advance fake
+      // timers past the grace window, and assert the call resolves to []
+      // with the reader discarded (not re-pooled).
+      vi.useFakeTimers();
+      try {
+        let resolveBlocked: ((value: unknown) => void) | undefined;
+        const blocked = new Promise<unknown>((resolve) => {
+          resolveBlocked = resolve;
+        });
+        const reader = {
+          xreadgroup: vi.fn().mockReturnValueOnce(blocked),
+          quit: vi.fn().mockResolvedValue("OK"),
+          disconnect: vi.fn(),
+          on: vi.fn(),
+        };
+        client.duplicate.mockReturnValueOnce(reader as unknown as Redis);
+
+        const inUse = (
+          service as unknown as { blockingReadersInUse: Set<Redis> }
+        ).blockingReadersInUse;
+        const pool = (service as unknown as { blockingReaderPool: Redis[] })
+          .blockingReaderPool;
+
+        const poll = service.xreadgroup(
+          "owners",
+          "node-a",
+          "match:cmd:m1",
+          16,
+          0,
+        );
+
+        // Resolve the microtask queue so the call reaches the await on
+        // reader.xreadgroup; the grace timer is still pending.
+        await vi.advanceTimersByTimeAsync(1000);
+        await expect(poll).resolves.toEqual([]);
+
+        // Reader must be discarded (removed from in-use, NOT pushed back
+        // into the idle pool) because the grace timeout fired.
+        expect(inUse.has(reader as unknown as Redis)).toBe(false);
+        expect(pool).toHaveLength(0);
+
+        // Pending the original BLOCK promise later must not re-pool the
+        // reader either — the timeout branch has already taken ownership
+        // of its lifecycle.
+        resolveBlocked?.(null);
+        await Promise.resolve();
+        expect(pool).toHaveLength(0);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("xack acks only when ids are present", async () => {

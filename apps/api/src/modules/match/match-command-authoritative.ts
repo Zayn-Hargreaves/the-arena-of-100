@@ -1,12 +1,6 @@
 import { Logger } from "@nestjs/common";
 import { Server } from "socket.io";
-import {
-  ClientEvent,
-  ErrorCode,
-  ERROR_MESSAGE_KEYS,
-  RoomError,
-  ServerEvent,
-} from "@arena/shared";
+import { ClientEvent } from "@arena/shared";
 import type { RedisService } from "../redis/redis.service";
 import type { MatchService } from "./match.service";
 import type { MatchOwnershipService } from "./match-ownership.service";
@@ -19,42 +13,7 @@ import type {
   SubmitAnswerBody,
 } from "./dto/match-command.dto";
 import { appliedSetKey } from "./match-command.keys";
-
-function emitAnswerRejection(
-  logger: Logger,
-  server: Server,
-  env: CommandEnvelope<SubmitAnswerBody>,
-  failedEvent: ClientEvent,
-  submissionId: string,
-  error: unknown,
-): void {
-  if (error instanceof RoomError) {
-    server.to(`player:${env.body.userId}`).emit(ServerEvent.ERROR, {
-      code: error.code,
-      message: ERROR_MESSAGE_KEYS[error.code],
-      failedEvent,
-      commandId: env.body.commandId,
-      submissionId,
-    });
-    return;
-  }
-  const detail =
-    error instanceof Error
-      ? error.message
-      : error == null
-        ? "null"
-        : String(error);
-  logger.warn(
-    `applyAnswerAuthoritative: non-RoomError rejection for ${env.body.userId} on ${failedEvent}/${env.body.commandId}: ${detail}`,
-  );
-  server.to(`player:${env.body.userId}`).emit(ServerEvent.ERROR, {
-    code: ErrorCode.INVALID_PAYLOAD,
-    message: ERROR_MESSAGE_KEYS[ErrorCode.INVALID_PAYLOAD],
-    failedEvent,
-    commandId: env.body.commandId,
-    submissionId,
-  });
-}
+import { emitPlayerCommandError } from "./match-card-command.helpers";
 
 export interface AuthoritativeCommandContext {
   redis: RedisService;
@@ -136,13 +95,14 @@ export async function applyAnswerCommand(
     context.logger.warn(
       `applyAnswerAuthoritative: submitAnswer rejected for ${env.matchId}/${env.body.userId} (acking as no-op): ${error instanceof Error ? error.message : String(error)}`,
     );
-    emitAnswerRejection(
+    emitPlayerCommandError(
       context.logger,
       server,
-      env,
+      env.body.userId,
       ClientEvent.SUBMIT_ANSWER,
-      env.body.submissionId,
+      env.body.commandId,
       error,
+      { submissionId: env.body.submissionId },
     );
     return "DUPLICATE_SUBMISSION";
   }
