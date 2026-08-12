@@ -601,7 +601,7 @@ describe("GameLoopService Persistence", () => {
 
       await expect(
         (service as any).roundRunner.endRound("match-1", "room-1", mockServer),
-      ).resolves.not.toThrow();
+      ).resolves.toBeUndefined();
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining("DB Connection Error"),
       );

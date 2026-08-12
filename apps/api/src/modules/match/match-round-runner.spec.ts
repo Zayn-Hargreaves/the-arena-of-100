@@ -2735,9 +2735,15 @@ describe("MatchRoundRunner", () => {
       );
     });
 
-    const recoveryRoundFixture = {
+    const recoveryRoundFixture: RecoveryRound = {
+      matchId: "match-1",
       roundNo: 1,
-    } as unknown as RecoveryRound;
+      question: { id: "q1", content: "?", options: ["A", "B", "C", "D"] },
+      startedAt: 0,
+      endsAt: 0,
+      status: "ACTIVE",
+      answers: new Map(),
+    };
 
     it("getRecoveryEliminatedIdsFromEventLog returns null when eliminatedIds is not an array", () => {
       const fakeEvent = {

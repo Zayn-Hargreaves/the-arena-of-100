@@ -474,7 +474,7 @@ describe("emitCardResolved", () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it("treats a non-array targetPlayerIds as empty (defensive replay safety)", () => {
+  it("skips broadcast and warns when targetPlayerIds is not a string array", () => {
     const recorder = makeMockServer();
     const effect: CardEffect = {
       kind: "OPTION_DISABLE",
@@ -492,7 +492,33 @@ describe("emitCardResolved", () => {
       effect,
     });
 
-    expect(warnSpy).not.toHaveBeenCalled();
-    expect(recorder.callsByEvent(ServerEvent.CARD_RESOLVED).length).toBe(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("targetPlayerIds not a string array"),
+    );
+    expect(recorder.callsByEvent(ServerEvent.CARD_RESOLVED).length).toBe(0);
+  });
+
+  it("skips broadcast and warns when targetPlayerIds contains a non-string element", () => {
+    const recorder = makeMockServer();
+    const effect: CardEffect = {
+      kind: "OPTION_DISABLE",
+      indexes: [1, 2],
+      count: 2,
+      availableAtResolution: 3,
+      durationMs: 5000,
+    };
+    emitCardResolved(logger, recorder.server, "r1", {
+      matchId: "m1",
+      cardId: "CB-1",
+      offerSeqNo: 7,
+      playedByPlayerId: "p1",
+      targetPlayerIds: ["p1", 42] as unknown as string[],
+      effect,
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("targetPlayerIds not a string array"),
+    );
+    expect(recorder.callsByEvent(ServerEvent.CARD_RESOLVED).length).toBe(0);
   });
 });

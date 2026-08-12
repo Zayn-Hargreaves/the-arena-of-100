@@ -117,11 +117,22 @@ export function emitCardResolved(
   roomId: string | undefined,
   payload: Record<string, unknown>,
 ): void {
-  const targetPlayerIds = Array.isArray(payload.targetPlayerIds)
-    ? payload.targetPlayerIds
-    : [];
-  const resolvedEffect = payload.effect as CardEffect | undefined;
   const matchId = payload.matchId as string | undefined;
+  const rawTargets = payload.targetPlayerIds;
+  const targetPlayerIds =
+    Array.isArray(rawTargets) &&
+    rawTargets.every((id) => typeof id === "string")
+      ? rawTargets
+      : null;
+  if (targetPlayerIds === null) {
+    logger.warn(
+      `emitCardResolved: replay skipped for ${
+        matchId ?? "unknown"
+      }: targetPlayerIds not a string array (got ${typeof rawTargets})`,
+    );
+    return;
+  }
+  const resolvedEffect = payload.effect as CardEffect | undefined;
   if (!roomId) {
     logger.warn(
       `emitCardResolved: replay skipped for ${matchId ?? "unknown"}: missing roomId`,

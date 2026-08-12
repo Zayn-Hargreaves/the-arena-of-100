@@ -40,35 +40,46 @@ export interface PerformanceViewModel {
 function buildRequestSignal(
   signal: AbortSignal,
   timeoutMs: number,
-): { signal: AbortSignal; cancel: () => void } {
+): { signal: AbortSignal; cancel: () => void; wasTimeout: () => boolean } {
   const controller = new AbortController();
+  let timedOut = false;
   const onAbort = () => controller.abort();
   if (signal.aborted) {
     controller.abort();
   } else {
     signal.addEventListener("abort", onAbort, { once: true });
   }
-  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutId = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   return {
     signal: controller.signal,
     cancel: () => {
       window.clearTimeout(timeoutId);
       signal.removeEventListener("abort", onAbort);
     },
+    wasTimeout: () => timedOut,
   };
 }
 
 export async function fetchResultResponse(
   matchId: string,
   signal: AbortSignal,
-): Promise<Response | null> {
+): Promise<{ response: Response | null; wasTimeout: boolean }> {
   const endpoint = `${API_URL}/matches/${encodeURIComponent(matchId)}`;
   const request = buildRequestSignal(signal, 10_000);
   try {
-    return await fetch(endpoint, {
+    const response = await fetch(endpoint, {
       credentials: "include",
       signal: request.signal,
     });
+    return { response, wasTimeout: false };
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      return { response: null, wasTimeout: request.wasTimeout() };
+    }
+    throw error;
   } finally {
     request.cancel();
   }
@@ -86,12 +97,20 @@ export function useMatchResults(matchId: string, userId: string | null) {
     async function fetchResults() {
       setLoadState("loading");
       try {
-        const response = await fetchResultResponse(
+        const { response, wasTimeout } = await fetchResultResponse(
           matchId,
           abortController.signal,
         );
-        if (!response) {
+        // Timeout abort: surface as network_error so the UI can retry.
+        if (wasTimeout) {
           setLoadState("network_error");
+          return;
+        }
+        // External abort between fetch resolve and now — skip silently so a
+        // stale request never overwrites state after cleanup.
+        if (abortController.signal.aborted) return;
+        if (!response) {
+          // External abort (cleanup) — keep silent, no state change needed.
           return;
         }
         if (response.status === 401 || response.status === 403) {
@@ -106,10 +125,13 @@ export function useMatchResults(matchId: string, userId: string | null) {
           setLoadState("network_error");
           return;
         }
-        setPayload((await response.json()) as MatchResultApiResponse);
+        // Guard both sides of response.json(): abort may fire while parsing.
+        if (abortController.signal.aborted) return;
+        const data = (await response.json()) as MatchResultApiResponse;
+        if (abortController.signal.aborted) return;
+        setPayload(data);
         setLoadState("ready");
-      } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return;
+      } catch {
         setLoadState("network_error");
       }
     }
@@ -135,7 +157,11 @@ export function useMatchResults(matchId: string, userId: string | null) {
   );
 
   const winner = useMemo<WinnerViewModel>(() => {
-    const topPlayer = sortedPlayers[0];
+    const winnerId = payload?.winnerId ?? null;
+    const winnerFromServer = winnerId
+      ? players.find((player) => player.id === winnerId)
+      : undefined;
+    const topPlayer = winnerFromServer ?? sortedPlayers[0];
     return {
       name: topPlayer?.name ?? t("updating"),
       spritesheet: "/arena_of_100/jellyfrog_spritesheet.webp",
@@ -145,7 +171,7 @@ export function useMatchResults(matchId: string, userId: string | null) {
       accuracy: "--",
       survivedRounds: "--",
     };
-  }, [sortedPlayers, t]);
+  }, [sortedPlayers, players, payload?.winnerId, t]);
 
   const yourPerformance = useMemo<PerformanceViewModel>(() => {
     const currentPlayer = userId

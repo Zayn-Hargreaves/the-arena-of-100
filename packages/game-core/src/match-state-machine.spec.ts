@@ -910,13 +910,16 @@ describe("MatchStateMachine gameplay methods", () => {
     machine.transition(MatchStatus.COUNTDOWN);
     machine.transition(MatchStatus.ROUND_ACTIVE);
     machine.disconnectPlayer("p1");
-    expect(machine.getEventLog().length).toBeGreaterThanOrEqual(3);
+    const allSeqNos = machine.getEventLog().map((e) => e.seqNo);
+    expect(allSeqNos.length).toBeGreaterThanOrEqual(3);
 
     const reverseVisited: number[] = [];
     machine.forEachEvent((entry) => {
       reverseVisited.push(entry.seqNo);
       return true;
     }, "reverse");
+    // Every logged event must be visited exactly once, in reverse order.
+    expect(reverseVisited).toEqual([...allSeqNos].reverse());
     for (let i = 1; i < reverseVisited.length; i++) {
       expect(reverseVisited[i]!).toBeLessThan(reverseVisited[i - 1]!);
     }
@@ -928,6 +931,7 @@ describe("MatchStateMachine gameplay methods", () => {
       forwardVisited.push(entry.seqNo);
       return true;
     });
+    expect(forwardVisited).toEqual(allSeqNos);
     for (let i = 1; i < forwardVisited.length; i++) {
       expect(forwardVisited[i]!).toBeGreaterThan(forwardVisited[i - 1]!);
     }
