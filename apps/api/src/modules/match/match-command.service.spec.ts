@@ -86,9 +86,17 @@ function applyPlayAuthoritative(
   ).applyCardPlayAuthoritative(env, owner, server);
 }
 
+type SubmitEnvOverrides = Omit<
+  Partial<CommandEnvelope<SubmitAnswerBody>>,
+  "body"
+> & {
+  body?: Partial<SubmitAnswerBody>;
+};
+
 function submitEnv(
-  overrides: Partial<CommandEnvelope<SubmitAnswerBody>> = {},
+  overrides: SubmitEnvOverrides = {},
 ): CommandEnvelope<SubmitAnswerBody> {
+  const { body: bodyOverrides, ...rest } = overrides;
   return {
     eventId: "evt-1",
     schemaVersion: 1,
@@ -102,10 +110,19 @@ function submitEnv(
       submissionId: "sub-1",
       clientTs: 900,
       commandId: "cmd-1",
+      ...bodyOverrides,
     },
-    ...overrides,
+    ...rest,
   };
 }
+
+describe("submitEnv helper", () => {
+  it("accepts a partial body override and preserves defaults", () => {
+    const env = submitEnv({ body: { answer: "Z" } });
+    expect(env.body.commandId).toBe("cmd-1");
+    expect(env.body.answer).toBe("Z");
+  });
+});
 
 describe("MatchCommandService (B4a)", () => {
   let redis: RedisMock;

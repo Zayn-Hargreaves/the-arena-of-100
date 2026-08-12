@@ -14,8 +14,8 @@ import { fetchResult, useMatchResults } from "./use-match-results";
 // contract that fetch + body share a controller.
 function makeAbortableFetch(
   impl: (input: unknown, init: RequestInit | undefined) => Promise<Response>,
-): ReturnType<typeof vi.spyOn> {
-  return vi.spyOn(globalThis, "fetch").mockImplementation(((
+): void {
+  vi.spyOn(globalThis, "fetch").mockImplementation(((
     input: unknown,
     init?: RequestInit,
   ) => {
@@ -293,6 +293,48 @@ describe("fetchResult", () => {
     // signal as aborted. This proves the controller is shared
     // across fetch + body, not a Promise.race band-aid.
     expect(observation.bodySawAbort).toBe(true);
+  });
+
+  it("returns wasTimeout: false when the external signal aborts after fetch resolves but before json is parsed", async () => {
+    const signalRef: { current: AbortSignal | undefined } = {
+      current: undefined,
+    };
+    const { body } = makeSignalAwareBody(signalRef);
+    makeAbortableFetch((_input, init) => {
+      signalRef.current = init?.signal;
+      return Promise.resolve(body as unknown as Response);
+    });
+
+    const controller = new AbortController();
+    const promise = fetchResult("m1", controller.signal);
+
+    // Network phase resolves; json() is waiting on the shared signal.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // External abort (not timer-driven) — the 10s ceiling did NOT fire.
+    controller.abort();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const result = await promise;
+    expect(result.wasTimeout).toBe(false);
+    expect(result.data).toBeNull();
+    expect(result.response).toBeNull();
   });
 
   it("returns wasTimeout: false when the external signal aborts mid-fetch", async () => {
