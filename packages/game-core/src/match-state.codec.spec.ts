@@ -611,6 +611,24 @@ describe("match-state.codec v2 + back-compat (B1c)", () => {
       );
     });
 
+    it("prefers v2 ROUND_ACTIVE phaseEndsAt over startedAt + default duration when currentRound.endsAt is missing", () => {
+      const state = buildState();
+      state.status = "ROUND_ACTIVE" as MatchState["status"];
+      state.phaseEndsAt = 16_000;
+      const round = buildRound({
+        startedAt: 2000,
+        endsAt: 16_000,
+        status: "ACTIVE",
+      });
+      const parsed = JSON.parse(serializeMatch(state, round, []));
+      delete parsed.currentRound.endsAt;
+      const payload = JSON.stringify(parsed);
+
+      const decoded = deserializeMatch(payload);
+      expect(decoded.currentRound?.endsAt).toBe(16_000);
+      expect(decoded.currentRound?.startedAt).toBe(2000);
+    });
+
     it("borrows reconstructed phaseEndsAt as the round endsAt on a v1 ROUND_ACTIVE blob missing both round anchors", () => {
       // v1 ROUND_ACTIVE: phaseEndsAt reconstructed from currentRound.endsAt
       // (perms 1 of backfillPhaseEndsAt). When the round's own endsAt is also

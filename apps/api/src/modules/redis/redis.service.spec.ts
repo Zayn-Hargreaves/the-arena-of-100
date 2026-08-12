@@ -1106,6 +1106,13 @@ describe("RedisService", () => {
       );
     });
 
+    it("removeIndexMemberIfValueUnchanged throws on an unexpected Lua reply", async () => {
+      client.eval.mockResolvedValueOnce("???");
+      await expect(
+        service.removeIndexMemberIfValueUnchanged("v", "a", "m", null),
+      ).rejects.toThrow(/unexpected Lua reply/);
+    });
+
     it("removeActiveIfTombstoned returns REMOVED / ABSENT", async () => {
       client.eval.mockResolvedValueOnce("REMOVED");
       await expect(

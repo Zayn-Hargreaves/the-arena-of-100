@@ -905,6 +905,56 @@ describe("MatchStateMachine gameplay methods", () => {
     expect(log[0].type).toBe("STATE_TRANSITION");
   });
 
+  it("forEachEvent with direction: 'reverse' iterates events most-recent-first", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    machine.disconnectPlayer("p1");
+    expect(machine.getEventLog().length).toBeGreaterThanOrEqual(3);
+
+    const reverseVisited: number[] = [];
+    machine.forEachEvent((entry) => {
+      reverseVisited.push(entry.seqNo);
+      return true;
+    }, "reverse");
+    for (let i = 1; i < reverseVisited.length; i++) {
+      expect(reverseVisited[i]!).toBeLessThan(reverseVisited[i - 1]!);
+    }
+
+    // Lock the default direction contract: omitting the second arg is forward
+    // (ascending seqNo). findCanonicalCardEvent depends on this.
+    const forwardVisited: number[] = [];
+    machine.forEachEvent((entry) => {
+      forwardVisited.push(entry.seqNo);
+      return true;
+    });
+    for (let i = 1; i < forwardVisited.length; i++) {
+      expect(forwardVisited[i]!).toBeGreaterThan(forwardVisited[i - 1]!);
+    }
+  });
+
+  it("forEachEvent with direction: 'reverse' stops when callback returns false", () => {
+    const machine = new MatchStateMachine("m1", "r1", makePlayers());
+    machine.transition(MatchStatus.COUNTDOWN);
+    machine.transition(MatchStatus.ROUND_ACTIVE);
+    machine.disconnectPlayer("p1");
+    const log = machine.getEventLog();
+    expect(log.length).toBe(3);
+    const middleSeqNo = log[1]!.seqNo;
+
+    const visited: number[] = [];
+    machine.forEachEvent((entry) => {
+      visited.push(entry.seqNo);
+      return entry.seqNo === middleSeqNo ? false : true;
+    }, "reverse");
+
+    // The middle entry IS pushed before the `return false` triggers the
+    // break, so visited.length === 2 and the two entries are the two
+    // most-recent seqNos in the log.
+    expect(visited.length).toBe(2);
+    expect(visited).toEqual([log[2]!.seqNo, log[1]!.seqNo]);
+  });
+
   it("disconnectPlayer marks player disconnected and offline, logging the event", () => {
     const machine = new MatchStateMachine("m1", "r1", makePlayers());
 

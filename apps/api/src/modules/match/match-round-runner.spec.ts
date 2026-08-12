@@ -1,6 +1,9 @@
 import { Logger } from "@nestjs/common";
 import { MatchRoundRunner } from "./match-round-runner";
-import { getRecoveryEliminatedIdsFromEventLog } from "./match-round-recovery";
+import {
+  getRecoveryEliminatedIdsFromEventLog,
+  type RecoveryRound,
+} from "./match-round-recovery";
 import { MatchService } from "./match.service";
 import { QuestionService } from "../question/question.service";
 import { RoomService } from "../room/room.service";
@@ -2732,6 +2735,10 @@ describe("MatchRoundRunner", () => {
       );
     });
 
+    const recoveryRoundFixture = {
+      roundNo: 1,
+    } as unknown as RecoveryRound;
+
     it("getRecoveryEliminatedIdsFromEventLog returns null when eliminatedIds is not an array", () => {
       const fakeEvent = {
         type: "ROUND_EVALUATED",
@@ -2743,7 +2750,7 @@ describe("MatchRoundRunner", () => {
           questionService,
         },
         [fakeEvent],
-        { roundNo: 1 } as never,
+        recoveryRoundFixture,
         ["p1", "p2"],
         "A",
         "match-1",
@@ -2762,7 +2769,7 @@ describe("MatchRoundRunner", () => {
           questionService,
         },
         [fakeEvent],
-        { roundNo: 1 } as never,
+        recoveryRoundFixture,
         UNAVAILABLE,
         "A",
         "match-1",

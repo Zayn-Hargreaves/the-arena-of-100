@@ -30,6 +30,7 @@ export async function disconnectMatchPlayer(
     context.logger.warn(
       `handlePlayerDisconnect: persist ${outcome} for ${matchId} — no confirmed canonical write, skipping disconnect broadcast`,
     );
+    context.matchService.evictStateMachine(matchId);
     return outcome;
   }
 

@@ -833,11 +833,19 @@ describe("MatchCommandService (B4a)", () => {
         checkEarlyTermination: vi.fn().mockResolvedValue(undefined),
       };
       service.setSideEffects(sideEffects);
+      const recorder = makeMockServer();
 
       await expect(
-        service.applySubmitAnswer(submitEnv(), server),
+        service.applySubmitAnswer(submitEnv(), recorder.server),
       ).resolves.toBe("DUPLICATE_SUBMISSION");
       expect(sideEffects.publishAnswerResult).not.toHaveBeenCalled();
+      const errorEmits = recorder.callsByEvent(ServerEvent.ERROR);
+      expect(errorEmits.length).toBe(1);
+      expect(errorEmits[0]?.[1]).toMatchObject({
+        code: ErrorCode.INVALID_PAYLOAD,
+        failedEvent: ClientEvent.SUBMIT_ANSWER,
+        submissionId: "sub-1",
+      });
     });
 
     it("RETRY for player_disconnect when no disconnect side effect is wired (B5 not deployed yet)", async () => {
@@ -1474,6 +1482,10 @@ describe("MatchCommandService (B4a)", () => {
     });
 
     it("recoverDuplicatePickEvent returns RETRY when the state machine cannot be loaded", async () => {
+      ownership.currentFence.mockReturnValue({
+        fence: 5,
+        leaseValue: "node-a:5",
+      });
       matchService.getStateMachine.mockResolvedValue(undefined);
       redis.sismember.mockResolvedValue(true);
 
@@ -2120,6 +2132,31 @@ describe("MatchCommandService (B4a)", () => {
       ).toBe("OPTION_LOCK");
     });
 
+    it("DUPLICATE_SUBMISSION + PLAYER_DISCONNECTED when explicit target is ineligible (DISCONNECTED)", async () => {
+      const { sm, offerSeqNo } = pickOfferSmForPlay({ pickedCardId: "CB-1" });
+      sm.disconnectPlayer("p2");
+      matchService.getStateMachine.mockResolvedValue(sm);
+      const recorder = makeMockServer();
+
+      const outcome = await applyPlayAuthoritative(
+        service,
+        playEnv("evt-cb3", "cmd-cb3", offerSeqNo, "p1", "CB-1", "p2"),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome).toBe("DUPLICATE_SUBMISSION");
+      const errorEmits = recorder.callsByEvent(ServerEvent.ERROR);
+      expect(errorEmits.length).toBe(1);
+      expect(errorEmits[0]?.[1]).toMatchObject({
+        code: ErrorCode.PLAYER_DISCONNECTED,
+        failedEvent: ClientEvent.CARD_PLAY,
+        commandId: "cmd-cb3",
+      });
+      expect(recorder.callsByEvent(ServerEvent.CARD_RESOLVED).length).toBe(0);
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+    });
+
     it("APPLIED — AOE card (CB-8, DELAY_RENDER, targetCount=3) expands to multiple targets via deterministic substream", async () => {
       const { sm, offerSeqNo } = pickOfferSmForPlay({
         pickedCardId: "CB-8",
@@ -2430,6 +2467,80 @@ describe("MatchCommandService (B4a)", () => {
       expect(errEmits.length).toBe(1);
       expect(recorder.callsByEvent(ServerEvent.CARD_RESOLVED)).toHaveLength(0);
       expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+    });
+
+    it("Recover via recoverDuplicatePlayEvent on playCard throw + card already played", async () => {
+      // The playCard catch mirrors the validate catch's two-branch
+      // shape: a `getPlayedCards(userId).has(cardId)` recovery branch
+      // and an emit-and-return DUPLICATE_SUBMISSION branch. The
+      // recovery branch here covers lines 432-436 of
+      // match-card-command-authoritative.ts (the `c8 ignore next 3`
+      // above hides the branch header).
+      //
+      // To reach it, validation must pass (so we get past line 347
+      // and into the playCard try at line 414) AND
+      // `getPlayedCards(userId).has(cardId)` must be true when the
+      // catch checks at line 429. We achieve this by:
+      //   1. Stamping a CARD_RESOLVED via the private logEvent so
+      //      handleDuplicatePlayRecovery has canonical metadata to
+      //      re-broadcast — but without going through playCard
+      //      (which would strip CB-1 from `pickedCards` and break
+      //      validatePickedCard).
+      //   2. Stubbing getPlayedCards so the FIRST call (validation
+      //      at line 343) returns an empty set — validation passes —
+      //      and all subsequent calls return a set containing CB-1 —
+      //      the catch's branch check hits the recovery path.
+      //   3. Spying playCard to throw so the catch fires.
+      const { sm, offerSeqNo } = pickOfferSmForPlay({ pickedCardId: "CB-1" });
+      (
+        sm as unknown as { logEvent: (t: string, p: unknown) => number }
+      ).logEvent("CARD_RESOLVED", {
+        seqNo: sm.getHeadSeqNo() + 1,
+        matchId: "m1",
+        roundNo: sm.getCurrentRound()?.roundNo ?? 0,
+        cardId: "CB-1",
+        offerSeqNo,
+        playedByPlayerId: "p1",
+        targetPlayerIds: ["p2"],
+        effect: { kind: "TIMER_MODIFY", deltaMs: -1000, targetCount: 1 },
+        resolution: "MUTATION",
+        serverTimestamp: 1000,
+        expiresAtServer: null,
+        remainingMs: null,
+        eventId: "evt-recover-pc",
+        commandId: "cmd-recover-pc",
+      });
+      const playedWithCard = new Set<CardId>(["CB-1"]);
+      let playedCalls = 0;
+      vi.spyOn(sm, "getPlayedCards").mockImplementation(() => {
+        playedCalls++;
+        // First call is `playedCardIds: ...` inside validateCardCommand.
+        // We need an empty set so validation passes (CB-1 NOT marked
+        // as already played yet).
+        if (playedCalls === 1) return new Set<CardId>();
+        return playedWithCard;
+      });
+      vi.spyOn(
+        sm as unknown as { playCard: (...args: unknown[]) => unknown },
+        "playCard",
+      ).mockImplementation(() => {
+        throw new Error("playCard synthetic");
+      });
+      matchService.getStateMachine.mockResolvedValue(sm);
+      const recorder = makeMockServer();
+
+      const outcome = await applyPlayAuthoritative(
+        service,
+        playEnv("evt-recover-pc", "cmd-recover-pc", offerSeqNo),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome).toBe("DUPLICATE_EVENT");
+      expect(recorder.callsByEvent(ServerEvent.ERROR).length).toBe(0);
+      expect(
+        recorder.callsByEvent(ServerEvent.CARD_RESOLVED).length,
+      ).toBeGreaterThan(0);
     });
 
     it("Recover via recoverDuplicatePlayEvent on validate rejection + card already played", async () => {

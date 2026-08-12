@@ -543,16 +543,11 @@ export class MatchCommandService implements OnModuleDestroy {
   }
 
   /**
-   * DUPLICATE_EVENT recovery: the first owner persisted the answer but may have
-   * crashed before broadcasting. Reload canonical state, re-emit the canonical
-   * ANSWER_RESULT idempotently, and re-run early termination before the caller
-   * XACKs — so the submitter still receives the outcome.
-   *
-   * Fence revalidation is performed immediately before each side effect (and
-   * again at entry) so a lease takeover between the entry check and the
-   * publish cannot let an ex-owner broadcast. Any lost-fence detection here
-   * returns RETRY (the consumer leaves the stream entry pending and the new
-   * owner heals via DUPLICATE_EVENT on its own re-apply).
+   * Build and return an `AuthoritativeCommandContext` snapshot from the
+   * service's existing dependencies. Performs no validation, no fence checks,
+   * and no duplicate-recovery logic — those live in the individual `apply…`
+   * methods (see `recoverDuplicateAnswer` for the DUPLICATE_EVENT path and
+   * the fence-revalidation rules used before each side effect).
    */
   private authoritativeContext(): AuthoritativeCommandContext {
     return {

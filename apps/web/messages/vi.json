@@ -237,7 +237,7 @@
     "title": "KẾT QUẢ ĐẤU TRƯỜNG",
     "matchId": "MÃ TRẬN: {matchId}",
     "championBadge": "QUÁN QUÂN ĐẤU TRƯỜNG",
-    "championDescription": "Đã đánh bại {opponents} đối thủ khác để giành ngôi vị quán quân duy nhất!",
+    "championDescription": "{opponents, plural, =0 {Đã trở thành quán quân duy nhất của đấu trường mà không phải đối đầu đối thủ nào!} one {Đã đánh bại # đối thủ khác để giành ngôi vị quán quân duy nhất!} other {Đã đánh bại # đối thủ khác để giành ngôi vị quán quân duy nhất!}}",
     "metrics": {
       "score": "Điểm Số",
       "accuracy": "Tỉ Lệ Đúng",

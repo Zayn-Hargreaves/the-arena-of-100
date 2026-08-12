@@ -117,8 +117,9 @@ export function emitCardResolved(
   roomId: string | undefined,
   payload: Record<string, unknown>,
 ): void {
-  const targetPlayerIds =
-    (payload.targetPlayerIds as string[] | undefined) ?? [];
+  const targetPlayerIds = Array.isArray(payload.targetPlayerIds)
+    ? payload.targetPlayerIds
+    : [];
   const resolvedEffect = payload.effect as CardEffect | undefined;
   const matchId = payload.matchId as string | undefined;
   if (!roomId) {

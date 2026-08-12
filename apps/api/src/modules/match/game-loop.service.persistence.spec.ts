@@ -571,7 +571,7 @@ describe("GameLoopService Persistence", () => {
       );
     });
 
-    it("propagates error when questionService.findOne throws during recovery rehydration", async () => {
+    it("falls back to surviving-set when questionService.findOne throws during recovery rehydration", async () => {
       stateMachine.transition(MatchStatus.COUNTDOWN);
       stateMachine.transition(MatchStatus.ROUND_ACTIVE);
       stateMachine.startRound({
@@ -595,13 +595,16 @@ describe("GameLoopService Persistence", () => {
         new Error("DB Connection Error"),
       );
 
-      vi.spyOn((service as any).roundRunner.logger, "error").mockImplementation(
-        () => {},
-      );
+      const warnSpy = vi
+        .spyOn((service as any).roundRunner.logger, "warn")
+        .mockImplementation(() => {});
 
       await expect(
         (service as any).roundRunner.endRound("match-1", "room-1", mockServer),
-      ).rejects.toThrow("DB Connection Error");
+      ).resolves.not.toThrow();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("DB Connection Error"),
+      );
     });
   });
 

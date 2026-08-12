@@ -409,16 +409,16 @@ function decodeCurrentRound(
       ? timing.currentRoundEndsAt
       : null;
 
-  if (endsAt === null && startedAt !== null) {
-    const derived = startedAt + GAME_CONFIG.ROUND_DURATION_MS;
-    endsAt = Number.isFinite(derived) ? derived : null;
-  }
   if (
     endsAt === null &&
     state.status === MatchStatus.ROUND_ACTIVE &&
     typeof state.phaseEndsAt === "number"
   ) {
     endsAt = state.phaseEndsAt;
+  }
+  if (endsAt === null && startedAt !== null) {
+    const derived = startedAt + GAME_CONFIG.ROUND_DURATION_MS;
+    endsAt = Number.isFinite(derived) ? derived : null;
   }
   if (startedAt === null && endsAt !== null) {
     const derived = endsAt - GAME_CONFIG.ROUND_DURATION_MS;

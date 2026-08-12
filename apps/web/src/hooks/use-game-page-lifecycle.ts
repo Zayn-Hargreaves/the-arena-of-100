@@ -35,6 +35,7 @@ export function useGamePageLifecycle({
     if (snapshotMatchIdRef.current !== matchId) {
       snapshotMatchIdRef.current = matchId;
       snapshotHydratedRef.current = false;
+      terminationNotifiedRef.current = false;
     }
     if (snapshotHydratedRef.current || !matchId) return;
     snapshotHydratedRef.current = true;

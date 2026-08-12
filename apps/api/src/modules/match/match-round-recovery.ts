@@ -8,7 +8,7 @@ import {
 import type { RoundState } from "@arena/shared";
 import type { QuestionService } from "../question/question.service";
 
-type RecoveryRound = Pick<
+export type RecoveryRound = Pick<
   RoundState,
   | "matchId"
   | "roundNo"
@@ -28,7 +28,7 @@ export interface RoundEndContext {
   correctAnswer: string;
 }
 
-interface RoundRecoveryContext {
+export interface RoundRecoveryContext {
   logger: Logger;
   questionService: QuestionService;
 }
@@ -49,12 +49,20 @@ export async function recoverRoundEnd(
   let correctAnswer = recoveryRound.correctAnswer || "";
 
   if (!correctAnswer) {
-    const question = await context.questionService.findOne(round.question.id);
-    if (question) {
-      correctAnswer = question.correctAnswer;
-    } else {
+    try {
+      const question = await context.questionService.findOne(round.question.id);
+      if (question) {
+        correctAnswer = question.correctAnswer;
+      } else {
+        context.logger.warn(
+          `Failed to rehydrate correctAnswer in recovery: question ${round.question.id} not found in DB for match ${matchId} round ${round.roundNo}`,
+        );
+      }
+    } catch (error) {
       context.logger.warn(
-        `Failed to rehydrate correctAnswer in recovery: question ${round.question.id} not found in DB for match ${matchId} round ${round.roundNo}`,
+        `Failed to rehydrate correctAnswer in recovery: question lookup for ${round.question.id} threw on match ${matchId} round ${round.roundNo}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       );
     }
   }

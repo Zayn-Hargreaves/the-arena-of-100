@@ -54,13 +54,7 @@ export function expandCardTargets(
     ),
   );
   const eligible = Array.from(stateMachine.getState().players.entries())
-    .filter(
-      ([id, player]) =>
-        id !== playedByPlayerId &&
-        player.status !== PlayerStatus.ELIMINATED &&
-        player.status !== PlayerStatus.WINNER &&
-        player.status !== PlayerStatus.DISCONNECTED,
-    )
+    .filter(([id]) => id !== playedByPlayerId && isEligible(id))
     .map(([id]) => id)
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 

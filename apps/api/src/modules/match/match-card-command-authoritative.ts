@@ -250,7 +250,7 @@ export async function applyCardPickCommand(
     return "RETRY";
   }
 
-  const roomId = state.roomId;
+  const roomId = stateMachine.getState().roomId;
   if (roomId) {
     server.to(`room:${roomId}`).emit(ServerEvent.CARD_PICKED, {
       matchId: env.matchId,
@@ -369,6 +369,29 @@ export async function applyCardPlayCommand(
     env.body.offerSeqNo,
     validated.cardId,
   );
+  const targetPlayerIds = expandCardTargets(
+    env.matchId,
+    validated.cardId,
+    userId,
+    env.body.targetPlayerId,
+    currentRoundNo,
+    env.body.offerSeqNo,
+    stateMachine,
+  );
+  if (targetPlayerIds.length === 0) {
+    context.logger.warn(
+      `applyCardPlayAuthoritative: no eligible targets for ${env.matchId}/${userId} cardId=${validated.cardId} (acking as no-op)`,
+    );
+    emitPlayerCommandError(
+      context.logger,
+      server,
+      userId,
+      ClientEvent.CARD_PLAY,
+      env.body.commandId,
+      new RoomError(ErrorCode.PLAYER_DISCONNECTED),
+    );
+    return "DUPLICATE_SUBMISSION";
+  }
   let resolved: CardEffect;
   try {
     resolved = resolveCardEffect(
@@ -376,9 +399,7 @@ export async function applyCardPlayCommand(
       validated.template,
       resolveRng,
       {
-        targetHand: env.body.targetPlayerId
-          ? stateMachine.getHand(env.body.targetPlayerId)
-          : undefined,
+        targetHand: stateMachine.getHand(targetPlayerIds[0]!),
         options: stateMachine.getCurrentRound()?.question.options,
         correctAnswer: stateMachine.getCorrectAnswer(),
         currentRoundNo,
@@ -400,15 +421,6 @@ export async function applyCardPlayCommand(
     return "DUPLICATE_SUBMISSION";
   }
 
-  const targetPlayerIds = expandCardTargets(
-    env.matchId,
-    validated.cardId,
-    userId,
-    env.body.targetPlayerId,
-    currentRoundNo,
-    env.body.offerSeqNo,
-    stateMachine,
-  );
   const serverNow = Date.now();
   let result;
   try {
@@ -451,7 +463,7 @@ export async function applyCardPlayCommand(
     return "RETRY";
   }
 
-  emitCardResolved(context.logger, server, state.roomId, {
+  emitCardResolved(context.logger, server, stateMachine.getState().roomId, {
     seqNo: result.seqNo,
     matchId: env.matchId,
     roundNo: currentRoundNo,

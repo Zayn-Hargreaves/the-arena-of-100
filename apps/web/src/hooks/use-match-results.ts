@@ -3,32 +3,12 @@ import { useTranslations } from "next-intl";
 import { API_URL } from "@/lib/api";
 
 export interface MatchResultApiResponse {
-  winner?: {
-    userId?: string;
-    name?: string;
-    avatarSeed?: string;
-    spritesheet?: string;
-    isAnimated?: boolean;
-    totalScore?: number;
-    averageSpeed?: string;
-    accuracy?: string;
-    survivedRounds?: string;
-  };
-  yourPerformance?: {
-    userId?: string;
-    name?: string;
-    rank?: number;
-    score?: number;
-    speed?: string;
-    accuracy?: string;
-    eliminatedRound?: number | null;
-  };
+  winnerId?: string | null;
   players?: Array<{
     userId?: string;
     score?: number;
     user?: { id?: string; username?: string };
   }>;
-  winnerId?: string | null;
 }
 
 export type ResultLoadState =
@@ -55,6 +35,43 @@ export interface PerformanceViewModel {
   speed: string;
   accuracy: string;
   eliminatedRound?: number | null;
+}
+
+function buildRequestSignal(
+  signal: AbortSignal,
+  timeoutMs: number,
+): { signal: AbortSignal; cancel: () => void } {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  if (signal.aborted) {
+    controller.abort();
+  } else {
+    signal.addEventListener("abort", onAbort, { once: true });
+  }
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  return {
+    signal: controller.signal,
+    cancel: () => {
+      window.clearTimeout(timeoutId);
+      signal.removeEventListener("abort", onAbort);
+    },
+  };
+}
+
+export async function fetchResultResponse(
+  matchId: string,
+  signal: AbortSignal,
+): Promise<Response | null> {
+  const endpoint = `${API_URL}/matches/${encodeURIComponent(matchId)}`;
+  const request = buildRequestSignal(signal, 10_000);
+  try {
+    return await fetch(endpoint, {
+      credentials: "include",
+      signal: request.signal,
+    });
+  } finally {
+    request.cancel();
+  }
 }
 
 export function useMatchResults(matchId: string, userId: string | null) {
@@ -120,32 +137,17 @@ export function useMatchResults(matchId: string, userId: string | null) {
   const winner = useMemo<WinnerViewModel>(() => {
     const topPlayer = sortedPlayers[0];
     return {
-      name:
-        payload?.winner?.name ??
-        topPlayer?.name ??
-        (topPlayer ? t("unknownPlayer") : t("updating")),
-      spritesheet:
-        payload?.winner?.spritesheet ??
-        "/arena_of_100/jellyfrog_spritesheet.webp",
-      isAnimated: payload?.winner?.isAnimated ?? true,
-      totalScore: payload?.winner?.totalScore ?? topPlayer?.score ?? 0,
-      averageSpeed: payload?.winner?.averageSpeed ?? "--",
-      accuracy: payload?.winner?.accuracy ?? "--",
-      survivedRounds: payload?.winner?.survivedRounds ?? "--",
+      name: topPlayer?.name ?? t("updating"),
+      spritesheet: "/arena_of_100/jellyfrog_spritesheet.webp",
+      isAnimated: true,
+      totalScore: topPlayer?.score ?? 0,
+      averageSpeed: "--",
+      accuracy: "--",
+      survivedRounds: "--",
     };
-  }, [payload?.winner, sortedPlayers, t]);
+  }, [sortedPlayers, t]);
 
   const yourPerformance = useMemo<PerformanceViewModel>(() => {
-    if (payload?.yourPerformance) {
-      return {
-        name: payload.yourPerformance.name ?? t("guestPlayer"),
-        rank: payload.yourPerformance.rank ?? null,
-        score: payload.yourPerformance.score ?? 0,
-        speed: payload.yourPerformance.speed ?? "--",
-        accuracy: payload.yourPerformance.accuracy ?? "--",
-        eliminatedRound: payload.yourPerformance.eliminatedRound,
-      };
-    }
     const currentPlayer = userId
       ? players.find((player) => player.id === userId)
       : undefined;
@@ -160,35 +162,12 @@ export function useMatchResults(matchId: string, userId: string | null) {
       accuracy: "--",
       eliminatedRound: null,
     };
-  }, [payload?.yourPerformance, players, sortedPlayers, t, userId]);
+  }, [players, sortedPlayers, t, userId]);
 
-  const winnerId = payload?.winner?.userId ?? payload?.winnerId;
+  const winnerId = payload?.winnerId ?? null;
   const opponents = winnerId
     ? players.filter((player) => player.id !== winnerId).length
     : Math.max(0, players.length - 1);
 
   return { loadState, winner, yourPerformance, opponents, retry };
-}
-
-async function fetchResultResponse(
-  matchId: string,
-  signal: AbortSignal,
-): Promise<Response | null> {
-  const endpoints = [
-    `${API_URL}/matches/${matchId}/results`,
-    `${API_URL}/matches/${matchId}`,
-  ];
-  let response: Response | null = null;
-  for (const endpoint of endpoints) {
-    const requestSignal = AbortSignal.any([
-      signal,
-      AbortSignal.timeout(10_000),
-    ]);
-    response = await fetch(endpoint, {
-      credentials: "include",
-      signal: requestSignal,
-    });
-    if (response.status !== 404) break;
-  }
-  return response;
 }

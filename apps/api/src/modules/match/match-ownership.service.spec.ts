@@ -469,7 +469,12 @@ describe("MatchOwnershipService (B2b)", () => {
         members.add(member);
         return members.size - sizeBefore;
       });
-      redis.serverTimeMs.mockImplementation(async () => Date.now() + 5);
+      const frozenLocalMs = new Date("2026-08-11T00:00:00.000Z").getTime();
+      const frozenRedisMs = frozenLocalMs + 5;
+      redis.serverTimeMs.mockImplementation(async () => frozenRedisMs);
+      const dateSpy = vi
+        .spyOn(Date, "now")
+        .mockImplementation(() => frozenLocalMs);
       redis.removeIndexMemberIfValueUnchanged.mockImplementation(
         async (
           key: string,
@@ -489,10 +494,13 @@ describe("MatchOwnershipService (B2b)", () => {
           return "REMOVED";
         },
       );
-
-      await service.computeMaxSkew();
-      expect(members.has("b")).toBe(true);
-      await expect(service.computeMaxSkew()).resolves.toBe(15);
+      try {
+        await service.computeMaxSkew();
+        expect(members.has("b")).toBe(true);
+        await expect(service.computeMaxSkew()).resolves.toBe(15);
+      } finally {
+        dateSpy.mockRestore();
+      }
     });
 
     it("ignores non-finite clock offsets when computing skew", async () => {
