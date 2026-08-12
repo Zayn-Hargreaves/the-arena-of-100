@@ -8,6 +8,7 @@ export const submitAnswerBodySchema = z.object({
   answer: z.string(),
   submissionId: z.string(),
   clientTs: z.number().finite(),
+  commandId: z.string().min(1),
 });
 
 export const playerDisconnectBodySchema = z.object({

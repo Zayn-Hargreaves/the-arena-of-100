@@ -7,6 +7,7 @@ import {
 import { ACTIVE_SET } from "./match-ownership.store";
 import type { RedisService } from "../redis/redis.service";
 import type { ClusterService } from "../cluster/cluster.service";
+import { publishClockOffset } from "./match-ownership-clock";
 
 type RedisMock = {
   acquireMatchLease: ReturnType<typeof vi.fn>;
@@ -19,6 +20,7 @@ type RedisMock = {
   get: ReturnType<typeof vi.fn>;
   set: ReturnType<typeof vi.fn>;
   serverTimeMs: ReturnType<typeof vi.fn>;
+  removeIndexMemberIfValueUnchanged: ReturnType<typeof vi.fn>;
   removeActiveIfStateAbsent?: ReturnType<typeof vi.fn>;
   removeActiveIfTombstoned?: ReturnType<typeof vi.fn>;
   finalizeMatchTombstone?: ReturnType<typeof vi.fn>;
@@ -63,6 +65,7 @@ describe("MatchOwnershipService (B2b)", () => {
       get: vi.fn().mockResolvedValue(null),
       set: vi.fn().mockResolvedValue(undefined),
       serverTimeMs: vi.fn().mockResolvedValue(1_000_000),
+      removeIndexMemberIfValueUnchanged: vi.fn().mockResolvedValue("REMOVED"),
       removeActiveIfStateAbsent: vi.fn().mockResolvedValue("PRESENT"),
       removeActiveIfTombstoned: vi.fn().mockResolvedValue("REMOVED"),
       finalizeMatchTombstone: vi.fn().mockResolvedValue("FINALIZED"),
@@ -431,7 +434,73 @@ describe("MatchOwnershipService (B2b)", () => {
         key === "node:clock:a" ? "7" : null,
       );
       await service.computeMaxSkew();
-      expect(redis.srem).toHaveBeenCalledWith("node:clocks", "dead");
+      expect(redis.removeIndexMemberIfValueUnchanged).toHaveBeenCalledWith(
+        "node:clock:dead",
+        "node:clocks",
+        "dead",
+        null,
+      );
+    });
+
+    it("keeps a node republished while stale cleanup is in flight", async () => {
+      const members = new Set(["a", "b"]);
+      const clocks = new Map<string, string>([
+        ["node:clock:a", "10"],
+        ["node:clock:b", "0"],
+      ]);
+      redis.smembers.mockImplementation(async () => [...members]);
+      redis.get.mockImplementation(
+        async (key: string) => clocks.get(key) ?? null,
+      );
+
+      let firstDeadRead = true;
+      redis.get.mockImplementation(async (key: string) => {
+        if (key === "node:clock:b" && firstDeadRead) {
+          firstDeadRead = false;
+          return null;
+        }
+        return clocks.get(key) ?? null;
+      });
+      redis.set.mockImplementation(async (key: string, value: string) => {
+        clocks.set(key, value);
+      });
+      redis.sadd.mockImplementation(async (_index: string, member: string) => {
+        const sizeBefore = members.size;
+        members.add(member);
+        return members.size - sizeBefore;
+      });
+      const frozenLocalMs = new Date("2026-08-11T00:00:00.000Z").getTime();
+      const frozenRedisMs = frozenLocalMs + 5;
+      redis.serverTimeMs.mockImplementation(async () => frozenRedisMs);
+      const dateSpy = vi
+        .spyOn(Date, "now")
+        .mockImplementation(() => frozenLocalMs);
+      redis.removeIndexMemberIfValueUnchanged.mockImplementation(
+        async (
+          key: string,
+          _index: string,
+          member: string,
+          observed: string | null,
+        ) => {
+          await publishClockOffset(
+            {
+              redis: redis as unknown as RedisService,
+              logger: (service as unknown as { logger: Logger }).logger,
+            },
+            member,
+          );
+          if ((clocks.get(key) ?? null) !== observed) return "CHANGED";
+          members.delete(member);
+          return "REMOVED";
+        },
+      );
+      try {
+        await service.computeMaxSkew();
+        expect(members.has("b")).toBe(true);
+        await expect(service.computeMaxSkew()).resolves.toBe(15);
+      } finally {
+        dateSpy.mockRestore();
+      }
     });
 
     it("ignores non-finite clock offsets when computing skew", async () => {

@@ -16,6 +16,7 @@ import type { RedisService } from "../redis/redis.service";
 import type { MatchService } from "./match.service";
 import type { MatchOwnershipService } from "./match-ownership.service";
 import type { ClusterService } from "../cluster/cluster.service";
+import { emitPlayerCommandError } from "./match-card-command.helpers";
 import {
   MatchStateMachine,
   resolveCardEffect,
@@ -85,9 +86,17 @@ function applyPlayAuthoritative(
   ).applyCardPlayAuthoritative(env, owner, server);
 }
 
+type SubmitEnvOverrides = Omit<
+  Partial<CommandEnvelope<SubmitAnswerBody>>,
+  "body"
+> & {
+  body?: Partial<SubmitAnswerBody>;
+};
+
 function submitEnv(
-  overrides: Partial<CommandEnvelope<SubmitAnswerBody>> = {},
+  overrides: SubmitEnvOverrides = {},
 ): CommandEnvelope<SubmitAnswerBody> {
+  const { body: bodyOverrides, ...rest } = overrides;
   return {
     eventId: "evt-1",
     schemaVersion: 1,
@@ -100,10 +109,20 @@ function submitEnv(
       answer: "A",
       submissionId: "sub-1",
       clientTs: 900,
+      commandId: "cmd-1",
+      ...bodyOverrides,
     },
-    ...overrides,
+    ...rest,
   };
 }
+
+describe("submitEnv helper", () => {
+  it("accepts a partial body override and preserves defaults", () => {
+    const env = submitEnv({ body: { answer: "Z" } });
+    expect(env.body.commandId).toBe("cmd-1");
+    expect(env.body.answer).toBe("Z");
+  });
+});
 
 describe("MatchCommandService (B4a)", () => {
   let redis: RedisMock;
@@ -832,11 +851,19 @@ describe("MatchCommandService (B4a)", () => {
         checkEarlyTermination: vi.fn().mockResolvedValue(undefined),
       };
       service.setSideEffects(sideEffects);
+      const recorder = makeMockServer();
 
       await expect(
-        service.applySubmitAnswer(submitEnv(), server),
+        service.applySubmitAnswer(submitEnv(), recorder.server),
       ).resolves.toBe("DUPLICATE_SUBMISSION");
       expect(sideEffects.publishAnswerResult).not.toHaveBeenCalled();
+      const errorEmits = recorder.callsByEvent(ServerEvent.ERROR);
+      expect(errorEmits.length).toBe(1);
+      expect(errorEmits[0]?.[1]).toMatchObject({
+        code: ErrorCode.INVALID_PAYLOAD,
+        failedEvent: ClientEvent.SUBMIT_ANSWER,
+        submissionId: "sub-1",
+      });
     });
 
     it("RETRY for player_disconnect when no disconnect side effect is wired (B5 not deployed yet)", async () => {
@@ -1472,6 +1499,19 @@ describe("MatchCommandService (B4a)", () => {
       expect(cardPickedEmits.length).toBe(0);
     });
 
+    it("recoverDuplicatePickEvent returns RETRY when the state machine cannot be loaded", async () => {
+      ownership.currentFence.mockReturnValue({
+        fence: 5,
+        leaseValue: "node-a:5",
+      });
+      matchService.getStateMachine.mockResolvedValue(undefined);
+      redis.sismember.mockResolvedValue(true);
+
+      await expect(
+        applyPickAuthoritative(service, pickEnv(), OWNER, server),
+      ).resolves.toBe("RETRY");
+    });
+
     it("recoverDuplicatePickEvent emits COMMAND_ID_CONFLICT on eventId mismatch", async () => {
       const { sm } = makePickOfferSm({
         offeredCardIds: ["CB-1", "CB-2", "CB-3"],
@@ -1670,7 +1710,8 @@ describe("MatchCommandService (B4a)", () => {
       );
 
       // A raw Error (NOT a RoomError) — raw message MUST NOT leak to the client.
-      service["emitPlayerError"](
+      emitPlayerCommandError(
+        (service as unknown as { logger: Logger }).logger,
         recorder.server,
         "p1",
         ClientEvent.CARD_PLAY,
@@ -1696,7 +1737,8 @@ describe("MatchCommandService (B4a)", () => {
     it("emitPlayerError forwards RoomError.code with the mapped key", () => {
       const recorder = makeMockServer();
 
-      service["emitPlayerError"](
+      emitPlayerCommandError(
+        (service as unknown as { logger: Logger }).logger,
         recorder.server,
         "p1",
         ClientEvent.CARD_PLAY,
@@ -2108,6 +2150,31 @@ describe("MatchCommandService (B4a)", () => {
       ).toBe("OPTION_LOCK");
     });
 
+    it("DUPLICATE_SUBMISSION + PLAYER_DISCONNECTED when explicit target is ineligible (DISCONNECTED)", async () => {
+      const { sm, offerSeqNo } = pickOfferSmForPlay({ pickedCardId: "CB-1" });
+      sm.disconnectPlayer("p2");
+      matchService.getStateMachine.mockResolvedValue(sm);
+      const recorder = makeMockServer();
+
+      const outcome = await applyPlayAuthoritative(
+        service,
+        playEnv("evt-cb3", "cmd-cb3", offerSeqNo, "p1", "CB-1", "p2"),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome).toBe("DUPLICATE_SUBMISSION");
+      const errorEmits = recorder.callsByEvent(ServerEvent.ERROR);
+      expect(errorEmits.length).toBe(1);
+      expect(errorEmits[0]?.[1]).toMatchObject({
+        code: ErrorCode.PLAYER_DISCONNECTED,
+        failedEvent: ClientEvent.CARD_PLAY,
+        commandId: "cmd-cb3",
+      });
+      expect(recorder.callsByEvent(ServerEvent.CARD_RESOLVED).length).toBe(0);
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+    });
+
     it("APPLIED — AOE card (CB-8, DELAY_RENDER, targetCount=3) expands to multiple targets via deterministic substream", async () => {
       const { sm, offerSeqNo } = pickOfferSmForPlay({
         pickedCardId: "CB-8",
@@ -2418,6 +2485,105 @@ describe("MatchCommandService (B4a)", () => {
       expect(errEmits.length).toBe(1);
       expect(recorder.callsByEvent(ServerEvent.CARD_RESOLVED)).toHaveLength(0);
       expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+    });
+
+    it("Recover via recoverDuplicatePlayEvent on playCard throw + card already played", async () => {
+      // The playCard catch mirrors the validate catch's two-branch
+      // shape: a `getPlayedCards(userId).has(cardId)` recovery branch
+      // (handled by handleDuplicatePlayRecovery via recoverDuplicatePlayEvent)
+      // and an emit-and-return DUPLICATE_SUBMISSION branch. The
+      // recovery branch here covers the playCard-catch playedCards.has
+      // guard in applyCardPlayCommand (the `c8 ignore next 3`
+      // above hides the branch header).
+      //
+      // To reach it, validation must pass — i.e. validateCardCommand
+      // must observe an empty playedCards set — AND
+      // `stateMachine.getPlayedCards(userId).has(validated.cardId)`
+      // must be true inside the playCard catch's branch check. We
+      // achieve this by:
+      //   1. Stamping a CARD_RESOLVED via the private logEvent so
+      //      handleDuplicatePlayRecovery has canonical metadata to
+      //      re-broadcast — but without going through playCard
+      //      (which would strip CB-1 from `pickedCards` and break
+      //      validatePickedCard).
+      //   2. Stubbing getPlayedCards using observable state rather
+      //      than call-order: the stub returns an empty set while
+      //      validation is running (so validateCardCommand passes)
+      //      and the played-card set once the playCard failure catch
+      //      is reached (so the catch's branch check hits the
+      //      recovery path). The transition is driven by the playCard
+      //      spy itself flipping a flag, which keeps the test
+      //      resilient to internal call-count changes.
+      //   3. Spying playCard to throw so the catch fires.
+      const { sm, offerSeqNo } = pickOfferSmForPlay({ pickedCardId: "CB-1" });
+      (
+        sm as unknown as { logEvent: (t: string, p: unknown) => number }
+      ).logEvent("CARD_RESOLVED", {
+        seqNo: sm.getHeadSeqNo() + 1,
+        matchId: "m1",
+        roundNo: sm.getCurrentRound()?.roundNo ?? 0,
+        cardId: "CB-1",
+        offerSeqNo,
+        playedByPlayerId: "p1",
+        targetPlayerIds: ["p2"],
+        effect: { kind: "TIMER_MODIFY", deltaMs: -1000, targetCount: 1 },
+        resolution: "MUTATION",
+        serverTimestamp: 1000,
+        expiresAtServer: null,
+        remainingMs: null,
+        eventId: "evt-recover-pc",
+        commandId: "cmd-recover-pc",
+      });
+      const playedWithCard = new Set<CardId>(["CB-1"]);
+      let phase: "validation" | "playCardFailed" = "validation";
+      vi.spyOn(sm, "getPlayedCards").mockImplementation(() => {
+        // While validation is running, the stub reports CB-1 as NOT
+        // yet played (so validateCardCommand passes). Once playCard
+        // has been invoked (and thrown), the stub reports CB-1 as
+        // already played, matching the post-mutation state the
+        // playCard catch's branch check expects.
+        if (phase === "validation") return new Set<CardId>();
+        return playedWithCard;
+      });
+      vi.spyOn(
+        sm as unknown as { playCard: (...args: unknown[]) => unknown },
+        "playCard",
+      ).mockImplementation(() => {
+        phase = "playCardFailed";
+        throw new Error("playCard synthetic");
+      });
+      matchService.getStateMachine.mockResolvedValue(sm);
+      const recorder = makeMockServer();
+
+      const outcome = await applyPlayAuthoritative(
+        service,
+        playEnv("evt-recover-pc", "cmd-recover-pc", offerSeqNo),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome).toBe("DUPLICATE_EVENT");
+      expect(recorder.callsByEvent(ServerEvent.ERROR).length).toBe(0);
+      // Strengthen: the replayed CARD_RESOLVED must carry the
+      // canonical fields from emitCardResolved's base frame so a
+      // regression that drops the payload or omits cardId /
+      // playedByPlayerId / targetPlayerIds fails loudly.
+      const resolvedEmits = recorder.callsByEvent(ServerEvent.CARD_RESOLVED);
+      expect(resolvedEmits.length).toBeGreaterThan(0);
+      const resolvedPayload = resolvedEmits[0]?.[1] as {
+        matchId: string;
+        cardId: string;
+        offerSeqNo: number;
+        playedByPlayerId: string;
+        targetPlayerIds: string[];
+        effect: { kind: string };
+      };
+      expect(resolvedPayload.matchId).toBe("m1");
+      expect(resolvedPayload.cardId).toBe("CB-1");
+      expect(resolvedPayload.offerSeqNo).toBe(offerSeqNo);
+      expect(resolvedPayload.playedByPlayerId).toBe("p1");
+      expect(resolvedPayload.targetPlayerIds).toEqual(["p2"]);
+      expect(resolvedPayload.effect.kind).toBe("TIMER_MODIFY");
     });
 
     it("Recover via recoverDuplicatePlayEvent on validate rejection + card already played", async () => {

@@ -524,6 +524,7 @@ describe("match-state.codec v2 + back-compat (B1c)", () => {
         [
           "p1",
           {
+            playerId: "p1",
             answer: "A",
             isCorrect: true,
             responseTimeMs: 100,
@@ -537,6 +538,95 @@ describe("match-state.codec v2 + back-compat (B1c)", () => {
         decoded.currentRound as { answers: Map<string, AnswerState> }
       ).answers.get("p1");
       expect(answer?.submissionId).toBe("legacy-p1-1234");
+    });
+
+    it("preserves an existing empty submissionId", () => {
+      const parsed = JSON.parse(v1Blob());
+      parsed.currentRound.answers = [
+        [
+          "p1",
+          {
+            playerId: "p1",
+            answer: "A",
+            submissionId: "",
+            isCorrect: true,
+            responseTimeMs: 100,
+            submittedAt: 1234,
+          },
+        ],
+      ];
+
+      const decoded = deserializeMatch(JSON.stringify(parsed));
+      const answer = (
+        decoded.currentRound as { answers: Map<string, AnswerState> }
+      ).answers.get("p1");
+      expect(answer?.submissionId).toBe("");
+    });
+
+    it("rejects an answer whose map key does not match answer.playerId", () => {
+      const parsed = JSON.parse(v1Blob());
+      parsed.currentRound.answers = [
+        [
+          "p1",
+          {
+            playerId: "p2",
+            answer: "A",
+            isCorrect: true,
+            responseTimeMs: 100,
+            submittedAt: 1234,
+          },
+        ],
+      ];
+
+      expect(() => deserializeMatch(JSON.stringify(parsed))).toThrow();
+    });
+
+    it("rejects malformed answer entries with the normalized codec error", () => {
+      const parsed = JSON.parse(v1Blob());
+      parsed.currentRound.answers = [["p1", null]];
+      const payload = JSON.stringify(parsed);
+
+      expect(() => deserializeMatch(payload)).toThrow(
+        `Invalid MatchStateMachine data (payload omitted; length=${payload.length})`,
+      );
+    });
+
+    it("reconstructs v2 ROUND_ACTIVE timing from phaseEndsAt", () => {
+      const state = buildState();
+      state.status = "ROUND_ACTIVE" as MatchState["status"];
+      state.phaseEndsAt = 16_000;
+      const round = buildRound({
+        startedAt: 1000,
+        endsAt: 16_000,
+        status: "ACTIVE",
+      });
+      const parsed = JSON.parse(serializeMatch(state, round, []));
+      delete parsed.currentRound.startedAt;
+      delete parsed.currentRound.endsAt;
+
+      const decoded = deserializeMatch(JSON.stringify(parsed));
+      expect(decoded.currentRound?.endsAt).toBe(16_000);
+      expect(decoded.currentRound?.startedAt).toBe(
+        16_000 - GAME_CONFIG.ROUND_DURATION_MS,
+      );
+    });
+
+    it("prefers v2 ROUND_ACTIVE phaseEndsAt over startedAt + default duration when currentRound.endsAt is missing", () => {
+      const state = buildState();
+      state.status = "ROUND_ACTIVE" as MatchState["status"];
+      state.phaseEndsAt = 16_000;
+      const round = buildRound({
+        startedAt: 2000,
+        endsAt: 16_000,
+        status: "ACTIVE",
+      });
+      const parsed = JSON.parse(serializeMatch(state, round, []));
+      delete parsed.currentRound.endsAt;
+      const payload = JSON.stringify(parsed);
+
+      const decoded = deserializeMatch(payload);
+      expect(decoded.currentRound?.endsAt).toBe(16_000);
+      expect(decoded.currentRound?.startedAt).toBe(2000);
     });
 
     it("borrows reconstructed phaseEndsAt as the round endsAt on a v1 ROUND_ACTIVE blob missing both round anchors", () => {

@@ -1,5 +1,9 @@
 import { Logger } from "@nestjs/common";
 import { MatchRoundRunner } from "./match-round-runner";
+import {
+  getRecoveryEliminatedIdsFromEventLog,
+  type RecoveryRound,
+} from "./match-round-recovery";
 import { MatchService } from "./match.service";
 import { QuestionService } from "../question/question.service";
 import { RoomService } from "../room/room.service";
@@ -22,6 +26,11 @@ describe("MatchRoundRunner", () => {
   let roomService: RoomService;
   let mockServer: Server;
   let stateMachine: MatchStateMachine;
+  const recoveryLogger = {
+    log: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  } as unknown as Logger;
 
   afterEach(() => {
     // Guard against tests that call vi.useFakeTimers() but bail out
@@ -30,6 +39,7 @@ describe("MatchRoundRunner", () => {
     // hook, every later suite in the file would inherit a fake
     // Date/setTimeout and either hang on flush or skew ordering.
     vi.useRealTimers();
+    vi.clearAllMocks();
   });
 
   beforeEach(() => {
@@ -59,6 +69,7 @@ describe("MatchRoundRunner", () => {
     matchService = {
       getStateMachine: vi.fn().mockResolvedValue(stateMachine),
       persistStateMachine: vi.fn().mockResolvedValue("APPLIED"),
+      evictStateMachine: vi.fn(),
       finishMatch: vi.fn().mockResolvedValue({}),
       // H2-style endRound fix: round + answers are persisted
       // atomically in a single $transaction call.
@@ -829,6 +840,19 @@ describe("MatchRoundRunner", () => {
           reason: "LEFT",
         }),
       );
+    });
+
+    it("skips PLAYER_LEFT when the disconnect mutation is not canonically persisted", async () => {
+      vi.mocked(matchService.persistStateMachine).mockResolvedValueOnce(
+        "RETRY",
+      );
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+      await runner.handleMatchPlayerLeft("match-1", "room-1", "p1", mockServer);
+
+      expect(matchService.evictStateMachine).toHaveBeenCalledWith("match-1");
+      expect(emitSpy).not.toHaveBeenCalled();
     });
   });
 
@@ -2711,24 +2735,28 @@ describe("MatchRoundRunner", () => {
       );
     });
 
+    const recoveryRoundFixture: RecoveryRound = {
+      matchId: "match-1",
+      roundNo: 1,
+      question: { id: "q1", content: "?", options: ["A", "B", "C", "D"] },
+      startedAt: 0,
+      endsAt: 0,
+      status: "ACTIVE",
+      answers: new Map(),
+    };
+
     it("getRecoveryEliminatedIdsFromEventLog returns null when eliminatedIds is not an array", () => {
       const fakeEvent = {
         type: "ROUND_EVALUATED",
         payload: { eliminatedIds: "not-an-array" },
       };
-      const result = (
-        runner as unknown as {
-          getRecoveryEliminatedIdsFromEventLog: (
-            events: unknown[],
-            recoveryRound: { roundNo: number },
-            startingPlayers: string[] | typeof UNAVAILABLE,
-            correctAnswer: string,
-            matchId: string,
-          ) => string[] | null;
-        }
-      ).getRecoveryEliminatedIdsFromEventLog(
+      const result = getRecoveryEliminatedIdsFromEventLog(
+        {
+          logger: recoveryLogger,
+          questionService,
+        },
         [fakeEvent],
-        { roundNo: 1 },
+        recoveryRoundFixture,
         ["p1", "p2"],
         "A",
         "match-1",
@@ -2741,19 +2769,13 @@ describe("MatchRoundRunner", () => {
         type: "ROUND_EVALUATED",
         payload: { eliminatedIds: ["p1"] },
       };
-      const result = (
-        runner as unknown as {
-          getRecoveryEliminatedIdsFromEventLog: (
-            events: unknown[],
-            recoveryRound: { roundNo: number },
-            startingPlayers: string[] | typeof UNAVAILABLE,
-            correctAnswer: string,
-            matchId: string,
-          ) => string[] | null;
-        }
-      ).getRecoveryEliminatedIdsFromEventLog(
+      const result = getRecoveryEliminatedIdsFromEventLog(
+        {
+          logger: recoveryLogger,
+          questionService,
+        },
         [fakeEvent],
-        { roundNo: 1 },
+        recoveryRoundFixture,
         UNAVAILABLE,
         "A",
         "match-1",

@@ -1,18 +1,12 @@
 import { Logger } from "@nestjs/common";
 import { Server } from "socket.io";
-import {
-  eliminationsForRound,
-  MatchStateMachine,
-  UNAVAILABLE,
-  type RoundStartingPlayers,
-} from "@arena/game-core";
+import { MatchStateMachine } from "@arena/game-core";
 import {
   GAME_CONFIG,
   MatchStatus,
   RoomStatus,
   RoomError,
   ErrorCode,
-  type RoundState,
 } from "@arena/shared";
 import { MatchService, type PersistOutcome } from "./match.service";
 import { MatchOwnershipService } from "./match-ownership.service";
@@ -21,33 +15,16 @@ import { RoomService } from "./../room/room.service";
 import { MatchTimerRegistry } from "./match-timer.registry";
 import { emitMatchStarted, emitRoomStatusUpdated } from "./game-loop.helpers";
 import {
-  emitMatchDisconnected,
   emitMatchFinished,
-  emitMatchPlayerLeft,
   emitPlayerEliminated,
   emitRoundEnded,
   emitRoundStarted,
 } from "./game-loop.events";
-
-type RecoveryRound = Pick<
-  RoundState,
-  | "matchId"
-  | "roundNo"
-  | "question"
-  | "startedAt"
-  | "endsAt"
-  | "status"
-  | "answers"
-> & {
-  correctAnswer?: string;
-  startingPlayers?: RoundStartingPlayers;
-};
-
-type RoundEndContext = {
-  survivingIds: string[];
-  eliminatedIds: string[];
-  correctAnswer: string;
-};
+import { recoverRoundEnd, type RoundEndContext } from "./match-round-recovery";
+import {
+  disconnectMatchPlayer,
+  leaveMatchPlayer,
+} from "./match-player-lifecycle";
 
 // ============================================================
 // MatchRoundRunner — the timer-driven match loop
@@ -765,85 +742,13 @@ export class MatchRoundRunner {
     state: ReturnType<MatchStateMachine["getState"]>,
     round: NonNullable<ReturnType<MatchStateMachine["getCurrentRound"]>>,
   ): Promise<RoundEndContext> {
-    this.logger.log(
-      `endRound entering recovery path for match ${matchId} round ${state.currentRoundNo}`,
-    );
-
-    const recoveryRound = round as typeof round & RecoveryRound;
-    const survivingIds = [...state.survivingPlayerIds];
-    let correctAnswer = recoveryRound.correctAnswer || "";
-
-    if (!correctAnswer) {
-      const questionObj = await this.questionService.findOne(round.question.id);
-      if (questionObj) {
-        correctAnswer = questionObj.correctAnswer;
-      } else {
-        this.logger.warn(
-          `Failed to rehydrate correctAnswer in recovery: question ${round.question.id} not found in DB for match ${matchId} round ${round.roundNo}`,
-        );
-      }
-    }
-
-    const startingPlayers = this.getRecoveryStartingPlayers(
-      recoveryRound,
+    return recoverRoundEnd(
+      { logger: this.logger, questionService: this.questionService },
       matchId,
+      stateMachine,
+      state,
+      round,
     );
-    const roundEvaluatedEvents = stateMachine
-      .getEventLog()
-      .filter(
-        (e) =>
-          e.type === "ROUND_EVALUATED" &&
-          e.payload &&
-          (e.payload as { roundNo?: number }).roundNo === round.roundNo,
-      );
-    const recoveredEliminatedIds = this.getRecoveryEliminatedIdsFromEventLog(
-      roundEvaluatedEvents,
-      recoveryRound,
-      startingPlayers,
-      correctAnswer,
-      matchId,
-    );
-
-    if (recoveredEliminatedIds) {
-      return {
-        survivingIds,
-        eliminatedIds: recoveredEliminatedIds,
-        correctAnswer,
-      };
-    }
-
-    if (startingPlayers === UNAVAILABLE) {
-      // The round-start roster is not recoverable; do not infer eliminations
-      // from cumulative state. Skip eliminating players this round and warn so
-      // the operator can investigate the missing snapshot.
-      this.logger.warn(
-        `Recovery for match ${matchId} round ${round.roundNo} skipped eliminatedIds: startingPlayers is UNAVAILABLE`,
-      );
-      return { survivingIds, eliminatedIds: [], correctAnswer };
-    }
-
-    if (!correctAnswer) {
-      // We can still derive the eliminated set from the persisted snapshot,
-      // but we must not call the helper without an answer key.
-      const survivingSet = new Set(survivingIds);
-      return {
-        survivingIds,
-        eliminatedIds: startingPlayers.filter(
-          (playerId) => !survivingSet.has(playerId),
-        ),
-        correctAnswer,
-      };
-    }
-
-    return {
-      survivingIds,
-      eliminatedIds: eliminationsForRound({
-        ...recoveryRound,
-        correctAnswer,
-        startingPlayers,
-      }),
-      correctAnswer,
-    };
   }
 
   private async scheduleMatchEndCheck(
@@ -856,102 +761,6 @@ export class MatchRoundRunner {
       this.matchEndCheckCallback(matchId, roomId, server),
       GAME_CONFIG.RESULT_DISPLAY_MS,
     );
-  }
-
-  private getRecoveryStartingPlayers(
-    round: RecoveryRound,
-    matchId: string,
-  ): string[] | typeof UNAVAILABLE {
-    if (round.startingPlayers === UNAVAILABLE) {
-      this.logger.warn(
-        `Recovery round snapshot unavailable for match ${matchId} round ${round.roundNo}: startingPlayers is UNAVAILABLE`,
-      );
-      return UNAVAILABLE;
-    }
-
-    if (Array.isArray(round.startingPlayers)) {
-      return round.startingPlayers;
-    }
-
-    this.logger.warn(
-      `Recovery round snapshot unavailable for match ${matchId} round ${round.roundNo}: startingPlayers missing`,
-    );
-    return UNAVAILABLE;
-  }
-
-  private getRecoveryEliminatedIdsFromEventLog(
-    roundEvaluatedEvents: ReadonlyArray<{
-      payload?: unknown;
-    }>,
-    recoveryRound: RecoveryRound,
-    startingPlayers: string[] | typeof UNAVAILABLE,
-    correctAnswer: string,
-    matchId: string,
-  ): string[] | null {
-    if (roundEvaluatedEvents.length === 0) {
-      return null;
-    }
-
-    if (roundEvaluatedEvents.length > 1) {
-      this.logger.warn(
-        `Recovery for match ${matchId} round ${recoveryRound.roundNo} ignored ${roundEvaluatedEvents.length} ROUND_EVALUATED events`,
-      );
-      return null;
-    }
-
-    const payload = roundEvaluatedEvents[0]?.payload as {
-      eliminatedIds?: unknown;
-    };
-    if (!Array.isArray(payload?.eliminatedIds)) {
-      return null;
-    }
-
-    if (
-      !payload.eliminatedIds.every((playerId) => typeof playerId === "string")
-    ) {
-      this.logger.warn(
-        `Recovery for match ${matchId} round ${recoveryRound.roundNo} ignored ROUND_EVALUATED event with non-string eliminatedIds`,
-      );
-      return null;
-    }
-
-    const eliminatedIds = payload.eliminatedIds;
-    if (new Set(eliminatedIds).size !== eliminatedIds.length) {
-      this.logger.warn(
-        `Recovery for match ${matchId} round ${recoveryRound.roundNo} ignored ROUND_EVALUATED event with duplicate eliminatedIds`,
-      );
-      return null;
-    }
-
-    if (startingPlayers === UNAVAILABLE || !correctAnswer) {
-      return null;
-    }
-
-    const startingPlayerSet = new Set(startingPlayers);
-    if (!eliminatedIds.every((playerId) => startingPlayerSet.has(playerId))) {
-      this.logger.warn(
-        `Recovery for match ${matchId} round ${recoveryRound.roundNo} ignored ROUND_EVALUATED event with out-of-round eliminatedIds`,
-      );
-      return null;
-    }
-
-    const expectedEliminatedIds = eliminationsForRound({
-      ...recoveryRound,
-      correctAnswer,
-      startingPlayers,
-    });
-    const expectedSet = new Set(expectedEliminatedIds);
-    const matchesExpected =
-      expectedEliminatedIds.length === eliminatedIds.length &&
-      eliminatedIds.every((playerId) => expectedSet.has(playerId));
-    if (!matchesExpected) {
-      this.logger.warn(
-        `Recovery for match ${matchId} round ${recoveryRound.roundNo} ignored ROUND_EVALUATED event whose eliminatedIds did not match recomputed round results`,
-      );
-      return null;
-    }
-
-    return [...eliminatedIds];
   }
 
   // ============================================================
@@ -1150,45 +959,12 @@ export class MatchRoundRunner {
     userId: string,
     server: Server,
   ): Promise<PersistOutcome | "NOOP"> {
-    // 1. Get state machine
-    const stateMachine = await this.matchService.getStateMachine(matchId);
-    if (!stateMachine) return "NOOP";
-
-    // 2. Get current state
-    const state = stateMachine.getState();
-
-    // 3. Check if player exists
-    const player = state.players.get(userId);
-    if (!player) {
-      this.logger.warn(`Player ${userId} not found in match ${matchId}`);
-      return "NOOP";
-    }
-
-    // 4. Mark player as DISCONNECTED in state machine
-    stateMachine.disconnectPlayer(userId);
-
-    // 5. Persist state machine. B2c: only broadcast the disconnect once the
-    // canonical write lands — a non-APPLIED outcome (RETRY/BLIND = this node is
-    // not the confirmed owner) means the mutation is not canonical, so skip the
-    // broadcast rather than announce a disconnect the owner never recorded.
-    // The outcome is propagated to the caller so the command-stream wrapper can
-    // decide XACK vs RETRY; the owner-local path already applied (or tried to)
-    // in-memory and reports the outcome for logging.
-    const outcome = await this.matchService.persistStateMachine(matchId);
-    if (outcome !== "APPLIED") {
-      this.logger.warn(
-        `handlePlayerDisconnect: persist ${outcome} for ${matchId} — no confirmed canonical write, skipping disconnect broadcast`,
-      );
-      return outcome;
-    }
-
-    // 6. Broadcast PLAYER_LEFT with reason field
-    const roomId = state.roomId;
-    emitMatchDisconnected(server, roomId, userId);
-
-    // 7. Log the disconnect
-    this.logger.log(`Player ${userId} disconnected from match ${matchId}`);
-    return "APPLIED";
+    return disconnectMatchPlayer(
+      { logger: this.logger, matchService: this.matchService },
+      matchId,
+      userId,
+      server,
+    );
   }
 
   // ============================================================
@@ -1210,35 +986,13 @@ export class MatchRoundRunner {
     server: Server,
     reason: "LEFT" | "STALE" = "LEFT",
   ): Promise<void> {
-    // 1. Get state machine. The match might already be FINISHED and the
-    //    in-memory state machine gone; we still broadcast so other
-    //    clients update their spectator list.
-    const stateMachine = await this.matchService.getStateMachine(matchId);
-
-    if (stateMachine) {
-      // 2. Verify if the player is in the match roster.
-      const state = stateMachine.getState();
-      const player = state.players.get(userId);
-      if (player) {
-        // Mark DISCONNECTED (same path as the socket-disconnect handler)
-        // so behaviour stays consistent: reconnect still possible,
-        // evaluateRound skips them, submitAnswer gate rejects.
-        stateMachine.disconnectPlayer(userId);
-        await this.matchService.persistStateMachine(matchId);
-      }
-    } else {
-      this.logger.warn(
-        `handleMatchPlayerLeft: no state machine for match ${matchId} (likely already finished); skipping state update`,
-      );
-    }
-
-    // 3. Broadcast PLAYER_LEFT (reason "LEFT"/"STALE") on the room channel so
-    //    lobby + in-match views stay in sync. FINISHED matches receive
-    //    it too so spectators update their "players still here" badge.
-    emitMatchPlayerLeft(server, roomId, userId, reason);
-
-    this.logger.log(
-      `Player ${userId} left match ${matchId} (room ${roomId}) with reason ${reason}`,
+    return leaveMatchPlayer(
+      { logger: this.logger, matchService: this.matchService },
+      matchId,
+      roomId,
+      userId,
+      server,
+      reason,
     );
   }
 

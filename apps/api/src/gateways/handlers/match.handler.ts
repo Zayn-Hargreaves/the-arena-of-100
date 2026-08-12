@@ -137,6 +137,7 @@ export class MatchHandler extends BaseHandler {
               answer: payload.answer,
               submissionId: payload.submissionId,
               clientTs: Date.now(),
+              commandId: payload.submissionId,
             },
           }),
         );
