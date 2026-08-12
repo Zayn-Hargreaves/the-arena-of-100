@@ -98,7 +98,7 @@ export async function fetchResult(
     // (if the body is still streaming). Either way we treat it as
     // a timeout outcome.
     if (request.signal.aborted) {
-      return { response, data: null, wasTimeout: request.wasTimeout() };
+      return { response: null, data: null, wasTimeout: request.wasTimeout() };
     }
     const data = (await response.json()) as MatchResultApiResponse;
     return { response, data, wasTimeout: false };
