@@ -1,5 +1,13 @@
 import { z } from "zod";
 import { ApiExtraModels, ApiProperty, getSchemaPath } from "@nestjs/swagger";
+import {
+  classWinrateSchema,
+  classStatsSchema,
+  classStatsResponseSchema,
+  type ClassWinrate,
+  type ClassStats,
+  type ClassStatsResponse,
+} from "@arena/shared";
 
 export const userSummarySchema = z.object({
   id: z.string(),
@@ -103,40 +111,21 @@ export class StatsResponseDto implements StatsResponse {
 }
 
 // ============================================================
-// Phase 3 — Profile stats additions (class winrate, streak, sabotage)
+// Class stats — Profile stats additions (class winrate, streak,
+// cards played).
+//
+// The Zod schema + Zod-inferred TS types (ClassWinrate,
+// ClassStats, ClassStatsResponse) live in `@arena/shared` so the
+// web hook + this DTO consume the same single source of truth.
+// NestJS-specific Swagger DTOs + decorators stay local so the
+// API package remains the only place that knows about Swagger.
 // ============================================================
 
-/** Per-class winrate record. `plays` is 0 → `winRate` is 0 (not NaN). */
-export const classWinrateSchema = z.object({
-  plays: z.number().int().nonnegative(),
-  wins: z.number().int().nonnegative(),
-  winRate: z.number().min(0).max(1),
-});
-
-export type ClassWinrate = z.infer<typeof classWinrateSchema>;
-
-export const phase3StatsSchema = z.object({
-  /** Winrate split by ClassId (CONG / THU). Empty object when the user has no class-assigned matches yet. */
-  classWinrate: z.object({
-    CONG: classWinrateSchema.optional(),
-    THU: classWinrateSchema.optional(),
-  }),
-  /**
-   * Latest streakAfter across the user's daily attempts (0 if none).
-   */
-  currentStreak: z.number().int().nonnegative(),
-  /**
-   * SUM(MatchPlayer.cardsPlayed) across the user's FINISHED matches.
-   * cardsPlayed is the authoritative counter persisted at
-   * finishMatch (derived from CARD_RESOLVED events in the state
-   * machine event log), so this aggregate survives event-log
-   * eviction and stays a stable "aggression" counter across FINISHED
-   * matches regardless of target.
-   */
-  sabotageCount: z.number().int().nonnegative(),
-});
-
-export type Phase3Stats = z.infer<typeof phase3StatsSchema>;
+// Re-export shared schemas + types for downstream API code that
+// imports them from `./dto` (e.g. users.controller.ts validates the
+// response shape with the same Zod schema).
+export { classWinrateSchema, classStatsSchema, classStatsResponseSchema };
+export type { ClassWinrate, ClassStats, ClassStatsResponse };
 
 export class ClassWinrateDto implements ClassWinrate {
   @ApiProperty({
@@ -156,29 +145,30 @@ export class ClassWinrateDto implements ClassWinrate {
 }
 
 @ApiExtraModels(ClassWinrateDto)
-export class Phase3StatsDto implements Phase3Stats {
+export class ClassStatsDto implements ClassStats {
   @ApiProperty({
     description:
-      "Per-class winrate keyed by ClassId (CONG / THU). Both keys are optional; the value is absent when the user has no class-assigned matches yet.",
+      "Per-class winrate keyed by ClassId (ATTACK / DEFENSE). Both keys are optional; the value is absent when the user has no class-assigned matches yet.",
     type: "object",
     additionalProperties: false,
     properties: {
-      CONG: { allOf: [{ $ref: getSchemaPath(ClassWinrateDto) }] },
-      THU: { allOf: [{ $ref: getSchemaPath(ClassWinrateDto) }] },
+      ATTACK: { allOf: [{ $ref: getSchemaPath(ClassWinrateDto) }] },
+      DEFENSE: { allOf: [{ $ref: getSchemaPath(ClassWinrateDto) }] },
     },
     example: {
-      CONG: { plays: 12, wins: 3, winRate: 0.25 },
-      THU: { plays: 9, wins: 2, winRate: 0.22 },
+      ATTACK: { plays: 12, wins: 3, winRate: 0.25 },
+      DEFENSE: { plays: 9, wins: 2, winRate: 0.22 },
     },
   })
   classWinrate!: {
-    CONG?: ClassWinrateDto;
-    THU?: ClassWinrateDto;
+    ATTACK?: ClassWinrateDto;
+    DEFENSE?: ClassWinrateDto;
   };
 
   @ApiProperty({
     example: 7,
-    description: "Latest streakAfter from daily attempts (0 if none)",
+    description:
+      "Latest streakAfter from daily attempts (0 if the most-recent attempt is not UTC today or yesterday)",
   })
   currentStreak!: number;
 
@@ -187,16 +177,10 @@ export class Phase3StatsDto implements Phase3Stats {
     description:
       "Total of MatchPlayer.cardsPlayed across the user's FINISHED matches (authoritative counter persisted at finishMatch)",
   })
-  sabotageCount!: number;
+  cardsPlayed!: number;
 }
 
-export const phase3StatsResponseSchema = z.object({
-  stats: phase3StatsSchema,
-});
-
-export type Phase3StatsResponse = z.infer<typeof phase3StatsResponseSchema>;
-
-export class Phase3StatsResponseDto implements Phase3StatsResponse {
-  @ApiProperty({ type: Phase3StatsDto })
-  stats!: Phase3StatsDto;
+export class ClassStatsResponseDto implements ClassStatsResponse {
+  @ApiProperty({ type: ClassStatsDto })
+  stats!: ClassStatsDto;
 }

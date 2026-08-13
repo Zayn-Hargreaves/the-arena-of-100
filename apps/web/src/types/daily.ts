@@ -1,6 +1,6 @@
 export type DailyDifficulty = "EASY" | "MEDIUM" | "HARD";
 
-import type { CardVariantKey } from "@arena/shared";
+import type { UnlockableCardVariantKey } from "@arena/shared";
 
 export interface DailyQuestionPublic {
   content: string;
@@ -48,9 +48,11 @@ export interface DailySubmitResponse {
   streakAfter: number;
   results: DailyAnswerResult[];
   completedAt: string;
+  // `variantKey` is restricted to the unlockable subset (NEON / GOLD) —
+  // `DEFAULT` is implicit and never returned by an unlock.
   unlockedVariant?: {
     cardId: string;
-    variantKey: CardVariantKey;
+    variantKey: UnlockableCardVariantKey;
   };
 }
 

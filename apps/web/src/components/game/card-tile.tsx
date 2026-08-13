@@ -1,15 +1,19 @@
 "use client";
-
 import React from "react";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
-import { type CardId, type CardTier, getCardDefinition } from "@arena/shared";
+import {
+  type CardId,
+  type CardTier,
+  type CardVariantKey,
+  getCardDefinition,
+} from "@arena/shared";
 
 export interface CardTileProps {
   cardId: CardId;
   variant?: "default" | "selected" | "dimmed" | "spent";
   /** Cosmetic variant unlock (Phase 3). Swaps border/glow; no effect change. */
-  cosmeticVariant?: "DEFAULT" | "NEON" | "GOLD";
+  cosmeticVariant?: CardVariantKey;
   onClick?: () => void;
   disabled?: boolean;
   className?: string;

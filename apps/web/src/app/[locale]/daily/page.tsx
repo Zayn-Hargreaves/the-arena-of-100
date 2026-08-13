@@ -416,10 +416,7 @@ export default function DailyPage() {
             copyLabel={t("share.copy")}
             copiedLabel={t("share.copied")}
             closeLabel={t("cardVariant.close")}
-            unlockHeadlineTemplate={t("cardVariant.headline", {
-              variant: "__VARIANT__",
-              cardName: "__CARD_NAME__",
-            })}
+            unlockHeadlineTemplate={t("cardVariant.headline")}
             shareHeadline={t("cardVariant.shareHeadline")}
             shareScoreLine={(score, correct, total) =>
               t("share.textScore", { score, correct, total })

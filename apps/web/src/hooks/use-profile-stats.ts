@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiGetJson } from "@/lib/api-client";
 import { useSocketStore } from "@/stores/socket-store";
+import type { ClassStatsResponse } from "@arena/shared";
 
 export interface UserSummary {
   id: string;
@@ -49,37 +50,23 @@ export function useProfileStats() {
 }
 
 // ============================================================
-// Phase 3 — class winrate + streak + sabotage count hook
+// Class stats — class winrate + streak + cards played hook
 // ============================================================
+//
+// `ClassWinrate`, `ClassStats`, `ClassStatsResponse` are imported
+// from `@arena/shared` so the API DTO and this hook share one
+// canonical Zod-derived type. Keep `@arena/web` free of
+// `@arena/api` (web depends only on shared per the package boundary).
 
-export interface ClassWinrate {
-  plays: number;
-  wins: number;
-  winRate: number;
-}
-
-export interface Phase3Stats {
-  classWinrate: {
-    CONG?: ClassWinrate;
-    THU?: ClassWinrate;
-  };
-  currentStreak: number;
-  sabotageCount: number;
-}
-
-export interface Phase3StatsResponse {
-  stats: Phase3Stats;
-}
-
-export function usePhase3Stats() {
+export function useClassStats() {
   const username = useSocketStore((state) => state.username);
 
   return useQuery({
-    queryKey: ["profile", "phase3-stats", username],
+    queryKey: ["profile", "class-stats", username],
     queryFn: () => {
       const token = useSocketStore.getState().accessToken;
-      return apiGetJson<Phase3StatsResponse>(
-        "/api/v1/users/me/phase3-stats",
+      return apiGetJson<ClassStatsResponse>(
+        "/api/v1/users/me/class-stats",
         token ?? undefined,
       );
     },

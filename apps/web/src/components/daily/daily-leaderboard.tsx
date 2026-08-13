@@ -97,6 +97,7 @@ export function DailyLeaderboard({ items }: Readonly<DailyLeaderboardProps>) {
               <span
                 className={`shrink-0 font-mono text-[10px] font-semibold px-1.5 py-0.5 rounded ${CARDS_PLAYED_TIERS[tier].className}`}
                 title={t("leaderboard.cardsThisWeek")}
+                aria-label={t(`leaderboard.cardsTier.${tier}`)}
               >
                 {t("leaderboard.cardsLabel", {
                   count: item.cardsPlayedThisWeek,

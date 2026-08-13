@@ -14,7 +14,7 @@
 // bridge APIs from accidentally proliferating ("NEUTRAL", "HYBRID",
 // ...) and forces the per-class card filter to be a closed compile
 // time check.
-export type ClassId = "CONG" | "THU";
+export type ClassId = "ATTACK" | "DEFENSE";
 
 // Display labels and tier description live in the i18n layer (the
 // web client maps `ClassId` -> translation key). This file only
@@ -26,6 +26,6 @@ export type ClassId = "CONG" | "THU";
 // there; keeping a class->cards mapping here avoids a circular
 // dependency between classes.ts and cards.ts.
 export const CLASS_IDS: readonly ClassId[] = Object.freeze([
-  "CONG",
-  "THU",
+  "ATTACK",
+  "DEFENSE",
 ] as const);

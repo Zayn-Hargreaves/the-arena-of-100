@@ -44,8 +44,8 @@ describe("seedFromString — UTF-8 encoding of non-ASCII inputs", () => {
   });
 
   it("is deterministic across calls (same input → same seed)", () => {
-    expect(seedFromString("match-1|CONG-player-1")).toBe(
-      seedFromString("match-1|CONG-player-1"),
+    expect(seedFromString("match-1|ATTACK-player-1")).toBe(
+      seedFromString("match-1|ATTACK-player-1"),
     );
   });
 });

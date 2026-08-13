@@ -5,6 +5,7 @@
 
 import { z } from "zod";
 import { ApiProperty } from "@nestjs/swagger";
+import { UNLOCKABLE_CARD_VARIANT_KEYS } from "@arena/shared";
 import { DAILY_QUESTION_COUNT, dateKeySchema } from "./daily-question.dto";
 
 /**
@@ -81,11 +82,15 @@ export const dailySubmitResponseSchema = z.object({
    * and the server unlocked a new card variant cosmetic for the user.
    * `undefined` when no unlock fired (streak did not cross a threshold, or
    * the user already owns every available variant).
+   *
+   * `variantKey` is restricted to the UNLOCKABLE subset
+   * (`NEON` | `GOLD`) — `DEFAULT` is the starting variant the user
+   * always has implicitly and is never surfaced via an unlock.
    */
   unlockedVariant: z
     .object({
       cardId: z.string(),
-      variantKey: z.enum(["DEFAULT", "NEON", "GOLD"]),
+      variantKey: z.enum(UNLOCKABLE_CARD_VARIANT_KEYS),
     })
     .optional(),
 });
@@ -178,5 +183,10 @@ export class DailySubmitResponseDto implements DailySubmitResponse {
       "(7, 14, …) and the server unlocked a new card variant cosmetic.",
     example: { cardId: "CB-1", variantKey: "NEON" },
   })
-  unlockedVariant?: { cardId: string; variantKey: "DEFAULT" | "NEON" | "GOLD" };
+  // Variant key is restricted to UNLOCKABLE values (`NEON` | `GOLD`).
+  // Cardinality mirrors `dailySubmitResponseSchema.unlockedVariant.variantKey`.
+  unlockedVariant?: {
+    cardId: string;
+    variantKey: (typeof UNLOCKABLE_CARD_VARIANT_KEYS)[number];
+  };
 }

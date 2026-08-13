@@ -900,11 +900,18 @@ describe("MatchService", () => {
 
     it("is idempotent across concurrent finishMatch calls (winner vs loser state machine)", async () => {
       // Two callers race to finish the same matchId with different
-      // winnerIds / state machines. The DB-level `updateMany` filter
-      // (`status != FINISHED`) is the idempotency guard: the first
-      // caller wins (count: 1), the second caller observes count: 0
-      // and short-circuits to the canonical row without re-running
+      // winnerIds / state machines. The two-phase claim guards the
+      // invariant: the FIRST caller's pre-check `match.updateMany`
+      // returns count: 1 (claim succeeded), and the second caller's
+      // pre-check returns count: 0 (already FINISHED), so the second
+      // caller short-circuits to the canonical row without re-running
       // score persistence or Redis cleanup.
+      //
+      // Expected `match.updateMany` call count: 3 — pre-check #1
+      // (claim winner), pre-check #2 (claim loser → count: 0 →
+      // short-circuit), then the in-transaction re-claim inside the
+      // winner's transaction (returns count: 0 — the row is now
+      // FINISHED so the filter rejects it).
       //
       // To force a true race — both calls reaching the transaction
       // step before either resolves — we wrap $transaction in a
@@ -942,9 +949,16 @@ describe("MatchService", () => {
 
       // Both updateMany calls are mocked up front. The order in which
       // they fire depends on whichever promise reaches $transaction
-      // first — the test does not assume which one wins.
+      // first — the test does not assume which one wins. The third
+      // mock covers the in-transaction re-claim inside the winner's
+      // transaction, which returns count: 0 because the pre-claim
+      // already set the row to FINISHED (the `status: { not:
+      // FINISHED }` filter rejects it). Sorted counts must be
+      // {0, 0, 1} — one winner pre-claim, one loser pre-claim, one
+      // safety-net re-claim all returning the expected count.
       vi.mocked(prisma.match.updateMany)
         .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 })
         .mockResolvedValueOnce({ count: 0 });
 
       // Synchronization barrier — $transaction awaits it before
@@ -996,31 +1010,78 @@ describe("MatchService", () => {
       expect(firstResult).toEqual(canonicalMatch);
       expect(secondResult).toEqual(canonicalMatch);
 
-      // Exactly one match.updateMany call returned count: 1 and one
-      // returned count: 0 — regardless of which promise won the race.
-      expect(prisma.match.updateMany).toHaveBeenCalledTimes(2);
+      // Three match.updateMany calls total. The pre-check runs for
+      // BOTH finishMatch callers (each awaits its own `updateMany`
+      // before short-circuiting). The explicit mocks cover those two
+      // pre-checks (count: 1 for the winner, count: 0 for the loser);
+      // the third call is the in-transaction re-claim inside the
+      // winner's transaction, which is mocked to return count: 0 —
+      // the row is already FINISHED by the pre-claim, so the
+      // `status: { not: FINISHED }` filter rejects it and Prisma
+      // reports count: 0 (this is the EXPECTED outcome; no warning
+      // is emitted by `finishMatch`). The exact order depends on
+      // which promise resolved first; the SORTED counts are always
+      // {0, 0, 1}.
+      expect(prisma.match.updateMany).toHaveBeenCalledTimes(3);
       const updateResults = vi
         .mocked(prisma.match.updateMany)
-        .mock.results.slice(0, 2)
+        .mock.results.slice(0, 3)
         .map((r) => r.value as Promise<{ count: number }>);
       const counts = await Promise.all(updateResults).then((rows) =>
         rows.map((r) => r.count).sort(),
       );
-      expect(counts).toEqual([0, 1]);
+      expect(counts).toEqual([0, 0, 1]);
 
-      // Score persistence runs in BOTH calls — the
-      // $transaction([...scoreUpdateOps, match.updateMany, ...])
-      // array is built and submitted before the count check, so the
-      // loser's score writes also execute. The idempotency guard
-      // (`status != FINISHED`) lives ONLY on the match.updateMany
-      // call — scores intentionally aren't filtered, because at the
-      // time the transaction is submitted we don't yet know which
-      // caller is the loser. Per-player matchPlayer.updateMany is
-      // an upsert-style idempotent write keyed on (matchId, userId)
-      // so a second write with the same values is a no-op at the row
-      // level. Both calls' scoreUpdateOps therefore run — twice for
-      // each of the 2 players.
-      expect(matchPlayerUpdateManyAfter - matchPlayerUpdateManyBefore).toBe(4);
+      // The in-transaction re-claim returning count: 0 is the
+      // expected successful outcome — it must NOT block the
+      // winner's path through to Redis cleanup. Verify the
+      // winner-side Redis ops ran (see lines further down for the
+      // full Redis-cleanup assertion block).
+
+      // Phase 3 — data-field assertions for the two
+      // `matchPlayer.updateMany` calls. The two-phase claim ensures
+      // ONLY the successful claimant runs `buildScoreUpdateOps` and
+      // submits the score writes — the loser's pre-check returns
+      // count: 0 and short-circuits before any score work is done.
+      // Both finishMatch calls share the in-memory state machine
+      // (the test only calls `createMatch` once, so the event log is
+      // empty here). `cardsPlayed`/`classId` fall back to `0` / `null`
+      // for each player from the empty event log.
+      const playerUpdateCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
+        .calls;
+      expect(playerUpdateCalls.length).toBe(2);
+
+      const seenData = playerUpdateCalls.map(
+        (call) => call[0]?.data as Record<string, unknown>,
+      );
+      // Every data payload has the expected keys + types.
+      for (const data of seenData) {
+        expect(data).toMatchObject({
+          score: expect.any(Number) as unknown,
+          cardsPlayed: 0,
+          classId: null,
+        });
+      }
+      // Each (matchId, userId) pair was written exactly once — only
+      // the winner ran scoreUpdateOps, so no per-player duplicate
+      // writes occur.
+      const wherePairs = new Set(
+        playerUpdateCalls
+          .map(
+            (call) =>
+              (call[0]?.where as { matchId: string; userId: string }) ?? null,
+          )
+          .filter((p): p is { matchId: string; userId: string } => p !== null)
+          .map((p) => `${p.matchId}::${p.userId}`),
+      );
+      expect(wherePairs.has("m_concurrent::u1")).toBe(true);
+      expect(wherePairs.has("m_concurrent::u2")).toBe(true);
+
+      // Score persistence runs ONLY in the winner's path — the two-
+      // phase claim short-circuits the loser before any score work.
+      // The winner's `buildScoreUpdateOps` produces one
+      // matchPlayer.updateMany per player (2 here).
+      expect(matchPlayerUpdateManyAfter - matchPlayerUpdateManyBefore).toBe(2);
 
       // Redis cleanup ran only on the winner's path — the winner reaches
       // the post-transaction block which deletes stateKey + revisionKey
@@ -1030,17 +1091,18 @@ describe("MatchService", () => {
       expect(redisDelAfter - redisDelBefore).toBe(2);
       expect(redis.del).toHaveBeenCalledWith("match:state:m_concurrent");
 
-      // The loser's idempotent branch skips in-memory state-machine
-      // eviction, so the entry remains present (the loser returned
-      // the canonical match row via the early-return path without
-      // touching stateMachines.delete).
+      // In-memory state-machine eviction. The WINNER's path reaches the
+      // post-transaction block and runs `stateMachines.delete(matchId)`
+      // — the only call site that touches the map. The loser's path
+      // is a pure early-return (sees `count: 0`); it does NOT also
+      // delete the entry, so the winner's `delete` is what makes the
+      // map end up empty after both calls resolve.
       const internalMap = (service as any).stateMachines as Map<
         string,
         unknown
       >;
-      // After both calls resolve, the state machine map MUST be empty
-      // because the winner's path deletes the entry. The loser's path
-      // is a pure no-op return — it doesn't re-evict.
+      // After both calls resolve, the state machine map MUST be empty.
+      // The loser's branch doesn't re-evict; the winner's branch does.
       expect(internalMap.has("m_concurrent")).toBe(false);
     });
   });

@@ -10,7 +10,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SpriteFrame } from "@/components/ui/sprite-frame";
 import { Spinner } from "@/components/ui/spinner";
 import { avatars, findAvatarBySeed, type AvatarOption } from "@/lib/avatars";
-import { DEFAULT_AVATAR_SEED, isValidAvatarSeed } from "@arena/shared";
+import {
+  DEFAULT_AVATAR_SEED,
+  isValidAvatarSeed,
+  type ClassId,
+  type ClassStats,
+} from "@arena/shared";
 import {
   formatDuration,
   formatPercent,
@@ -18,7 +23,7 @@ import {
   formatResponseMs,
 } from "@/lib/formatters";
 import { useMatchHistory } from "@/hooks/use-match-history";
-import { usePhase3Stats, useProfileStats } from "@/hooks/use-profile-stats";
+import { useClassStats, useProfileStats } from "@/hooks/use-profile-stats";
 import { useSocketStore } from "@/stores/socket-store";
 import type { Locale } from "@/i18n/routing";
 
@@ -355,48 +360,82 @@ function HistorySection({
 }
 
 // -----------------------------------------------------------------------
-// Phase 3 — class winrate + streak + sabotage count
+// Phase 3 — class winrate + streak + cards played
 // -----------------------------------------------------------------------
 
-interface Phase3StatsSectionProps {
+interface ClassStatsSectionProps {
   isUnauthorized: boolean;
-  phase3Query: ReturnType<typeof usePhase3Stats>;
+  classStatsQuery: ReturnType<typeof useClassStats>;
   t: ReturnType<typeof useTranslations>;
 }
 
-// Tier colour for class badges — CONG leans warm/red (offensive),
-// THU leans cool/blue (defensive). Reads at a glance even before
+// Tier colour for class badges — ATTACK leans warm/red (offensive),
+// DEFENSE leans cool/blue (defensive). Reads at a glance even before
 // the player knows the class system. Labels are localized at render
-// time via the `profile.phase3.class.*` next-intl keys.
+// time via the `profile.classStats.class.*` next-intl keys.
 const CLASS_BADGE: Record<string, { className: string }> = {
-  CONG: {
+  ATTACK: {
     className: "bg-candy-red text-white border-candy-ink",
   },
-  THU: {
+  DEFENSE: {
     className: "bg-candy-blue text-white border-candy-ink",
   },
 };
 
-function Phase3StatsSection({
+/**
+ * Pick the highest-winrate class the user has actually PLAYED. Pure
+ * module-level helper so the JSX render path stays declarative.
+ *
+ * Filters out classes whose `plays === 0` (a 100% win-rate on zero
+ * matches would otherwise win the comparison), then returns the
+ * higher `winRate`. Ties resolve to `ATTACK` (the original iteration
+ * order), preserving the pre-refactor behavior.
+ *
+ * Returns `null` when neither class has any plays — the UI renders a
+ * `—` placeholder instead.
+ */
+function pickBestClass(
+  classWinrate: ClassStats["classWinrate"],
+): { classId: ClassId; winRate: number } | null {
+  const attack = classWinrate.ATTACK;
+  const defense = classWinrate.DEFENSE;
+  const attackPlayed = (attack?.plays ?? 0) > 0;
+  const defensePlayed = (defense?.plays ?? 0) > 0;
+  if (!attackPlayed && !defensePlayed) return null;
+  // Both played → tie goes to ATTACK by convention.
+  if (!defensePlayed) {
+    return { classId: "ATTACK", winRate: attack?.winRate ?? 0 };
+  }
+  if (!attackPlayed) {
+    return { classId: "DEFENSE", winRate: defense?.winRate ?? 0 };
+  }
+  return (attack?.winRate ?? 0) >= (defense?.winRate ?? 0)
+    ? { classId: "ATTACK", winRate: attack?.winRate ?? 0 }
+    : { classId: "DEFENSE", winRate: defense?.winRate ?? 0 };
+}
+
+function ClassStatsSection({
   isUnauthorized,
-  phase3Query,
+  classStatsQuery,
   t,
-}: Readonly<Phase3StatsSectionProps>) {
+}: Readonly<ClassStatsSectionProps>) {
   const handleRetry = useCallback(() => {
-    phase3Query.refetch();
-  }, [phase3Query]);
+    classStatsQuery.refetch();
+  }, [classStatsQuery]);
 
   if (isUnauthorized) {
     return <MessageCard message={t("error.signinRequired")} />;
   }
-  if (phase3Query.error) {
+  if (classStatsQuery.error) {
     return <QueryErrorCard onRetry={handleRetry} t={t} />;
   }
 
-  const data = phase3Query.data?.stats;
-  const cong = data?.classWinrate.CONG;
-  const thu = data?.classWinrate.THU;
-  const hasAnyClassData = Boolean(cong || thu);
+  const data = classStatsQuery.data?.stats;
+  const attack = data?.classWinrate.ATTACK;
+  const defense = data?.classWinrate.DEFENSE;
+  // Compute the best-class pick ONCE per render — no IIFE inside
+  // JSX, no unreachable `candidates.length === 0` branch.
+  const best = data ? pickBestClass(data.classWinrate) : null;
 
   return (
     <div className="space-y-4">
@@ -404,100 +443,69 @@ function Phase3StatsSection({
         {/* Streak chip — separate so it stands out as the "Daily Challenge" reward loop. */}
         <div className="bg-candy-pink border-[3px] border-candy-ink rounded-2xl p-4 text-center space-y-1 shadow-[4px_4px_0_0_#2B2D42] hover:-translate-y-0.5 transition-transform">
           <span className="text-xs font-mono font-black uppercase text-white">
-            {t("phase3.streak")}
+            {t("classStats.streak")}
           </span>
           <div className="font-display font-black text-3xl text-white flex items-center justify-center gap-2">
             <MiniGlyph variant="streak" className="w-6 h-6 text-white" />
             <StatValue
-              isLoading={phase3Query.isLoading}
+              isLoading={classStatsQuery.isLoading}
               value={data?.currentStreak ?? 0}
             />
           </div>
           <p className="text-[10px] font-mono font-black uppercase text-white/80">
-            {t("phase3.streakHint")}
+            {t("classStats.streakHint")}
           </p>
         </div>
 
-        {/* Sabotage / aggression counter — total CARD_RESOLVED events */}
+        {/* Cards played counter — SUM(MatchPlayer.cardsPlayed) across FINISHED matches */}
         <div className="bg-white border-[3px] border-candy-ink rounded-2xl p-4 text-center space-y-1 shadow-[4px_4px_0_0_#2B2D42] hover:-translate-y-0.5 transition-transform">
           <span className="text-xs font-mono font-black uppercase text-candy-ink/75">
-            {t("phase3.sabotage")}
+            {t("classStats.cardsPlayed")}
           </span>
           <div className="font-display font-black text-3xl text-candy-red flex items-center justify-center gap-2">
             <MiniGlyph variant="target" className="w-6 h-6 text-candy-red" />
             <StatValue
-              isLoading={phase3Query.isLoading}
-              value={data?.sabotageCount ?? 0}
+              isLoading={classStatsQuery.isLoading}
+              value={data?.cardsPlayed ?? 0}
             />
           </div>
           <p className="text-[10px] font-mono font-black uppercase text-candy-ink/60">
-            {t("phase3.sabotageHint")}
+            {t("classStats.cardsPlayedHint")}
           </p>
         </div>
 
         {/* Best class winrate placeholder for grid symmetry — shows when user has any class data */}
         <div className="bg-candy-yellow border-[3px] border-candy-ink rounded-2xl p-4 text-center space-y-1 shadow-[4px_4px_0_0_#2B2D42] hover:-translate-y-0.5 transition-transform">
           <span className="text-xs font-mono font-black uppercase text-candy-ink">
-            {t("phase3.bestClass")}
+            {t("classStats.bestClass")}
           </span>
           <div className="font-display font-black text-xl text-candy-ink flex items-center justify-center gap-2">
-            {hasAnyClassData && (cong?.plays ?? 0) + (thu?.plays ?? 0) > 0 ? (
-              (() => {
-                // Consider only classes whose corresponding cong/thu
-                // row has plays > 0; exclude unplayed classes before
-                // comparing win rates. Tie behavior preserved: if both
-                // classes have plays, the higher win rate wins (ties go
-                // to CONG to keep the original order).
-                const candidates: Array<"CONG" | "THU"> = [];
-                if ((cong?.plays ?? 0) > 0) candidates.push("CONG");
-                if ((thu?.plays ?? 0) > 0) candidates.push("THU");
-                if (candidates.length === 0) {
-                  return (
-                    <StatValue isLoading={phase3Query.isLoading} value="—" />
-                  );
-                }
-                const best = candidates.reduce((a, b) => {
-                  const aRate =
-                    (a === "CONG" ? cong?.winRate : thu?.winRate) ?? 0;
-                  const bRate =
-                    (b === "CONG" ? cong?.winRate : thu?.winRate) ?? 0;
-                  return aRate >= bRate ? a : b;
-                });
-                const bestRate =
-                  (best === "CONG" ? cong?.winRate : thu?.winRate) ?? 0;
-                const badge = CLASS_BADGE[best];
-                return (
-                  <>
-                    {badge && (
-                      <span
-                        className={`px-2 py-1 rounded border-2 text-xs font-mono font-black ${badge.className}`}
-                      >
-                        {t(`phase3.class.${best}`)}
-                      </span>
-                    )}
-                    <span>
-                      <StatValue
-                        isLoading={phase3Query.isLoading}
-                        value={formatPercent(bestRate)}
-                      />
-                    </span>
-                  </>
-                );
-              })()
+            {best ? (
+              <>
+                <span
+                  className={`px-2 py-1 rounded border-2 text-xs font-mono font-black ${CLASS_BADGE[best.classId]?.className ?? ""}`}
+                >
+                  {t(`classStats.class.${best.classId}`)}
+                </span>
+                <StatValue
+                  isLoading={classStatsQuery.isLoading}
+                  value={formatPercent(best.winRate)}
+                />
+              </>
             ) : (
-              <StatValue isLoading={phase3Query.isLoading} value="—" />
+              <StatValue isLoading={classStatsQuery.isLoading} value="—" />
             )}
           </div>
           <p className="text-[10px] font-mono font-black uppercase text-candy-ink/70">
-            {t("phase3.bestClassHint")}
+            {t("classStats.bestClassHint")}
           </p>
         </div>
       </div>
 
       {/* Class winrate breakdown — one row per class the user has played */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {(["CONG", "THU"] as const).map((classId) => {
-          const row = classId === "CONG" ? cong : thu;
+        {(["ATTACK", "DEFENSE"] as const).map((classId) => {
+          const row = classId === "ATTACK" ? attack : defense;
           const badge = CLASS_BADGE[classId];
           return (
             <div
@@ -509,23 +517,23 @@ function Phase3StatsSection({
                   <span
                     className={`px-2 py-1 rounded border-2 text-[10px] font-mono font-black ${badge.className}`}
                   >
-                    {t(`phase3.class.${classId}`)}
+                    {t(`classStats.class.${classId}`)}
                   </span>
                 )}
                 <span className="font-display font-black text-lg text-candy-ink">
                   {row
                     ? formatPercent(row.winRate)
-                    : phase3Query.isLoading
+                    : classStatsQuery.isLoading
                       ? "--"
-                      : "0%"}
+                      : "—"}
                 </span>
               </div>
               <p className="text-[10px] font-mono font-black uppercase text-candy-ink/60 mt-1">
                 {row
-                  ? `${row.wins} / ${row.plays} ${t("phase3.matchesWon")}`
-                  : phase3Query.isLoading
+                  ? `${row.wins} / ${row.plays} ${t("classStats.matchesWon")}`
+                  : classStatsQuery.isLoading
                     ? "--"
-                    : t("phase3.noClassMatches")}
+                    : t("classStats.noClassMatches")}
               </p>
             </div>
           );
@@ -543,7 +551,7 @@ export default function ProfilePage() {
   const t = useTranslations("profile");
   const statsQuery = useProfileStats();
   const historyQuery = useMatchHistory({ limit: 20 });
-  const phase3Query = usePhase3Stats();
+  const classStatsQuery = useClassStats();
 
   const profile = statsQuery.data;
   const activeName = profile?.user.username || username || "Khách_Đấu_Thủ";
@@ -632,10 +640,10 @@ export default function ProfilePage() {
         </div>
 
         <div className="space-y-4 pt-2">
-          <DashboardSectionTitle title={t("phase3.title")} glyph="streak" />
-          <Phase3StatsSection
+          <DashboardSectionTitle title={t("classStats.title")} glyph="streak" />
+          <ClassStatsSection
             isUnauthorized={isUnauthorized}
-            phase3Query={phase3Query}
+            classStatsQuery={classStatsQuery}
             t={t}
           />
         </div>

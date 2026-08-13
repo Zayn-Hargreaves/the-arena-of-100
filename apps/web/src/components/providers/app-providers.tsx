@@ -11,9 +11,10 @@ interface AppProvidersProps {
   children: React.ReactNode;
 }
 
-// On logout (username transitions from a value to null), remove the
-// profile cache so the next authenticated user does not see stale data
-// from the previous session.
+// On any identity change (login, logout, role swap — including
+// re-auth WITHOUT logout, which used to skip the invalidator),
+// drop every `["profile", …]` cache entry so the next render does
+// not see stale data from the previous session.
 function ProfileCacheInvalidator() {
   const queryClient = useQueryClient();
   const username = useSocketStore((state) => state.username);
@@ -21,7 +22,7 @@ function ProfileCacheInvalidator() {
 
   React.useEffect(() => {
     const previous = previousUsernameRef.current;
-    if (previous !== null && username === null) {
+    if (previous !== username) {
       queryClient.removeQueries({ queryKey: ["profile"] });
     }
     previousUsernameRef.current = username;

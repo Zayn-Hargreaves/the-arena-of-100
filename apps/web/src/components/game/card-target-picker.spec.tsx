@@ -1,15 +1,15 @@
 // ============================================================
 // `CardTargetPicker` tests — bypass behavior (spec §4.3
 // "Target picker is UI-only self-pause"; card-validator
-// "Defensive/THU cards are self-only").
+// "Defensive/DEFENSE cards are self-only").
 //
 // Verifies:
-//   - self-only Defensive/THU cards bypass the dialog and
+//   - self-only Defensive/DEFENSE cards bypass the dialog and
 //     invoke `onPick` with no target (so the wire payload
 //     omits `targetPlayerId`)
-//   - AOE Offensive/CONG cards auto-select the first eligible
+//   - AOE Offensive/ATTACK cards auto-select the first eligible
 //     target without rendering the dialog
-//   - single-target CONG cards still render the dialog and
+//   - single-target ATTACK cards still render the dialog and
 //     invoke `onPick(target.playerId)` on click
 //   - the dedup ref is keyed by `offerSeqNo` (the same
 //     `cardId` arriving in a different offer still fires)
@@ -29,7 +29,7 @@ const TARGETS = [
 ] as const;
 
 describe("CardTargetPicker", () => {
-  it("bypasses the dialog for self-only Defensive/THU cards and invokes onPick with no target", async () => {
+  it("bypasses the dialog for self-only Defensive/DEFENSE cards and invokes onPick with no target", async () => {
     const onPick = vi.fn();
     const onCancel = vi.fn();
     render(
@@ -52,7 +52,7 @@ describe("CardTargetPicker", () => {
     expect(onCancel).not.toHaveBeenCalled();
   });
 
-  it("auto-picks the first eligible target for AOE Offensive/CONG cards", async () => {
+  it("auto-picks the first eligible target for AOE Offensive/ATTACK cards", async () => {
     const onPick = vi.fn();
     const onCancel = vi.fn();
     render(
@@ -72,7 +72,7 @@ describe("CardTargetPicker", () => {
     expect(onPick).toHaveBeenCalledTimes(1);
   });
 
-  it("renders the dialog for single-target CONG cards and picks on click", async () => {
+  it("renders the dialog for single-target ATTACK cards and picks on click", async () => {
     const onPick = vi.fn();
     const onCancel = vi.fn();
     render(

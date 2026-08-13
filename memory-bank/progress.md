@@ -19,11 +19,14 @@ Admin kill-switch append-only audit event **đã xong**.
 
 ## Latest Known Test Counts
 
-- API unit tests: **1369/1369** passed (2026-07-28).
-- Game-core tests: **70/70**
-- Web tests: **31/31**
-- Shared tests: **3/3**
-- E2E tests: **11/11**
+- API unit tests: **1693/1693** passed (2026-08-13, post Phase 3 + pending-grant drainer hardening).
+- Game-core tests: **280/280**
+- Web tests: **247/247**
+- Shared tests: **61/61**
+- E2E tests: covered by the API suite in vitest's `--config test/vitest-e2e.config.ts` runner (out-of-band; not in `pnpm test`).
+- Load-test vitest (helper/oracle modules): **67/67** —
+  reconnect 7, failover-verdict 22, card-batch-verdict 26,
+  chaos-failover-cli 6, validate-results 6.
 
 Run the relevant package tests before using these numbers in PR text.
 
@@ -128,6 +131,7 @@ Run the relevant package tests before using these numbers in PR text.
 - `DailySubmitResponse.unlockedVariant?: { cardId, variantKey }` added.
 - `CardTile` accepts `cosmeticVariant?: "DEFAULT"|"NEON"|"GOLD"` → ring/glow overlay (cyan / amber Tailwind classes).
 - 8 unit tests added: <7, =0 reset, NEON first unlock, GOLD second, cap (null), DB error path, idempotency.
+  - 2026-08-13: pending-grant drainer hardening added 3 drain tests (post-failure recovery, streak-reset survival, idempotent re-drain) — now 11 total in this card-variant suite.
 
 **Day 27 — Daily leaderboard cross-show "Most cards played this week".**
 
@@ -137,12 +141,12 @@ Run the relevant package tests before using these numbers in PR text.
 - `DailyLeaderboardItemDto.cardsPlayedThisWeek: number` added (en/vi i18n: `Cards.cardsThisWeek`, `cardsLabel`).
 - New tier badge (`Common 1-5 / Rare 6-15 / Epic 16+`) renders inline next to score.
 
-**Day 28-29 — Profile page class winrate + streak + sabotage count.**
+**Day 28-29 — Profile page class winrate + streak + cards played count.**
 
-- `UsersService.getPhase3Stats(userId)` returns `{ classWinrate: { CONG?, THU? }, currentStreak, sabotageCount }`. Three queries, one round trip.
-- Class winrate via `$queryRaw` `GROUP BY classId` over FINISHED matches; `sabotageCount = SUM(MatchPlayer.cardsPlayed)`; `currentStreak = max(DailyAttempt.streakAfter)`.
-- Endpoint `GET /users/me/phase3-stats` (additive; does NOT touch existing `/users/me/stats`).
-- `usePhase3Stats` hook + `Phase3StatsSection` component on profile page (4-card grid: streak, sabotage, best-class highlight, per-class bars).
+- `UsersService.getClassStats(userId)` returns `{ stats: { classWinrate: { ATTACK?, DEFENSE? }, currentStreak, cardsPlayed } }`. It executes one existence query, then three aggregate queries in parallel.
+- Class winrate via `$queryRaw` `GROUP BY classId` over FINISHED matches; `cardsPlayed = SUM(MatchPlayer.cardsPlayed)`; `currentStreak` is the latest `DailyAttempt.streakAfter` only when its `dateKey` is UTC today or yesterday (otherwise `0`).
+- Endpoint `GET /users/me/class-stats` (additive; does NOT touch existing `/users/me/stats`).
+- `useClassStats` hook + `ClassStatsSection` component on profile page (3-card summary grid: streak, cardsPlayed, bestClass; followed by a separate detail grid for ATTACK and DEFENSE).
 - 5 unit tests added: not-found, zero-data happy path, full-data aggregation, defensive classId filtering, zero-plays wins divide-by-zero protection.
 
 **Day 30-31 — Shareable card unlock notification (viral hook).**
@@ -153,7 +157,7 @@ Run the relevant package tests before using these numbers in PR text.
 **Day 32-33 — C3-card-batch-failover (gate).**
 
 - `load-test/lib/card-batch-verdict.mjs` — pure oracle; PASS / FAIL / INCONCLUSIVE verdict; `dedupeEffects` + `detectEffectConflicts` + `diffEffects` helpers.
-- `load-test/lib/card-batch-verdict.test.mjs` — 11 vitest cases covering 3 checkpoint PASS scenarios (`append_pre_emit`, `mid_batch_flush`, `pre_ack`), 2 chaos fingerprints (`lost_effect`, `double_apply`), 3 invalid-artifact rejections, 3 helper unit tests.
+- `load-test/lib/card-batch-verdict.test.mjs` — 26 vitest cases covering 3 checkpoint PASS scenarios (`append_pre_emit`, `mid_batch_flush`, `pre_ack`), 2 chaos fingerprints (`lost_effect`, `double_apply`), 1 duplicate-transport fingerprint (`duplicate_observation`), 2 per-element `invalid_artifact` regressions (`expected_effects: [null]`, `observed_effects` missing `seqNo`), 3 cohort-invariant cases (pre-kill missing, post-flip missing, happy-path PASS), 7 invalid-artifact rejections (invalid checkpoint label, `t_kill ≥ t_owner_flip`, `t_recover < t_owner_flip`, null/undefined/array artifact, missing `observed_effects`), 4 cohort-type hardening tests (undefined = no-op, null / number / string = `invalid_artifact`), 4 helper unit tests.
 - Production code UNCHANGED — Phase 2 append-first design already satisfies the invariant; gate is a regression detector.
 - `load-test/MULTI-BASELINE.md` + `load-test/README.md` updated with the new gate section; explicitly calls out that this gate is distinct from C3-owner-failover (different dedupe key: effect `seqNo` vs round `eventId`).
 
@@ -165,8 +169,8 @@ Run the relevant package tests before using these numbers in PR text.
 
 **Day 35-36 — Final integration tests + ship prep.**
 
-- All test suites green: shared 61 / game-core 280 / API 1678 / web 247 / load-test 52 = **2318 tests pass**, no regression.
-- Spec §7 DoD checklist updated; all 16 items ticked.
+- All test suites green: shared 61 / game-core 280 / API 1681 / web 247 / load-test 63 = **2332 tests pass**, no regression.
+- Spec §7 DoD checklist updated; all 15 items ticked.
 - Coverage targets met (card engine + class engine ≥ 95% from Phase 2 baseline; new code paths covered by Phase 3 tests).
 
 **Cross-cutting decisions honored:**
@@ -224,7 +228,10 @@ Run the relevant package tests before using these numbers in PR text.
 - Server-side delta push on auth reconnect still full SNAPSHOT (`auth.handler.syncReconnection`). Client-driven delta after re-auth is shipped: socket store calls `REQUEST_SNAPSHOT(matchId, lastSeenSeqNo)` on `AUTHENTICATED` when match context survives disconnect.
 - Spectator transport split for scale.
 - Full WCAG / Playwright / rematch work.
-- **Class + Card Hybrid (Phase 1-3, locked 2026-07-30)**: chưa bắt đầu code. Source of truth: `memory-bank/spec/class-cards-phase.md`. Phase 1 (Daily Challenge, Week 1-2) → Phase 2 (Class+Card, Week 3-6) → Phase 3 (Integration + VI i18n, Week 7-8). Phase 2 bắt đầu bằng `gitnexus_impact` cho `MatchStateMachine.playCard` (CRITICAL blast radius).
+- **Class + Card Hybrid (Phase 1-3, locked 2026-07-30, implementation complete 2026-08-12)**: Phase 3 shipped days 25-36 of the locked 8-week plan; spec §7 all 15 DoD items ticked. Source of truth: `memory-bank/spec/class-cards-phase.md`. Phase 1 (Daily Challenge) Week 1-2 ✅; Phase 2 (Class+Card) Week 3-6 ✅; Phase 3 (Integration + VI i18n) Week 7-8 ✅.
+  - **C3-owner-failover RUN** still pending (distinct from Phase 3 `C3-card-batch-failover` which is shipped as a chaos oracle).
+- **Operational follow-ups still pending** (post-Phase-3 hardening queued, not in scope of the locked 8-week plan):
+  - `pending_card_variant_unlocks` row written by `DailyService.submit` when the in-tx `userCardVariant.upsert` fails. The unlock error is caught and swallowed before the submit transaction returns, so `dailyAttempt.create` always commits regardless of the unlock's outcome. The pending insert is best-effort: a thrown non-P2002 error on it is logged and the transaction still commits (rare loss path). The next submit drains unprocessed rows (`processedAt IS NULL`) via `drainPendingCardVariantUnlocksInTx` and attempts the idempotent `userCardVariant.upsert`. Idempotency: pending-table `@@unique([userId, dateKey, streakAfter])` (a re-attempt at the same unlock boundary on the same `dateKey` hits P2002 and is swallowed as a no-op; a future submit on a different day that crosses the same `streakAfter` after the previous grant was processed can create a fresh pending row); `user_card_variants` `@@unique([userId, cardId, variantKey])` (drainer's `userCardVariant.upsert` is idempotent on replay). Migration: `20260812130000_phase3_pending_card_variant_unlock/migration.sql`.
 
 ## Content Roadmap (chốt 2026-07-30 — supersedes 2026-07-28)
 

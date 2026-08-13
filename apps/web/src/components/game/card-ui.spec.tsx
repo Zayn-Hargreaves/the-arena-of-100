@@ -22,10 +22,10 @@ vi.mock("next-intl", async () => {
         EPIC: "Epic",
         RARE: "Rare",
         COMMON: "Common",
-        CONG: "Offensive",
-        THU: "Defensive",
-        "classes.CONG": "Offensive",
-        "classes.THU": "Defensive",
+        ATTACK: "Offensive",
+        DEFENSE: "Defensive",
+        "classes.ATTACK": "Offensive",
+        "classes.DEFENSE": "Defensive",
         "tiers.COMMON": "Common",
         "tiers.RARE": "Rare",
         "tiers.EPIC": "Epic",
@@ -93,7 +93,7 @@ describe("CardHand", () => {
       <CardHand
         hand={["CB-1", "CB-2", "TN-1"]}
         playedCardIds={[]}
-        classId="CONG"
+        classId="ATTACK"
         onPickCard={() => {}}
       />,
     );
@@ -118,7 +118,7 @@ describe("CardHand", () => {
       <CardHand
         hand={["CB-1"]}
         playedCardIds={["CB-1"]}
-        classId="CONG"
+        classId="ATTACK"
         onPickCard={() => {}}
       />,
     );
@@ -129,15 +129,15 @@ describe("CardHand", () => {
 
 describe("ClassBadge", () => {
   it("renders the Offensive class badge", () => {
-    const { container } = render(<ClassBadge classId="CONG" />);
-    const badge = container.querySelector("[data-class='CONG']");
+    const { container } = render(<ClassBadge classId="ATTACK" />);
+    const badge = container.querySelector("[data-class='ATTACK']");
     expect(badge).not.toBeNull();
     expect(badge?.textContent).toContain("Offensive");
   });
 
   it("renders the Defensive class badge", () => {
-    const { container } = render(<ClassBadge classId="THU" />);
-    const badge = container.querySelector("[data-class='THU']");
+    const { container } = render(<ClassBadge classId="DEFENSE" />);
+    const badge = container.querySelector("[data-class='DEFENSE']");
     expect(badge).not.toBeNull();
   });
 });

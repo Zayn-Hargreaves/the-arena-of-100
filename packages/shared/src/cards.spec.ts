@@ -17,10 +17,10 @@ import {
 import { CLASS_IDS, type ClassId } from "./classes";
 
 describe("card catalog (Phase 2 — spec §3.1, §3.2)", () => {
-  it("exports exactly 18 cards (8 Offensive/CONG + 10 Defensive/THU)", () => {
+  it("exports exactly 18 cards (8 Offensive/ATTACK + 10 Defensive/DEFENSE)", () => {
     expect(CARD_CATALOG.length).toBe(18);
-    expect(CARD_CATALOG.filter((c) => c.classId === "CONG").length).toBe(8);
-    expect(CARD_CATALOG.filter((c) => c.classId === "THU").length).toBe(10);
+    expect(CARD_CATALOG.filter((c) => c.classId === "ATTACK").length).toBe(8);
+    expect(CARD_CATALOG.filter((c) => c.classId === "DEFENSE").length).toBe(10);
   });
 
   it("contains all 18 unique CardIds in the spec", () => {
@@ -50,9 +50,9 @@ describe("card catalog (Phase 2 — spec §3.1, §3.2)", () => {
     expect(actual).toEqual(expected);
   });
 
-  it("every card has cohort-consistent backfireRate (0.0 for Defensive/THU, 0.1 for Offensive/CONG)", () => {
+  it("every card has cohort-consistent backfireRate (0.0 for Defensive/DEFENSE, 0.1 for Offensive/ATTACK)", () => {
     for (const card of CARD_CATALOG) {
-      if (card.classId === "CONG") {
+      if (card.classId === "ATTACK") {
         expect(card.backfireRate).toBe(0.1);
       } else {
         expect(card.backfireRate).toBe(0.0);
@@ -110,8 +110,8 @@ describe("compareCardId (spec §3.3 — canonical 18-ID order)", () => {
 });
 
 describe("getClassPool (spec §3.3 — frozen ordered pool)", () => {
-  it("returns the 8 Offensive/CONG cards in canonical order", () => {
-    const pool = getClassPool("CONG");
+  it("returns the 8 Offensive/ATTACK cards in canonical order", () => {
+    const pool = getClassPool("ATTACK");
     expect(pool.length).toBe(8);
     expect(pool).toEqual([
       "CB-1",
@@ -125,8 +125,8 @@ describe("getClassPool (spec §3.3 — frozen ordered pool)", () => {
     ]);
   });
 
-  it("returns the 10 Defensive/THU cards in canonical order", () => {
-    const pool = getClassPool("THU");
+  it("returns the 10 Defensive/DEFENSE cards in canonical order", () => {
+    const pool = getClassPool("DEFENSE");
     expect(pool.length).toBe(10);
     expect(pool).toEqual([
       "TN-1",
@@ -147,8 +147,8 @@ describe("getClassPool (spec §3.3 — frozen ordered pool)", () => {
     // into to be ordered snapshots. We return the same
     // `readonly CardId[]` callers see across multiple calls so
     // accidental mutation is caught at compile time.
-    const pool = getClassPool("CONG");
-    expect(pool).toEqual(getClassPool("CONG"));
+    const pool = getClassPool("ATTACK");
+    expect(pool).toEqual(getClassPool("ATTACK"));
   });
 
   it("returns a runtime-immutable array (push / splice / index-assignment rejected)", () => {
@@ -156,7 +156,7 @@ describe("getClassPool (spec §3.3 — frozen ordered pool)", () => {
     // caller cannot poison the catalog. Mutation attempts throw
     // in strict mode and are silently ignored otherwise — the
     // contract is `Object.isFrozen(pool)`.
-    const pool = getClassPool("CONG");
+    const pool = getClassPool("ATTACK");
     expect(Object.isFrozen(pool)).toBe(true);
     const mutable = pool as unknown as CardId[];
     const expectThrow = (label: string, fn: () => void) => {
@@ -183,7 +183,7 @@ describe("getClassPool (spec §3.3 — frozen ordered pool)", () => {
     });
     // After the rejected mutations, the catalog is still the
     // canonical list — the contract guarantees the rejection.
-    expect(getClassPool("CONG")).toEqual([
+    expect(getClassPool("ATTACK")).toEqual([
       "CB-1",
       "CB-2",
       "CB-3",
@@ -195,8 +195,8 @@ describe("getClassPool (spec §3.3 — frozen ordered pool)", () => {
     ]);
   });
 
-  it("freezes the Defensive/THU pool too", () => {
-    expect(Object.isFrozen(getClassPool("THU"))).toBe(true);
+  it("freezes the Defensive/DEFENSE pool too", () => {
+    expect(Object.isFrozen(getClassPool("DEFENSE"))).toBe(true);
   });
 });
 
@@ -230,9 +230,9 @@ describe("PRNG contract version + tier weights (spec §3.3)", () => {
 });
 
 describe("classes (spec §2)", () => {
-  it("CLASS_IDS contains exactly CONG and THU", () => {
+  it("CLASS_IDS contains exactly ATTACK and DEFENSE", () => {
     expect(CLASS_IDS.length).toBe(2);
-    expect(new Set(CLASS_IDS)).toEqual(new Set<ClassId>(["CONG", "THU"]));
+    expect(new Set(CLASS_IDS)).toEqual(new Set<ClassId>(["ATTACK", "DEFENSE"]));
   });
 });
 
@@ -272,22 +272,26 @@ describe("card variant unlock (Phase 3)", () => {
     expect(nextCardVariant(new Set(["DEFAULT", "NEON", "GOLD"]))).toBe(null);
   });
 
-  it("pickCardForVariantUnlock rotates through the CONG pool deterministically", () => {
-    const pool = getClassPool("CONG");
+  it("pickCardForVariantUnlock rotates through the ATTACK pool deterministically", () => {
+    const pool = getClassPool("ATTACK");
     expect(pool.length).toBeGreaterThan(0);
-    // Every unlock index maps to a card in the CONG pool.
-    for (const idx of [0, 1, 2, 3, 5, 7]) {
-      const card = pickCardForVariantUnlock("CONG", idx);
-      expect(pool).toContain(card);
+    // Strong deterministic-rotation assertion: every unlock index
+    // maps to `pool[idx % pool.length]`. Strengthened from the
+    // earlier `expect(pool).toContain(card)` membership check so a
+    // silently-shifted rotation cannot pass. Indices are mixed
+    // (low + ≥ pool.length) to cover wrap-around.
+    for (const idx of [0, 1, 2, 3, 5, 7, 8, 9]) {
+      const card = pickCardForVariantUnlock("ATTACK", idx);
+      expect(card).toBe(pool[idx % pool.length]);
     }
   });
 
   it("pickCardForVariantUnlock is deterministic for a given classId + index", () => {
-    expect(pickCardForVariantUnlock("CONG", 0)).toBe(
-      pickCardForVariantUnlock("CONG", 0),
+    expect(pickCardForVariantUnlock("ATTACK", 0)).toBe(
+      pickCardForVariantUnlock("ATTACK", 0),
     );
-    expect(pickCardForVariantUnlock("THU", 2)).toBe(
-      pickCardForVariantUnlock("THU", 2),
+    expect(pickCardForVariantUnlock("DEFENSE", 2)).toBe(
+      pickCardForVariantUnlock("DEFENSE", 2),
     );
   });
 });

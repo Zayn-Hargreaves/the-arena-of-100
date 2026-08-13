@@ -32,7 +32,12 @@
 // The verdict is the SAME invariant across all three: the surviving
 // nodes' view of the per-player effects MUST equal the set of effects
 // recorded in the event log + a hand-derived expected_effects record,
-// without doubles or drops.
+// without doubles or drops. Plus the cohort contract (see Step 5
+// below): every observed effect that participates in the cohort MUST
+// already have an event-log record from before the kill, and the
+// surviving nodes MUST observe a canonical record after the owner
+// flip — this pins the "persistence BEFORE emit → recovery AFTER
+// flip" round-trip that chaos owns.
 // ============================================================
 
 // Verdict is strictly binary: PASS | FAIL. (Earlier drafts listed
@@ -53,14 +58,51 @@ function isFiniteNumber(v) {
 // artifact producer emits a CARD_RESOLVED with a stable seqNo; the
 // triple is the canonical effect identity used for dedupe, diff,
 // and conflict detection.
+//
+// Wrapped to NEVER throw — a malformed element always resolves to a
+// sentinel string ("::::") that no real effect could match, so the
+// diff returns it as `extra` / `dropped` rather than crashing the
+// oracle. The element-validator (`validateEffectElement`) is the
+// gate that rejects malformed elements ahead of any diff.
 function effectKey(ev) {
-  return `${ev.playerId}::${ev.effectId}::${ev.seqNo}`;
+  if (ev === null || typeof ev !== "object") return "::::";
+  const p = typeof ev.playerId === "string" ? ev.playerId : "";
+  const e = typeof ev.effectId === "string" ? ev.effectId : "";
+  const s = isFiniteNumber(ev.seqNo) ? String(ev.seqNo) : "";
+  return `${p}::${e}::${s}`;
 }
 
 // Pair key (playerId, effectId) — used only by the conflict detector
 // to surface distinct-seqNo observations of the same logical effect.
 function effectPairKey(ev) {
-  return `${ev.playerId}::${ev.effectId}`;
+  if (ev === null || typeof ev !== "object") return "::";
+  const p = typeof ev.playerId === "string" ? ev.playerId : "";
+  const e = typeof ev.effectId === "string" ? ev.effectId : "";
+  return `${p}::${e}`;
+}
+
+// Validate a single effect element against the canonical CARD_RESOLVED
+// shape. Returns `null` when the element is well-formed, or a string
+// explaining the first violation. Designed so callers iterate over
+// every element and report the FIRST failing index to keep the
+// `invalid_artifact` reason concise.
+function validateEffectElement(el, index) {
+  if (el === null || typeof el !== "object") {
+    return `effects[${index}]: expected an object, got ${el === null ? "null" : typeof el}`;
+  }
+  if (typeof el.playerId !== "string" || el.playerId.length === 0) {
+    return `effects[${index}].playerId must be a non-empty string`;
+  }
+  if (typeof el.effectId !== "string" || el.effectId.length === 0) {
+    return `effects[${index}].effectId must be a non-empty string`;
+  }
+  if (!isFiniteNumber(el.seqNo)) {
+    return `effects[${index}].seqNo must be a finite number`;
+  }
+  if (!isFiniteNumber(el.t)) {
+    return `effects[${index}].t must be a finite number`;
+  }
+  return null;
 }
 
 // Group valid effect observations by their canonical triple. Mirrors
@@ -196,6 +238,89 @@ export function diffEffects(expectedEffects, observedEffects) {
   return { dropped, extra };
 }
 
+/**
+ * Cohort invariant. Every effect listed in `artifact.cohort_effects`
+ * must satisfy BOTH:
+ *   1. `expected_effects` carries a record with `t < t_kill`
+ *      (persisted BEFORE the chaos injection); AND
+ *   2. the canonical surviving-nodes observation carries a record
+ *      with `t >= t_owner_flip` (DELIVERED to the surviving set
+ *      after ownership transfer).
+ *
+ * The cohort scopes the gate to a smaller set of effects that the
+ * harness explicitly identifies as round-trip-critical. If the
+ * cohort list is absent (`undefined`), the cohort check is a no-op
+ * — the existing diff / conflict / duplicate invariants remain in
+ * force.
+ *
+ * When `cohort_effects` is provided with any non-array value
+ * (null, primitive, object), the function returns
+ * `invalidArtifact` so the caller can surface `invalid_artifact`
+ * before applying the cohort checks. Valid arrays preserve the
+ * existing handling.
+ *
+ * Returns `{ failures, invalidArtifact }`:
+ *   - `invalidArtifact` is a non-null string when the artifact shape
+ *     is rejected up-front; the caller emits `invalid_artifact` and
+ *     skips cohort iteration.
+ *   - `failures` is the list of cohort contract violations (empty
+ *     array means the cohort contract held).
+ */
+function checkCohortInvariant(artifact, canonical) {
+  if (artifact.cohort_effects === undefined) {
+    return { failures: [], invalidArtifact: null };
+  }
+  if (!Array.isArray(artifact.cohort_effects)) {
+    return {
+      failures: [],
+      invalidArtifact: "cohort_effects must be an array when provided",
+    };
+  }
+  const cohort = artifact.cohort_effects;
+  if (cohort.length === 0) {
+    return { failures: [], invalidArtifact: null };
+  }
+
+  const expected = Array.isArray(artifact.expected_effects)
+    ? artifact.expected_effects
+    : [];
+  const tKill = artifact.t_kill;
+  const tOwnerFlip = artifact.t_owner_flip;
+  const failures = [];
+
+  for (const cohortId of cohort) {
+    if (
+      typeof cohortId !== "object" ||
+      cohortId === null ||
+      typeof cohortId.playerId !== "string" ||
+      typeof cohortId.effectId !== "string"
+    ) {
+      failures.push(
+        `cohort_effects[] contains an invalid member (expected {playerId, effectId})`,
+      );
+      continue;
+    }
+    const { playerId, effectId } = cohortId;
+    const pre = expected.find(
+      (e) => e && e.playerId === playerId && e.effectId === effectId && e.t < tKill,
+    );
+    const postCanonical = canonical.find(
+      (e) => e && e.playerId === playerId && e.effectId === effectId && e.t >= tOwnerFlip,
+    );
+    if (!pre) {
+      failures.push(
+        `cohort ${playerId}:${effectId} has no pre-kill expected record (t < t_kill=${tKill})`,
+      );
+    }
+    if (!postCanonical) {
+      failures.push(
+        `cohort ${playerId}:${effectId} has no post-flip canonical observed record (t >= t_owner_flip=${tOwnerFlip})`,
+      );
+    }
+  }
+  return { failures, invalidArtifact: null };
+}
+
 // Evaluate a *.card-batch.json artifact. Returns
 //   { verdict, reasons: [{code, detail}], derived: {...} }
 export function evaluateCardBatchFailover(artifact) {
@@ -272,6 +397,38 @@ export function evaluateCardBatchFailover(artifact) {
     fail("invalid_artifact", "expected_effects must be an array");
   }
 
+  // Bail early when arrays are missing — element validation would
+  // explode on `null`. The shape failure is more useful to the
+  // operator than a downstream TypeError.
+  if (reasons.some((r) => r.code === "invalid_artifact")) {
+    return {
+      verdict: CARD_BATCH_VERDICT.FAIL,
+      reasons,
+      derived: null,
+    };
+  }
+
+  // ---- Step 1b: per-element validation (every effect must look
+  //               like {playerId:string, effectId:string, seqNo:num, t:num}).
+  //               A null element or missing field used to slip past the
+  //               Array.isArray guard and surface as `extra`/dropped`.
+  //               Reject the artifact up-front with `invalid_artifact`
+  //               so the oracle never degrades into silent acceptance.
+  for (let i = 0; i < observed.length; i++) {
+    const violation = validateEffectElement(observed[i], i);
+    if (violation) {
+      fail("invalid_artifact", `observed_${violation}`);
+      break;
+    }
+  }
+  for (let i = 0; i < expected.length; i++) {
+    const violation = validateEffectElement(expected[i], i);
+    if (violation) {
+      fail("invalid_artifact", `expected_${violation}`);
+      break;
+    }
+  }
+
   if (reasons.some((r) => r.code === "invalid_artifact")) {
     return {
       verdict: CARD_BATCH_VERDICT.FAIL,
@@ -329,7 +486,20 @@ export function evaluateCardBatchFailover(artifact) {
     );
   }
 
-  // ---- Step 6: recovery oracle (basic — full version mirrors owner-failover) ----
+  // ---- Step 6: cohort invariant (chaos-only). Each cohort_effects
+  //               member must round-trip: persisted BEFORE the kill,
+  //               observed AFTER the owner flip on the surviving set.
+  //               Failures here mean the chaos injection broke the
+  //               round-trip contract for that effect.
+  const cohortResult = checkCohortInvariant(artifact, canonical);
+  if (cohortResult.invalidArtifact) {
+    fail("invalid_artifact", cohortResult.invalidArtifact);
+  }
+  for (const detail of cohortResult.failures) {
+    fail("cohort_missed", detail);
+  }
+
+  // ---- Step 7: recovery oracle (basic — full version mirrors owner-failover) ----
   const ownerAfter = artifact.owner_after || {};
   if (!isFiniteNumber(ownerAfter.fence)) {
     fail("invalid_artifact", "owner_after.fence missing or not finite");

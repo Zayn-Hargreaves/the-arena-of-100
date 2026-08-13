@@ -16,7 +16,7 @@ export interface CardTargetPickerProps {
   // offerSeqNo correlation").
   offerSeqNo: number;
   targets: ReadonlyArray<{ playerId: string; name: string }>;
-  // For self-only Defensive/THU cards the picker is bypassed
+  // For self-only Defensive/DEFENSE cards the picker is bypassed
   // and `onPick` is invoked with NO argument so the emitted
   // command omits `targetPlayerId` (server validator rejects any
   // `targetPlayerId` on a self-only play). For all other cards
@@ -30,8 +30,8 @@ export interface CardTargetPickerProps {
 // own timer for ≤2s (UI-only, server `answerDeadline` is
 // unaffected) per spec §4.3 "Target picker is UI-only self-pause".
 //
-// For self-only Defensive/THU cards, the modal is bypassed
-// and the card plays immediately. For Offensive/CONG cards
+// For self-only Defensive/DEFENSE cards, the modal is bypassed
+// and the card plays immediately. For Offensive/ATTACK cards
 // with `targetCount > 1`
 // (AOE), the picker auto-selects the eligible roster without
 // prompting the player.
@@ -45,9 +45,9 @@ export function CardTargetPicker({
 }: CardTargetPickerProps) {
   const t = useTranslations("Cards");
   const def = getCardDefinition(cardId);
-  const isSelfOnly = def.classId === "THU";
+  const isSelfOnly = def.classId === "DEFENSE";
   const isAoe =
-    def.classId === "CONG" &&
+    def.classId === "ATTACK" &&
     (def.effectTemplate as { targetCount?: number }).targetCount !== 1 &&
     (def.effectTemplate as { targetCount?: number }).targetCount !== undefined;
 
@@ -58,13 +58,13 @@ export function CardTargetPicker({
   // A later offer carrying the same `cardId` starts a fresh
   // session and triggers `onPick` again.
   //
-  // Self-only Defensive/THU cards: the dialog is bypassed and
+  // Self-only Defensive/DEFENSE cards: the dialog is bypassed and
   // `onPick` is invoked with no target so the wire payload
   // omits `targetPlayerId` (server rejects any target on a
   // self-only play). Full selection, timing, and validation
   // remain the server's responsibility.
   //
-  // AOE Offensive/CONG cards: the client sends only the initial
+  // AOE Offensive/ATTACK cards: the client sends only the initial
   // eligible target; full AOE roster expansion is the server's
   // responsibility.
   const firedRef = React.useRef<Set<number>>(new Set());

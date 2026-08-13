@@ -1,10 +1,17 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NotFoundException } from "@nestjs/common";
 import { Role } from "@prisma/client";
 import { UsersService } from "./users.service";
 import { PrismaService } from "../prisma/prisma.service";
 
 const FINISHED = "FINISHED";
+
+// Phase 3 — pinned "now" so the dateKey boundary (UTC today /
+// yesterday) is deterministic across test runs.
+const NOW_MS = Date.UTC(2026, 7, 12, 12, 0, 0); // 2026-08-12T12:00:00Z
+const TODAY_KEY = "2026-08-12";
+const YESTERDAY_KEY = "2026-08-11";
+const FIVE_DAYS_AGO_KEY = "2026-08-07";
 
 describe("UsersService", () => {
   let service: UsersService;
@@ -29,6 +36,12 @@ describe("UsersService", () => {
       $queryRaw: vi.fn(),
     };
     service = new UsersService(prisma as unknown as PrismaService);
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW_MS);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe("getMyStats", () => {
@@ -634,13 +647,13 @@ describe("UsersService", () => {
     });
   });
 
-  // Phase 3 — class winrate + streak + sabotage count
-  describe("getPhase3Stats", () => {
+  // class winrate + streak + cards played count
+  describe("getClassStats", () => {
     const mockUser = { id: "u1" };
 
     it("throws NotFoundException when user does not exist", async () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
-      await expect(service.getPhase3Stats("missing")).rejects.toBeInstanceOf(
+      await expect(service.getClassStats("missing")).rejects.toBeInstanceOf(
         NotFoundException,
       );
     });
@@ -653,34 +666,36 @@ describe("UsersService", () => {
         _sum: { cardsPlayed: null },
       });
 
-      const result = await service.getPhase3Stats("u1");
+      const result = await service.getClassStats("u1");
 
       expect(result.stats.classWinrate).toEqual({});
       expect(result.stats.currentStreak).toBe(0);
-      expect(result.stats.sabotageCount).toBe(0);
+      expect(result.stats.cardsPlayed).toBe(0);
     });
 
-    it("aggregates per-class winrate from FINISHED matches with non-null classId", async () => {
+    it("aggregates per-class winrate + cards played from FINISHED matches", async () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
       vi.mocked(prisma.$queryRaw).mockResolvedValue([
-        { class_id: "CONG", plays: 10n, wins: 3n },
-        { class_id: "THU", plays: 5n, wins: 2n },
+        { class_id: "ATTACK", plays: 10n, wins: 3n },
+        { class_id: "DEFENSE", plays: 5n, wins: 2n },
       ]);
       vi.mocked(prisma.dailyAttempt.findFirst).mockResolvedValue({
         streakAfter: 7,
+        dateKey: TODAY_KEY,
       });
       vi.mocked(prisma.matchPlayer.aggregate).mockResolvedValue({
         _sum: { cardsPlayed: 28 },
       });
 
-      const result = await service.getPhase3Stats("u1");
+      const result = await service.getClassStats("u1");
 
-      // Phase 3 — the sabotage count must be filtered by match.status =
-      // FINISHED so the aggregate only sums finished matches. This is
-      // the authoritative source-of-truth scope (cardsPlayed is
-      // persisted at finishMatch, so pre-FINISHED matches have no
-      // cardsPlayed row yet, but the filter is still required for
-      // correctness after the match.status transition is reverted).
+      // Phase 3 — the cards played aggregate must be filtered by
+      // match.status = FINISHED so the sum only includes finished
+      // matches. This is the authoritative source-of-truth scope
+      // (cardsPlayed is persisted at finishMatch, so pre-FINISHED
+      // matches have no cardsPlayed row yet, but the filter is still
+      // required for correctness after the match.status transition
+      // is reverted).
       const aggregateCall = vi.mocked(prisma.matchPlayer.aggregate).mock
         .calls[0]?.[0];
       expect(aggregateCall?.where).toEqual({
@@ -689,21 +704,68 @@ describe("UsersService", () => {
       });
       expect(aggregateCall?._sum).toEqual({ cardsPlayed: true });
 
-      expect(result.stats.classWinrate.CONG).toEqual({
+      // Phase 3 — the dailyAttempt query pins `dateKey` (UTC-today or
+      // UTC-yesterday boundary) AND orders by `completedAt desc`. The
+      // service uses both to gate `currentStreak` to active streaks.
+      const findFirstCall = vi.mocked(prisma.dailyAttempt.findFirst).mock
+        .calls[0]?.[0];
+      expect(findFirstCall?.where).toEqual({ userId: "u1" });
+      expect(findFirstCall?.orderBy).toEqual({ completedAt: "desc" });
+      expect(findFirstCall?.select).toEqual({
+        streakAfter: true,
+        dateKey: true,
+      });
+
+      expect(result.stats.classWinrate.ATTACK).toEqual({
         plays: 10,
         wins: 3,
         winRate: 0.3,
       });
-      expect(result.stats.classWinrate.THU).toEqual({
+      expect(result.stats.classWinrate.DEFENSE).toEqual({
         plays: 5,
         wins: 2,
         winRate: 0.4,
       });
       expect(result.stats.currentStreak).toBe(7);
-      expect(result.stats.sabotageCount).toBe(28);
+      expect(result.stats.cardsPlayed).toBe(28);
     });
 
-    it("skips class rows whose class_id is not CONG or THU (defensive)", async () => {
+    it("returns currentStreak from a daily attempt dated yesterday (boundary)", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
+      vi.mocked(prisma.dailyAttempt.findFirst).mockResolvedValue({
+        streakAfter: 4,
+        dateKey: YESTERDAY_KEY,
+      });
+      vi.mocked(prisma.matchPlayer.aggregate).mockResolvedValue({
+        _sum: { cardsPlayed: 0 },
+      });
+
+      const result = await service.getClassStats("u1");
+
+      expect(result.stats.currentStreak).toBe(4);
+    });
+
+    it("returns currentStreak = 0 when the latest attempt is older than yesterday (stale streak)", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([]);
+      // Most-recent attempt was 5 days ago — frozen streak should
+      // NOT bleed through to the profile page (the user can re-start
+      // tomorrow, the displayed streak reflects today only).
+      vi.mocked(prisma.dailyAttempt.findFirst).mockResolvedValue({
+        streakAfter: 9,
+        dateKey: FIVE_DAYS_AGO_KEY,
+      });
+      vi.mocked(prisma.matchPlayer.aggregate).mockResolvedValue({
+        _sum: { cardsPlayed: 0 },
+      });
+
+      const result = await service.getClassStats("u1");
+
+      expect(result.stats.currentStreak).toBe(0);
+    });
+
+    it("skips class rows whose class_id is not ATTACK or DEFENSE (defensive)", async () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
       vi.mocked(prisma.$queryRaw).mockResolvedValue([
         { class_id: "BOGUS", plays: 10n, wins: 5n },
@@ -713,7 +775,7 @@ describe("UsersService", () => {
         _sum: { cardsPlayed: 0 },
       });
 
-      const result = await service.getPhase3Stats("u1");
+      const result = await service.getClassStats("u1");
 
       expect(result.stats.classWinrate).toEqual({});
     });
@@ -721,18 +783,18 @@ describe("UsersService", () => {
     it("treats zero plays as winRate = 0 (not NaN)", async () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
       vi.mocked(prisma.$queryRaw).mockResolvedValue([
-        { class_id: "CONG", plays: 0n, wins: 0n },
+        { class_id: "ATTACK", plays: 0n, wins: 0n },
       ]);
       vi.mocked(prisma.dailyAttempt.findFirst).mockResolvedValue(null);
       vi.mocked(prisma.matchPlayer.aggregate).mockResolvedValue({
         _sum: { cardsPlayed: 0 },
       });
 
-      const result = await service.getPhase3Stats("u1");
+      const result = await service.getClassStats("u1");
 
-      expect(result.stats.classWinrate.CONG?.winRate).toBe(0);
+      expect(result.stats.classWinrate.ATTACK?.winRate).toBe(0);
       expect(
-        Number.isFinite(result.stats.classWinrate.CONG?.winRate ?? NaN),
+        Number.isFinite(result.stats.classWinrate.ATTACK?.winRate ?? NaN),
       ).toBe(true);
     });
   });

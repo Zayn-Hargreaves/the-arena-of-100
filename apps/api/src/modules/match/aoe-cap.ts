@@ -25,7 +25,7 @@ import { AOE_CAP_PER_ROUND, type CardEffectEvent } from "@arena/shared";
 // themselves (i.e. `targetPlayerIds.length > 1` — the AOE shape).
 //
 // v1 simplification: ONLY effects with `targetPlayerIds.length > 1`
-// count toward the cap. A single-target Offensive/CONG card is
+// count toward the cap. A single-target Offensive/ATTACK card is
 // NOT considered AOE for budgeting purposes (the cap is about
 // broadcast cost, not single-target cost).
 export function countAoeResolved(
@@ -104,7 +104,7 @@ export class AoeCapTracker {
 
   // Called after a `CARD_RESOLVED` event is appended. Increments
   // the counter only for AOE-shaped resolutions (targetPlayerIds
-  // length > 1). Single-target Offensive/CONG cards do NOT count.
+  // length > 1). Single-target Offensive/ATTACK cards do NOT count.
   onCardResolved(event: CardEffectEvent): void {
     if (event.matchId !== this.matchId) return;
     if (event.roundNo !== this.currentRoundNo) return;

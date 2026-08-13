@@ -314,19 +314,19 @@
       "TECHNOLOGY": "Công nghệ",
       "CULTURE": "Văn hóa"
     },
-    "phase3": {
-      "title": "PHASE 3 — LỚP · CHUỖI · PHÁ HOẠI",
+    "classStats": {
+      "title": "LỚP · CHUỖI · LÁ BÀI",
       "streak": "CHUỖI THẮNG HIỆN TẠI",
       "streakHint": "Số ngày Daily Challenge thắng liên tiếp",
-      "sabotage": "SỐ LƯỢNG PHÁ HOẠI",
-      "sabotageHint": "Tổng lá bài đã chơi trong các trận kết thúc",
+      "cardsPlayed": "SỐ LÁ BÀI ĐÃ CHƠI",
+      "cardsPlayedHint": "Tổng số lá bài đã dùng trong các trận kết thúc",
       "bestClass": "LỚP MẠNH NHẤT",
       "bestClassHint": "Tỉ lệ thắng cao hơn giữa CÔNG / THỦ",
       "matchesWon": "trận thắng",
       "noClassMatches": "Chưa có trận nào được gán lớp",
       "class": {
-        "CONG": "CÔNG",
-        "THU": "THỦ"
+        "ATTACK": "CÔNG",
+        "DEFENSE": "THỦ"
       }
     },
     "error": {
@@ -353,7 +353,12 @@
     "accuracyShort": "Chính xác",
     "empty": "Chưa có dữ liệu xếp hạng.",
     "cardsThisWeek": "Lá bài đã chơi trong tuần",
-    "cardsLabel": "🃏 {count}",
+    "cardsLabel": "{count, plural, one {🃏 # lá bài} other {🃏 # lá bài}}",
+    "cardsTier": {
+      "COMMON": "Hạng thường — người chơi nhẹ",
+      "RARE": "Hạng hiếm — người chơi tích cực",
+      "EPIC": "Hạng sử thi — tay chơi bài chuyên nghiệp"
+    },
     "error": {
       "loadFailed": "Không tải được bảng xếp hạng.",
       "rowUnavailable": "Không thể hiển thị hàng bảng xếp hạng.",
@@ -541,7 +546,12 @@
     "leaderboard": {
       "title": "Bảng Xếp Hạng Hôm Nay",
       "error": "Không tải được bảng xếp hạng.",
-      "empty": "Hôm nay chưa có điểm — hãy là người đầu tiên."
+      "empty": "Hôm nay chưa có điểm — hãy là người đầu tiên.",
+      "cardsTier": {
+        "COMMON": "Hạng thường — người chơi nhẹ",
+        "RARE": "Hạng hiếm — người chơi tích cực",
+        "EPIC": "Hạng sử thi — tay chơi bài chuyên nghiệp"
+      }
     },
     "gate": {
       "title": "Chọn biệt danh",
@@ -590,8 +600,8 @@
     "noCards": "Không có lá bài nào",
     "milestoneOffer": "Round cột mốc — chọn một lá bài để sử dụng",
     "classes": {
-      "CONG": "Tấn công",
-      "THU": "Phòng thủ"
+      "ATTACK": "Tấn công",
+      "DEFENSE": "Phòng thủ"
     },
     "tiers": {
       "COMMON": "Thường",

@@ -314,19 +314,19 @@
       "TECHNOLOGY": "Technology",
       "CULTURE": "Culture"
     },
-    "phase3": {
-      "title": "PHASE 3 — CLASS · STREAK · SABOTAGE",
+    "classStats": {
+      "title": "CLASS · STREAK · CARDS",
       "streak": "CURRENT STREAK",
       "streakHint": "Daily Challenge wins in a row",
-      "sabotage": "SABOTAGE COUNT",
-      "sabotageHint": "Cards played across finished matches",
+      "cardsPlayed": "CARDS PLAYED",
+      "cardsPlayedHint": "Total cards used across finished matches",
       "bestClass": "BEST CLASS",
-      "bestClassHint": "Highest winrate between CONG / THU",
+      "bestClassHint": "Highest winrate between ATTACK / DEFENSE",
       "matchesWon": "matches won",
       "noClassMatches": "No class-assigned matches yet",
       "class": {
-        "CONG": "CONG",
-        "THU": "THU"
+        "ATTACK": "Offensive",
+        "DEFENSE": "Defensive"
       }
     },
     "error": {
@@ -353,7 +353,12 @@
     "accuracyShort": "Accuracy",
     "empty": "No leaderboard data yet.",
     "cardsThisWeek": "Cards played this week",
-    "cardsLabel": "🃏 {count}",
+    "cardsLabel": "{count, plural, one {🃏 # card} other {🃏 # cards}}",
+    "cardsTier": {
+      "COMMON": "Common card tier — light runner",
+      "RARE": "Rare card tier — active player",
+      "EPIC": "Epic card tier — card-slinging shark"
+    },
     "error": {
       "loadFailed": "Failed to load leaderboard.",
       "rowUnavailable": "Leaderboard row unavailable.",
@@ -541,7 +546,12 @@
     "leaderboard": {
       "title": "Today's Leaderboard",
       "error": "Leaderboard unavailable.",
-      "empty": "No scores yet today — be the first."
+      "empty": "No scores yet today — be the first.",
+      "cardsTier": {
+        "COMMON": "Common card tier — light runner",
+        "RARE": "Rare card tier — active player",
+        "EPIC": "Epic card tier — card-slinging shark"
+      }
     },
     "gate": {
       "title": "Choose your nickname",
@@ -590,8 +600,8 @@
     "noCards": "No cards in hand",
     "milestoneOffer": "Milestone round — pick a card to play",
     "classes": {
-      "CONG": "Offensive",
-      "THU": "Defensive"
+      "ATTACK": "Offensive",
+      "DEFENSE": "Defensive"
     },
     "tiers": {
       "COMMON": "Common",

@@ -50,34 +50,35 @@ model User {
   updatedAt DateTime @updatedAt
 
   // Relations
-  hostedRooms    Room[]          @relation("RoomHost")
-  roomPlayers    RoomPlayer[]
-  matchPlayers   MatchPlayer[]
-  answers        Answer[]
-  wonMatches     Match[]         @relation("MatchWinner")
-  dailyAttempts  DailyAttempt[]
-  cardVariants   UserCardVariant[]
+  hostedRooms               Room[]                     @relation("RoomHost")
+  roomPlayers               RoomPlayer[]
+  matchPlayers              MatchPlayer[]
+  answers                   Answer[]
+  wonMatches                Match[]                    @relation("MatchWinner")
+  dailyAttempts             DailyAttempt[]
+  cardVariants              UserCardVariant[]
+  pendingCardVariantUnlocks PendingCardVariantUnlock[]
   // PR 3 (Admin Audit): inverse side of EventLog.adminUser. Optional FK
   // (onDelete: SetNull on the EventLog side) so a deleted admin user
   // does not cascade-delete their own audit trail.
-  eventLogsAdmin EventLog[]      @relation("EventLogAdmin")
+  eventLogsAdmin            EventLog[]                 @relation("EventLogAdmin")
 
   @@map("users")
 }
 
 // Rooms
 model Room {
-  id            String   @id @default(cuid())
-  code          String   @unique
-  type          String   // PUBLIC | PRIVATE
-  status        String   // WAITING | COUNTDOWN | IN_GAME | FINISHED
-  hostId        String
-  maxPlayers    Int      @default(100)
-  timeLimit     Int      @default(15)
-  category      String   @default("ALL")
+  id             String   @id @default(cuid())
+  code           String   @unique
+  type           String // PUBLIC | PRIVATE
+  status         String // WAITING | COUNTDOWN | IN_GAME | FINISHED
+  hostId         String
+  maxPlayers     Int      @default(100)
+  timeLimit      Int      @default(15)
+  category       String   @default("ALL")
   currentMatchId String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   // Relations
   host    User         @relation("RoomHost", fields: [hostId], references: [id])
@@ -106,7 +107,7 @@ model RoomPlayer {
 model Match {
   id        String    @id @default(cuid())
   roomId    String
-  status    String    // CREATED | COUNTDOWN | ROUND_ACTIVE | ROUND_EVALUATING | ROUND_RESULT | FINISHED
+  status    String // CREATED | COUNTDOWN | ROUND_ACTIVE | ROUND_EVALUATING | ROUND_RESULT | FINISHED
   winnerId  String?
   startedAt DateTime?
   endedAt   DateTime?
@@ -127,16 +128,16 @@ model Match {
 
 // Match Players
 model MatchPlayer {
-  id         String @id @default(cuid())
-  matchId    String
-  userId     String
-  score      Int    @default(0)
+  id          String  @id @default(cuid())
+  matchId     String
+  userId      String
+  score       Int     @default(0)
   // Phase 3 — count of CARD_RESOLVED events the player triggered.
   // Persisted at finishMatch so the daily leaderboard can aggregate
   // "most cards played this week" without re-reading the event log
   // (which is in-memory/Redis only and gone after the match ends).
-  cardsPlayed Int   @default(0)
-  // Phase 3 — class assigned for this match (CONG / THU). NULL when
+  cardsPlayed Int     @default(0)
+  // Phase 3 — class assigned for this match (ATTACK / DEFENSE). NULL when
   // the CLASS_ASSIGNED event was never emitted (legacy match or
   // admin-terminated match that bypassed assignment). Read-only on
   // the API surface: derived from the event log at finishMatch.
@@ -158,17 +159,17 @@ model MatchPlayer {
 
 // Match Rounds
 model MatchRound {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   matchId    String
   roundNo    Int
   questionId String
-  startedAt  DateTime @default(now())
+  startedAt  DateTime  @default(now())
   endedAt    DateTime?
 
   // Relations
-  match   Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  match    Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
   question Question @relation(fields: [questionId], references: [id])
-  answers Answer[]
+  answers  Answer[]
 
   @@unique([matchId, roundNo])
   // Required for composite FK reference from Answer(matchId, roundId) -> (matchId, id)
@@ -178,16 +179,16 @@ model MatchRound {
 
 // Questions
 model Question {
-  id            String   @id @default(cuid())
+  id            String           @id @default(cuid())
   content       String
-  options       Json     // ["A", "B", "C", "D"]
+  options       Json // ["A", "B", "C", "D"]
   correctAnswer String
   difficulty    Difficulty
   category      QuestionCategory
   explanation   String?
-  active        Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  active        Boolean          @default(true)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
 
   // Relations
   rounds MatchRound[]
@@ -220,7 +221,7 @@ model Answer {
 
 // Event Logs (Event Sourcing)
 model EventLog {
-  id         String   @id @default(cuid())
+  id          String   @id @default(cuid())
   // PR 3 (Admin Audit): matchId, roomId, and adminUserId are now all
   // nullable. Match-scoped events (gameplay, snapshots) set matchId;
   // room-scoped events (admin termination, reset) set roomId; admin
@@ -233,20 +234,20 @@ model EventLog {
   // GET /admin/audit-events query relies on `createdAt` (indexed below)
   // instead. If future event-sourcing work reintroduces seqNo it should
   // also reintroduce the producer that maintains it.
-  matchId    String?
-  roomId     String?
+  matchId     String?
+  roomId      String?
   adminUserId String?
-  eventType  String
-  payload    Json
-  createdAt  DateTime @default(now())
+  eventType   String
+  payload     Json
+  createdAt   DateTime @default(now())
 
   // Relations
   // PR 3: onDelete: SetNull on the adminUser FK so deleting an admin
   // user does not cascade-delete their own audit trail. The audit row
   // is preserved with adminUserId = null and the original cuid in the
   // payload JSON for forensic recovery.
-  match      Match?   @relation(fields: [matchId], references: [id], onDelete: SetNull)
-  adminUser  User?    @relation("EventLogAdmin", fields: [adminUserId], references: [id], onDelete: SetNull)
+  match     Match? @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  adminUser User?  @relation("EventLogAdmin", fields: [adminUserId], references: [id], onDelete: SetNull)
 
   @@index([adminUserId, createdAt], map: "event_logs_admin_user_id_created_at_idx")
   @@index([roomId, createdAt], map: "event_logs_room_id_created_at_idx")
@@ -294,7 +295,7 @@ model DailyQuestion {
   dateKey String // "YYYY-MM-DD" — NOT unique: one row per version
   version Int    @default(1)
 
-  questions Json             // 5 questions: [{ content, options, correctAnswer, difficulty, category, explanation? }]
+  questions Json // 5 questions: [{ content, options, correctAnswer, difficulty, category, explanation? }]
   category  QuestionCategory @default(GENERAL)
   active    Boolean          @default(true)
 
@@ -315,7 +316,7 @@ model DailyAttempt {
   id           String   @id @default(cuid())
   dateKey      String
   userId       String
-  answers      Json     // [{ answer, isCorrect, responseTimeMs }] — client times are stats-only
+  answers      Json // [{ answer, isCorrect, responseTimeMs }] — client times are stats-only
   score        Int      @default(0)
   correctCount Int      @default(0)
   streakBefore Int      @default(0)
@@ -335,7 +336,7 @@ model DailyAttempt {
   dailyQuestion DailyQuestion @relation(fields: [dailyQuestionId], references: [id], onDelete: Restrict)
 
   @@unique([dateKey, userId]) // 1 attempt/user/day
-  @@index([dateKey, score])   // leaderboard query
+  @@index([dateKey, score]) // leaderboard query
   @@index([dailyQuestionId])
   @@map("daily_attempts")
 }
@@ -359,15 +360,69 @@ model DailyAttempt {
 // uses `upsert` (createOnly) so a row that already exists is a no-op.
 // ============================================================
 model UserCardVariant {
-  id         String          @id @default(cuid())
+  id         String         @id @default(cuid())
   userId     String
   cardId     String
-  variantKey CardVariantKey  @default(DEFAULT)
-  unlockedAt DateTime        @default(now())
+  variantKey CardVariantKey @default(DEFAULT)
+  unlockedAt DateTime       @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, cardId, variantKey])
   @@index([userId])
   @@map("user_card_variants")
+}
+
+// ============================================================
+// Phase 3 — durable pending-grant intent
+//
+// A row is inserted (in the same transaction as `dailyAttempt.create`)
+// when the cosmetic-unlock `userCardVariant.upsert` inside the submit
+// transaction fails. The next submit — regardless of
+// `shouldAttemptUnlock` — drains pending rows for the user, attempts
+// the idempotent upsert, and marks the row `processedAt = now()`.
+//
+// Why a separate table:
+//   - The unique constraint on `user_card_variants` enforces
+//     idempotency of the upsert WHEN IT FIRES, but is NOT a "pending
+//     grant" by itself — a transient DB error inside the submit
+//     transaction does not write a `user_card_variants` row, so
+//     there is nothing to replay against.
+//   - The in-process retry counter used in the original 2026-08-13
+//     implementation could not survive a process restart, and relied
+//     on the user crossing the same streak boundary again — a streak
+//     reset zeroes `streakAfter`, so a user who tripped the unlock
+//     once and then missed a day would never get the row.
+//   - The drain runs on EVERY submit (independently of
+//     `shouldAttemptUnlock`) so a streak reset does not strand the
+//     row.
+//
+// `@@unique([userId, dateKey, streakAfter])` makes the pending-row
+// insert idempotent within a single day's attempt: a retried submit
+// at the same unlock boundary hits P2002 and is swallowed as a
+// no-op, but a later submit on a DIFFERENT `dateKey` crossing the
+// same `streakAfter` after the previous grant was processed can
+// create a fresh pending row. `processedAt` is nullable so the
+// drainer can find unprocessed rows with `WHERE processedAt IS NULL`.
+//
+// Partial index note: a `WHERE processedAt IS NULL` partial index
+// on `userId` is maintained manually by migration
+// `20260812130000_phase3_pending_card_variant_unlock/migration.sql`
+// to match the drainer's predicate. Prisma cannot declare partial
+// indexes inline, so the model intentionally does NOT carry an
+// `@@index([userId])` — it would create a non-partial index that
+// is redundant with the partial one below.
+// ============================================================
+model PendingCardVariantUnlock {
+  id          String    @id @default(cuid())
+  userId      String
+  dateKey     String
+  streakAfter Int
+  createdAt   DateTime  @default(now())
+  processedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dateKey, streakAfter])
+  @@map("pending_card_variant_unlocks")
 }

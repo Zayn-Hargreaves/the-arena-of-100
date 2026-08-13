@@ -122,9 +122,13 @@ The strict invariant — same across all three checkpoints:
 
 ### Pass / done
 
-- `load-test/lib/card-batch-verdict.test.mjs` — 11 vitest cases pass.
+- `load-test/lib/card-batch-verdict.test.mjs` — 22 vitest cases pass.
   Mocks 5-effect session through the 3-checkpoint matrix plus dedupe,
   conflict, lost-effect, double-apply, and timeline-shape assertions.
+  The cohort invariant (`cohort_missed` pre/post-flip, plus the
+  happy-path round-trip PASS) is part of the 2026-08-12 hardening
+  — keeps the chaos gate scoped to effects that MUST survive a
+  failover (persisted before the kill, observed after the flip).
 - Production code unchanged (Phase 2 append-first design already
   satisfies the invariant); this gate is a regression detector, not a
   fix-it-first deliverable.

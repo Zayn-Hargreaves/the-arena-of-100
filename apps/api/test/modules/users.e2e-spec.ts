@@ -204,4 +204,31 @@ describe("E2E /users", () => {
       expect(res.statusCode).toBe(400);
     });
   });
+
+  describe("GET /api/v1/users/me/class-stats", () => {
+    it("returns 401 when the Authorization header is missing", async () => {
+      const res = await testApp.inject("GET", "/api/v1/users/me/class-stats");
+      expect(res.statusCode).toBe(401);
+    });
+
+    it("returns 401 when the token is malformed", async () => {
+      const res = await testApp.inject("GET", "/api/v1/users/me/class-stats", {
+        headers: { authorization: "Bearer not-a-real-jwt" },
+      });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it("returns 404 when an authenticated userId has no user row", async () => {
+      // Authenticated but unknown userId — UsersService.getClassStats
+      // throws NotFoundException("USER_NOT_FOUND").
+      const headers = testApp.authedHeaders(
+        "ckldoesnotexist111222333",
+        "GhostPlayer",
+      );
+      const res = await testApp.inject("GET", "/api/v1/users/me/class-stats", {
+        headers,
+      });
+      expect(res.statusCode).toBe(404);
+    });
+  });
 });

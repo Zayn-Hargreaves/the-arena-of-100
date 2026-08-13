@@ -11,9 +11,12 @@ import { ownerKey, fenceKey } from "./match-ownership.store";
 import { MatchStateMachine } from "@arena/game-core";
 import {
   MatchStatus,
+  MatchEventType,
   RoomStatus,
   PlayerStatus,
   ErrorCode,
+  type CardEffectEvent,
+  type ClassAssignedEvent,
   type PlayerInfo,
   RoomError,
 } from "@arena/shared";
@@ -428,28 +431,70 @@ export class MatchService {
     roomId: string,
     isAdminTermination = false,
   ) {
-    // B2: Persist accumulated scores from in-memory state machine BEFORE cleanup.
-    // Skipped for admin termination — the match was force-stopped and the state
-    // machine reference is dropped without computing final scores.
+    // 2d fix — two-phase claim. The match row is claimed as FINISHED
+    // BEFORE any score / room update ops are built or executed, so a
+    // concurrent or post-restart `finishMatch` call that races us
+    // cannot trigger score / cardsPlayed / classId writes on a match
+    // that is already FINISHED. The pre-check is a single
+    // `updateMany` with `status: { not: FINISHED }`; a `count === 0`
+    // result means another finisher won the race — we return
+    // immediately with the canonical row and never read the state
+    // machine for score computation.
+    //
+    // For the admin-termination path we still want the claim gate
+    // (skipping it would let a force-terminator overwrite a winner
+    // that a normal finish had already committed), so the pre-check
+    // runs unconditionally. The only thing the admin path skips is
+    // the SCORE UPDATE OPS — the match / room status updates still
+    // run in the main transaction below.
+    const claimResult = await this.prisma.match.updateMany({
+      where: { id: matchId, status: { not: MatchStatus.FINISHED } },
+      data: {
+        status: MatchStatus.FINISHED,
+        winnerId,
+        endedAt: new Date(),
+      },
+    });
+    if (claimResult.count === 0) {
+      this.logger.warn(
+        `finishMatch: match ${matchId} was already FINISHED; treating this call as a no-op (claim gate). winnerId/endedAt left untouched.`,
+      );
+      return this.prisma.match.findUnique({ where: { id: matchId } });
+    }
+
+    // Claim succeeded — only the claimant computes score updates.
+    // Skipped for admin termination: the match was force-stopped and
+    // the state machine reference is dropped without computing final
+    // scores. Reading the in-memory state machine AFTER the claim
+    // means a loser of the claim race never paid the read cost.
     const scoreUpdateOps = !isAdminTermination
       ? await this.buildScoreUpdateOps(matchId)
       : [];
 
-    // H2: ONE transaction. Either all of {scores, match, room} commit
-    // or none do. If Prisma throws, the database is left untouched.
+    // H2: ONE transaction for the remaining work. Either all of
+    // {scores, room} commit or none do. If Prisma throws, the database
+    // is left untouched.
     //
-    // Prisma's $transaction returns results in the same order as
-    // the input array. With the `...scoreUpdateOps` spread the
+    // The `match.updateMany` claim has already committed in the
+    // pre-check above; the `match.updateMany` re-issued here is a
+    // safety-net no-op (status is now FINISHED so the
+    // `status: { not: FINISHED }` filter rejects every row, returning
+    // `count: 0`). Keeping it in the same array preserves the H2
+    // single-transaction contract from the original implementation
+    // and the `updateResult` slot is still read for diagnostics.
+    //
+    // Prisma's $transaction returns results in the same order as the
+    // input array. With the `...scoreUpdateOps` spread the
     // match.updateMany operation lives at index `scoreUpdateOps.length`
     // (which is 0 for the admin-termination path and N for the
     // normal-finish path). We read that slot explicitly to get the
-    // `{ count }` result of the idempotent update.
+    // `{ count }` result of the idempotent re-claim.
     //
-    // 1f/2a fix: the match update is now idempotent at the DB layer.
-    // The in-memory `finishingMatches` guard in GameLoopService only
-    // covers a single process; a cross-process finish or a
-    // post-restart re-call could otherwise overwrite winnerId/endedAt
-    // on an already-FINISHED match. `updateMany` with a
+    // 1f/2a fix: the match update is idempotent at the DB layer. The
+    // in-memory `finishingMatches` guard in GameLoopService only covers
+    // a single process; a cross-process finish or a post-restart
+    // re-call could otherwise overwrite winnerId/endedAt on an
+    // already-FINISHED match. `updateMany` with a
     // `status: { not: FINISHED }` filter makes the second finish a
     // no-op (count: 0) instead of a clobbering write.
     const txResults = await this.prisma.$transaction([
@@ -467,17 +512,16 @@ export class MatchService {
         data: { status: RoomStatus.FINISHED },
       }),
     ]);
-    const updateResult = txResults[scoreUpdateOps.length] as { count: number };
-
-    // If the match was already FINISHED (count: 0), a concurrent or
-    // prior finish won the race. Skip the now-redundant cleanup +
-    // return the canonical row rather than asserting our write took.
-    if (updateResult.count === 0) {
-      this.logger.warn(
-        `finishMatch: match ${matchId} was already FINISHED; treating this call as a no-op (idempotent guard). winnerId/endedAt left untouched.`,
-      );
-      return this.prisma.match.findUnique({ where: { id: matchId } });
-    }
+    // `txResults[scoreUpdateOps.length].count` is the in-transaction
+    // re-claim's `{ count }`. The re-claim returning count: 0 is the
+    // EXPECTED outcome (the row was already set to FINISHED by the
+    // pre-claim above, so the `status: { not: FINISHED }` filter
+    // rejects it). No assertion / no warning — we read past the
+    // slot and continue to Redis cleanup so the winner's match
+    // reaches a consistent FINISHED state. The expression below is
+    // bound here only to document the slot's semantics; it is
+    // intentionally not used otherwise.
+    void txResults[scoreUpdateOps.length];
 
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
@@ -568,22 +612,24 @@ export class MatchService {
     // classId = NULL.
     const classByUser = new Map<string, string>();
     for (const entry of stateMachine.getEventLog()) {
-      if (entry.type === "CARD_RESOLVED") {
-        const payload = entry.payload as
-          | { playedByPlayerId?: string }
-          | undefined;
-        const playerId = payload?.playedByPlayerId;
+      if (entry.type === MatchEventType.CARD_RESOLVED) {
+        // `CardEffectEvent = MutationEffect | TemporaryEffect` — both
+        // share a `playedByPlayerId` field; the union is already
+        // narrowed by `entry.type` matching the discriminator, so the
+        // cast is safe (the runtime value is one of the two).
+        const payload = entry.payload as CardEffectEvent;
+        const playerId = payload.playedByPlayerId;
         if (playerId) {
           cardsPlayedByUser.set(
             playerId,
             (cardsPlayedByUser.get(playerId) ?? 0) + 1,
           );
         }
-      } else if (entry.type === "CLASS_ASSIGNED") {
-        const payload = entry.payload as
-          | { assignments?: Array<{ playerId: string; classId: string }> }
-          | undefined;
-        const assignments = payload?.assignments ?? [];
+      } else if (entry.type === MatchEventType.CLASS_ASSIGNED) {
+        // `ClassAssignedEvent` is the canonical payload schema for the
+        // CLASS_ASSIGNED event; reading `assignments` is type-safe.
+        const payload = entry.payload as ClassAssignedEvent;
+        const assignments = payload.assignments ?? [];
         for (const a of assignments) {
           classByUser.set(a.playerId, a.classId);
         }

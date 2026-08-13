@@ -83,7 +83,18 @@ describe("DailyService", () => {
     dailyQuestion: { findFirst: any; findUnique: any };
     dailyAttempt: { count: any; create: any; findUnique: any };
     userCardVariant: { findMany: any; upsert: any };
+    pendingCardVariantUnlock: {
+      create: any;
+      findMany: any;
+      update: any;
+    };
     $queryRaw: any;
+    // Phase 3 — the cosmetic unlock + dailyAttempt.create now share
+    // ONE `$transaction`. Tests pass a callback-style $transaction
+    // that simply forwards `tx` calls to the top-level mocks so the
+    // existing assertions (`expect(prisma.userCardVariant.upsert)...`)
+    // continue to work without per-test rewrites.
+    $transaction: any;
   };
   let redis: {
     getJSON: any;
@@ -117,7 +128,19 @@ describe("DailyService", () => {
         findMany: vi.fn().mockResolvedValue([]),
         upsert: vi.fn(),
       },
+      pendingCardVariantUnlock: {
+        create: vi.fn().mockResolvedValue({}),
+        // Default: no pending rows. Tests that exercise the drainer
+        // override this with a pre-seeded row.
+        findMany: vi.fn().mockResolvedValue([]),
+        update: vi.fn().mockResolvedValue({}),
+      },
       $queryRaw: vi.fn(),
+      $transaction: vi
+        .fn()
+        .mockImplementation(async (cb: any) =>
+          typeof cb === "function" ? cb(prisma) : Promise.all(cb),
+        ),
     };
     redis = {
       getJSON: vi.fn(),
@@ -938,6 +961,192 @@ describe("DailyService", () => {
 
         expect(result.streakAfter).toBe(7);
         expect(result.unlockedVariant).toBeUndefined();
+        // The pending-grant row IS written in the same transaction as
+        // dailyAttempt.create — that is the durable recovery signal.
+        expect(prisma.pendingCardVariantUnlock.create).toHaveBeenCalledWith({
+          data: { userId: "user-1", dateKey: "2026-08-09", streakAfter: 7 },
+        });
+      });
+
+      it("retries the unlock on a subsequent submit by draining the pending grant (3 distinct users)", async () => {
+        // Three distinct users — each crosses the streakAfter === 7
+        // threshold on its own submit, then hits a transient DB
+        // error on the cosmetic unlock. Each user gets a pending
+        // grant row written in the same transaction as
+        // `dailyAttempt.create`. The drainer, which runs on every
+        // submit (regardless of `shouldAttemptUnlock`), picks the
+        // pending row up and re-attempts the upsert — except in
+        // this test we have `userCardVariant.findMany` still
+        // throwing, so the drain logs and the row stays pending.
+        //
+        // Using distinct users (not "user-1" three times) is
+        // defensive against a future mock setup that enforces
+        // the `@@unique([dateKey, userId])` constraint on
+        // `daily_attempts` — a retried submit for the same user on
+        // the same dateKey would throw P2002 and surface as a 409,
+        // not a real "retry the unlock" scenario.
+        //
+        // The session-token mock must mirror the userId for each
+        // call (otherwise `claims.sub !== userId` would 400 the
+        // submit before the unlock branch ever runs).
+        const users = ["user-1", "user-2", "user-3"];
+        prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 6 });
+        prisma.userCardVariant.findMany.mockRejectedValue(new Error("DB down"));
+        auth.verifyDailySession.mockImplementation((token: string) => ({
+          sub: token, // token carries the userId in this test
+          dateKey: "2026-08-09",
+          dailyQuestionId: QUESTION_SET_ID,
+          startedAtMs: NOW_MS,
+          iat: Math.floor(NOW_MS / 1000),
+        }));
+        const warnSpy = vi.spyOn(Logger.prototype, "warn");
+
+        for (const user of users) {
+          await service.submit(user, { ...submitInput(), sessionToken: user });
+        }
+
+        // All three submissions succeeded — the submit MUST NOT
+        // surface the unlock failure. (The `await` above would
+        // throw if any submit 400'd, so reaching this line is
+        // itself the assertion.)
+
+        // One pending-grant row written per user. The `streakAfter`
+        // for each user is 7 (threshold crossing).
+        expect(prisma.pendingCardVariantUnlock.create).toHaveBeenCalledTimes(3);
+        const createdCalls = vi.mocked(prisma.pendingCardVariantUnlock.create)
+          .mock.calls;
+        const createdUserIds = createdCalls.map(
+          (call: [unknown]) =>
+            (call[0] as { data: { userId: string } }).data.userId,
+        );
+        expect(createdUserIds.sort()).toEqual(["user-1", "user-2", "user-3"]);
+
+        // WARN logs emitted per user — three "persisting pending
+        // grant intent" warnings (the drainer also runs and hits
+        // the same DB error, but its WARN is "Pending card-variant
+        // unlock drain failed", which is intentionally a distinct
+        // message so operators can tell the trigger-side failure
+        // apart from the drain-side failure).
+        const pendingIntentWarns = warnSpy.mock.calls
+          .map((call) => call[0])
+          .filter(
+            (msg): msg is string =>
+              typeof msg === "string" &&
+              msg.includes("persisting pending grant intent"),
+          );
+        expect(pendingIntentWarns).toHaveLength(3);
+      });
+
+      // The drain runs on EVERY submit (regardless of
+      // `shouldAttemptUnlock`) so a streak reset zeroes
+      // `streakAfter`, so a user who tripped the unlock once and
+      // then missed a day must still recover the row. These three
+      // tests pin the drain contract:
+      //   1. a fresh pending row on the next submit gets the
+      //      idempotent upsert + `processedAt` mark;
+      //   2. a streak reset (streakAfter = 0, NOT a milestone)
+      //      does not strand the pending row;
+      //   3. a re-drain on the same submit finds `processedAt !=
+      //      null` and skips the upsert (idempotency).
+      it("drains a pending grant on a fresh submit (post-failure recovery)", async () => {
+        // Pre-seed one unprocessed pending row for user-1.
+        prisma.pendingCardVariantUnlock.findMany.mockResolvedValue([
+          {
+            id: "pending-1",
+            userId: "user-1",
+            dateKey: "2026-08-09",
+            streakAfter: 7,
+            createdAt: new Date(),
+            processedAt: null,
+          },
+        ]);
+        // owned variants = empty, so nextCardVariant = NEON.
+        prisma.userCardVariant.findMany.mockResolvedValue([]);
+        prisma.userCardVariant.upsert.mockResolvedValue({});
+
+        const result = await service.submit("user-1", submitInput());
+
+        // The drain attempted the idempotent upsert via
+        // `maybeUnlockCardVariantInTx`.
+        expect(prisma.userCardVariant.upsert).toHaveBeenCalled();
+        // The pending row was marked processed.
+        expect(prisma.pendingCardVariantUnlock.update).toHaveBeenCalledWith({
+          where: { id: "pending-1" },
+          data: { processedAt: expect.any(Date) as unknown },
+        });
+        // The submit still returns an `unlockedVariant` for THIS
+        // attempt (NEON) because the drain ran as part of the
+        // same transaction — a fresh submit on streakAfter = 6
+        // does NOT cross the threshold (6 % 7 !== 0), so the
+        // user-facing response shape's `unlockedVariant` is the
+        // drain's grant, not the threshold trigger.
+        expect(result.unlockedVariant).toEqual(
+          expect.objectContaining({ variantKey: "NEON" }),
+        );
+      });
+
+      it("drains a pending grant on a streak reset (not a milestone submit)", async () => {
+        // Pre-seed one unprocessed pending row.
+        prisma.pendingCardVariantUnlock.findMany.mockResolvedValue([
+          {
+            id: "pending-1",
+            userId: "user-1",
+            dateKey: "2026-08-09",
+            streakAfter: 7,
+            createdAt: new Date(),
+            processedAt: null,
+          },
+        ]);
+        prisma.userCardVariant.findMany.mockResolvedValue([]);
+        prisma.userCardVariant.upsert.mockResolvedValue({});
+
+        // streakBefore = 6 → streakAfter = 0 (because the user
+        // got an answer wrong, even though they submitted). The
+        // submit's `shouldAttemptUnlock` is FALSE (0 % 7 === 0
+        // but 0 is not > 0). The drain MUST still fire.
+        const result = await service.submit(
+          "user-1",
+          submitInput([
+            { answer: "A", responseTimeMs: 1000 },
+            { answer: "A", responseTimeMs: 1000 }, // wrong
+            { answer: "A", responseTimeMs: 1000 },
+            { answer: "B", responseTimeMs: 1000 },
+            { answer: "A", responseTimeMs: 1000 },
+          ]),
+        );
+
+        expect(result.streakAfter).toBe(0);
+        // The drain STILL ran — pending grants must survive streak
+        // resets so a user who tripped the unlock once and then
+        // missed a day still recovers the row.
+        expect(prisma.userCardVariant.upsert).toHaveBeenCalled();
+        expect(prisma.pendingCardVariantUnlock.update).toHaveBeenCalledWith({
+          where: { id: "pending-1" },
+          data: { processedAt: expect.any(Date) as unknown },
+        });
+      });
+
+      it("skips a pending grant whose processedAt is already set (idempotent re-drain)", async () => {
+        // Both rows have `processedAt != null` — the drainer
+        // filters them out via `WHERE processedAt IS NULL`.
+        prisma.pendingCardVariantUnlock.findMany.mockResolvedValue([]);
+
+        await service.submit("user-1", submitInput());
+
+        // The drainer MUST scope its scan to unprocessed rows so
+        // already-granted rows are never re-attempted: assert the
+        // predicate here so a future regression that drops
+        // `processedAt: null` (or moves the drain out of the
+        // transaction) is caught.
+        expect(prisma.pendingCardVariantUnlock.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ processedAt: null }),
+          }),
+        );
+        // No upsert, no processedAt update — the drain found
+        // nothing to do.
+        expect(prisma.userCardVariant.upsert).not.toHaveBeenCalled();
+        expect(prisma.pendingCardVariantUnlock.update).not.toHaveBeenCalled();
       });
     });
 

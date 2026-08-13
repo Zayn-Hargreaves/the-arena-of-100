@@ -29,49 +29,49 @@ import {
 import { mulberry32, sha256Bytes } from "./prng";
 import {
   ALL_SAMPLING_VECTORS,
-  VECTOR_CONG_CLASS_HAPPY,
-  VECTOR_THU_CLASS_HAPPY,
+  VECTOR_ATTACK_CLASS_HAPPY,
+  VECTOR_DEFENSE_CLASS_HAPPY,
   loadSamplingVector,
 } from "@arena/shared/src/cards.sampling-vectors";
 
 describe("sampleOffer — happy path (spec §3.3)", () => {
-  it("returns exactly 3 unique cards for CONG", () => {
-    const result = sampleOffer("CONG", "match-1|CONG-player-1");
+  it("returns exactly 3 unique cards for ATTACK", () => {
+    const result = sampleOffer("ATTACK", "match-1|ATTACK-player-1");
     expect(result.cards).toHaveLength(3);
     expect(new Set(result.cards).size).toBe(3);
   });
 
-  it("returns exactly 3 unique cards for THU", () => {
-    const result = sampleOffer("THU", "match-1|THU-player-1");
+  it("returns exactly 3 unique cards for DEFENSE", () => {
+    const result = sampleOffer("DEFENSE", "match-1|DEFENSE-player-1");
     expect(result.cards).toHaveLength(3);
     expect(new Set(result.cards).size).toBe(3);
   });
 
   it("returns only cards from the requested class pool", () => {
-    const congPool = new Set(getClassPool("CONG"));
-    const result = sampleOffer("CONG", "any-seed");
+    const attackPool = new Set(getClassPool("ATTACK"));
+    const result = sampleOffer("ATTACK", "any-seed");
     for (const c of result.cards) {
-      expect(congPool.has(c)).toBe(true);
+      expect(attackPool.has(c)).toBe(true);
     }
   });
 
   it("consumes 6 floats per 3-card offer (no retry)", () => {
-    const result = sampleOffer("CONG", "any-seed");
+    const result = sampleOffer("ATTACK", "any-seed");
     expect(result.steps).toHaveLength(6);
     expect(result.steps.filter((s) => s.purpose === "TIER")).toHaveLength(3);
     expect(result.steps.filter((s) => s.purpose === "CARD")).toHaveLength(3);
   });
 
   it("is deterministic — same seed → same offer + same step trace", () => {
-    const a = sampleOffer("CONG", "deterministic-seed");
-    const b = sampleOffer("CONG", "deterministic-seed");
+    const a = sampleOffer("ATTACK", "deterministic-seed");
+    const b = sampleOffer("ATTACK", "deterministic-seed");
     expect(a.cards).toEqual(b.cards);
     expect(a.steps).toEqual(b.steps);
   });
 
   it("different seeds yield different offers (statistical sanity)", () => {
-    const a = sampleOffer("CONG", "seed-A");
-    const b = sampleOffer("CONG", "seed-B");
+    const a = sampleOffer("ATTACK", "seed-A");
+    const b = sampleOffer("ATTACK", "seed-B");
     expect(a.cards).not.toEqual(b.cards);
   });
 });
@@ -90,7 +90,7 @@ describe("sampleOffer — tier selection (spec §3.3 60/30/10)", () => {
   it("places COMMON / RARE / EPIC tiers across many seeds", () => {
     const seen = new Set<string>();
     for (let i = 0; i < 50; i++) {
-      const result = sampleOffer("CONG", `seed-${i}`);
+      const result = sampleOffer("ATTACK", `seed-${i}`);
       for (const s of result.steps) {
         if (s.purpose === "TIER" && s.tier) seen.add(s.tier);
       }
@@ -104,7 +104,10 @@ describe("sampleOffer — tier selection (spec §3.3 60/30/10)", () => {
 describe("sampleOffer — without replacement invariant", () => {
   it("never draws the same cardId twice in a single offer", () => {
     for (let i = 0; i < 200; i++) {
-      const result = sampleOffer(i % 2 === 0 ? "CONG" : "THU", `seed-${i}`);
+      const result = sampleOffer(
+        i % 2 === 0 ? "ATTACK" : "DEFENSE",
+        `seed-${i}`,
+      );
       expect(new Set(result.cards).size).toBe(result.cards.length);
     }
   });
@@ -113,7 +116,7 @@ describe("sampleOffer — without replacement invariant", () => {
 describe("sampleOffer — exhausted-pool branch (spec §3.3 fewer-than-3)", () => {
   it("returns fewer than 3 cards and stops consuming RNG when no cards remain", () => {
     // Pass custom single-card pool ["CB-1"] to sampleOffer seam.
-    const result = sampleOffer("CONG", "exhausted-seed", ["CB-1"]);
+    const result = sampleOffer("ATTACK", "exhausted-seed", ["CB-1"]);
     expect(result.cards).toEqual(["CB-1"]);
     // Exactly one TIER step (drew COMMON) and one CARD step
     // (drew CB-1) — no further TIER or CARD draws once the pool
@@ -465,10 +468,10 @@ describe("SAMPLE_OFFER_COUNT constant", () => {
 
 describe("ALL_SAMPLING_VECTORS — sanity", () => {
   it("contains expected canonical vectors", () => {
-    expect(VECTOR_CONG_CLASS_HAPPY.classId).toBe("CONG");
-    expect(VECTOR_THU_CLASS_HAPPY.classId).toBe("THU");
-    expect(loadSamplingVector("cong-class-happy")).toBe(
-      VECTOR_CONG_CLASS_HAPPY,
+    expect(VECTOR_ATTACK_CLASS_HAPPY.classId).toBe("ATTACK");
+    expect(VECTOR_DEFENSE_CLASS_HAPPY.classId).toBe("DEFENSE");
+    expect(loadSamplingVector("attack-class-happy")).toBe(
+      VECTOR_ATTACK_CLASS_HAPPY,
     );
   });
 });

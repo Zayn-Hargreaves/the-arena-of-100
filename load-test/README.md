@@ -273,26 +273,40 @@ exactly which invariant was violated.
 
 ### Tests
 
+Run from the **repository root**. The `load-test/vitest.config.mjs`
+sets its own `root:` to `load-test/`, so the trailing test-file
+argument is resolved relative to that directory — `lib/...` (NOT
+`load-test/lib/...`):
+
 ```bash
 node_modules/.bin/vitest run --config load-test/vitest.config.mjs \
   lib/card-batch-verdict.test.mjs
 ```
 
-17 cases:
+22 cases:
 
 - 3 checkpoint PASS scenarios: `append_pre_emit`, `mid_batch_flush`,
-  `pre_ack`
-- 5 negative cases: invalid checkpoint label, broken timeline
-  (`t_kill >= t_owner_flip`), recovery before owner flip
-  (`t_recover < t_owner_flip`), missing `observed_effects`,
-  invalid artifact shape (null / undefined / array)
-- 3 chaos-fingerprint cases: `lost_effect` (one expected effect missing
-  from transport), `double_apply` (zombie re-emit with conflicting
-  `seqNo`), `duplicate_observation` (same canonical triple observed
-  twice)
-- 5 helper unit tests: dedupe, conflict detection, diff,
-  `findDuplicateObservations`, helper unit coverage of the canonical
-  triple key
+  `pre_ack` — each fixture carries a cohort effect that round-trips
+  (persisted before `t_kill`, observed after `t_owner_flip`).
+- 7 artifact/timeline validation cases: invalid checkpoint label,
+  broken timeline (`t_kill >= t_owner_flip`), recovery before owner
+  flip (`t_recover < t_owner_flip`), null / undefined / array
+  artifact, missing `observed_effects`.
+- 2 element-validation cases (added 2026-08-12):
+  `expected_effects: [null]` and `observed_effects` missing
+  `seqNo`. Both must surface as `invalid_artifact` rather than
+  silently underflow the diff.
+- 3 invariant-failure cases: `lost_effect` (one expected effect
+  missing from transport), `double_apply` (zombie re-emit with
+  conflicting `seqNo`), `duplicate_observation` (same canonical
+  triple observed twice).
+- 2 cohort-invariant cases (added 2026-08-12): `cohort_missed`
+  when a cohort effect has no pre-kill expected record, and
+  `cohort_missed` when it has no post-flip canonical observation.
+  Plus a positive control: cohort round-trip PASSES on the happy
+  timeline (counts as part of the 3 checkpoint scenarios above).
+- 4 direct-helper unit tests: `dedupeEffects`,
+  `detectEffectConflicts`, `diffEffects`, `findDuplicateObservations`.
 
 ### Distinct from C3-owner-failover
 

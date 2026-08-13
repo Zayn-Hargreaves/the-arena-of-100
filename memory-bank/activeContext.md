@@ -5,7 +5,7 @@
 
 ## Current Working Mode
 
-- **Phase 3 implementation complete 2026-08-12 (commit pending).** Spec §7 15-item checklist fully ticked; test counts: shared 61 / game-core 280 / API 1678 / web 247 / load-test 52 = **2318 tests pass**, no regression. Source of truth: `memory-bank/spec/class-cards-phase.md`.
+- **Phase 3 implementation complete 2026-08-12 (commit pending).** Spec §7 15-item checklist fully ticked; test counts: shared 61 / game-core 280 / API 1681 / web 247 / load-test 63 = **2332 tests pass**, no regression. Source of truth: `memory-bank/spec/class-cards-phase.md`.
 - Memory-bank consolidation vẫn là baseline; spec thuộc supplementary folder `spec/`.
 - Spec doc là authoritative cho Phase 1-3; mọi thay đổi update spec trước rồi reflect activeContext/progress.
 
@@ -21,12 +21,12 @@
 - Distributed match runtime is implemented (Stage B: Redis Socket.IO adapter, fenced owner-lease + failover, owner-single-writer answers, presence leader election) and the Stage C measurement harness + D1 architecture narrative are in place (`docs/architecture-distributed.md`).
 - **2026-07-28: multi-node k6 RUN done** — 800→3200 VU on the 3-node `docker:multi` cluster; two real bottlenecks found & fixed with numbers (consumer poll loop: answer p95 1126→201ms; pg pool default-10 ceiling → `DB_POOL_MAX`); capacity envelope linear 201/357/669ms p95 @ 800/1600/3200, 0 connect errors. Full story + interview prep: `career-assessment.md` §2026-07-28; raw: `load-test/results/`. Outstanding: **C3-owner-failover** numbers (baseline owner-lease); Plan A single-room 100-user baseline table (P2). **C3-card-batch-failover** is a separate Phase 3 gate.
 - **2026-07-30: Content Roadmap locked — Class + Card Hybrid.** 2 classes (Công / Thủ) random assignment, 18 cards (10 Thủ + 8 Công), 20s round stream-lined overlay pattern, `CARD_RESOLVED_BATCH` aggregation, AOE cap 2/round, clock-drift safe rehydrate. Banned vĩnh viễn: `Time Drain` (snowball), `Push Down` (phá score determinism). Ban/pick draft defer; Territory mode defer vô thời hạn; Gauntlet scope-down (replaced bởi class+card). Full spec: `memory-bank/spec/class-cards-phase.md`. Timeline: 8 tuần (Phase 1: Week 1-2 / Phase 2: Week 3-6 / Phase 3: Week 7-8).
-- **2026-08-12: Phase 3 implementation complete (commit pending).** Days 25-36 of the locked 8-week plan. Spec §7 15-item DoD checklist fully ticked. Test counts: shared 61 / game-core 280 / API 1678 / web 247 / load-test 52 = **2318 tests pass**, no regression. Highlights:
+- **2026-08-12: Phase 3 implementation complete (commit pending).** Days 25-36 of the locked 8-week plan. Spec §7 15-item DoD checklist fully ticked. Test counts: shared 61 / game-core 280 / API 1681 / web 247 / load-test 63 = **2332 tests pass**, no regression. Highlights:
   - Daily streak ≥ 7 → card variant cosmetic unlock (DEFAULT / NEON / GOLD enum + `UserCardVariant` table; idempotent upsert; UI ring/glow overlay).
   - Daily leaderboard cross-show "Most cards played this week" — `LATERAL` aggregate over `MatchPlayer.cardsPlayed` (persisted at `finishMatch` from event-log traversal).
-  - Profile page — `GET /users/me/phase3-stats` returns class winrate (CONG / THU per-class) + current streak + sabotage count.
+  - Profile page — `GET /users/me/class-stats` returns class winrate (ATTACK / DEFENSE per-class) + current streak + cards played count.
   - Shareable card unlock notification modal (viral hook).
-  - **C3-card-batch-failover gate**: pure oracle + 11 vitest cases. Production code UNCHANGED (Phase 2 append-first design already satisfies the invariant).
+  - **C3-card-batch-failover gate**: pure oracle + 22 vitest cases (2026-08-12 hardening: per-element validation + cohort invariant). Production code UNCHANGED (Phase 2 append-first design already satisfies the invariant).
   - VI i18n: 18 cards × 2 locales under `Cards.byId.{cardId}.name|description`.
 
 ## Current Architectural Decisions

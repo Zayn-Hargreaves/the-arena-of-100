@@ -24,53 +24,147 @@ export interface SamplingVector {
   readonly offeredCardIds: readonly CardId[];
 }
 
-export const VECTOR_CONG_CLASS_HAPPY: SamplingVector = {
-  classId: "CONG",
-  seed: "match-1|CONG-player-1",
+export const VECTOR_ATTACK_CLASS_HAPPY: SamplingVector = {
+  classId: "ATTACK",
+  seed: "match-1|ATTACK-player-1",
   prngVersion: PRNG_CONTRACT_VERSION,
   pool: ["CB-1", "CB-2", "CB-3", "CB-4", "CB-5", "CB-6", "CB-7", "CB-8"],
   steps: [
-    { float: 0.7850035228766501, purpose: "TIER", retry: false, tier: "RARE" },
+    { float: 0.7999080908484757, purpose: "TIER", retry: false, tier: "RARE" },
     {
-      float: 0.31643332121893764,
+      float: 0.2420050031505525,
       purpose: "CARD",
       retry: false,
       cardIndex: 0,
       drawnCardId: "CB-4",
     },
     {
-      float: 0.20335578848607838,
+      float: 0.28035216545686126,
       purpose: "TIER",
       retry: false,
       tier: "COMMON",
     },
     {
-      float: 0.5861659238580614,
+      float: 0.21088944585062563,
+      purpose: "CARD",
+      retry: false,
+      cardIndex: 1,
+      drawnCardId: "CB-2",
+    },
+    {
+      float: 0.45453126821666956,
+      purpose: "TIER",
+      retry: false,
+      tier: "COMMON",
+    },
+    {
+      float: 0.9860148571897298,
+      purpose: "CARD",
+      retry: false,
+      cardIndex: 3,
+      drawnCardId: "CB-7",
+    },
+  ],
+  offeredCardIds: ["CB-4", "CB-2", "CB-7"],
+} as const;
+
+export const VECTOR_DEFENSE_CLASS_HAPPY: SamplingVector = {
+  classId: "DEFENSE",
+  seed: "match-1|DEFENSE-player-1",
+  prngVersion: PRNG_CONTRACT_VERSION,
+  pool: [
+    "TN-1",
+    "TN-2",
+    "TN-3",
+    "TN-4",
+    "TN-5",
+    "TN-6",
+    "TN-7",
+    "TN-8",
+    "TN-9",
+    "TN-10",
+  ],
+  steps: [
+    {
+      float: 0.27121737878769636,
+      purpose: "TIER",
+      retry: false,
+      tier: "COMMON",
+    },
+    {
+      float: 0.40260959579609334,
       purpose: "CARD",
       retry: false,
       cardIndex: 2,
-      drawnCardId: "CB-3",
+      drawnCardId: "TN-3",
     },
     {
-      float: 0.13818945782259107,
+      float: 0.2202025989536196,
       purpose: "TIER",
       retry: false,
       tier: "COMMON",
     },
     {
-      float: 0.48672376829199493,
+      float: 0.7773561500944197,
+      purpose: "CARD",
+      retry: false,
+      cardIndex: 3,
+      drawnCardId: "TN-6",
+    },
+    { float: 0.8675547456368804, purpose: "TIER", retry: false, tier: "RARE" },
+    {
+      float: 0.9955143094994128,
+      purpose: "CARD",
+      retry: false,
+      cardIndex: 2,
+      drawnCardId: "TN-9",
+    },
+  ],
+  offeredCardIds: ["TN-3", "TN-6", "TN-9"],
+} as const;
+
+export const VECTOR_SHARED_SEED_ATTACK: SamplingVector = {
+  classId: "ATTACK",
+  seed: "shared-seed-1",
+  prngVersion: PRNG_CONTRACT_VERSION,
+  pool: ["CB-1", "CB-2", "CB-3", "CB-4", "CB-5", "CB-6", "CB-7", "CB-8"],
+  steps: [
+    { float: 0.6622988730669022, purpose: "TIER", retry: false, tier: "RARE" },
+    {
+      float: 0.2698002790566534,
+      purpose: "CARD",
+      retry: false,
+      cardIndex: 0,
+      drawnCardId: "CB-4",
+    },
+    { float: 0.9095154637470841, purpose: "TIER", retry: false, tier: "EPIC" },
+    {
+      float: 0.9176650370936841,
+      purpose: "CARD",
+      retry: false,
+      cardIndex: 0,
+      drawnCardId: "CB-8",
+    },
+    {
+      float: 0.1361268328037113,
+      purpose: "TIER",
+      retry: false,
+      tier: "COMMON",
+    },
+    {
+      float: 0.30713995452970266,
       purpose: "CARD",
       retry: false,
       cardIndex: 1,
       drawnCardId: "CB-2",
     },
   ],
-  offeredCardIds: ["CB-4", "CB-3", "CB-2"],
+  offeredCardIds: ["CB-4", "CB-8", "CB-2"],
 } as const;
 
-export const VECTOR_THU_CLASS_HAPPY: SamplingVector = {
-  classId: "THU",
-  seed: "match-1|THU-player-1",
+export const VECTOR_SHARED_SEED_DEFENSE: SamplingVector = {
+  classId: "DEFENSE",
+  seed: "shared-seed-1",
   prngVersion: PRNG_CONTRACT_VERSION,
   pool: [
     "TN-1",
@@ -86,154 +180,65 @@ export const VECTOR_THU_CLASS_HAPPY: SamplingVector = {
   ],
   steps: [
     {
-      float: 0.14207896473817527,
+      float: 0.09039362985640764,
       purpose: "TIER",
       retry: false,
       tier: "COMMON",
     },
     {
-      float: 0.35720975045114756,
+      float: 0.41077345330268145,
       purpose: "CARD",
       retry: false,
       cardIndex: 2,
       drawnCardId: "TN-3",
     },
-    { float: 0.7420756528154016, purpose: "TIER", retry: false, tier: "RARE" },
     {
-      float: 0.19060465041548014,
-      purpose: "CARD",
-      retry: false,
-      cardIndex: 0,
-      drawnCardId: "TN-4",
-    },
-    { float: 0.7787872166372836, purpose: "TIER", retry: false, tier: "RARE" },
-    {
-      float: 0.7070694454014301,
-      purpose: "CARD",
-      retry: false,
-      cardIndex: 1,
-      drawnCardId: "TN-9",
-    },
-  ],
-  offeredCardIds: ["TN-3", "TN-4", "TN-9"],
-} as const;
-
-export const VECTOR_SHARED_SEED_CONG: SamplingVector = {
-  classId: "CONG",
-  seed: "shared-seed-1",
-  prngVersion: PRNG_CONTRACT_VERSION,
-  pool: ["CB-1", "CB-2", "CB-3", "CB-4", "CB-5", "CB-6", "CB-7", "CB-8"],
-  steps: [
-    {
-      float: 0.5508925563190132,
+      float: 0.19746926031075418,
       purpose: "TIER",
       retry: false,
       tier: "COMMON",
     },
     {
-      float: 0.6854414825793356,
+      float: 0.6689903363585472,
       purpose: "CARD",
       retry: false,
       cardIndex: 3,
-      drawnCardId: "CB-6",
+      drawnCardId: "TN-6",
     },
     {
-      float: 0.10476188664324582,
+      float: 0.42102572857402265,
       purpose: "TIER",
       retry: false,
       tier: "COMMON",
     },
     {
-      float: 0.8840647146571428,
-      purpose: "CARD",
-      retry: false,
-      cardIndex: 3,
-      drawnCardId: "CB-7",
-    },
-    {
-      float: 0.034209711477160454,
-      purpose: "TIER",
-      retry: false,
-      tier: "COMMON",
-    },
-    {
-      float: 0.7238316438160837,
+      float: 0.6441179781686515,
       purpose: "CARD",
       retry: false,
       cardIndex: 2,
-      drawnCardId: "CB-3",
+      drawnCardId: "TN-5",
     },
   ],
-  offeredCardIds: ["CB-6", "CB-7", "CB-3"],
-} as const;
-
-export const VECTOR_SHARED_SEED_THU: SamplingVector = {
-  classId: "THU",
-  seed: "shared-seed-1",
-  prngVersion: PRNG_CONTRACT_VERSION,
-  pool: [
-    "TN-1",
-    "TN-2",
-    "TN-3",
-    "TN-4",
-    "TN-5",
-    "TN-6",
-    "TN-7",
-    "TN-8",
-    "TN-9",
-    "TN-10",
-  ],
-  steps: [
-    {
-      float: 0.3119782966095954,
-      purpose: "TIER",
-      retry: false,
-      tier: "COMMON",
-    },
-    {
-      float: 0.23534569423645735,
-      purpose: "CARD",
-      retry: false,
-      cardIndex: 1,
-      drawnCardId: "TN-2",
-    },
-    { float: 0.6644067305605859, purpose: "TIER", retry: false, tier: "RARE" },
-    {
-      float: 0.8973990571685135,
-      purpose: "CARD",
-      retry: false,
-      cardIndex: 2,
-      drawnCardId: "TN-9",
-    },
-    { float: 0.8916048582177609, purpose: "TIER", retry: false, tier: "RARE" },
-    {
-      float: 0.008692982606589794,
-      purpose: "CARD",
-      retry: false,
-      cardIndex: 0,
-      drawnCardId: "TN-4",
-    },
-  ],
-  offeredCardIds: ["TN-2", "TN-9", "TN-4"],
+  offeredCardIds: ["TN-3", "TN-6", "TN-5"],
 } as const;
 
 export const ALL_SAMPLING_VECTORS: readonly SamplingVector[] = [
-  VECTOR_CONG_CLASS_HAPPY,
-  VECTOR_THU_CLASS_HAPPY,
-  VECTOR_SHARED_SEED_CONG,
-  VECTOR_SHARED_SEED_THU,
+  VECTOR_ATTACK_CLASS_HAPPY,
+  VECTOR_DEFENSE_CLASS_HAPPY,
+  VECTOR_SHARED_SEED_ATTACK,
+  VECTOR_SHARED_SEED_DEFENSE,
 ] as const;
 
 export function loadSamplingVector(label: string): SamplingVector {
   switch (label) {
-    case "cong-class-happy":
-      return VECTOR_CONG_CLASS_HAPPY;
-    case "thu-class-happy":
-      return VECTOR_THU_CLASS_HAPPY;
-    case "shared-seed-cong":
-      return VECTOR_SHARED_SEED_CONG;
-    case "shared-seed-thu":
-      return VECTOR_SHARED_SEED_THU;
+    case "attack-class-happy":
+      return VECTOR_ATTACK_CLASS_HAPPY;
+    case "defense-class-happy":
+      return VECTOR_DEFENSE_CLASS_HAPPY;
+    case "shared-seed-attack":
+      return VECTOR_SHARED_SEED_ATTACK;
+    case "shared-seed-defense":
+      return VECTOR_SHARED_SEED_DEFENSE;
   }
   throw new Error(`Unknown sampling vector: ${label}`);
 }

@@ -306,7 +306,7 @@ all consumers) as a single shared source. Each vector has this shape:
 
 ```typescript
 export interface SamplingVector {
-  readonly classId: ClassId; // "CONG" | "THU"
+  readonly classId: ClassId; // "ATTACK" | "DEFENSE"
   readonly seed: string; // known seed passed to deriveSubstream
   readonly prngVersion: string; // MUST equal PRNG_CONTRACT_VERSION ("mulberry32-substream-v1"), the card-sampling RNG contract owned by @arena/shared. Identifies the ENTIRE deterministic card RNG contract: seed derivation, Mulberry32 algorithm, RNG-consumption order (TIER/CARD float accounting), and sampling rules. DISTINCT from DailyRunHeader.prngVersion ("sha256-v1") in gauntlet-design.md, which versions header seed-derivation only — same field name, different namespace, versioned independently. This vector reuses the mulberry32 ALGORITHM described in gauntlet-design.md §"Seed-derivation contract" but not that constant's value.
   readonly pool: readonly CardId[]; // frozen class-pool snapshot at vector creation
