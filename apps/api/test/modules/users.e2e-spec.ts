@@ -230,5 +230,31 @@ describe("E2E /users", () => {
       });
       expect(res.statusCode).toBe(404);
     });
+
+    it("returns 200 with classWinrate, currentStreak, and cardsPlayed for a persisted demo user", async () => {
+      // The success case — UsersService.getClassStats returns the
+      // ClassStatsResponse envelope for any known user. The demo
+      // user MAY have zero matches; the response still carries the
+      // three required keys (classWinrate defaults to {}, the other
+      // two are 0), so the assertion is safe regardless of seed state.
+      const headers = testApp.authedHeaders(demoUserId, demoUsername);
+      const res = await testApp.inject("GET", "/api/v1/users/me/class-stats", {
+        headers,
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json<{
+        data: {
+          stats: {
+            classWinrate: Record<string, unknown>;
+            currentStreak: number;
+            cardsPlayed: number;
+          };
+        };
+      }>();
+      expect(body.data.stats).toHaveProperty("classWinrate");
+      expect(body.data.stats.classWinrate).toBeTypeOf("object");
+      expect(typeof body.data.stats.currentStreak).toBe("number");
+      expect(typeof body.data.stats.cardsPlayed).toBe("number");
+    });
   });
 });

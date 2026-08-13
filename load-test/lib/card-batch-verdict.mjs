@@ -60,25 +60,46 @@ function isFiniteNumber(v) {
 // and conflict detection.
 //
 // Wrapped to NEVER throw — a malformed element always resolves to a
-// sentinel string ("::::") that no real effect could match, so the
-// diff returns it as `extra` / `dropped` rather than crashing the
-// oracle. The element-validator (`validateEffectElement`) is the
-// gate that rejects malformed elements ahead of any diff.
+// sentinel string (`JSON.stringify([null,null,null])` for the triple,
+// `JSON.stringify([null,null])` for the pair) that no real effect
+// could match, so the diff returns it as `extra` / `dropped` rather
+// than crashing the oracle. The element-validator
+// (`validateEffectElement`) is the gate that rejects malformed
+// elements ahead of any diff.
+//
+// Encoding is `JSON.stringify([p, e, s])` / `JSON.stringify([p, e])`
+// — a tuple, NOT delimiter-joined text. The previous
+// `${p}::${e}::${s}` form was ambiguous: `playerId="a::b"` and
+// `effectId="c"` collides with `playerId="a"` and `effectId="b::c"`
+// because both serialize to `"a::b::c"`. JSON tuple encoding cannot
+// collide that way (no input string can produce the exact
+// `["x","y","z"]` shape from any other input).
 function effectKey(ev) {
-  if (ev === null || typeof ev !== "object") return "::::";
-  const p = typeof ev.playerId === "string" ? ev.playerId : "";
-  const e = typeof ev.effectId === "string" ? ev.effectId : "";
-  const s = isFiniteNumber(ev.seqNo) ? String(ev.seqNo) : "";
-  return `${p}::${e}::${s}`;
+  if (ev === null || typeof ev !== "object")
+    return JSON.stringify([null, null, null]);
+  const p = typeof ev.playerId === "string" ? ev.playerId : null;
+  const e = typeof ev.effectId === "string" ? ev.effectId : null;
+  const s = isFiniteNumber(ev.seqNo) ? ev.seqNo : null;
+  return JSON.stringify([p, e, s]);
 }
 
 // Pair key (playerId, effectId) — used only by the conflict detector
 // to surface distinct-seqNo observations of the same logical effect.
+// Same tuple-encoding rule as `effectKey`: never delimiter-joined.
 function effectPairKey(ev) {
-  if (ev === null || typeof ev !== "object") return "::";
-  const p = typeof ev.playerId === "string" ? ev.playerId : "";
-  const e = typeof ev.effectId === "string" ? ev.effectId : "";
-  return `${p}::${e}`;
+  if (ev === null || typeof ev !== "object") return JSON.stringify([null, null]);
+  const p = typeof ev.playerId === "string" ? ev.playerId : null;
+  const e = typeof ev.effectId === "string" ? ev.effectId : null;
+  return JSON.stringify([p, e]);
+}
+
+// Inverse of `effectPairKey` — recovers the (playerId, effectId) for
+// the conflict report. JSON-array `parse` is safe because the only
+// emitter is `effectPairKey`, which always wraps the pair in a 2-element
+// JSON array.
+function decodePairKey(pairKey) {
+  const parsed = JSON.parse(pairKey);
+  return [parsed[0], parsed[1]];
 }
 
 // Validate a single effect element against the canonical CARD_RESOLVED
@@ -175,7 +196,7 @@ export function detectEffectConflicts(raw) {
   for (const [pairKey, evs] of byPair) {
     const seqNos = new Set(evs.map((e) => e.seqNo));
     if (seqNos.size <= 1) continue;
-    const [playerId, effectId] = pairKey.split("::");
+    const [playerId, effectId] = decodePairKey(pairKey);
     // Choose canonical as the lowest seqNo (mirrors apply-order).
     const canonicalSeqNo = Math.min(...seqNos);
     const canonical = evs.find((e) => e.seqNo === canonicalSeqNo);

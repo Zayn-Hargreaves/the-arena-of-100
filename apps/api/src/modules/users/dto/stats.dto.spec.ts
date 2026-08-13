@@ -5,6 +5,12 @@ import {
   UserSummaryDto,
   StatsDto,
   StatsResponseDto,
+  classWinrateSchema,
+  classStatsSchema,
+  classStatsResponseSchema,
+  ClassWinrateDto,
+  ClassStatsDto,
+  ClassStatsResponseDto,
 } from "./stats.dto";
 import { describe, it, expect } from "vitest";
 import { ZodError } from "zod";
@@ -233,6 +239,160 @@ describe("StatsDto & Schema", () => {
       dto.stats = stats;
       expect(dto.user).toBe(user);
       expect(dto.stats).toBe(stats);
+    });
+  });
+
+  describe("classWinrateSchema", () => {
+    const valid = { plays: 12, wins: 3, winRate: 0.25 };
+
+    it("should validate a complete class winrate", () => {
+      expect(classWinrateSchema.parse(valid)).toEqual(valid);
+    });
+
+    it("should accept zero plays with zero winRate", () => {
+      expect(
+        classWinrateSchema.parse({ plays: 0, wins: 0, winRate: 0 }),
+      ).toEqual({
+        plays: 0,
+        wins: 0,
+        winRate: 0,
+      });
+    });
+
+    it("should throw on negative plays", () => {
+      expect(() =>
+        classWinrateSchema.parse({ plays: -1, wins: 0, winRate: 0 }),
+      ).toThrow(ZodError);
+    });
+
+    it("should throw on negative wins", () => {
+      expect(() =>
+        classWinrateSchema.parse({ plays: 1, wins: -1, winRate: 0 }),
+      ).toThrow(ZodError);
+    });
+
+    it("should throw on winRate outside [0, 1]", () => {
+      expect(() =>
+        classWinrateSchema.parse({ plays: 1, wins: 0, winRate: -0.1 }),
+      ).toThrow(ZodError);
+      expect(() =>
+        classWinrateSchema.parse({ plays: 1, wins: 0, winRate: 1.5 }),
+      ).toThrow(ZodError);
+    });
+
+    it("should accept boundary values 0 and 1", () => {
+      expect(
+        classWinrateSchema.parse({ plays: 1, wins: 0, winRate: 0 }).winRate,
+      ).toBe(0);
+      expect(
+        classWinrateSchema.parse({ plays: 1, wins: 1, winRate: 1 }).winRate,
+      ).toBe(1);
+    });
+  });
+
+  describe("classStatsSchema", () => {
+    const valid = {
+      classWinrate: {
+        ATTACK: { plays: 12, wins: 3, winRate: 0.25 },
+        DEFENSE: { plays: 9, wins: 2, winRate: 0.22 },
+      },
+      currentStreak: 7,
+      cardsPlayed: 28,
+    };
+
+    it("should validate a complete class stats payload", () => {
+      expect(classStatsSchema.parse(valid)).toEqual(valid);
+    });
+
+    it("should validate with empty classWinrate", () => {
+      const input = { classWinrate: {}, currentStreak: 0, cardsPlayed: 0 };
+      expect(classStatsSchema.parse(input)).toEqual(input);
+    });
+
+    it("should validate with only ATTACK class", () => {
+      const input = {
+        classWinrate: { ATTACK: { plays: 5, wins: 1, winRate: 0.2 } },
+        currentStreak: 3,
+        cardsPlayed: 10,
+      };
+      expect(classStatsSchema.parse(input)).toEqual(input);
+    });
+
+    it("should validate with only DEFENSE class", () => {
+      const input = {
+        classWinrate: { DEFENSE: { plays: 5, wins: 1, winRate: 0.2 } },
+        currentStreak: 3,
+        cardsPlayed: 10,
+      };
+      expect(classStatsSchema.parse(input)).toEqual(input);
+    });
+
+    it("should throw on negative currentStreak", () => {
+      expect(() =>
+        classStatsSchema.parse({ ...valid, currentStreak: -1 }),
+      ).toThrow(ZodError);
+    });
+
+    it("should throw on negative cardsPlayed", () => {
+      expect(() =>
+        classStatsSchema.parse({ ...valid, cardsPlayed: -1 }),
+      ).toThrow(ZodError);
+    });
+  });
+
+  describe("classStatsResponseSchema", () => {
+    it("should validate a complete response", () => {
+      const input = {
+        stats: {
+          classWinrate: {
+            ATTACK: { plays: 12, wins: 3, winRate: 0.25 },
+          },
+          currentStreak: 7,
+          cardsPlayed: 28,
+        },
+      };
+      expect(classStatsResponseSchema.parse(input)).toEqual(input);
+    });
+
+    it("should throw if stats is missing", () => {
+      expect(() => classStatsResponseSchema.parse({})).toThrow(ZodError);
+    });
+  });
+
+  describe("Class DTO classes", () => {
+    it("ClassWinrateDto should instantiate and preserve properties", () => {
+      const dto = new ClassWinrateDto();
+      dto.plays = 12;
+      dto.wins = 3;
+      dto.winRate = 0.25;
+      expect(dto.plays).toBe(12);
+      expect(dto.wins).toBe(3);
+      expect(dto.winRate).toBe(0.25);
+    });
+
+    it("ClassStatsDto should instantiate and preserve properties", () => {
+      const dto = new ClassStatsDto();
+      dto.classWinrate = {
+        ATTACK: { plays: 12, wins: 3, winRate: 0.25 },
+        DEFENSE: { plays: 9, wins: 2, winRate: 0.22 },
+      };
+      dto.currentStreak = 7;
+      dto.cardsPlayed = 28;
+      expect(dto.classWinrate.ATTACK?.plays).toBe(12);
+      expect(dto.classWinrate.DEFENSE?.wins).toBe(2);
+      expect(dto.currentStreak).toBe(7);
+      expect(dto.cardsPlayed).toBe(28);
+    });
+
+    it("ClassStatsResponseDto should instantiate and nest ClassStatsDto", () => {
+      const stats = new ClassStatsDto();
+      stats.classWinrate = {};
+      stats.currentStreak = 0;
+      stats.cardsPlayed = 0;
+
+      const response = new ClassStatsResponseDto();
+      response.stats = stats;
+      expect(response.stats).toBe(stats);
     });
   });
 });

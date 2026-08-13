@@ -19,13 +19,13 @@ Admin kill-switch append-only audit event **đã xong**.
 
 ## Latest Known Test Counts
 
-- API unit tests: **1693/1693** passed (2026-08-13, post Phase 3 + pending-grant drainer hardening).
+- API unit tests: **1719/1719** passed (2026-08-13, post Phase 3 + daily tx-isolation hardening + users e2e class-stats success case).
 - Game-core tests: **280/280**
-- Web tests: **247/247**
+- Web tests: **267/267**
 - Shared tests: **61/61**
 - E2E tests: covered by the API suite in vitest's `--config test/vitest-e2e.config.ts` runner (out-of-band; not in `pnpm test`).
-- Load-test vitest (helper/oracle modules): **67/67** —
-  reconnect 7, failover-verdict 22, card-batch-verdict 26,
+- Load-test vitest (helper/oracle modules): **71/71** —
+  reconnect 7, failover-verdict 22, card-batch-verdict 30,
   chaos-failover-cli 6, validate-results 6.
 
 Run the relevant package tests before using these numbers in PR text.
@@ -169,7 +169,7 @@ Run the relevant package tests before using these numbers in PR text.
 
 **Day 35-36 — Final integration tests + ship prep.**
 
-- All test suites green: shared 61 / game-core 280 / API 1681 / web 247 / load-test 63 = **2332 tests pass**, no regression.
+- All test suites green (measured 2026-08-13): shared 61 / game-core 280 / API 1719 / web 267 / load-test 71 = **2398 tests pass**, no regression.
 - Spec §7 DoD checklist updated; all 15 items ticked.
 - Coverage targets met (card engine + class engine ≥ 95% from Phase 2 baseline; new code paths covered by Phase 3 tests).
 

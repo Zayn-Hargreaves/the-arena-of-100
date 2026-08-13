@@ -283,7 +283,7 @@ node_modules/.bin/vitest run --config load-test/vitest.config.mjs \
   lib/card-batch-verdict.test.mjs
 ```
 
-22 cases:
+30 cases (measured 2026-08-13):
 
 - 3 checkpoint PASS scenarios: `append_pre_emit`, `mid_batch_flush`,
   `pre_ack` — each fixture carries a cohort effect that round-trips
@@ -307,6 +307,16 @@ node_modules/.bin/vitest run --config load-test/vitest.config.mjs \
   timeline (counts as part of the 3 checkpoint scenarios above).
 - 4 direct-helper unit tests: `dedupeEffects`,
   `detectEffectConflicts`, `diffEffects`, `findDuplicateObservations`.
+- 4 cohort-type hardening cases (added 2026-08-12): undefined =
+  no-op, null / number / string = `invalid_artifact`, plus
+  the happy-path positive control (the cohort round-trip PASSES
+  on the happy timeline).
+- 4 encoding-collision regression cases (added 2026-08-13):
+  `dedupeEffects`, `detectEffectConflicts`,
+  `findDuplicateObservations`, and `diffEffects` MUST keep
+  `(playerId="a::b", effectId="c")` distinct from
+  `(playerId="a", effectId="b::c")` after the JSON-tuple key
+  encoding replaced the previous delimiter-joined form.
 
 ### Distinct from C3-owner-failover
 

@@ -3,7 +3,13 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { MatchOwnershipService } from "./match-ownership.service";
 import { NotFoundException } from "@nestjs/common";
-import { MatchStatus, PlayerStatus, ErrorCode } from "@arena/shared";
+import {
+  MatchStatus,
+  PlayerStatus,
+  ErrorCode,
+  MatchEventType,
+  type ClassAssignedEvent,
+} from "@arena/shared";
 import { MatchStateMachine } from "@arena/game-core";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -1570,6 +1576,92 @@ describe("MatchService", () => {
       expect(u1Call![0].data.score).toBe(298);
       // u2: only round 1 correct = 130
       expect(u2Call![0].data.score).toBe(130);
+    });
+
+    it("counts CARD_RESOLVED events per player as cardsPlayed", async () => {
+      await setupMatch("m1", "r1", ["u1", "u2"]);
+
+      // Assign classes so playCard is allowed
+      const sm = await service.getStateMachine("m1");
+      sm!.classAssignment(["u1", "u2"], "seed-1");
+
+      // Play one round normally to get scores
+      await playRound("m1", [
+        { playerId: "u1", answer: "A", isCorrect: true, responseTimeMs: 200 },
+        { playerId: "u2", answer: "A", isCorrect: true, responseTimeMs: 8000 },
+      ]);
+
+      // Manually inject CARD_RESOLVED events via playCard
+      const attackCard = {
+        id: "ATK-1" as any,
+        name: "Strike",
+        classId: "ATTACK" as const,
+        tier: "COMMON" as const,
+        backfireRate: 0.1,
+        effectType: "DAMAGE" as const,
+        basePower: 10,
+      };
+      const effect = {
+        type: "DAMAGE" as const,
+        power: 10,
+        targets: ["u2"],
+      };
+      sm!.playCard("u1", attackCard, 1, effect, ["u2"], 1000);
+
+      await service.finishMatch("m1", "u1", "r1");
+
+      const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
+        .calls as any[][];
+      const u1Call = updateManyCalls.find((c) => c[0].where.userId === "u1");
+      const u2Call = updateManyCalls.find((c) => c[0].where.userId === "u2");
+      expect(u1Call![0].data.cardsPlayed).toBe(1);
+      expect(u2Call![0].data.cardsPlayed).toBe(0);
+    });
+
+    it("sets classId from CLASS_ASSIGNED event", async () => {
+      await setupMatch("m1", "r1", ["u1", "u2"]);
+
+      const sm = await service.getStateMachine("m1");
+      sm!.classAssignment(["u1", "u2"], "seed-2");
+
+      await playRound("m1", [
+        { playerId: "u1", answer: "A", isCorrect: true, responseTimeMs: 200 },
+        { playerId: "u2", answer: "A", isCorrect: true, responseTimeMs: 8000 },
+      ]);
+
+      await service.finishMatch("m1", "u1", "r1");
+
+      const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
+        .calls as any[][];
+      const u1Call = updateManyCalls.find((c) => c[0].where.userId === "u1");
+      const u2Call = updateManyCalls.find((c) => c[0].where.userId === "u2");
+      const classLog = sm!
+        .getEventLog()
+        .find((e) => e.type === MatchEventType.CLASS_ASSIGNED)!
+        .payload as ClassAssignedEvent;
+      const expectedById = new Map(
+        classLog.assignments.map((a) => [a.playerId, a.classId]),
+      );
+      expect(u1Call![0].data.classId).toBe(expectedById.get("u1"));
+      expect(u2Call![0].data.classId).toBe(expectedById.get("u2"));
+    });
+
+    it("defaults cardsPlayed to 0 and classId to null when no events exist", async () => {
+      await setupMatch("m1", "r1", ["u1", "u2"]);
+
+      // Don't assign classes or play cards — just answer
+      await playRound("m1", [
+        { playerId: "u1", answer: "A", isCorrect: true, responseTimeMs: 200 },
+        { playerId: "u2", answer: "A", isCorrect: true, responseTimeMs: 8000 },
+      ]);
+
+      await service.finishMatch("m1", "u1", "r1");
+
+      const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
+        .calls as any[][];
+      const u1Call = updateManyCalls.find((c) => c[0].where.userId === "u1");
+      expect(u1Call![0].data.cardsPlayed).toBe(0);
+      expect(u1Call![0].data.classId).toBeNull();
     });
   });
 

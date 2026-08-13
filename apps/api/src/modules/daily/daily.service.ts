@@ -281,25 +281,33 @@ export class DailyService {
       results,
     } as const;
 
-    // Phase 3 — dailyAttempt.create + (when eligible) the
-    // userCardVariant.upsert that powers the cosmetic unlock run
-    // inside ONE `$transaction`. The unlock is best-effort: a
-    // transient failure inside the callback is caught and logged so
-    // the transaction still commits dailyAttempt.create (the submit
-    // must not 5xx because a cosmetic row failed). Recovering the
-    // unlock is automatic — the next submit whose `streakAfter`
-    // crosses the same threshold re-runs the idempotent upsert
-    // (guarded by the (userId, cardId, variantKey) unique constraint)
-    // and gets the same row eventually. The unique constraint is
-    // the real "durable pending grant": a stuck upsert can be replayed
-    // any number of times without duplicating the cosmetic grant.
-    let submitOutcome: {
-      attempt: { completedAt: Date };
-      unlock: { cardId: string; variantKey: UnlockableCardVariantKey } | null;
-    };
+    // Phase 3 — dailyAttempt.create is the durable record of the submit
+    // and MUST commit even if every subsequent cosmetic operation
+    // (variant unlock, pending-grant write, drainer) fails. The attempt
+    // therefore runs in its OWN $transaction with no other operations,
+    // and the unlock / drain run AFTER it commits using `this.prisma`
+    // directly.
+    //
+    // Why a separate transaction: in real PostgreSQL, a failed statement
+    // inside `$transaction` poisons the whole transaction ("current
+    // transaction is aborted, commands ignored until end of transaction
+    // block"). The previous single-transaction design only INTENTED to
+    // commit the attempt even when the unlock path threw, but
+    // `pendingCardVariantUnlock.create` would fail with that abort
+    // error and Prisma's commit would roll back the attempt row
+    // alongside it. Isolating the unlock/drain to separate transactions
+    // (each with its own try/catch) ensures the attempt row is durable
+    // before any cosmetic work runs.
+    //
+    // Recovery for the unlock itself is the same as before: a
+    // `pending_card_variant_unlocks` row is written (best-effort, P2002
+    // swallowed) so the next submit's drainer can re-attempt the
+    // idempotent `userCardVariant.upsert` (guarded by the
+    // (userId, cardId, variantKey) unique constraint).
+    let attempt: { completedAt: Date };
     try {
-      submitOutcome = await this.prisma.$transaction(async (tx) => {
-        const attempt = await tx.dailyAttempt.create({
+      attempt = await this.prisma.$transaction(async (tx) => {
+        return tx.dailyAttempt.create({
           data: {
             dateKey,
             userId,
@@ -319,102 +327,6 @@ export class DailyService {
             streakAfter,
           },
         });
-
-        let unlock: {
-          cardId: string;
-          variantKey: UnlockableCardVariantKey;
-        } | null = null;
-        if (shouldAttemptUnlock) {
-          try {
-            unlock = await this.maybeUnlockCardVariantInTx(
-              tx,
-              userId,
-              streakAfter,
-            );
-          } catch (unlockErr) {
-            // Cosmetic-unlock failure must never bubble out of the
-            // submit transaction and roll back the attempt that the
-            // submit has already paid for.
-            //
-            // Durable recovery: write a `pending_card_variant_unlocks`
-            // row in the SAME transaction as `dailyAttempt.create`.
-            // The next submit — regardless of `shouldAttemptUnlock` —
-            // drains the row via `drainPendingCardVariantUnlocksInTx`
-            // and attempts the idempotent upsert, so a streak reset
-            // does not strand the row and a process restart does not
-            // lose it. The `@@unique([userId, dateKey, streakAfter])`
-            // constraint on the pending table makes the insert itself
-            // idempotent on a retried submit (P2002 is swallowed so a
-            // replay cannot surface as a 5xx). The `dateKey` slot keeps
-            // each attempt-day's pending row distinct, so a future
-            // submit on a different day that re-crosses the same
-            // `streakAfter` (after the previous grant was processed)
-            // can create a fresh pending row.
-            //
-            // If the pending-row write ALSO fails (a sustained DB
-            // outage), the original best-effort swallow stands: the
-            // attempt row commits, the unlock is lost. The error is
-            // logged with full context so operators can investigate.
-            const message =
-              unlockErr instanceof Error
-                ? unlockErr.message
-                : String(unlockErr);
-            this.logger.warn(
-              `Card variant unlock inside submit tx failed (streak=${streakAfter}); persisting pending grant intent: ${message}`,
-            );
-            try {
-              await tx.pendingCardVariantUnlock.create({
-                data: {
-                  userId,
-                  dateKey,
-                  streakAfter,
-                },
-              });
-            } catch (pendingErr) {
-              // `@@unique([userId, dateKey, streakAfter])` P2002 on a
-              // replayed submit is a no-op (a pending row already
-              // exists for this streak boundary — the drainer will
-              // pick it up). Anything else is a real failure: log it
-              // and let the attempt row commit anyway. The original
-              // cosmetic-unlock row is still lost in this rare path.
-              if (
-                pendingErr instanceof Prisma.PrismaClientKnownRequestError &&
-                pendingErr.code === "P2002"
-              ) {
-                // expected; silent no-op
-              } else {
-                const pendingMessage =
-                  pendingErr instanceof Error
-                    ? pendingErr.message
-                    : String(pendingErr);
-                this.logger.warn(
-                  `Card variant pending-grant write also failed (streak=${streakAfter}); unlock is now lost until the user re-crosses this streak boundary: ${pendingMessage}`,
-                );
-              }
-            }
-          }
-        }
-
-        // Drain any pending grants for this user regardless of
-        // `shouldAttemptUnlock` — a streak reset zeroes
-        // `streakAfter`, so a user who tripped the unlock once and
-        // then missed a day must still recover the row. The drain
-        // runs in the same transaction as `dailyAttempt.create`,
-        // so it either commits with the attempt or rolls back with
-        // it (the attempt row itself is the durable audit trail).
-        // The drain's grant (if any) is surfaced as `unlock` so the
-        // response shape's `unlockedVariant` reflects what was
-        // granted THIS submit, not only what was triggered by the
-        // current streak boundary.
-        const drainedUnlock = await this.drainPendingCardVariantUnlocksInTx(
-          tx,
-          userId,
-        );
-        if (drainedUnlock && !unlock) {
-          unlock = drainedUnlock;
-        }
-
-        return { attempt, unlock };
       });
     } catch (error) {
       // P2002 = unique([dateKey, userId]): the day is already spent.
@@ -431,6 +343,102 @@ export class DailyService {
       }
       throw error;
     }
+
+    // Best-effort post-commit: cosmetic unlock + drain. Each step runs
+    // in its own implicit transaction on `this.prisma` (no `$transaction`
+    // wrapper), and each is fully isolated by try/catch so a Prisma
+    // error in any one step cannot roll back the attempt that was
+    // already committed above.
+    let unlock: {
+      cardId: string;
+      variantKey: UnlockableCardVariantKey;
+    } | null = null;
+
+    if (shouldAttemptUnlock) {
+      try {
+        unlock = await this.maybeUnlockCardVariantInTx(
+          this.prisma,
+          userId,
+          streakAfter,
+        );
+      } catch (unlockErr) {
+        // Cosmetic-unlock failure must never bubble out of submit and
+        // roll back the attempt that was already committed.
+        //
+        // Durable recovery: write a `pending_card_variant_unlocks` row
+        // in its own transaction. The next submit's drainer picks the
+        // row up and re-attempts the idempotent upsert, so a streak
+        // reset does not strand the row and a process restart does not
+        // lose it. The `@@unique([userId, dateKey, streakAfter])`
+        // constraint on the pending table makes the insert itself
+        // idempotent on a retried submit (P2002 is swallowed so a
+        // replay cannot surface as a 5xx). The `dateKey` slot keeps
+        // each attempt-day's pending row distinct, so a future submit
+        // on a different day that re-crosses the same `streakAfter`
+        // (after the previous grant was processed) can create a fresh
+        // pending row.
+        //
+        // If the pending-row write ALSO fails (a sustained DB outage),
+        // the original best-effort swallow stands: the attempt row is
+        // already committed, the unlock is lost. The error is logged
+        // with full context so operators can investigate.
+        const message =
+          unlockErr instanceof Error ? unlockErr.message : String(unlockErr);
+        this.logger.warn(
+          `Card variant unlock inside submit tx failed (streak=${streakAfter}); persisting pending grant intent: ${message}`,
+        );
+        try {
+          await this.prisma.pendingCardVariantUnlock.create({
+            data: {
+              userId,
+              dateKey,
+              streakAfter,
+            },
+          });
+        } catch (pendingErr) {
+          // `@@unique([userId, dateKey, streakAfter])` P2002 on a
+          // replayed submit is a no-op (a pending row already exists
+          // for this streak boundary — the drainer will pick it up).
+          // Anything else is a real failure: log it. The original
+          // cosmetic-unlock row is still lost in this rare path, but
+          // the attempt row IS safe because it committed before this
+          // cosmetic branch ran.
+          if (
+            pendingErr instanceof Prisma.PrismaClientKnownRequestError &&
+            pendingErr.code === "P2002"
+          ) {
+            // expected; silent no-op
+          } else {
+            const pendingMessage =
+              pendingErr instanceof Error
+                ? pendingErr.message
+                : String(pendingErr);
+            this.logger.warn(
+              `Card variant pending-grant write also failed (streak=${streakAfter}); unlock is now lost until the user re-crosses this streak boundary: ${pendingMessage}`,
+            );
+          }
+        }
+      }
+    }
+
+    // Drain any pending grants for this user regardless of
+    // `shouldAttemptUnlock` — a streak reset zeroes `streakAfter`,
+    // so a user who tripped the unlock once and then missed a day
+    // must still recover the row. The drain runs in its OWN
+    // transaction after the attempt commits, so it cannot roll the
+    // attempt back. The drain's grant (if any) is surfaced as
+    // `unlock` so the response shape's `unlockedVariant` reflects
+    // what was granted THIS submit, not only what was triggered by
+    // the current streak boundary.
+    const drainedUnlock = await this.drainPendingCardVariantUnlocksInTx(
+      this.prisma,
+      userId,
+    );
+    if (drainedUnlock && !unlock) {
+      unlock = drainedUnlock;
+    }
+
+    const submitOutcome = { attempt, unlock };
 
     // Best-effort: a stale leaderboard is acceptable, a failed submit is not.
     await this.invalidateLeaderboardCache(dateKey);
@@ -872,10 +880,10 @@ export class DailyService {
    * that somehow reached this path twice) is a no-op — the `upsert`
    * uses empty update semantics, so an existing row is left as-is.
    *
-   * `db` is the Prisma client — the production code passes
-   * `this.prisma` for the standalone path and a transaction client
-   * (`tx`) for the in-submit-transaction path. Sharing the helper
-   * ensures both paths enforce the same idempotency contract.
+   * `db` can be `PrismaService` or `Prisma.TransactionClient`.
+   * This helper does not open a transaction itself. The drain helper
+   * requires `PrismaService` because it opens one transaction per
+   * pending row before it calls this helper with that transaction client.
    */
   private async maybeUnlockCardVariantInTx(
     db: PrismaService | Prisma.TransactionClient,
@@ -939,8 +947,12 @@ export class DailyService {
 
   /**
    * Drain pending card-variant unlocks for a user. Called from
-   * `submit` (in the same transaction as `dailyAttempt.create`) so
-   * the drain commits-or-rolls-back atomically with the attempt.
+   * `submit` AFTER `dailyAttempt.create` commits, using the top-level
+   * `PrismaService` so each pending row's grant + `processedAt` write
+   * happens in its own transaction. A failure on one row no longer
+   * blocks siblings (they already aborted together under the old
+   * single-transaction design), and no failure here can roll back
+   * the attempt that already committed.
    *
    * Why on EVERY submit (not just `shouldAttemptUnlock`):
    *   - A streak reset zeroes `streakAfter`, so a user who tripped
@@ -951,8 +963,9 @@ export class DailyService {
    *
    * Idempotency:
    *   - The drainer's SELECT filters `processedAt IS NULL`, so a
-   *     second drain call on the same transaction (e.g. a retry
-   *     due to P2002 on `daily_attempts`) finds nothing to do.
+   *     second drain call on the same submit (e.g. a retried
+   *     submission that already processed pending rows) finds
+   *     nothing to do.
    *   - Each pending row's upsert goes through the same
    *     `maybeUnlockCardVariantInTx` path, which uses
    *     `userCardVariant.upsert` keyed on
@@ -966,23 +979,23 @@ export class DailyService {
    * unprocessed and the next submit retries.
    */
   private async drainPendingCardVariantUnlocksInTx(
-    tx: Prisma.TransactionClient,
+    db: PrismaService,
     userId: string,
   ): Promise<{ cardId: string; variantKey: UnlockableCardVariantKey } | null> {
     let pending: Awaited<
-      ReturnType<typeof tx.pendingCardVariantUnlock.findMany>
+      ReturnType<typeof db.pendingCardVariantUnlock.findMany>
     >;
     try {
-      pending = await tx.pendingCardVariantUnlock.findMany({
+      pending = await db.pendingCardVariantUnlock.findMany({
         where: { userId, processedAt: null },
         orderBy: { createdAt: "asc" },
       });
     } catch (drainReadErr) {
       // Read-side drain failure is cosmetic: a transient DB blip
       // here must not roll back the `dailyAttempt.create` that
-      // submit is committing. Return null so the surrounding
-      // transaction completes normally; the unprocessed rows
-      // remain pending for the next submit's drain attempt.
+      // submit already committed. Return null so the caller
+      // continues normally; the unprocessed rows remain pending for
+      // the next submit's drain attempt.
       const message =
         drainReadErr instanceof Error
           ? drainReadErr.message
@@ -1008,14 +1021,46 @@ export class DailyService {
 
     for (const row of pending) {
       try {
-        const grant = await this.maybeUnlockCardVariantInTx(
-          tx,
-          userId,
-          row.streakAfter,
-        );
-        await tx.pendingCardVariantUnlock.update({
-          where: { id: row.id },
-          data: { processedAt: new Date() },
+        const grant = await db.$transaction(async (tx) => {
+          // Re-read + row-lock the pending row under the
+          // `processedAt IS NULL` guard. Two concurrent submits can
+          // both see this row in the outer
+          // `findMany({ processedAt: null })` and both reach this
+          // transaction; the `FOR UPDATE` row lock serialises them,
+          // so the second transaction blocks here until the first
+          // commits and then sees `processedAt` already set (the
+          // query returns no rows). The second drainer is therefore
+          // a no-op for this row — without the lock both
+          // transactions would race the
+          // `userCardVariant.upsert` and produce duplicate grants
+          // (the `@@unique([userId, cardId, variantKey])` guard
+          // would dedupe the cosmetic row, but two `processedAt`
+          // writes and two drainer round-trips would still both
+          // count). Tagged-template binding escapes the cuid safely;
+          // we never interpolate user input.
+          const locked = await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT id
+            FROM "pending_card_variant_unlocks"
+            WHERE id = ${row.id} AND "processedAt" IS NULL
+            FOR UPDATE
+          `;
+          if (locked.length === 0) {
+            // Already processed by a concurrent drainer that won
+            // the row lock. Skip silently — the drain loop logs the
+            // first grant per submit and any subsequent grants on
+            // the same row are intentionally discarded.
+            return null;
+          }
+          const g = await this.maybeUnlockCardVariantInTx(
+            tx,
+            userId,
+            row.streakAfter,
+          );
+          await tx.pendingCardVariantUnlock.update({
+            where: { id: row.id },
+            data: { processedAt: new Date() },
+          });
+          return g;
         });
         if (grant && !firstGrant) firstGrant = grant;
       } catch (drainErr) {

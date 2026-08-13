@@ -44,7 +44,25 @@ vi.mock("@/components/ui/app-shell-layout", () => ({
     React.createElement("div", { "data-testid": "shell" }, children),
 }));
 
+vi.mock("@arena/shared", async () => {
+  const actual =
+    await vi.importActual<typeof import("@arena/shared")>("@arena/shared");
+  return {
+    ...actual,
+    getCardDefinition: vi.fn((id: string) => ({
+      id,
+      name: `Card ${id}`,
+      classId: "ATTACK",
+      tier: "COMMON",
+      backfireRate: 0.1,
+      effectType: "DAMAGE",
+      basePower: 10,
+    })),
+  };
+});
+
 import DailyPage from "./page";
+import { ApiError } from "@/lib/api-client";
 
 const sampleQuestions = [
   {
@@ -221,6 +239,127 @@ describe("DailyPage", () => {
 
     await waitFor(() =>
       expect(screen.getByText("alreadyDone")).toBeInTheDocument(),
+    );
+  });
+
+  it("shows 409 error message when submit returns conflict", async () => {
+    storeState.accessToken = "tok-abc";
+    submitDaily.mockRejectedValue(new ApiError("Conflict", 409));
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText("Q1?")).toBeInTheDocument());
+
+    for (let i = 0; i < sampleQuestions.length; i++) {
+      fireEvent.click(
+        screen.getByRole("button", { name: sampleQuestions[i].options[0] }),
+      );
+      if (i < sampleQuestions.length - 1) {
+        fireEvent.click(screen.getByText(/^next$/i));
+      } else {
+        fireEvent.click(screen.getByText(/^submit$/i));
+      }
+    }
+
+    await waitFor(() =>
+      expect(screen.getByText("error.alreadySubmitted")).toBeInTheDocument(),
+    );
+  });
+
+  it("shows 429 error message when submit returns rate limited", async () => {
+    storeState.accessToken = "tok-abc";
+    submitDaily.mockRejectedValue(new ApiError("Too Many", 429));
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText("Q1?")).toBeInTheDocument());
+
+    for (let i = 0; i < sampleQuestions.length; i++) {
+      fireEvent.click(
+        screen.getByRole("button", { name: sampleQuestions[i].options[0] }),
+      );
+      if (i < sampleQuestions.length - 1) {
+        fireEvent.click(screen.getByText(/^next$/i));
+      } else {
+        fireEvent.click(screen.getByText(/^submit$/i));
+      }
+    }
+
+    await waitFor(() =>
+      expect(screen.getByText("error.rateLimited")).toBeInTheDocument(),
+    );
+  });
+
+  it("shows generic error message when submit fails with unknown error", async () => {
+    storeState.accessToken = "tok-abc";
+    submitDaily.mockRejectedValue(new ApiError("Server error", 500));
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText("Q1?")).toBeInTheDocument());
+
+    for (let i = 0; i < sampleQuestions.length; i++) {
+      fireEvent.click(
+        screen.getByRole("button", { name: sampleQuestions[i].options[0] }),
+      );
+      if (i < sampleQuestions.length - 1) {
+        fireEvent.click(screen.getByText(/^next$/i));
+      } else {
+        fireEvent.click(screen.getByText(/^submit$/i));
+      }
+    }
+
+    await waitFor(() => {
+      const el = screen.getByText(/submitFailed/);
+      expect(el).toBeInTheDocument();
+    });
+  });
+
+  it("shows leaderboard error when leaderboard fetch fails", async () => {
+    getDailyLeaderboard.mockRejectedValue(new Error("Network error"));
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByText("leaderboard.error")).toBeInTheDocument(),
+    );
+  });
+
+  it("shows CardVariantUnlockModal when submit response has unlockedVariant", async () => {
+    storeState.accessToken = "tok-abc";
+    submitDaily.mockResolvedValue({
+      dateKey: "2026-08-09",
+      version: 1,
+      score: 600,
+      correctCount: 4,
+      totalQuestions: 5,
+      elapsedMs: 25_000,
+      streakBefore: 6,
+      streakAfter: 7,
+      results: [],
+      completedAt: "2026-08-09T12:01:00.000Z",
+      unlockedVariant: { cardId: "ATK-1", variantKey: "GOLD" },
+    });
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText("Q1?")).toBeInTheDocument());
+
+    for (let i = 0; i < sampleQuestions.length; i++) {
+      fireEvent.click(
+        screen.getByRole("button", { name: sampleQuestions[i].options[0] }),
+      );
+      if (i < sampleQuestions.length - 1) {
+        fireEvent.click(screen.getByText(/^next$/i));
+      } else {
+        fireEvent.click(screen.getByText(/^submit$/i));
+      }
+    }
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("card-variant-unlock-modal"),
+      ).toBeInTheDocument(),
     );
   });
 });

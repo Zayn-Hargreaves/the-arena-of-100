@@ -243,7 +243,7 @@ describe("C3-card-batch-failover — strict chaos gate (3 checkpoints)", () => {
     ];
     const dupes = findDuplicateObservations(raw);
     expect(dupes).toHaveLength(1);
-    expect(dupes[0]?.key).toBe("p1::SHIELD::1001");
+    expect(dupes[0]?.key).toBe(JSON.stringify(["p1", "SHIELD", 1001]));
     expect(dupes[0]?.count).toBe(2);
   });
 
@@ -452,5 +452,117 @@ describe("C3-card-batch-failover — strict chaos gate (3 checkpoints)", () => {
         (r) => r.code === "invalid_artifact" && /cohort_effects/.test(r.detail),
       ),
     ).toBe(true);
+  });
+});
+
+// ----------------------------------------------------------------------
+// Encoding-collision regression tests.
+//
+// The previous `${p}::${e}::${s}` delimiter-joined key was
+// ambiguous: playerId="a::b"/effectId="c" collides with
+// playerId="a"/effectId="b::c" (both serialize to "a::b::c"). The
+// collision class has to be caught at every layer that consumes the
+// key — dedupe, conflict detection, duplicate detection, and diff —
+// or a regression that drops one of these layers (or reintroduces
+// delimiter joining) silently corrupts the verdict.
+//
+// Each test below uses inputs that would be ambiguous under the
+// old delimiter form, and asserts the oracle treats them as
+// DISTINCT effects end-to-end.
+// ----------------------------------------------------------------------
+describe("C3-card-batch-failover — key encoding (no '::' collisions)", () => {
+  it("dedupeEffects treats (a::b, c) and (a, b::c) as distinct effects", () => {
+    // Both triples share the same seqNo 1001, but the player/effect
+    // boundaries differ. Under delimiter joining both keys would be
+    // "a::b::c::1001" — the oracle must NOT collapse them.
+    const raw = [
+      { playerId: "a::b", effectId: "c", seqNo: 1001, t: 100, nodeId: "n1" },
+      { playerId: "a", effectId: "b::c", seqNo: 1001, t: 100, nodeId: "n1" },
+    ];
+    const canonical = dedupeEffects(raw);
+    expect(canonical).toHaveLength(2);
+    const signatures = canonical
+      .map((e) => `${e.playerId}|${e.effectId}`)
+      .sort();
+    expect(signatures).toEqual(["a::b|c", "a|b::c"]);
+  });
+
+  it("detectEffectConflicts does NOT flag a collision across the '::' boundary", () => {
+    // Two pairs that share the OLD delimiter key "a::b::c" but live
+    // on different (playerId, effectId) boundaries. With delimiter
+    // joining they would collapse into one pair and (because the
+    // seqNos differ) trigger a false `double_apply`. Tuple encoding
+    // must keep them as two pairs, each with a single seqNo.
+    const raw = [
+      {
+        playerId: "a::b",
+        effectId: "c",
+        seqNo: 1001,
+        t: 100,
+        nodeId: "n1",
+      },
+      {
+        playerId: "a",
+        effectId: "b::c",
+        seqNo: 2002,
+        t: 200,
+        nodeId: "n2",
+      },
+    ];
+    const conflicts = detectEffectConflicts(raw);
+    expect(conflicts).toHaveLength(0);
+  });
+
+  it("findDuplicateObservations does NOT count a delimiter-key collision as a duplicate", () => {
+    // Same boundary collision, but with IDENTICAL seqNos. Under
+    // delimiter joining these would (wrongly) share a key and be
+    // flagged as duplicate observations of the same canonical
+    // effect. Tuple encoding must keep them as two distinct effects.
+    const raw = [
+      {
+        playerId: "a::b",
+        effectId: "c",
+        seqNo: 1001,
+        t: 100,
+        nodeId: "n1",
+      },
+      {
+        playerId: "a",
+        effectId: "b::c",
+        seqNo: 1001,
+        t: 100,
+        nodeId: "n2",
+      },
+    ];
+    const duplicates = findDuplicateObservations(raw);
+    expect(duplicates).toHaveLength(0);
+  });
+
+  it("diffEffects treats (a::b, c) and (a, b::c) as distinct expected vs observed", () => {
+    // These two tuples serialize identically under delimiter-joined
+    // encoding (`a::b::c` for both), but the JSON-tuple
+    // `effectKey` keeps them distinct so the diff must surface one
+    // drop on the expected side and one extra on the observed side.
+    const expected = [
+      { playerId: "a::b", effectId: "c", seqNo: 1001 },
+    ];
+    const observed = [
+      { playerId: "a", effectId: "b::c", seqNo: 1001, t: 0 },
+    ];
+    const diff = diffEffects(expected, observed);
+    expect(diff.dropped).toHaveLength(1);
+    expect(diff.extra).toHaveLength(1);
+    // Validate the actual `playerId`/`effectId` of each entry, not just
+    // the counts — without this a swapped classification (the
+    // expected-side effect reported as `extra`, and the observed-side
+    // as `dropped`) would still pass the length assertions.
+    expect(diff.dropped[0]).toMatchObject({
+      playerId: "a::b",
+      effectId: "c",
+    });
+    expect(diff.extra[0]).toMatchObject({
+      playerId: "a",
+      effectId: "b::c",
+    });
   });
 });

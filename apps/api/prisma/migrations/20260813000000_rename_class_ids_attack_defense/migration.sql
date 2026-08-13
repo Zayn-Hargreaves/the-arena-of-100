@@ -21,5 +21,9 @@
 -- MatchPlayer.classId column needs backfilling — provided the sequence
 -- above holds. Do NOT rely on these SQL comments or the UPDATEs below
 -- to prevent legacy writes; that is the deploy pipeline's job.
-UPDATE "match_players" SET "classId" = 'ATTACK'  WHERE "classId" = 'CONG';
-UPDATE "match_players" SET "classId" = 'DEFENSE' WHERE "classId" = 'THU';
+UPDATE "match_players"
+   SET "classId" = 'ATTACK'
+ WHERE "classId" = 'CONG';
+UPDATE "match_players"
+   SET "classId" = 'DEFENSE'
+ WHERE "classId" = 'THU';
