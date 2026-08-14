@@ -11,4 +11,5 @@
 **/.env
 **/.env.*
 load-test/results
+apps/api/prisma/migrations/__tests__
 *.log

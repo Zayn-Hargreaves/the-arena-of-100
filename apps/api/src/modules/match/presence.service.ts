@@ -51,7 +51,7 @@ const ROOM_SWEEP_GRACE_PERIOD_MS = 30_000;
 // never reach the server on the first attempt, and disbanding on a single
 // missed tick evicts every other player in the room over what a real
 // client would have self-healed from within the next 5-10s. Requiring two
-// CONSECUTIVE stale ticks (~10s total, still well inside the 20s presence
+// CONSECUTIVE stale ticks (~10s total, still well inside the 40s presence
 // TTL a genuinely-gone host would need to clear anyway) keeps the
 // original protection against an actually-abandoned room while giving a
 // reconnecting host one more cycle to prove it's still there.

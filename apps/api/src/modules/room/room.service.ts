@@ -463,7 +463,14 @@ export class RoomService {
   // ============================================================
 
   async updatePresence(roomId: string, userId: string) {
-    await this.redis.set(`room:presence:${roomId}:${userId}`, "1", 20);
+    // TTL must exceed the heartbeat interval (`socket-store.ts` and the k6
+    // harness `flows.js` both use 25s) by a comfortable margin so a 6-10s
+    // network blip does not falsely expire the key before the next refresh.
+    // 40s gives ~15s of buffer over 25s. Stale-detection latency rises from
+    // ~20s to ~40s — acceptable for a quiz game, and the 2-consecutive-tick
+    // grace in `PresenceService` (`HOST_STALE_CONSECUTIVE_SWEEPS = 2`,
+    // sweep every 5s) still fires within TTL.
+    await this.redis.set(`room:presence:${roomId}:${userId}`, "1", 40);
   }
 
   async clearPresence(roomId: string, userId: string) {

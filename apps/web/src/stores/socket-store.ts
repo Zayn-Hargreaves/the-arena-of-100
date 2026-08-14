@@ -429,7 +429,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       throw error;
     }
 
-    // Start heartbeat interval (every 10 seconds)
+    // Start heartbeat interval (every 25 seconds)
     const currentState = get();
     if (currentState.socket !== newSocket) {
       newSocket.disconnect();
@@ -446,7 +446,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           sentAt: Date.now(),
         });
       }
-    }, 10000);
+    }, 25000);
 
     if (get().socket !== newSocket) {
       clearInterval(interval);

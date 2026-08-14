@@ -27,6 +27,61 @@ during the **room-creation burst** at the start of each sweep, NOT during
 gameplay. Steady-state has plenty of headroom. The actual bottleneck at
 8,000+ VU is **socket connect queue + k6 load-generator capacity**.
 
+## Heartbeat 25s validation at 8,000 VU (2026-08-14)
+
+Production and k6 heartbeat cadence were changed together from 10s to 25s;
+Redis presence TTL changed from 20s to 40s. The cluster was recreated from a
+fresh database with all 11 Prisma migrations before measuring:
+
+- `ROOMS=80`, `PLAYERS_PER_ROOM=69`, `SPECTATORS_PER_ROOM=30`
+- `RAMP_UP=90s`, `SPEC_RAMP_UP=45s`, `HOLD=2m`
+- `DB_POOL_MAX=50` per node, `PG_MAX_CONNECTIONS=300`, `LB_METHOD=least_conn`
+- direct interleaved node routing through `:3011/:3012/:3013`, matching the
+  prior ceiling methodology
+
+### Result
+
+| Metric                                                |                                   Heartbeat 25s / ramp 90s |
+| ----------------------------------------------------- | ---------------------------------------------------------: |
+| WS connect success                                    |                                          **8,000 / 8,000** |
+| setup flow errors / WS connect errors / HTTP failures |                                             **0 / 0 / 0%** |
+| app error rate                                        |                                  **0.755%** (122 / 16,150) |
+| answer p50 / p95 / max                                |                          **819.5ms / 1,768.9ms / 2,717ms** |
+| round events / answers submitted                      |                                          **9,557 / 1,858** |
+| client `MATCH_FINISHED` observations                  |                                  **6,553 / 8,000 (81.9%)** |
+| DB matches / finished matches                         |                       **81 / 81** (includes the mini-test) |
+| DB rounds / persisted answers                         |                **183 / 1,869** (includes mini-test 3 / 25) |
+| PG active peak / samples >= 100                       |                              **17 / 0** across 468 samples |
+| API event-loop lag max                                |                                                  **176ms** |
+| Presence/Prisma/internal errors                       | **0 host-stale, 0 disband, 0 Prisma/FK, 0 INTERNAL_ERROR** |
+
+The run is valid evidence for heartbeat/presence and server-side match
+correctness: all 80 measured benchmark matches reached `FINISHED`; gameplay
+produced rounds and batched answer persistence; no room was stale-disbanded;
+Postgres had substantial headroom.
+
+It is **not** an apples-to-apples replacement for the prior 8,000-VU ceiling
+row. With the 90s player ramp but unchanged 35s host warmup, many clients join
+after a fast match has already progressed or finished. Therefore the 81.9%
+client `MATCH_FINISHED/ws_connect_success` ratio is timing-confounded and must
+not be interpreted as 18.1% server match failure. The database and API logs
+show 80/80 benchmark matches finished. A ceiling comparison using the client
+ratio requires either the original 30s/15s ramps or a readiness barrier before
+hosts start matches.
+
+The answer p95 crossed the 1s SLO even though heartbeat traffic dropped 60%.
+This means heartbeat optimization alone does not move the demonstrated 8,000
+VU performance ceiling. It does remove presence traffic without introducing
+stale-host failures; socket/HTTP scheduling remains the limiting layer.
+
+### Batch verification
+
+No new batching code was added. `MatchService.saveRoundAndAnswers()` already
+persists one round plus all answers in a single transaction using
+`tx.answer.createMany(...)`; `matchPlayer.createMany(...)` also already exists.
+The mini-test persisted 25/25 submitted answers, and the 8,000-VU run persisted
+the measured answer workload without Prisma or connection errors.
+
 ## Sweep history (this doc revision adds 8,000 + 10,000 VU)
 
 The 2026-08-14 first-pass ceiling sweep showed `app_error_rate = 11-27%` at
@@ -224,6 +279,7 @@ production metric is **per-second arrival rate**, which at 10,000 VU/60s =
 - `load-test/results/ceiling-clean-64x100-6e9179e-20260814T151000.json` (6,400 VU)
 - `load-test/results/ceiling-clean-80x100-19279ba-20260814T091453.json` (8,000 VU)
 - `load-test/results/ceiling-clean-100x100-19279ba-20260814T092532.json` (10,000 VU)
+- `load-test/results/ceiling-heartbeat25-ramp90-80x100-bca68ea-20260814T111300Z.json` (8,000 VU, heartbeat 25s / TTL 40s validation)
 
 **K6 summary exports** (original noisy — kept for noise-comparison reference):
 
@@ -235,6 +291,8 @@ production metric is **per-second arrival rate**, which at 10,000 VU/60s =
 
 - `load-test/results/clean-{32,64,80,100}x100-node-{1,2,3}.cpu.jsonl` (CPU + eventLoopLag per node)
 - `load-test/results/clean-{32,64,80,100}x100.pg.jsonl` (pg_stat_activity)
+- `load-test/results/ceiling-heartbeat25-ramp90-80x100-bca68ea-20260814T111300Z.node-{1,2,3}.{cpu,redis}.jsonl`
+- `load-test/results/ceiling-heartbeat25-ramp90-80x100-bca68ea-20260814T111300Z.pg.jsonl`
 
 ## Reproduction
 

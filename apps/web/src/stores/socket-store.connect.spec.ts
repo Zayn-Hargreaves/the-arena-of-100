@@ -170,6 +170,7 @@ describe("socket-store connect heartbeat ownership", () => {
       await firstConnect;
 
       expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+      expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 25000);
       expect(useSocketStore.getState().socket).toBe(socket2);
       expect(useSocketStore.getState().heartbeatInterval).toBe(intervalToken);
     } finally {

@@ -1138,7 +1138,7 @@ describe("RoomService", () => {
   describe("presence methods", () => {
     it("updates presence in Redis", async () => {
       await service.updatePresence("r1", "u1");
-      expect(redis.set).toHaveBeenCalledWith("room:presence:r1:u1", "1", 20);
+      expect(redis.set).toHaveBeenCalledWith("room:presence:r1:u1", "1", 40);
     });
 
     it("clears presence in Redis", async () => {

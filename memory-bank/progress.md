@@ -378,6 +378,38 @@ same cluster + instrumentation setup. Source of truth:
   `load-test/results/ceiling-clean-{80,100}x100-*.json` (2 new), 6 new
   monitoring JSONLs. Patched no app code.
 
+### 2026-08-14 — Heartbeat 25s / presence TTL 40s validation
+
+- Production web client and both k6 heartbeat flows changed **10s -> 25s**;
+  Redis presence TTL changed **20s -> 40s**. Presence sweep remains 5s with
+  two consecutive stale sweeps required for host eviction.
+- Rebuilt the stale `arena-api:multi-build` migration image and recreated the
+  benchmark database. Prisma initially failed with `P3015` because
+  `prisma/migrations/__tests__/` was copied into the image without a
+  `migration.sql`; `.dockerignore` now excludes that test-only directory.
+  Verified all 11 migrations, including
+  `20260812000000_phase3_card_variants`, and both `match_players.cardsPlayed`
+  and `match_players.classId`.
+- **Mini gate (31 VU)**: 31/31 connect, 31/31 receive `MATCH_FINISHED`, 90 round
+  events, 25 answers, answer p95 **23.8ms**, 0 app/setup/HTTP/WS errors; DB has
+  one finished match, 3 rounds, and 25 persisted answers.
+- **8,000 VU run** (`RAMP_UP=90s`, `SPEC_RAMP_UP=45s`, `HOLD=2m`): 8,000/8,000
+  WS connect, 0 setup/connect/HTTP failures, app error rate **0.755%**, answer
+  p95 **1,768.9ms**, 9,557 round events, 1,858 submitted answers. API logs:
+  0 host stale/disband, 0 Prisma/FK/INTERNAL_ERROR. DB: all 80 benchmark
+  matches `FINISHED`; PG active peak only **17** (0/468 samples >=100).
+- Client `MATCH_FINISHED` observations were 6,553/8,000, but this is not
+  comparable to the prior ramp-30 result: hosts still start after 35s while
+  players ramp for 90s, so late clients miss already-finished matches. Server
+  DB truth is 80/80 matches finished. Do not claim the ceiling moved from this
+  ratio; use the original ramp or add a readiness barrier for an A/B rerun.
+- **Batch DB decision**: no code added. `MatchService.saveRoundAndAnswers()`
+  already uses one transaction for the round plus `tx.answer.createMany(...)`;
+  `matchPlayer.createMany(...)` also exists. Mini and 8k persistence completed
+  without DB errors.
+- Source of truth and artifacts: `load-test/CEILING.md` and
+  `load-test/results/ceiling-heartbeat25-ramp90-80x100-bca68ea-20260814T111300Z*`.
+
 ## Follow-ups (to consider when product needs >8k concurrent VU)
 
 Recorded 2026-08-14 after ceiling sweep showed 8,000 VU is the hard ceiling.
@@ -424,11 +456,11 @@ not the language:
 
 If we want a tangible "ceiling moved from 8k → 12k VU" story for interviews:
 
-| Lever                                       | Effort           | Expected gain                                        | Risk                                                          |
-| ------------------------------------------- | ---------------- | ---------------------------------------------------- | ------------------------------------------------------------- |
-| **Heartbeat 10s → 25s**                     | 5 min (1 config) | ~30-40% less WS message traffic                      | Players see stale "disconnect" for 25s instead of 10s         |
-| **Cache match state in Redis with TTL=5s**  | 1-2 hours        | Skip DB lookup on hot path, removes DB pool pressure | Stale-cache window of 5s (acceptable for quiz game)           |
-| **`createMany` batching for answer writes** | 30 min           | 2-3× fewer Prisma roundtrips                         | None (already exists in match.service.ts:101 for matchPlayer) |
+| Lever                                       | Effort       | Expected gain                                        | Risk                                                         |
+| ------------------------------------------- | ------------ | ---------------------------------------------------- | ------------------------------------------------------------ |
+| **Heartbeat 10s → 25s**                     | Done         | 60% fewer heartbeat emits; 8k presence gate passed   | Presence expiry detection rises from ~20s to ~40s            |
+| **Cache match state in Redis with TTL=5s**  | 1-2 hours    | Skip DB lookup on hot path, removes DB pool pressure | Stale-cache window of 5s (acceptable for quiz game)          |
+| **`createMany` batching for answer writes** | Already done | One transaction persists round + all answers         | `saveRoundAndAnswers()` already calls `tx.answer.createMany` |
 
 Recommend picking **#2** if we revisit: removes the DB pool saturate burst,
 which is the most "showable" data point.

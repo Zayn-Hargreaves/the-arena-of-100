@@ -43,19 +43,19 @@ function newSubmissionId(vu, roundNo) {
   return `lt-${vu}-${roundNo}-${Math.floor(Math.random() * 1e9)}`;
 }
 
-// Mirrors apps/web's socket-store heartbeat (every 10s — comfortably under
-// the server's 20s presence TTL). Without this, a socket that joins and
-// then just waits (e.g. the host during warmup) has its presence key
-// expire and gets swept as "stale" — disbanding the room out from under
-// the rest of the test. `getRoomId` is a thunk because for player/spectator
-// the room id is only known after ROOM_JOINED resolves.
+// Mirrors apps/web's socket-store heartbeat (every 25s — well under the
+// server's 40s presence TTL). At 25s interval, a healthy client's heartbeat
+// refreshes the presence key ~1.6x before TTL expiry; a 6-10s network blip
+// still refreshes in time, while server load drops ~60% vs 10s interval
+// (8,000 VU × 6 hb/min → 8,000 VU × 2.4 hb/min). See `room.service.ts`
+// `updatePresence` for the matching TTL.
 function startHeartbeat(client, getRoomId) {
   const interval = setInterval(() => {
     const roomId = getRoomId();
     if (roomId && client.connected) {
       client.emit(ClientEvent.HEARTBEAT, { roomId, sentAt: Date.now() });
     }
-  }, 10000);
+  }, 25000);
   return () => clearInterval(interval);
 }
 
@@ -332,7 +332,7 @@ async function runReconnectingFlow({
     if (c && c.connected && roomId) {
       c.emit(ClientEvent.HEARTBEAT, { roomId, sentAt: Date.now() });
     }
-  }, 10000);
+  }, 25000);
 
   await sleepMs(lifetimeMs);
   clearInterval(hb);
