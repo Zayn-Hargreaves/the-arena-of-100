@@ -58,7 +58,12 @@ fresh database with all 11 Prisma migrations before measuring:
 The run is valid evidence for heartbeat/presence and server-side match
 correctness: all 80 measured benchmark matches reached `FINISHED`; gameplay
 produced rounds and batched answer persistence; no room was stale-disbanded;
-Postgres had substantial headroom.
+Postgres had substantial headroom. The authoritative artifact for this run is
+`load-test/results/ceiling-heartbeat25-ramp90-80x100-bca68ea-20260814T111300Z.json`.
+Earlier intermediate files (`ceiling-optimized-80x100-bca68ea-20260814T101922.json`
+and `ceiling-optimized-ramp90-80x100-bca68ea-20260814T103817.json`) reflect
+intermediate/incomplete calibration runs (with partial connections or unmeasured
+answer latencies) and are not used as SLO evidence.
 
 It is **not** an apples-to-apples replacement for the prior 8,000-VU ceiling
 row. With the 90s player ramp but unchanged 35s host warmup, many clients join

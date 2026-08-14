@@ -103,11 +103,13 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
       {isEliminated && <EliminatedOverlay reason={eliminationReason} />}
 
       {/* Pre-Match Topic Ban Draft Overlay */}
-      {(match?.status === "TOPIC_VOTING" ||
-        (topicVoting &&
-          (!topicVoting.isFinished ||
-            (match?.status === "COUNTDOWN" &&
-              topicVoting.matchId === match.id)))) && <TopicVotingOverlay />}
+      {Boolean(
+        match?.id &&
+        (match.status === "TOPIC_VOTING" ||
+          (topicVoting &&
+            topicVoting.matchId === match.id &&
+            (!topicVoting.isFinished || match.status === "COUNTDOWN"))),
+      ) && <TopicVotingOverlay />}
 
       {/* Drop-in spectator banner: a thin top-of-page strip telling the
           user they joined as a late spectator. Lighter than the

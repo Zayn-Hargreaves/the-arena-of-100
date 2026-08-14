@@ -203,6 +203,43 @@ describe("MatchRoundRunner", () => {
     }
   });
 
+  it("starts topic-voting live timer with resumePhaseRemaining accounting for persist delay", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(roomService.getRoom).mockResolvedValue({
+        id: "room-1",
+        type: "PUBLIC",
+        category: "ALL",
+        status: RoomStatus.WAITING,
+        currentMatchId: null,
+        players: [{ userId: "p1" }, { userId: "p2" }],
+      } as any);
+
+      vi.mocked(matchService.persistStateMachine).mockImplementation(
+        async () => {
+          vi.advanceTimersByTime(2000);
+          return "APPLIED";
+        },
+      );
+
+      const armSpy = vi.spyOn(runner as any, "armPhaseTimer");
+
+      await (runner as any).startMatchLoop(
+        "match-1",
+        "room-1",
+        mockServer as unknown as Server,
+      );
+
+      expect(armSpy).toHaveBeenCalledWith(
+        "match-1",
+        expect.any(Function),
+        GAME_CONFIG.TOPIC_VOTING_DURATION_MS - 2000,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("should execute countdown and call executeRound after 5 seconds", async () => {
     vi.useFakeTimers();
 

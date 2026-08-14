@@ -123,10 +123,16 @@ export class MatchRoundRunner {
         GAME_CONFIG.TOPIC_VOTING_DURATION_MS,
       );
 
+      const remainingMs = this.resumePhaseRemaining(
+        stateMachine,
+        MatchStatus.TOPIC_VOTING,
+        GAME_CONFIG.TOPIC_VOTING_DURATION_MS,
+      );
+
       this.armPhaseTimer(
         matchId,
         this.topicVotingTimerCallback(matchId, roomId, server),
-        GAME_CONFIG.TOPIC_VOTING_DURATION_MS,
+        remainingMs,
       );
       return;
     }

@@ -939,8 +939,10 @@ describe("MatchCommandService (B4a)", () => {
           topic: "SCIENCE",
         },
       };
+      const spy = vi.spyOn(service, "applyVoteBanTopicAuthoritative");
       matchService.getStateMachine.mockResolvedValue(undefined);
       await expect(applyPrivate(service, env, server)).resolves.toBe("RETRY");
+      expect(spy).toHaveBeenCalledWith(env, expect.anything(), server);
     });
   });
 
@@ -1051,6 +1053,66 @@ describe("MatchCommandService (B4a)", () => {
         .getEventLog()
         .filter((e) => e.type === "TOPIC_VOTE_SUBMITTED");
       expect(topicVoteEvents.length).toBe(1);
+    });
+
+    it("returns DUPLICATE_SUBMISSION, does not mutate topicVotes, and does not emit summary when topic voting is closed or expired", async () => {
+      const sm = new MatchStateMachine("m1", "r1", [
+        {
+          id: "p1",
+          name: "Alice",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+      ]);
+      // Case 1: Status is not TOPIC_VOTING (e.g. transitioned to COUNTDOWN)
+      sm.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"]);
+      sm.transition(MatchStatus.COUNTDOWN);
+      matchService.getStateMachine.mockResolvedValue(sm);
+      const recorder = makeMockServer();
+
+      const outcome1 = await service.applyVoteBanTopicAuthoritative(
+        voteEnv(),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome1).toBe("DUPLICATE_SUBMISSION");
+      expect(sm.getState().topicVotes).toEqual({});
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+      expect(
+        recorder.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY).length,
+      ).toBe(0);
+
+      // Case 2: Status is TOPIC_VOTING but phaseEndsAt <= Date.now()
+      const smExpired = new MatchStateMachine("m1", "r1", [
+        {
+          id: "p1",
+          name: "Alice",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+      ]);
+      smExpired.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"], 1);
+      (smExpired as any).state.phaseEndsAt = Date.now() - 1000;
+      matchService.getStateMachine.mockResolvedValue(smExpired);
+
+      const outcome2 = await service.applyVoteBanTopicAuthoritative(
+        voteEnv(),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome2).toBe("DUPLICATE_SUBMISSION");
+      expect(smExpired.getState().topicVotes).toEqual({});
+      expect(
+        recorder.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY).length,
+      ).toBe(0);
     });
   });
 

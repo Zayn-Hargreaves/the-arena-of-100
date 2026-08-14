@@ -60,4 +60,26 @@ describe("TopicVotingOverlay", () => {
     render(<TopicVotingOverlay />);
     expect(screen.getByText("active")).toBeInTheDocument();
   });
+
+  it("does not call voteBanTopic when isFinished is true (button disabled and handleVote early return)", () => {
+    useSocketStore.setState({
+      topicVoting: {
+        matchId: "m1",
+        candidateTopics: ["SCIENCE", "HISTORY", "TECH"],
+        endsAt: Date.now() - 1000,
+        durationMs: 10000,
+        myVotedTopic: null,
+        voteCounts: { SCIENCE: 5, HISTORY: 3, TECH: 1 },
+        totalVotes: 9,
+        bannedTopics: ["SCIENCE", "HISTORY"],
+        activeTopics: ["TECH"],
+        isFinished: true,
+      },
+    });
+
+    render(<TopicVotingOverlay />);
+    const scienceCard = screen.getByText("Khoa Học & Tự Nhiên");
+    fireEvent.click(scienceCard);
+    expect(voteBanTopicMock).not.toHaveBeenCalled();
+  });
 });

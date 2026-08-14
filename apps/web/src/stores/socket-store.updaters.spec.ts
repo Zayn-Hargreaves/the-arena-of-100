@@ -1450,5 +1450,77 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         isFinished: true,
       });
     });
+
+    it("applySnapshotState sets topicVoting to null when status is ROUND_ACTIVE or beyond", () => {
+      const state = makeState({
+        userId: "u1",
+        topicVoting: {
+          matchId: "m1",
+          candidateTopics: ["SCIENCE"],
+          endsAt: 10000,
+          durationMs: 10000,
+          myVotedTopic: null,
+          voteCounts: {},
+          totalVotes: 0,
+          bannedTopics: [],
+          activeTopics: [],
+          isFinished: true,
+        },
+      });
+
+      const result = applySnapshotState(state, {
+        matchId: "m1",
+        status: MatchStatus.ROUND_ACTIVE,
+        currentRoundNo: 1,
+        players: [],
+        currentQuestion: null,
+        roundEndTime: null,
+        lastEventSeqNo: 5,
+        candidateTopics: ["SCIENCE"],
+      });
+
+      expect(result.topicVoting).toBeNull();
+    });
+
+    it("applyRoundStartedState clears topicVoting to null", () => {
+      const state = makeState({
+        userId: "u1",
+        match: {
+          id: "m1",
+          status: MatchStatus.COUNTDOWN,
+          currentRoundNo: 0,
+          players: [],
+          currentQuestion: null,
+          roundEndTime: null,
+        },
+        topicVoting: {
+          matchId: "m1",
+          candidateTopics: ["SCIENCE"],
+          endsAt: 10000,
+          durationMs: 10000,
+          myVotedTopic: null,
+          voteCounts: {},
+          totalVotes: 0,
+          bannedTopics: ["HISTORY"],
+          activeTopics: ["SCIENCE"],
+          isFinished: true,
+        },
+      });
+
+      const result = applyRoundStartedState(state, {
+        matchId: "m1",
+        roundNo: 1,
+        question: {
+          id: "q1",
+          category: "SCIENCE",
+          text: "What is H2O?",
+          options: ["Water", "Air", "Fire", "Earth"],
+        },
+        endsAt: 30000,
+        durationMs: 15000,
+      });
+
+      expect(result.topicVoting).toBeNull();
+    });
   });
 });

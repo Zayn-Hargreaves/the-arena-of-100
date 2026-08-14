@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useTranslations } from "next-intl";
 import {
   Ban,
@@ -31,7 +31,7 @@ const TOPIC_METADATA: Record<
     labelVi: "Kiến Thức Chung",
     labelEn: "General Knowledge",
     icon: Globe,
-    color: "from-blue-500/20 to-cyan-500/20 border-cyan-500/30",
+    color: "from-sky-500/20 to-blue-500/20 border-sky-500/30",
   },
   SCIENCE: {
     labelVi: "Khoa Học & Tự Nhiên",
@@ -43,25 +43,7 @@ const TOPIC_METADATA: Record<
     labelVi: "Lịch Sử & Thế Giới",
     labelEn: "History & World",
     icon: Landmark,
-    color: "from-amber-500/20 to-yellow-500/20 border-amber-500/30",
-  },
-  GEOGRAPHY: {
-    labelVi: "Địa Lý & Du Lịch",
-    labelEn: "Geography",
-    icon: Compass,
-    color: "from-sky-500/20 to-blue-500/20 border-sky-500/30",
-  },
-  ENTERTAINMENT: {
-    labelVi: "Giải Trí & Âm Nhạc",
-    labelEn: "Entertainment",
-    icon: Film,
-    color: "from-purple-500/20 to-pink-500/20 border-purple-500/30",
-  },
-  SPORTS: {
-    labelVi: "Thể Thao",
-    labelEn: "Sports",
-    icon: Trophy,
-    color: "from-orange-500/20 to-red-500/20 border-orange-500/30",
+    color: "from-amber-500/20 to-orange-500/20 border-amber-500/30",
   },
   TECH: {
     labelVi: "Công Nghệ & IT",
@@ -69,9 +51,27 @@ const TOPIC_METADATA: Record<
     icon: Code,
     color: "from-indigo-500/20 to-violet-500/20 border-indigo-500/30",
   },
-  LITERATURE: {
-    labelVi: "Văn Học & Nghệ Thuật",
-    labelEn: "Literature & Art",
+  ENTERTAINMENT: {
+    labelVi: "Giải Trí & Pop Culture",
+    labelEn: "Entertainment & Pop",
+    icon: Film,
+    color: "from-purple-500/20 to-fuchsia-500/20 border-purple-500/30",
+  },
+  SPORTS: {
+    labelVi: "Thể Thao & Esports",
+    labelEn: "Sports & Esports",
+    icon: Trophy,
+    color: "from-yellow-500/20 to-amber-500/20 border-yellow-500/30",
+  },
+  GEOGRAPHY: {
+    labelVi: "Địa Lý & Quốc Gia",
+    labelEn: "Geography & Maps",
+    icon: Compass,
+    color: "from-teal-500/20 to-cyan-500/20 border-teal-500/30",
+  },
+  LOGIC: {
+    labelVi: "Tư Duy & Câu Đố",
+    labelEn: "Logic & Puzzles",
     icon: BookOpen,
     color: "from-rose-500/20 to-pink-500/20 border-rose-500/30",
   },
@@ -79,9 +79,62 @@ const TOPIC_METADATA: Record<
 
 export function TopicVotingOverlay() {
   const t = useTranslations("Game.topicVoting");
-  const { topicVoting, voteBanTopic } = useSocketStore();
+  const { topicVoting, voteBanTopic, match } = useSocketStore();
 
   const [timeLeft, setTimeLeft] = useState<number>(10);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previousActiveElement = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    previousActiveElement.current =
+      document.activeElement as HTMLElement | null;
+
+    if (dialogRef.current) {
+      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusable.length > 0) {
+        focusable[0]?.focus();
+      }
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || !dialogRef.current) return;
+
+      const focusable = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) return;
+
+      const firstElement = focusable[0];
+      const lastElement = focusable[focusable.length - 1];
+
+      if (e.shiftKey) {
+        if (document.activeElement === firstElement) {
+          e.preventDefault();
+          lastElement?.focus();
+        }
+      } else {
+        if (document.activeElement === lastElement) {
+          e.preventDefault();
+          firstElement?.focus();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      if (
+        previousActiveElement.current &&
+        typeof previousActiveElement.current.focus === "function"
+      ) {
+        previousActiveElement.current.focus();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!topicVoting) return;
@@ -100,6 +153,13 @@ export function TopicVotingOverlay() {
   }, [topicVoting?.endsAt]);
 
   if (!topicVoting) return null;
+  if (
+    match &&
+    match.status !== "TOPIC_VOTING" &&
+    match.status !== "COUNTDOWN"
+  ) {
+    return null;
+  }
 
   const {
     candidateTopics,
@@ -119,7 +179,13 @@ export function TopicVotingOverlay() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fade-in">
-      <div className="relative w-full max-w-4xl p-6 md:p-8 bg-slate-900/90 border border-slate-700/60 rounded-2xl shadow-2xl shadow-rose-950/20 overflow-hidden text-slate-100 flex flex-col items-center animate-scale-in">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="topic-voting-title"
+        className="relative w-full max-w-4xl p-6 md:p-8 bg-slate-900/90 border border-slate-700/60 rounded-2xl shadow-2xl shadow-rose-950/20 overflow-hidden text-slate-100 flex flex-col items-center animate-scale-in"
+      >
         {/* Header Glow */}
         <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-96 h-32 bg-rose-500/20 blur-3xl pointer-events-none" />
 
@@ -130,7 +196,10 @@ export function TopicVotingOverlay() {
             <span>{t("title")}</span>
           </div>
 
-          <h2 className="text-2xl md:text-3xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-slate-100 via-rose-100 to-rose-400">
+          <h2
+            id="topic-voting-title"
+            className="text-2xl md:text-3xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-slate-100 via-rose-100 to-rose-400"
+          >
             {isFinished ? t("bannedTopicsHeader") : t("subtitle")}
           </h2>
 

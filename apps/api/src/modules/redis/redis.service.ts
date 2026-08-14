@@ -140,6 +140,10 @@ export class RedisService implements OnModuleDestroy {
     return core.setIfAbsent(this.client, key, value, ttl);
   }
 
+  // Atomic CAS write: writes `cacheKey` with `ttlSec` only when the value at
+  // `genKey` strictly equals `expectedGen`. Treats a missing `genKey` as
+  // generation "0". Callers must use "0" when no generation is present to avoid
+  // silent write failures.
   setIfGenMatches(
     genKey: string,
     cacheKey: string,

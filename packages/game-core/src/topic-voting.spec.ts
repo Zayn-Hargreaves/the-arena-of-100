@@ -70,5 +70,33 @@ describe("topic-voting engine", () => {
       const result2 = resolveBannedTopics(candidates, votes, 2, seed);
       expect(result1).toEqual(result2);
     });
+
+    it("bans all candidate topics and leaves activeTopics empty when candidateTopics length <= bannedCount", () => {
+      // Case 1: candidateTopics.length === bannedCount (exact match early return)
+      const candidatesEqual = ["SCIENCE", "HISTORY"];
+      const votesEqual = { p1: "SCIENCE" };
+      const resultEqual = resolveBannedTopics(
+        candidatesEqual,
+        votesEqual,
+        2,
+        seed,
+      );
+      expect(resultEqual.bannedTopics).toEqual(["SCIENCE", "HISTORY"]);
+      expect(resultEqual.activeTopics).toEqual([]);
+      expect(resultEqual.voteCounts).toEqual({ SCIENCE: 1, HISTORY: 0 });
+
+      // Case 2: candidateTopics.length < bannedCount
+      const candidatesSmaller = ["SCIENCE"];
+      const votesSmaller = { p1: "SCIENCE", p2: "SCIENCE" };
+      const resultSmaller = resolveBannedTopics(
+        candidatesSmaller,
+        votesSmaller,
+        3,
+        seed,
+      );
+      expect(resultSmaller.bannedTopics).toEqual(["SCIENCE"]);
+      expect(resultSmaller.activeTopics).toEqual([]);
+      expect(resultSmaller.voteCounts).toEqual({ SCIENCE: 2 });
+    });
   });
 });

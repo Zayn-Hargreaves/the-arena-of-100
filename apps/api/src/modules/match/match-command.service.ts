@@ -643,19 +643,19 @@ export class MatchCommandService implements OnModuleDestroy {
       return "DUPLICATE_SUBMISSION";
     }
 
-    let existingVoteEvent: unknown = null;
+    let hasExistingVoteEvent = false;
     stateMachine.forEachEvent((entry) => {
       if (entry.type === "TOPIC_VOTE_SUBMITTED") {
         const payload = (entry.payload ?? {}) as Record<string, unknown>;
         if (payload.eventId === env.eventId) {
-          existingVoteEvent = entry;
+          hasExistingVoteEvent = true;
           return false;
         }
       }
       return true;
     }, "reverse");
 
-    if (existingVoteEvent) {
+    if (hasExistingVoteEvent) {
       return this.recoverDuplicateVoteBanTopic(env, server);
     }
 
@@ -685,22 +685,7 @@ export class MatchCommandService implements OnModuleDestroy {
       return "RETRY";
     }
 
-    const updatedState = stateMachine.getState();
-    const candidateTopics = updatedState.candidateTopics ?? [];
-    const votes = updatedState.topicVotes ?? {};
-    const voteCounts = tallyTopicVotes(votes, candidateTopics);
-    const totalVotes = Object.keys(votes).length;
-
-    const roomId = await this.matchService.getRoomIdByMatchId(env.matchId);
-    if (roomId) {
-      emitTopicVotingSummary(
-        server,
-        roomId,
-        env.matchId,
-        voteCounts,
-        totalVotes,
-      );
-    }
+    await this.emitTopicVotingSummaryFromSM(env.matchId, stateMachine, server);
 
     try {
       await this.redis.sadd(applied, env.eventId);
@@ -713,6 +698,26 @@ export class MatchCommandService implements OnModuleDestroy {
     return "APPLIED";
   }
 
+  private async emitTopicVotingSummaryFromSM(
+    matchId: string,
+    stateMachine: MatchStateMachine,
+    server: Server,
+  ): Promise<void> {
+    const updatedState = stateMachine.getState();
+    const candidateTopics = updatedState.candidateTopics ?? [];
+    const votes = updatedState.topicVotes ?? {};
+    const voteCounts = tallyTopicVotes(votes, candidateTopics);
+    const totalVotes = Object.values(voteCounts).reduce(
+      (sum: number, n: number) => sum + n,
+      0,
+    );
+
+    const roomId = await this.matchService.getRoomIdByMatchId(matchId);
+    if (roomId) {
+      emitTopicVotingSummary(server, roomId, matchId, voteCounts, totalVotes);
+    }
+  }
+
   private async recoverDuplicateVoteBanTopic(
     env: CommandEnvelope<VoteBanTopicBody>,
     server: Server,
@@ -720,7 +725,7 @@ export class MatchCommandService implements OnModuleDestroy {
     const stateMachine = await this.matchService.getStateMachine(env.matchId);
     if (!stateMachine) return "DUPLICATE_EVENT";
 
-    let canonicalEvent: unknown = null;
+    let hasCanonicalEvent = false;
     stateMachine.forEachEvent((entry) => {
       if (entry.type === "TOPIC_VOTE_SUBMITTED") {
         const payload = (entry.payload ?? {}) as Record<string, unknown>;
@@ -728,33 +733,18 @@ export class MatchCommandService implements OnModuleDestroy {
           payload.eventId === env.eventId ||
           payload.playerId === env.body.userId
         ) {
-          canonicalEvent = entry;
+          hasCanonicalEvent = true;
           return false;
         }
       }
       return true;
     }, "reverse");
 
-    if (!canonicalEvent) {
+    if (!hasCanonicalEvent) {
       return "DUPLICATE_EVENT";
     }
 
-    const state = stateMachine.getState();
-    const candidateTopics = state.candidateTopics ?? [];
-    const votes = state.topicVotes ?? {};
-    const voteCounts = tallyTopicVotes(votes, candidateTopics);
-    const totalVotes = Object.keys(votes).length;
-
-    const roomId = await this.matchService.getRoomIdByMatchId(env.matchId);
-    if (roomId) {
-      emitTopicVotingSummary(
-        server,
-        roomId,
-        env.matchId,
-        voteCounts,
-        totalVotes,
-      );
-    }
+    await this.emitTopicVotingSummaryFromSM(env.matchId, stateMachine, server);
 
     return "DUPLICATE_EVENT";
   }

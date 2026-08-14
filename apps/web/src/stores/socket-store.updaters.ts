@@ -331,6 +331,7 @@ export function applyRoundStartedState(
           currentQuestion: data.question,
           roundEndTime: data.endsAt,
         },
+    topicVoting: null,
     lastAnswerResult: null,
     pendingAnswer: null,
   };
@@ -525,71 +526,74 @@ export function applySnapshotState(
     // so subsequent reconnects can ask for only newer events.
     lastSeenSeqNo: data.lastEventSeqNo,
     topicVoting:
-      data.candidateTopics && data.candidateTopics.length > 0
-        ? {
-            matchId: data.matchId,
-            candidateTopics: data.candidateTopics,
-            endsAt: data.phaseEndsAt ?? data.roundEndTime ?? 0,
-            durationMs: 10000,
-            myVotedTopic:
-              state.topicVoting?.matchId === data.matchId
-                ? state.topicVoting.myVotedTopic
-                : null,
-            voteCounts: data.voteCounts ?? {},
-            totalVotes: data.voteCounts
-              ? Object.values(data.voteCounts).reduce(
-                  (sum: number, n: number) => sum + n,
-                  0,
-                )
-              : 0,
-            bannedTopics:
-              (state.topicVoting?.matchId === data.matchId &&
-              state.topicVoting.bannedTopics.length > 0
-                ? state.topicVoting.bannedTopics
-                : data.bannedTopics) ?? [],
-            activeTopics:
-              (state.topicVoting?.matchId === data.matchId &&
-              state.topicVoting.activeTopics.length > 0
-                ? state.topicVoting.activeTopics
-                : data.activeTopics) ?? [],
-            isFinished: data.status !== MatchStatus.TOPIC_VOTING,
-          }
-        : state.topicVoting?.matchId === data.matchId
+      data.status === MatchStatus.TOPIC_VOTING ||
+      data.status === MatchStatus.COUNTDOWN
+        ? data.candidateTopics && data.candidateTopics.length > 0
           ? {
-              ...state.topicVoting,
+              matchId: data.matchId,
+              candidateTopics: data.candidateTopics,
+              endsAt: data.phaseEndsAt ?? data.roundEndTime ?? 0,
+              durationMs: 10000,
+              myVotedTopic:
+                state.topicVoting?.matchId === data.matchId
+                  ? state.topicVoting.myVotedTopic
+                  : null,
+              voteCounts: data.voteCounts ?? {},
+              totalVotes: data.voteCounts
+                ? Object.values(data.voteCounts).reduce(
+                    (sum: number, n: number) => sum + n,
+                    0,
+                  )
+                : 0,
               bannedTopics:
+                (state.topicVoting?.matchId === data.matchId &&
                 state.topicVoting.bannedTopics.length > 0
                   ? state.topicVoting.bannedTopics
-                  : (data.bannedTopics ?? []),
+                  : data.bannedTopics) ?? [],
               activeTopics:
+                (state.topicVoting?.matchId === data.matchId &&
                 state.topicVoting.activeTopics.length > 0
                   ? state.topicVoting.activeTopics
-                  : (data.activeTopics ?? []),
-              isFinished:
-                data.status !== MatchStatus.TOPIC_VOTING
-                  ? true
-                  : state.topicVoting.isFinished,
+                  : data.activeTopics) ?? [],
+              isFinished: data.status !== MatchStatus.TOPIC_VOTING,
             }
-          : (data.bannedTopics && data.bannedTopics.length > 0) ||
-              (data.activeTopics && data.activeTopics.length > 0)
+          : state.topicVoting?.matchId === data.matchId
             ? {
-                matchId: data.matchId,
-                candidateTopics: data.candidateTopics ?? [],
-                endsAt: data.phaseEndsAt ?? data.roundEndTime ?? 0,
-                durationMs: 10000,
-                myVotedTopic: null,
-                voteCounts: data.voteCounts ?? {},
-                totalVotes: data.voteCounts
-                  ? Object.values(data.voteCounts).reduce(
-                      (sum: number, n: number) => sum + n,
-                      0,
-                    )
-                  : 0,
-                bannedTopics: data.bannedTopics ?? [],
-                activeTopics: data.activeTopics ?? [],
-                isFinished: data.status !== MatchStatus.TOPIC_VOTING,
+                ...state.topicVoting,
+                bannedTopics:
+                  state.topicVoting.bannedTopics.length > 0
+                    ? state.topicVoting.bannedTopics
+                    : (data.bannedTopics ?? []),
+                activeTopics:
+                  state.topicVoting.activeTopics.length > 0
+                    ? state.topicVoting.activeTopics
+                    : (data.activeTopics ?? []),
+                isFinished:
+                  data.status !== MatchStatus.TOPIC_VOTING
+                    ? true
+                    : state.topicVoting.isFinished,
               }
-            : null,
+            : (data.bannedTopics && data.bannedTopics.length > 0) ||
+                (data.activeTopics && data.activeTopics.length > 0)
+              ? {
+                  matchId: data.matchId,
+                  candidateTopics: data.candidateTopics ?? [],
+                  endsAt: data.phaseEndsAt ?? data.roundEndTime ?? 0,
+                  durationMs: 10000,
+                  myVotedTopic: null,
+                  voteCounts: data.voteCounts ?? {},
+                  totalVotes: data.voteCounts
+                    ? Object.values(data.voteCounts).reduce(
+                        (sum: number, n: number) => sum + n,
+                        0,
+                      )
+                    : 0,
+                  bannedTopics: data.bannedTopics ?? [],
+                  activeTopics: data.activeTopics ?? [],
+                  isFinished: data.status !== MatchStatus.TOPIC_VOTING,
+                }
+              : null
+        : null,
   };
 }
 

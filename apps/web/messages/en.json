@@ -239,7 +239,7 @@
       "banned": "BANNED",
       "active": "ACTIVE",
       "voted": "VOTED",
-      "votesCount": "{count, plural, =0 {0 votes} one {1 vote} other {# votes}}",
+      "votesCount": "{count, plural, =0 {votes} one {vote} other {votes}}",
       "bannedTopicsHeader": "TOPIC BAN RESULTS",
       "startingMatch": "Preparing match..."
     }

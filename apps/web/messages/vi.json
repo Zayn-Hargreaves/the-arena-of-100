@@ -239,7 +239,7 @@
       "banned": "ĐÃ CẤM",
       "active": "HOẠT ĐỘNG",
       "voted": "ĐÃ CHỌN",
-      "votesCount": "{count, plural, =0 {0 phiếu} one {1 phiếu} other {# phiếu}}",
+      "votesCount": "{count, plural, =0 {phiếu} one {phiếu} other {phiếu}}",
       "bannedTopicsHeader": "KẾT QUẢ CẤM CHỦ ĐỀ",
       "startingMatch": "Đang chuẩn bị vào trận đấu..."
     }
