@@ -9,6 +9,8 @@ import {
   ErrorCode,
   MatchEventType,
   type ClassAssignedEvent,
+  type CardEffect,
+  type CardId,
 } from "@arena/shared";
 import { MatchStateMachine } from "@arena/game-core";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -1591,22 +1593,33 @@ describe("MatchService", () => {
         { playerId: "u2", answer: "A", isCorrect: true, responseTimeMs: 8000 },
       ]);
 
-      // Manually inject CARD_RESOLVED events via playCard
-      const attackCard = {
-        id: "ATK-1" as any,
-        name: "Strike",
-        classId: "ATTACK" as const,
-        tier: "COMMON" as const,
-        backfireRate: 0.1,
-        effectType: "DAMAGE" as const,
-        basePower: 10,
+      // Manually inject CARD_RESOLVED events via playCard.
+      // `playCard` takes a `CardId` (string) and a `CardEffect` keyed
+      // by `kind`; the legacy `attackCard` object + `{ type, power,
+      // targets }` payload predates the v1 card catalog and is
+      // rejected by the runtime guard.
+      const cardId = "CB-1" as CardId;
+      const effect: CardEffect = {
+        kind: "TIMER_MODIFY",
+        deltaMs: -5000,
+        targetCount: 1,
       };
-      const effect = {
-        type: "DAMAGE" as const,
-        power: 10,
-        targets: ["u2"],
-      };
-      sm!.playCard("u1", attackCard, 1, effect, ["u2"], 1000);
+      const result = sm!.playCard("u1", cardId, 1, effect, ["u2"], 1000);
+      // TIMER_MODIFY is a MUTATION effect — must NOT carry an
+      // expiresAtServer stamp on either the return value or the
+      // persisted event payload.
+      expect(result.expiresAtServer).toBeNull();
+      expect(result.remainingMs).toBeNull();
+      // The persisted CARD_RESOLVED event payload must also carry
+      // no expiry stamp (otherwise reconnect/rehydrate would
+      // resurrect a MUTATION effect's "ghost" timer).
+      const resolved = sm!
+        .getEventLog()
+        .find((e) => e.type === "CARD_RESOLVED");
+      expect(resolved).toBeDefined();
+      const payload = resolved!.payload as Record<string, unknown>;
+      expect(payload.expiresAtServer ?? null).toBeNull();
+      expect(payload.remainingMs ?? null).toBeNull();
 
       await service.finishMatch("m1", "u1", "r1");
 

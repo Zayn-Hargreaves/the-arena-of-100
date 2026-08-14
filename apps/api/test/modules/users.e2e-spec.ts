@@ -252,7 +252,14 @@ describe("E2E /users", () => {
         };
       }>();
       expect(body.data.stats).toHaveProperty("classWinrate");
-      expect(body.data.stats.classWinrate).toBeTypeOf("object");
+      // `typeof null === "object"` and `Array.isArray([]) === true`,
+      // so a bare `toBeTypeOf("object")` would accept either a
+      // null payload or an array. Tighten to a real Record<string,
+      // unknown>: non-null, non-array, and an object.
+      const classWinrate = body.data.stats.classWinrate;
+      expect(classWinrate).not.toBeNull();
+      expect(Array.isArray(classWinrate)).toBe(false);
+      expect(classWinrate).toBeTypeOf("object");
       expect(typeof body.data.stats.currentStreak).toBe("number");
       expect(typeof body.data.stats.cardsPlayed).toBe("number");
     });

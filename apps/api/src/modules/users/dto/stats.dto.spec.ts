@@ -259,6 +259,15 @@ describe("StatsDto & Schema", () => {
       });
     });
 
+    it("should throw when plays is 0 but winRate is nonzero", () => {
+      // Cross-field invariant: a player who has never played a
+      // match has no observed win rate, so winRate MUST be 0 (not
+      // NaN, not 1). The schema enforces this via `.refine`.
+      expect(() =>
+        classWinrateSchema.parse({ plays: 0, wins: 0, winRate: 1 }),
+      ).toThrow(ZodError);
+    });
+
     it("should throw on negative plays", () => {
       expect(() =>
         classWinrateSchema.parse({ plays: -1, wins: 0, winRate: 0 }),

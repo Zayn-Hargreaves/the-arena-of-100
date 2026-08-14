@@ -97,6 +97,23 @@ const sampleQuestions = [
   },
 ];
 
+// Drive the quiz UI through every sample question: pick the first
+// option, click Next until the last question, then click Submit on
+// the final screen. Mirrors the answer-selection + Next/Submit
+// sequence repeated across the error-path tests below.
+function completeQuiz() {
+  for (let i = 0; i < sampleQuestions.length; i++) {
+    fireEvent.click(
+      screen.getByRole("button", { name: sampleQuestions[i].options[0] }),
+    );
+    if (i < sampleQuestions.length - 1) {
+      fireEvent.click(screen.getByText(/^next$/i));
+    } else {
+      fireEvent.click(screen.getByText(/^submit$/i));
+    }
+  }
+}
+
 const todayResponse = {
   dateKey: "2026-08-09",
   version: 1,
@@ -250,16 +267,7 @@ describe("DailyPage", () => {
 
     await waitFor(() => expect(screen.getByText("Q1?")).toBeInTheDocument());
 
-    for (let i = 0; i < sampleQuestions.length; i++) {
-      fireEvent.click(
-        screen.getByRole("button", { name: sampleQuestions[i].options[0] }),
-      );
-      if (i < sampleQuestions.length - 1) {
-        fireEvent.click(screen.getByText(/^next$/i));
-      } else {
-        fireEvent.click(screen.getByText(/^submit$/i));
-      }
-    }
+    completeQuiz();
 
     await waitFor(() =>
       expect(screen.getByText("error.alreadySubmitted")).toBeInTheDocument(),
@@ -274,16 +282,7 @@ describe("DailyPage", () => {
 
     await waitFor(() => expect(screen.getByText("Q1?")).toBeInTheDocument());
 
-    for (let i = 0; i < sampleQuestions.length; i++) {
-      fireEvent.click(
-        screen.getByRole("button", { name: sampleQuestions[i].options[0] }),
-      );
-      if (i < sampleQuestions.length - 1) {
-        fireEvent.click(screen.getByText(/^next$/i));
-      } else {
-        fireEvent.click(screen.getByText(/^submit$/i));
-      }
-    }
+    completeQuiz();
 
     await waitFor(() =>
       expect(screen.getByText("error.rateLimited")).toBeInTheDocument(),
@@ -298,16 +297,7 @@ describe("DailyPage", () => {
 
     await waitFor(() => expect(screen.getByText("Q1?")).toBeInTheDocument());
 
-    for (let i = 0; i < sampleQuestions.length; i++) {
-      fireEvent.click(
-        screen.getByRole("button", { name: sampleQuestions[i].options[0] }),
-      );
-      if (i < sampleQuestions.length - 1) {
-        fireEvent.click(screen.getByText(/^next$/i));
-      } else {
-        fireEvent.click(screen.getByText(/^submit$/i));
-      }
-    }
+    completeQuiz();
 
     await waitFor(() => {
       const el = screen.getByText(/submitFailed/);
@@ -345,16 +335,7 @@ describe("DailyPage", () => {
 
     await waitFor(() => expect(screen.getByText("Q1?")).toBeInTheDocument());
 
-    for (let i = 0; i < sampleQuestions.length; i++) {
-      fireEvent.click(
-        screen.getByRole("button", { name: sampleQuestions[i].options[0] }),
-      );
-      if (i < sampleQuestions.length - 1) {
-        fireEvent.click(screen.getByText(/^next$/i));
-      } else {
-        fireEvent.click(screen.getByText(/^submit$/i));
-      }
-    }
+    completeQuiz();
 
     await waitFor(() =>
       expect(

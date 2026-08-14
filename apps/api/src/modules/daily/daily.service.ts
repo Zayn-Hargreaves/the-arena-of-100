@@ -915,9 +915,12 @@ export class DailyService {
     }
 
     // Pick the card to attach the unlock to. `unlockIndex` is the
-    // count of non-DEFAULT variants the user owns, so it rotates
-    // through the class pool deterministically.
-    const unlockIndex = ownedVariants.size;
+    // total number of variant grants the user owns (including
+    // duplicates of the same variantKey), so it rotates through
+    // the class pool deterministically — distinct from
+    // `ownedVariants.size`, which only counts unique variant
+    // keys and feeds `nextCardVariant` above.
+    const unlockIndex = ownedRows.length;
     // v1: we don't have a persisted class for daily-challenge users
     // (class assignment is match-scoped). Default to ATTACK pool for
     // cosmetic variety — the card chosen has no gameplay impact.

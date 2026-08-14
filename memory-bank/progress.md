@@ -157,7 +157,7 @@ Run the relevant package tests before using these numbers in PR text.
 **Day 32-33 — C3-card-batch-failover (gate).**
 
 - `load-test/lib/card-batch-verdict.mjs` — pure oracle; PASS / FAIL / INCONCLUSIVE verdict; `dedupeEffects` + `detectEffectConflicts` + `diffEffects` helpers.
-- `load-test/lib/card-batch-verdict.test.mjs` — 26 vitest cases covering 3 checkpoint PASS scenarios (`append_pre_emit`, `mid_batch_flush`, `pre_ack`), 2 chaos fingerprints (`lost_effect`, `double_apply`), 1 duplicate-transport fingerprint (`duplicate_observation`), 2 per-element `invalid_artifact` regressions (`expected_effects: [null]`, `observed_effects` missing `seqNo`), 3 cohort-invariant cases (pre-kill missing, post-flip missing, happy-path PASS), 7 invalid-artifact rejections (invalid checkpoint label, `t_kill ≥ t_owner_flip`, `t_recover < t_owner_flip`, null/undefined/array artifact, missing `observed_effects`), 4 cohort-type hardening tests (undefined = no-op, null / number / string = `invalid_artifact`), 4 helper unit tests.
+- `load-test/lib/card-batch-verdict.test.mjs` — 30 vitest cases covering 3 checkpoint PASS scenarios (`append_pre_emit`, `mid_batch_flush`, `pre_ack`), 2 chaos fingerprints (`lost_effect`, `double_apply`), 1 duplicate-transport fingerprint (`duplicate_observation`), 2 per-element `invalid_artifact` regressions (`expected_effects: [null]`, `observed_effects` missing `seqNo`), 3 cohort-invariant cases (pre-kill missing, post-flip missing, happy-path PASS), 7 invalid-artifact rejections (invalid checkpoint label, `t_kill ≥ t_owner_flip`, `t_recover < t_owner_flip`, null/undefined/array artifact, missing `observed_effects`), 4 cohort-type hardening tests (undefined = no-op, null / number / string = `invalid_artifact`), 4 helper unit tests, 4 key-encoding collision tests (no `'::'` boundary collapse across `dedupeEffects` / `detectEffectConflicts` / `findDuplicateObservations` / `diffEffects`).
 - Production code UNCHANGED — Phase 2 append-first design already satisfies the invariant; gate is a regression detector.
 - `load-test/MULTI-BASELINE.md` + `load-test/README.md` updated with the new gate section; explicitly calls out that this gate is distinct from C3-owner-failover (different dedupe key: effect `seqNo` vs round `eventId`).
 
@@ -172,6 +172,7 @@ Run the relevant package tests before using these numbers in PR text.
 - All test suites green (measured 2026-08-13): shared 61 / game-core 280 / API 1719 / web 267 / load-test 71 = **2398 tests pass**, no regression.
 - Spec §7 DoD checklist updated; all 15 items ticked.
 - Coverage targets met (card engine + class engine ≥ 95% from Phase 2 baseline; new code paths covered by Phase 3 tests).
+- 2 lines remain uncovered across the Phase 3 surfaces (`apps/web/src/components/daily/card-variant-unlock-modal.tsx:111` — i18n branch where the key is present, exercised by `card-ui.spec.tsx` mock but not by `card-variant-unlock-modal.spec.tsx`; `apps/api/src/modules/daily/daily.service.ts:415` — non-`Error` branch of the pending-grant failure fallback when `String(pendingErr)` is taken). Both are defensive fallbacks, not on the hot path; tracking as follow-ups rather than gating ship.
 
 **Cross-cutting decisions honored:**
 

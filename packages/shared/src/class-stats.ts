@@ -14,11 +14,20 @@
 import { z } from "zod";
 
 /** Per-class winrate record. `plays` is 0 → `winRate` is 0 (not NaN). */
-export const classWinrateSchema = z.object({
-  plays: z.number().int().nonnegative(),
-  wins: z.number().int().nonnegative(),
-  winRate: z.number().min(0).max(1),
-});
+export const classWinrateSchema = z
+  .object({
+    plays: z.number().int().nonnegative(),
+    wins: z.number().int().nonnegative(),
+    winRate: z.number().min(0).max(1),
+  })
+  .refine((v) => v.plays !== 0 || v.winRate === 0, {
+    message: "winRate must be 0 when plays is 0",
+    path: ["winRate"],
+  })
+  .refine((v) => v.wins <= v.plays, {
+    message: "wins cannot exceed plays",
+    path: ["wins"],
+  });
 
 export type ClassWinrate = z.infer<typeof classWinrateSchema>;
 

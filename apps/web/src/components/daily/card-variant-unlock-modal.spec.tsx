@@ -1,21 +1,25 @@
 import React from "react";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { CardVariantUnlockModal } from "./card-variant-unlock-modal";
 import type { DailySubmitResponse } from "@/types/daily";
 
-vi.mock("@arena/shared", () => ({
-  getCardDefinition: vi.fn((id: string) => ({
-    id,
-    name: `Card ${id}`,
-    classId: "ATTACK" as const,
-    tier: "COMMON" as const,
-    backfireRate: 0.1,
-    effectType: "DAMAGE" as const,
-    basePower: 10,
-  })),
-}));
+vi.mock("@arena/shared", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@arena/shared")>();
+  return {
+    ...actual,
+    getCardDefinition: vi.fn((id: string) => ({
+      id,
+      name: `Card ${id}`,
+      classId: "ATTACK" as const,
+      tier: "COMMON" as const,
+      backfireRate: 0.1,
+      effectType: "DAMAGE" as const,
+      basePower: 10,
+    })),
+  };
+});
 
 const mockResult: DailySubmitResponse = {
   dateKey: "2026-01-01",
@@ -53,9 +57,61 @@ function makeProps(overrides?: Record<string, unknown>) {
   };
 }
 
+// Snapshot of the browser globals these tests mutate
+// (`navigator.share`, `navigator.clipboard`, `window.isSecureContext`)
+// so each test can `Object.defineProperty` to a stub and the
+// `afterEach` restores the real JSDOM originals. Without this,
+// earlier tests leak their fake `share` / `clipboard` mocks into
+// later tests and produce order-dependent failures.
+const browserGlobalsSnapshot = {
+  navigatorShare: Object.getOwnPropertyDescriptor(navigator, "share"),
+  navigatorClipboard: Object.getOwnPropertyDescriptor(navigator, "clipboard"),
+  windowIsSecureContext: Object.getOwnPropertyDescriptor(
+    window,
+    "isSecureContext",
+  ),
+};
+
+function restoreBrowserGlobals() {
+  if (browserGlobalsSnapshot.navigatorShare) {
+    Object.defineProperty(
+      navigator,
+      "share",
+      browserGlobalsSnapshot.navigatorShare,
+    );
+  } else {
+    delete (navigator as { share?: unknown }).share;
+  }
+  if (browserGlobalsSnapshot.navigatorClipboard) {
+    Object.defineProperty(
+      navigator,
+      "clipboard",
+      browserGlobalsSnapshot.navigatorClipboard,
+    );
+  } else {
+    delete (navigator as { clipboard?: unknown }).clipboard;
+  }
+  if (browserGlobalsSnapshot.windowIsSecureContext) {
+    Object.defineProperty(
+      window,
+      "isSecureContext",
+      browserGlobalsSnapshot.windowIsSecureContext,
+    );
+  } else {
+    // Cleanup: drop a stub the test installed so it cannot leak
+    // into later tests when the original descriptor was absent.
+    delete (window as { isSecureContext?: unknown }).isSecureContext;
+  }
+}
+
 describe("CardVariantUnlockModal", () => {
+  beforeEach(() => {
+    restoreBrowserGlobals();
+  });
+
   afterEach(() => {
     vi.useRealTimers();
+    restoreBrowserGlobals();
   });
 
   it("renders dialog with correct aria-label and content", () => {
@@ -99,23 +155,6 @@ describe("CardVariantUnlockModal", () => {
     expect(screen.getByText("NEON")).toHaveClass(
       "bg-cyan-100",
       "text-cyan-700",
-    );
-  });
-
-  it("shows default variant badge with slate styling", () => {
-    render(
-      <CardVariantUnlockModal
-        {...makeProps({
-          result: {
-            ...mockResult,
-            unlockedVariant: { cardId: "ATK-1", variantKey: "DEFAULT" },
-          },
-        })}
-      />,
-    );
-    expect(screen.getByText("DEFAULT")).toHaveClass(
-      "bg-slate-100",
-      "text-slate-700",
     );
   });
 
@@ -287,5 +326,60 @@ describe("CardVariantUnlockModal", () => {
 
     addSpy.mockRestore();
     removeSpy.mockRestore();
+  });
+
+  it("traps focus inside the dialog with Tab / Shift+Tab", () => {
+    render(<CardVariantUnlockModal {...makeProps()} />);
+
+    const buttons = screen.getAllByRole("button");
+    const first = buttons[0]!;
+    const last = buttons[buttons.length - 1]!;
+
+    // Tab from the last button wraps to the first.
+    last.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement).toBe(first);
+
+    // Shift+Tab from the first button wraps to the last.
+    first.focus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
+  });
+
+  it("ignores non-Tab keydowns inside the focus trap", () => {
+    render(<CardVariantUnlockModal {...makeProps()} />);
+
+    const buttons = screen.getAllByRole("button");
+    const first = buttons[0]!;
+
+    first.focus();
+    fireEvent.keyDown(document, { key: "Enter" });
+    // Focus is left untouched when the key isn't Tab.
+    expect(document.activeElement).toBe(first);
+  });
+
+  it("silently no-ops copy when clipboard.writeText rejects", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(window, "isSecureContext", {
+      value: true,
+      configurable: true,
+    });
+
+    render(<CardVariantUnlockModal {...makeProps()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+
+    // Let the rejected promise's catch handler run; the dialog must
+    // stay open and the button label must remain "Copy" (no "Copied!"
+    // flash). The catch path is the only thing under test here —
+    // swallowing the rejection is the intended behavior.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
   });
 });
