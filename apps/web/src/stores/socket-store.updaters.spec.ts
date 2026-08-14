@@ -1423,5 +1423,32 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         isFinished: false,
       });
     });
+
+    it("applySnapshotState restores banned and active topics on COUNTDOWN when topicVoting is null", () => {
+      const state = makeState({
+        userId: "u1",
+        topicVoting: null,
+      });
+
+      const result = applySnapshotState(state, {
+        matchId: "m1",
+        status: MatchStatus.COUNTDOWN,
+        currentRoundNo: 0,
+        players: [],
+        currentQuestion: null,
+        roundEndTime: null,
+        lastEventSeqNo: 1,
+        bannedTopics: ["HISTORY"],
+        activeTopics: ["SCIENCE", "TECH"],
+        phaseEndsAt: 20000,
+      });
+
+      expect(result.topicVoting).toMatchObject({
+        matchId: "m1",
+        bannedTopics: ["HISTORY"],
+        activeTopics: ["SCIENCE", "TECH"],
+        isFinished: true,
+      });
+    });
   });
 });

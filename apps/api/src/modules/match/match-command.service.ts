@@ -39,7 +39,8 @@ import {
   applyCardPlayCommand,
 } from "./match-card-command-authoritative";
 import { appliedSetKey } from "./match-command.keys";
-import { tallyTopicVotes } from "@arena/game-core";
+import { MatchStatus } from "@arena/shared";
+import { MatchStateMachine, tallyTopicVotes } from "@arena/game-core";
 import { emitTopicVotingSummary } from "./game-loop.events";
 
 export {
@@ -625,14 +626,45 @@ export class MatchCommandService implements OnModuleDestroy {
       return "RETRY";
     }
     if (alreadyApplied) {
-      return "DUPLICATE_EVENT";
+      return this.recoverDuplicateVoteBanTopic(env, server);
     }
 
     const stateMachine = await this.matchService.getStateMachine(env.matchId);
     if (!stateMachine) return "RETRY";
 
+    const state = stateMachine.getState();
+    if (
+      state.status !== MatchStatus.TOPIC_VOTING ||
+      (typeof state.phaseEndsAt === "number" && state.phaseEndsAt <= Date.now())
+    ) {
+      this.logger.warn(
+        `applyVoteBanTopicAuthoritative: voteBanTopic rejected for ${env.matchId}/${env.body.userId} (TOPIC_VOTING_CLOSED)`,
+      );
+      return "DUPLICATE_SUBMISSION";
+    }
+
+    let existingVoteEvent: unknown = null;
+    stateMachine.forEachEvent((entry) => {
+      if (entry.type === "TOPIC_VOTE_SUBMITTED") {
+        const payload = (entry.payload ?? {}) as Record<string, unknown>;
+        if (payload.eventId === env.eventId) {
+          existingVoteEvent = entry;
+          return false;
+        }
+      }
+      return true;
+    }, "reverse");
+
+    if (existingVoteEvent) {
+      return this.recoverDuplicateVoteBanTopic(env, server);
+    }
+
+    const serialized = stateMachine.serialize();
+
     try {
-      stateMachine.voteBanTopic(env.body.userId, env.body.topic);
+      stateMachine.voteBanTopic(env.body.userId, env.body.topic, {
+        eventId: env.eventId,
+      });
     } catch (error) {
       this.logger.warn(
         `applyVoteBanTopicAuthoritative: voteBanTopic rejected for ${env.matchId}/${env.body.userId} (acking as no-op): ${error instanceof Error ? error.message : String(error)}`,
@@ -644,10 +676,30 @@ export class MatchCommandService implements OnModuleDestroy {
       env.matchId,
     );
     if (persistOutcome !== "APPLIED") {
+      this.matchService.evictStateMachine(env.matchId);
+      const canonical = MatchStateMachine.deserialize(serialized);
+      Object.assign(stateMachine, canonical);
       this.logger.warn(
         `applyVoteBanTopicAuthoritative: persistStateMachine returned ${persistOutcome} for ${env.matchId} (RETRY)`,
       );
       return "RETRY";
+    }
+
+    const updatedState = stateMachine.getState();
+    const candidateTopics = updatedState.candidateTopics ?? [];
+    const votes = updatedState.topicVotes ?? {};
+    const voteCounts = tallyTopicVotes(votes, candidateTopics);
+    const totalVotes = Object.keys(votes).length;
+
+    const roomId = await this.matchService.getRoomIdByMatchId(env.matchId);
+    if (roomId) {
+      emitTopicVotingSummary(
+        server,
+        roomId,
+        env.matchId,
+        voteCounts,
+        totalVotes,
+      );
     }
 
     try {
@@ -656,6 +708,35 @@ export class MatchCommandService implements OnModuleDestroy {
       this.logger.warn(
         `applyVoteBanTopicAuthoritative: sadd applied failed for ${env.matchId}: ${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+
+    return "APPLIED";
+  }
+
+  private async recoverDuplicateVoteBanTopic(
+    env: CommandEnvelope<VoteBanTopicBody>,
+    server: Server,
+  ): Promise<CommandOutcome> {
+    const stateMachine = await this.matchService.getStateMachine(env.matchId);
+    if (!stateMachine) return "DUPLICATE_EVENT";
+
+    let canonicalEvent: unknown = null;
+    stateMachine.forEachEvent((entry) => {
+      if (entry.type === "TOPIC_VOTE_SUBMITTED") {
+        const payload = (entry.payload ?? {}) as Record<string, unknown>;
+        if (
+          payload.eventId === env.eventId ||
+          payload.playerId === env.body.userId
+        ) {
+          canonicalEvent = entry;
+          return false;
+        }
+      }
+      return true;
+    }, "reverse");
+
+    if (!canonicalEvent) {
+      return "DUPLICATE_EVENT";
     }
 
     const state = stateMachine.getState();
@@ -675,7 +756,7 @@ export class MatchCommandService implements OnModuleDestroy {
       );
     }
 
-    return "APPLIED";
+    return "DUPLICATE_EVENT";
   }
   /**
    * Runtime schema validation. Returns the typed envelope, or null when the

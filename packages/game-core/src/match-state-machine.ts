@@ -640,6 +640,8 @@ export class MatchStateMachine {
     candidateTopics?: string[];
     voteCounts?: Record<string, number>;
     phaseEndsAt?: number | null;
+    bannedTopics?: string[];
+    activeTopics?: string[];
   } {
     const candidateTopics = this.state.candidateTopics;
     const voteCounts =
@@ -658,6 +660,12 @@ export class MatchStateMachine {
       candidateTopics: candidateTopics ? [...candidateTopics] : undefined,
       voteCounts,
       phaseEndsAt: this.state.phaseEndsAt,
+      bannedTopics: this.state.bannedTopics
+        ? [...this.state.bannedTopics]
+        : undefined,
+      activeTopics: this.state.activeTopics
+        ? [...this.state.activeTopics]
+        : undefined,
     };
   }
 
@@ -812,7 +820,11 @@ export class MatchStateMachine {
     return this.state.candidateTopics;
   }
 
-  voteBanTopic(playerId: string, topic: string): boolean {
+  voteBanTopic(
+    playerId: string,
+    topic: string,
+    metadata?: { eventId?: string },
+  ): boolean {
     if (this.state.status !== MatchStatus.TOPIC_VOTING) {
       throw new RoomError(ErrorCode.TOPIC_VOTING_CLOSED);
     }
@@ -832,11 +844,16 @@ export class MatchStateMachine {
 
     this.state.topicVotes[playerId] = topic;
 
-    this.logEvent("TOPIC_VOTE_SUBMITTED", {
+    const payload: Record<string, unknown> = {
       matchId: this.state.id,
       playerId,
       topic,
-    });
+    };
+    if (metadata?.eventId) {
+      payload.eventId = metadata.eventId;
+    }
+
+    this.logEvent("TOPIC_VOTE_SUBMITTED", payload);
 
     return true;
   }

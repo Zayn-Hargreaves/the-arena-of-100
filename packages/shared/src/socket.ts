@@ -146,6 +146,8 @@ export interface SnapshotPayload {
   candidateTopics?: string[];
   voteCounts?: Record<string, number>;
   phaseEndsAt?: number | null;
+  bannedTopics?: string[];
+  activeTopics?: string[];
 }
 
 // Delta replay batch (ServerEvent.EVENT_BATCH). Emitted instead of a

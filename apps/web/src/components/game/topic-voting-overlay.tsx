@@ -113,7 +113,7 @@ export function TopicVotingOverlay() {
   } = topicVoting;
 
   const handleVote = (topic: string) => {
-    if (isFinished || timeLeft <= 0) return;
+    if (isFinished) return;
     voteBanTopic(matchId, topic);
   };
 
@@ -168,15 +168,11 @@ export function TopicVotingOverlay() {
                 type="button"
                 key={topic}
                 onClick={() => handleVote(topic)}
-                disabled={isFinished || timeLeft <= 0}
+                disabled={isFinished}
                 aria-pressed={isSelected}
                 className={`relative text-left w-full p-5 rounded-xl border transition-all duration-200 select-none overflow-hidden flex flex-col justify-between min-h-[140px] bg-gradient-to-br ${
                   meta.color
-                } ${
-                  isFinished || timeLeft <= 0
-                    ? "cursor-default"
-                    : "cursor-pointer"
-                } ${
+                } ${isFinished ? "cursor-default" : "cursor-pointer"} ${
                   isSelected
                     ? "ring-2 ring-rose-500 border-rose-500 shadow-lg shadow-rose-950/40 transform scale-[1.02]"
                     : "hover:border-slate-500/50 hover:scale-[1.01]"

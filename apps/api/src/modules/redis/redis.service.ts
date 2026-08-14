@@ -140,6 +140,23 @@ export class RedisService implements OnModuleDestroy {
     return core.setIfAbsent(this.client, key, value, ttl);
   }
 
+  setIfGenMatches(
+    genKey: string,
+    cacheKey: string,
+    expectedGen: string,
+    value: string,
+    ttlSec: number,
+  ): Promise<boolean> {
+    return core.setIfGenMatches(
+      this.client,
+      genKey,
+      cacheKey,
+      expectedGen,
+      value,
+      ttlSec,
+    );
+  }
+
   del(key: string): Promise<void> {
     return core.del(this.client, key);
   }

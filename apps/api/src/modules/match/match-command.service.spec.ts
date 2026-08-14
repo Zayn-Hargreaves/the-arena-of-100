@@ -1005,7 +1005,7 @@ describe("MatchCommandService (B4a)", () => {
       });
     });
 
-    it("returns RETRY without emitting summary when persistStateMachine fails", async () => {
+    it("returns RETRY without emitting summary when persistStateMachine fails, and redelivery applies idempotently", async () => {
       const sm = new MatchStateMachine("m1", "r1", [
         {
           id: "p1",
@@ -1020,18 +1020,37 @@ describe("MatchCommandService (B4a)", () => {
       sm.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"]);
       matchService.getStateMachine.mockResolvedValue(sm);
       matchService.persistStateMachine.mockResolvedValue("RETRY");
+      matchService.getRoomIdByMatchId.mockResolvedValue("r1");
       const recorder = makeMockServer();
 
-      const outcome = await service.applyVoteBanTopicAuthoritative(
-        voteEnv(),
+      const env = voteEnv();
+      const outcome1 = await service.applyVoteBanTopicAuthoritative(
+        env,
         OWNER,
         recorder.server,
       );
 
-      expect(outcome).toBe("RETRY");
+      expect(outcome1).toBe("RETRY");
       expect(
         recorder.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY).length,
       ).toBe(0);
+
+      matchService.persistStateMachine.mockResolvedValue("APPLIED");
+      const outcome2 = await service.applyVoteBanTopicAuthoritative(
+        env,
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome2).toBe("APPLIED");
+      expect(
+        recorder.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY).length,
+      ).toBe(1);
+
+      const topicVoteEvents = sm
+        .getEventLog()
+        .filter((e) => e.type === "TOPIC_VOTE_SUBMITTED");
+      expect(topicVoteEvents.length).toBe(1);
     });
   });
 

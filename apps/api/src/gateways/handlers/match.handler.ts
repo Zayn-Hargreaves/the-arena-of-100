@@ -454,6 +454,21 @@ export class MatchHandler extends BaseHandler {
       async () => {
         const userId = this.requireAuth(client);
 
+        const roomId = await this.matchService.getRoomIdByMatchId(
+          payload.matchId,
+        );
+        if (!roomId) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
+        if (!client.rooms.has(`room:${roomId}`)) {
+          throw new RoomError(ErrorCode.UNAUTHORIZED);
+        }
+        const stateMachine = await this.matchService.getStateMachine(
+          payload.matchId,
+        );
+        if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
+
+        const state = stateMachine.getState();
+        this.assertActivePlayer(state, userId);
+
         await this.matchCommand.forward(
           makeCommandEnvelope({
             matchId: payload.matchId,
