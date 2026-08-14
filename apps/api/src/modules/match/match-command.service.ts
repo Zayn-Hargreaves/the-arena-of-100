@@ -721,9 +721,20 @@ export class MatchCommandService implements OnModuleDestroy {
     );
 
     const roomId = await this.matchService.getRoomIdByMatchId(matchId);
-    if (roomId) {
-      emitTopicVotingSummary(server, roomId, matchId, voteCounts, totalVotes);
+    if (!roomId) {
+      return;
     }
+
+    const latestState = stateMachine.getState();
+    if (
+      latestState.status !== MatchStatus.TOPIC_VOTING ||
+      (typeof latestState.phaseEndsAt === "number" &&
+        latestState.phaseEndsAt <= Date.now())
+    ) {
+      return;
+    }
+
+    emitTopicVotingSummary(server, roomId, matchId, voteCounts, totalVotes);
   }
 
   private async recoverDuplicateVoteBanTopic(

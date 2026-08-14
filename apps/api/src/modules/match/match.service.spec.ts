@@ -1437,30 +1437,43 @@ describe("MatchService", () => {
     });
 
     it("handles two overlapping invalidations on the same matchId without orphan timers or premature state clearing", async () => {
-      // First invalidation attempt 1 fails
-      vi.mocked(redis.incr).mockRejectedValueOnce(new Error("Redis error 1"));
+      let resolveFirstIncr!: (val: number) => void;
+      const firstIncrPromise = new Promise<number>((resolve) => {
+        resolveFirstIncr = resolve;
+      });
 
+      // First invalidation starts but remains pending on redis.incr
+      vi.mocked(redis.incr).mockImplementationOnce(() => firstIncrPromise);
       void service.invalidateMatchGeneration("m_overlap");
       await vi.advanceTimersByTimeAsync(0);
       expect(service.hasPendingGenerationInvalidation("m_overlap")).toBe(true);
 
-      // Advance 50ms (before attempt 2 fires at 100ms)
-      await vi.advanceTimersByTimeAsync(50);
-      expect(service.hasPendingGenerationInvalidation("m_overlap")).toBe(true);
-
-      // Second invalidation is triggered, superseding the first
-      vi.mocked(redis.incr).mockResolvedValueOnce(2 as any);
+      // Second invalidation is triggered while first is still pending, but fails attempt 1
+      vi.mocked(redis.incr).mockRejectedValueOnce(new Error("Redis error 2"));
       void service.invalidateMatchGeneration("m_overlap");
       await vi.advanceTimersByTimeAsync(0);
+      expect(service.hasPendingGenerationInvalidation("m_overlap")).toBe(true);
 
-      // Second invalidation succeeded immediately on its attempt 1
-      expect(service.hasPendingGenerationInvalidation("m_overlap")).toBe(false);
+      // Resolve the first invalidation's redis.incr call
+      resolveFirstIncr(1);
+      await vi.advanceTimersByTimeAsync(0);
 
-      // Advance past when the first invalidation's attempt 2 would have fired (+100ms)
-      await vi.advanceTimersByTimeAsync(500);
-      // Redis.incr was called once for the first attempt and once for the second invalidation
-      expect(redis.incr).toHaveBeenCalledTimes(2);
+      // Assert the older epoch cannot clear the newer pending state
+      expect(service.hasPendingGenerationInvalidation("m_overlap")).toBe(true);
+
+      // Second invalidation's retry attempt 2 succeeds at +100ms
+      vi.mocked(redis.incr).mockResolvedValueOnce(2);
+      await vi.advanceTimersByTimeAsync(100);
+
       expect(service.hasPendingGenerationInvalidation("m_overlap")).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+      expect((service as any).invalidationTimers.has("m_overlap")).toBe(false);
+
+      // Advance time further to confirm no further retries occur
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(redis.incr).toHaveBeenCalledTimes(3);
+      expect(service.hasPendingGenerationInvalidation("m_overlap")).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
     });
 
     it("cleans up all pending invalidation timers onModuleDestroy", async () => {

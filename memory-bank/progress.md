@@ -476,7 +476,7 @@ If we want a tangible "ceiling moved from 8k → 12k VU" story for interviews:
 | **Cache match state in Redis (generation-based + TTL=5s)** | Done         | Skip DB lookup on read paths / absorb burst reads  | Generation key (`match:gen:<id>`) checked on read; finishMatch invalidates with exponential backoff retry (max 5 attempts) and deletes cache on retry attempt > 1 |
 | **`createMany` batching for answer writes**                | Already done | One transaction persists round + all answers       | `saveRoundAndAnswers()` already calls `tx.answer.createMany`                                                                                                      |
 
-Generation-based match caching is implemented in `MatchService`: absorbs read spikes during rapid reconnections and setup, backed by serialized retry invalidation (max 5 attempts, exponential backoff) ensuring consistency on match completion.
+Generation-based match caching is implemented in `MatchService`: absorbs read spikes during rapid reconnections and setup, providing bounded eventual consistency through the 5-second TTL, best-effort invalidation retries (max 5 attempts, exponential backoff), and epoch fencing (noting concurrent redis.incr operations may occur).
 
 ### Methodology follow-up (NOT code change)
 

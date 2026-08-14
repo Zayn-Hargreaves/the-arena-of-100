@@ -1179,6 +1179,75 @@ describe("MatchCommandService (B4a)", () => {
         recorderExpired.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY).length,
       ).toBe(0);
     });
+
+    it("suppresses topic voting summary if status changes during roomId lookup", async () => {
+      const sm = new MatchStateMachine("m1", "r1", [
+        {
+          id: "p1",
+          name: "Alice",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+      ]);
+      sm.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"]);
+      matchService.getStateMachine.mockResolvedValue(sm);
+      matchService.getRoomIdByMatchId.mockImplementation(async () => {
+        sm.transition(MatchStatus.COUNTDOWN);
+        return "r1";
+      });
+      const recorder = makeMockServer();
+
+      const outcome = await service.applyVoteBanTopicAuthoritative(
+        voteEnv(),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome).toBe("APPLIED");
+      expect(
+        recorder.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY).length,
+      ).toBe(0);
+    });
+
+    it("suppresses topic voting summary if phase deadline expires during roomId lookup", async () => {
+      vi.useFakeTimers();
+      try {
+        const sm = new MatchStateMachine("m1", "r1", [
+          {
+            id: "p1",
+            name: "Alice",
+            status: PlayerStatus.ACTIVE,
+            score: 0,
+            totalResponseTimeMs: 0,
+            correctAnswers: 0,
+            isOnline: true,
+          },
+        ]);
+        sm.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"], 10_000);
+        matchService.getStateMachine.mockResolvedValue(sm);
+        matchService.getRoomIdByMatchId.mockImplementation(async () => {
+          (sm as any).state.phaseEndsAt = Date.now() - 1000;
+          return "r1";
+        });
+        const recorder = makeMockServer();
+
+        const outcome = await service.applyVoteBanTopicAuthoritative(
+          voteEnv(),
+          OWNER,
+          recorder.server,
+        );
+
+        expect(outcome).toBe("APPLIED");
+        expect(
+          recorder.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY).length,
+        ).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe("claimed-but-unregistered pollOnce edge", () => {

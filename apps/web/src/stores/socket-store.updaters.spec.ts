@@ -1485,6 +1485,44 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
       expect(result.topicVoting?.activeTopics).toEqual([]);
     });
 
+    it("applySnapshotState replaces non-empty local bannedTopics and activeTopics with empty arrays when candidateTopics is omitted in snapshot", () => {
+      const state = makeState({
+        userId: "u1",
+        topicVoting: {
+          matchId: "m1",
+          candidateTopics: ["SCIENCE", "HISTORY", "TECH"],
+          endsAt: 10000,
+          durationMs: 10000,
+          myVotedTopic: null,
+          voteCounts: {},
+          totalVotes: 0,
+          bannedTopics: ["HISTORY"],
+          activeTopics: ["SCIENCE", "TECH"],
+          isFinished: false,
+        },
+      });
+
+      const result = applySnapshotState(state, {
+        matchId: "m1",
+        status: MatchStatus.TOPIC_VOTING,
+        currentRoundNo: 0,
+        players: [],
+        currentQuestion: null,
+        roundEndTime: null,
+        lastEventSeqNo: 2,
+        bannedTopics: [],
+        activeTopics: [],
+      });
+
+      expect(result.topicVoting?.bannedTopics).toEqual([]);
+      expect(result.topicVoting?.activeTopics).toEqual([]);
+      expect(result.topicVoting?.candidateTopics).toEqual([
+        "SCIENCE",
+        "HISTORY",
+        "TECH",
+      ]);
+    });
+
     it("applySnapshotState replaces non-empty local bannedTopics and activeTopics with different snapshot lists", () => {
       const state = makeState({
         userId: "u1",
