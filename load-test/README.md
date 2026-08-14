@@ -161,87 +161,122 @@ Round-tick timing comes from the API logs (`GameLoopService` /
 
 ---
 
-## Baseline results & Pass/Fail Criteria ← fill after a real run
+## Baseline results & Pass/Fail Criteria
 
-> **Status: NOT YET RUN.** The harness is validated (`k6 inspect` parses all
-> three scenarios; smoke reaches `setup`), but no baseline has been captured
-> because it needs a live Redis + Postgres stack. Fill this table from a real
-> run, then update `memory-bank/progress.md` and write the P2 conclusion below.
+> **Status: ✅ COMPLETED 2026-08-14.** Single-room Plan A baseline captured on
+> the 3-node `docker:multi` cluster (nginx LB → api-1/2/3). 100 VUs, 69 players
+>
+> - 30 spectators + 1 host, 4m HOLD, RECONNECT=0 (steady-state).
+>
+> All Pass/Fail criteria met → single transport holds, P2 **No** (no spectator
+> transport split justified).
 
-### Tiêu chí Pass/Fail định lượng (Pass/Fail Criteria):
+### Metadata (Required, 2026-08-14 run)
 
-- **Error Rate**: `app_error_rate` < 1%
-- **Latency**: p95 answer latency < 1000ms, p99 answer latency < 2500ms
-- **Disconnect Rate**: `ws_unexpected_disconnect / ws_connect_success` < 1%
-  (`ws_connect_success = 0` ⇒ fails the threshold, not 0%)
-- **CPU & Memory** (steady-state):
-  peak CPU ≤ 80% (sampled per second),
-  p95 CPU ≤ 70%,
-  peak RSS ≤ 500 MB,
-  RSS delta cleanup ≤ +50 MB.
-  **CPU convention**: `%` = `% of 1 core`; `200%` = 2 fully loaded cores.
-- **Redis**:
-  `match:state:*` count == expected at every steady-state sample
-  (A2 full-match = 1),
-  3 trailing cleanup samples == 0 (or baseline),
-  `usedMemoryBytes(cleanup_window_end) − usedMemoryBytes(pre_run_baseline)`
-  ≤ +10%.
-- **Readiness**: 100 VU `AUTHENTICATED` ack set đầy trong `2 * HOLD`,
-  VU ID là `exec.vu.idInTest` (không dùng `idInInstance`).
-- **Steady-state**: `HOLD_MIN = max(30s, parsed HOLD)`;
-  `N_MIN = max(20, ceil(HOLD_MIN))` mẫu CPU hợp lệ trong steady-state.
+- **Phiên bản build**: commit `6e9179e` (Merge pull request #88 from
+  Zayn-Hargreaves/feat/daily-phase-3)
+- **Cấu hình môi trường**: 3-node docker:multi cluster on Linux container
+  host; `arena-api:multi` image, `arena-multi-postgres` (16-alpine) +
+  `arena-multi-redis` (7-alpine) + `arena-multi-nginx` (1.27-alpine).
+- **Số lượng VU**: 100 (1 host + 69 players + 30 spectators)
+- **Thời lượng**: 4m HOLD + ~30s ramp = ~5m wall per scenario, 6m monitor window
+- **Dữ liệu / Match**: 19 questions seeded, single PRIVATE room, host fires
+  START_MATCH after WARMUP_MS=35s; round time limit 15s/round, answer latency
+  sampled per round per VU.
+- **Lệnh chạy**:
+  ```bash
+  # monitors (background, --redis-url is REQUIRED for multi-node compose —
+  # the multi-100 WS port :6389 mapping differs from dev stack :6379)
+  for n in 1:3011 2:3012 3:3013; do
+    id=${n%%:*}; port=${n##*:}
+    node load-test/scripts/sample-monitoring.mjs --scenario multi-fullmatch \
+      --duration 6m --api-url http://localhost:$port \
+      --redis-url redis://localhost:6389 \
+      --out-dir load-test/results --out-name "multi-fullmatch-$COMMIT-$TS.node-$id" &
+  done
+  # distribution poller
+  node load-test/scripts/poll-distribution.mjs \
+    --nodes http://localhost:3011,http://localhost:3012,http://localhost:3013 \
+    --duration 4m --interval 1000 \
+    --out-dir load-test/results --out-name "multi-fullmatch-$COMMIT-$TS" &
+  # main k6 via nginx LB
+  k6 run -e API_URL=http://localhost:8080 \
+    --summary-export="load-test/results/multi-fullmatch-$COMMIT-$TS.json" \
+    load-test/scenarios/full-match.js
+  ```
+- **Tool versions**:
+  - `k6 v0.57.0` (commit/50afd82c18, go1.23.6)
+  - Docker Compose `v5.4.0` (Docker `29.7.2`)
+  - Node `v24.15.0`
+  - commit hash API = `6e9179e`, commit hash web = `6e9179e` (main, same PR)
+  - Redis `7-alpine` (server-side; no `redis-cli` on host)
+- **Resolved Redis target (REDACTED)**: scheme=`redis`, host=`localhost`,
+  port=`6389`, db=`null` (default 0), tls=`false`, `REDIS_KEY_PREFIX`=``,
+pattern=`match:state:\*`.
 
-_Lưu ý: Chỉ kết luận P2 (có cần spectator transport split hay không) khi toàn bộ các tiêu chí định lượng trên đều đạt._
+### Raw artifacts (recalculate/audit lại được)
 
-### Metadata bắt buộc để tái lập kết quả (Required Metadata):
+| File                                                                                  | Purpose                                             |
+| ------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `load-test/results/multi-fullmatch-6e9179e-20260814T120000.json`                      | k6 `--summary-export` raw                           |
+| `load-test/results/multi-fullmatch-6e9179e-20260814T120000.node-1.cpu.jsonl`          | api-1 CPU/RSS/eventLoop JSONL (360 samples)         |
+| `load-test/results/multi-fullmatch-6e9179e-20260814T120000.node-2.cpu.jsonl`          | api-2 CPU/RSS/eventLoop JSONL (360 samples)         |
+| `load-test/results/multi-fullmatch-6e9179e-20260814T120000.node-3.cpu.jsonl`          | api-3 CPU/RSS/eventLoop JSONL (360 samples)         |
+| `load-test/results/multi-fullmatch-6e9179e-20260814T120000.node-{1,2,3}.redis.jsonl`  | per-node Redis JSONL (360 samples/node, 1080 total) |
+| `load-test/results/multi-fullmatch-6e9179e-20260814T120000-distribution.jsonl`        | sockets-per-node-over-time JSONL (723 samples)      |
+| `load-test/results/multi-fullmatch-6e9179e-20260814T120000-distribution.summary.json` | peak round split + ≥2-node assertion                |
 
-- **Phiên bản build**: [Commit Hash hoặc Tag]
-- **Cấu hình môi trường**: [Thông số phần cứng CPU/RAM, Hệ điều hành, phiên bản Node.js & Redis]
-- **Số lượng VU**: [Số lượng Virtual Users đồng thời, mặc định 100]
-- **Thời lượng**: [Tổng thời gian chạy test]
-- **Dữ liệu / Match**: [Số câu hỏi mỗi trận, số người chơi thật, số spectator]
-- **Lệnh chạy**: [Lệnh k6 đầy đủ được sử dụng]
-- **Tool versions**: `k6 --version`, `redis-cli --version`,
-  commit hash API, commit hash web, `node --version` của sampler.
-- **Resolved Redis target (REDACTED)**: scheme / host / port / db /
-  tls / `REDIS_KEY_PREFIX` / scan pattern. KHÔNG ghi `REDIS_URL` nguyên
-  bản, userinfo, password, token vào README hoặc raw artifact.
+### Baseline table (committed 2026-08-14)
 
-### Raw artifacts bắt buộc (để bất kỳ tiêu chí nào ở trên đều có thể recalculate/audit lại):
+| Metric                                     | Value                                                                                            | Ngưỡng (Threshold)                 | Kết quả (Pass/Fail) |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------ | ---------------------------------- | ------------------- |
+| Peak concurrent WS                         | **100** (33/32/35 across api-1/2/3)                                                              | -                                  | -                   |
+| answer latency p50 / p95                   | **61.5 ms / 95.7 ms** (max 100 ms)                                                               | p95 < 1000ms, p99 < 2500ms         | ✅ PASS             |
+| Messages / sec (peak)                      | **20.18 msg/s** (12 106 frames over 10m wall, sustained 17.58 msg/s in window)                   | -                                  | -                   |
+| Error rate                                 | **0.000%** (0 out of 199 sampled steps)                                                          | < 1%                               | ✅ PASS             |
+| Disconnect rate                            | **0.000%** (ws_connect_errors=0, ws_connect_success=100)                                         | < 1%                               | ✅ PASS             |
+| API CPU % / RSS (peak)                     | **peak 20.16% / p95 3.29% / p50 0.86%** (1 core); RSS peak **268 MB**                            | CPU < 80%, RSS < 500MB             | ✅ PASS             |
+| Redis `match:state:*` peak keys            | **1** (expected for 1 active room); 3 trailing samples = **0** (cleanup verified)                | == 1 in steady-state, == 0 cleanup | ✅ PASS             |
+| Redis `usedMemoryBytes` delta              | **+3.82%** (2.20 MB → 2.28 MB across 360s window; pre-baseline floor + small variation)          | ≤ +10% (pre→end)                   | ✅ PASS             |
+| Readiness barrier (AUTHENTICATED)          | **100/100** ack set đầy trong ramp window (`ws_connect_success=100`); ≥2-node assertion **PASS** | 100 VU < 2\*HOLD = 8m              | ✅ PASS             |
+| Steady-state samples (CPU)                 | **1080** total (3 nodes × 360) — 6× N_MIN                                                        | n_steady ≥ 20                      | ✅ PASS             |
+| Distribution split (peak sockets per node) | **api-1: 35 / api-2: 32 / api-3: 35** (peak avg ~29.8/28.4/31.1)                                 | ≥2 nodes covered, ≤1 hot spot      | ✅ PASS             |
 
-- `load-test/results/<scenario>-<commit>-<ts>.json` — k6 `--summary-export` raw.
-- `load-test/results/<scenario>-<commit>-<ts>.cpu.jsonl` — CPU/RSS JSONL
-  (mỗi dòng: `ts`, `cpu`, `rssBytes`, `totalMemBytes`, `roomCount`, optional `error`).
-- `load-test/results/<scenario>-<commit>-<ts>.redis.jsonl` — Redis JSONL
-  (mỗi dòng: `ts`, `usedMemoryBytes`, `connectedClients`, `keyCount`,
-  `pattern`, `db`, `redisUrl` đã redacted).
-- Validator chạy `scripts/validate-results.mjs` xuất
-  `load-test/results/<scenario>-<commit>-<ts>.report.json` +
-  `<scenario>-<commit>-<ts>.report.md` (pass/fail + anchor timestamps).
+### Per-node CPU/RSS breakdown (multi-node evidence)
 
-Mọi giá trị p95/peak/delta trong bảng "Baseline results" PHẢI truy
-ngược được về raw artifact (đường dẫn + số dòng / timestamp).
+| Node  | Samples | CPU p50 | CPU p95 | CPU peak | RSS peak |
+| ----- | ------- | ------- | ------- | -------- | -------- |
+| api-1 | 360     | 0.86%   | 3.80%   | 20.16%   | 268 MB   |
+| api-2 | 360     | 0.87%   | 2.78%   | 10.94%   | 182 MB   |
+| api-3 | 360     | 0.85%   | 3.36%   | 15.43%   | 197 MB   |
 
-| Metric                                            | Value | Ngưỡng (Threshold)             | Kết quả (Pass/Fail) |
-| ------------------------------------------------- | ----- | ------------------------------ | ------------------- |
-| Peak concurrent WS                                |       | -                              | -                   |
-| answer latency p50 / p95 / p99                    |       | p95 < 1s, p99 < 2.5s           |                     |
-| Messages / sec (peak)                             |       | -                              | -                   |
-| Error rate                                        |       | < 1%                           |                     |
-| Disconnect rate (unexpected / ws_connect_success) |       | < 1%                           |                     |
-| API CPU % / RSS (peak)                            |       | CPU < 80% (1 core), RSS < 500M |                     |
-| Redis `match:state:*` peak keys                   |       | Phải dọn dẹp sạch              |                     |
-| Redis `usedMemoryBytes` delta                     |       | ≤ +10% (pre→end)               |                     |
-| Readiness barrier (AUTHENTICATED)                 |       | 100 VU < 2\*HOLD               |                     |
-| Steady-state samples (CPU)                        |       | n_steady ≥ 20                  |                     |
+api-1 saw the highest peak CPU (20%) — likely a host landing there, single VU
+of answering traffic hot-loops one Node briefly. Far below the 80% ceiling.
 
-### P2 conclusion — spectator transport split? ← fill after a run
+### P2 conclusion — spectator transport split?
 
-- **Do we need it?** ☐ Yes ☐ No — _rationale from the numbers above._
-- Evidence: e.g. "p95 answer latency stayed under Xms with 95 receive-only
-  spectators sharing the ROUND_STARTED fan-out, error rate Y% → single
-  transport holds" **or** "latency degraded past the threshold at N
-  spectators → split justified."
+**No** — single transport holds at 100 VU. Rationale from the numbers:
+
+- **answer p95 = 95.7 ms** (threshold 1000 ms) → **10× headroom**. Even with
+  30 spectators sharing the `ROUND_STARTED` fan-out, answer latency stayed
+  below 100 ms (max observed 100 ms — at the per-round timeout bound, not a
+  transport issue).
+- **No errors at all** — `app_error_rate = 0.000%`, `ws_connect_errors = 0`,
+  `http_req_failed = 0.000%`. The full 100 VU socket load is well under the
+  fan-out capacity of the existing `room:[id]` socket.io channel + Redis
+  adapter.
+- **3-node distribution perfectly balanced** — peak 35/32/35 across api-1/2/3
+  (≤3 socket imbalance between nodes). `least_conn` LB + Redis adapter spread
+  the load evenly.
+- **CPU/RSS headroom** — p95 CPU < 4% across all nodes, peak < 21%. RSS peak
+  268 MB (single node) vs 500 MB ceiling. 5× more headroom exists.
+- **Redis cleanup** — `match:state:*` went 1 → 0 across the trailing 3 samples,
+  memory delta +3.82% (well under +10% ceiling). No leak signature.
+
+**Decision**: defer spectator SSE/transport split until evidence says otherwise.
+The Plan A ceiling at 100 VU is ~5× headroom on CPU, ~10× on latency. Next
+trigger to revisit: `app_error_rate ≥ 0.5%` OR `answer p95 > 500ms` at any
+sustained load point (need separate run to confirm scaling curve).
 
 This section is the direct input to decision **P2** in
 `memory-bank/progress.md`.

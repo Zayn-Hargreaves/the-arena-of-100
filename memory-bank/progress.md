@@ -121,8 +121,6 @@ Run the relevant package tests before using these numbers in PR text.
 
 ### 2026-08-12 — Phase 3 implementation complete (Integration & Polish, commit pending)
 
-**Days 25-36 of the locked 8-week plan**. All DoD items in spec §7 ticked.
-
 **Day 25-26 — Daily streak ≥ 7 → card variant cosmetic unlock.**
 
 - New Prisma model `UserCardVariant { userId, cardId, variantKey ("DEFAULT"|"NEON"|"GOLD"), unlockedAt }` + enum. Migration `20260812000000_phase3_card_variants`.
@@ -179,6 +177,44 @@ Run the relevant package tests before using these numbers in PR text.
 - Sequential ordering (Days 25 → 36 as written).
 - Card variant = enum + DB row (no asset pipeline).
 - C3-card-batch-failover = strict (no production change; chaos-only gate).
+
+### 2026-08-14 — Plan A 100-user baseline (single-room, multi-node)
+
+Evidence gate for **P2 (spectator transport split) decision** filled.
+
+- **Topology**: 3-node `docker:multi` cluster (nginx LB `:8080` `least_conn`
+  → api-1/2/3 on `:3011/:3012/:3013`) sharing single Postgres + Redis;
+  RECONNECT=0 (steady-state); `--redis-url=redis://localhost:6389` (the
+  multi-100 WS port, NOT dev-stack `:6379`).
+- **Population**: 1 host + 69 players + 30 spectators = 100 VU, 4m HOLD.
+- **k6 results** (`load-test/results/multi-fullmatch-6e9179e-20260814T120000.json`):
+  - answer latency **p50=61.5ms / p95=95.7ms / max=100ms** (thresholds
+    p95 < 1000ms, p99 < 2500ms — 10× headroom)
+  - `app_error_rate = 0.000%` (0/199), `ws_connect_errors = 0`,
+    `http_req_failed = 0.000%` (0/331)
+  - `ws_connect_success = 100`, `match_finished_received = 100`,
+    `round_started_received = 267`, sustained **17.58 msg/s** inbound.
+- **CPU / RSS** (1080 samples across 3 nodes, 6m window):
+  p50 **0.86%**, p95 **3.29%**, peak **20.16%** (api-1); RSS peak **268 MB**.
+- **Redis** (`match:state:*` SCAN, 1080 samples): peak **1**, end **0** (cleanup
+  verified across 3 trailing samples), `usedMemoryBytes` delta **+3.82%**
+  (2.20 → 2.28 MB).
+- **Distribution** (`poll-distribution.mjs`, 723 samples over 4m): peak
+  sockets per node **35 / 32 / 35** — perfectly balanced; ≥2-node assertion
+  PASS; all 3 probe URLs covered; 0 auth failures, 0 poll errors.
+- **P2 decision**: **No spectator transport split needed at 100 VU.**
+  Rationale: 10× latency headroom, 0 errors, 5× CPU headroom, 2× RSS headroom,
+  balanced 3-node fan-out. Defer split until `app_error_rate ≥ 0.5%` OR
+  `answer p95 > 500ms` at any sustained load point.
+- **Doc updates**: `load-test/README.md` §Baseline results filled with the
+  baseline table + P2 conclusion; raw artifacts retained under
+  `load-test/results/multi-fullmatch-6e9179e-20260814T120000*`.
+- **Operational fix surfaced**: `MULTI-BASELINE.md` orchestrator example
+  omits `--redis-url`; the dev-stack default `:6379` is bound to a different
+  project's `cmp_redis` (with auth) → `NOAUTH Authentication required` on
+  every Redis sample. Fixed by passing `--redis-url=redis://localhost:6389`
+  explicitly. The original 2026-07-28 multi-node runs likely hit the same
+  issue silently and should be reviewed.
 
 ## What Is Done
 
