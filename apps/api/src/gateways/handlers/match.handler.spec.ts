@@ -1040,7 +1040,7 @@ describe("MatchHandler", () => {
     });
 
     it("forwards a self-target TN-1 envelope without a targetPlayerId", async () => {
-      // TN-1 is a self-only THU card; the boundary must forward
+      // TN-1 is a self-only DEFENSE card; the boundary must forward
       // `targetPlayerId: undefined` verbatim. expandTargets on the
       // owner side falls back to the actor for self-only cards.
       const machine = makePlayMachine();

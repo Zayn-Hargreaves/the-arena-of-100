@@ -2,10 +2,10 @@ import { sampleOffer } from './packages/game-core/dist/card-engine.js';
 import { CARD_CATALOG, compareCardId } from './packages/shared/dist/index.js';
 
 const cases = [
-  { label: "cong-class-happy", classId: "CONG", seed: "match-1|CONG-player-1" },
-  { label: "thu-class-happy", classId: "THU", seed: "match-1|THU-player-1" },
-  { label: "shared-seed-cong", classId: "CONG", seed: "shared-seed-1" },
-  { label: "shared-seed-thu", classId: "THU", seed: "shared-seed-1" },
+  { label: "attack-class-happy", classId: "ATTACK", seed: "match-1|ATTACK-player-1" },
+  { label: "defense-class-happy", classId: "DEFENSE", seed: "match-1|DEFENSE-player-1" },
+  { label: "shared-seed-attack", classId: "ATTACK", seed: "shared-seed-1" },
+  { label: "shared-seed-defense", classId: "DEFENSE", seed: "shared-seed-1" },
 ];
 
 let out = "// AUTO-GENERATED from spec §3.3 sampling algorithm — see\n";

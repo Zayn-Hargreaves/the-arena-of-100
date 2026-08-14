@@ -101,3 +101,47 @@ load actually spreads across the cluster. Blast radius: load-test harness only �
 | `multi-fullmatch-<commit>-<ts>.node-{1,2,3}.cpu.jsonl`    | per-node CPU/RSS chart                                     |
 | `multi-fullmatch-<commit>-<ts>-distribution.jsonl`        | sockets-per-node-over-time chart                           |
 | `multi-fullmatch-<commit>-<ts>-distribution.summary.json` | peak-round split + concurrent ≥2-node assertion            |
+
+## C3 — Card-batch failover gate (Phase 3, spec §5.3)
+
+Chaos-injects a node kill at one of three checkpoints in the
+`CARD_RESOLVED` / `CARD_RESOLVED_BATCH` lifecycle:
+
+| Checkpoint        | When                                                            | Invariant                                                         |
+| ----------------- | --------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `append_pre_emit` | Between inner `CARD_RESOLVED` event append and outer batch emit | All persisted events surface at least once on a surviving node    |
+| `mid_batch_flush` | During the ≤50 ms `CARD_RESOLVED_BATCH` micro-batch flush       | New owner must NOT double-apply any effect (dedupe by `seqNo`)    |
+| `pre_ack`         | After emit sent, before the client ack                          | Recovery replays exactly the committed batch — no drops, no dupes |
+
+The strict invariant — same across all three checkpoints:
+
+> Every persisted `CARD_RESOLVED` (by its canonical `seqNo`) appears at
+> least once in transport post-failover; no `(playerId, effectId)`
+> pair is observed with two distinct `seqNos` (zombie / split-brain
+> fingerprint).
+
+### Pass / done
+
+- `load-test/lib/card-batch-verdict.test.mjs` — 22 vitest cases pass.
+  Mocks 5-effect session through the 3-checkpoint matrix plus dedupe,
+  conflict, lost-effect, double-apply, and timeline-shape assertions.
+  The cohort invariant (`cohort_missed` pre/post-flip, plus the
+  happy-path round-trip PASS) is part of the 2026-08-12 hardening
+  — keeps the chaos gate scoped to effects that MUST survive a
+  failover (persisted before the kill, observed after the flip).
+- Production code unchanged (Phase 2 append-first design already
+  satisfies the invariant); this gate is a regression detector, not a
+  fix-it-first deliverable.
+
+### Artifacts produced
+
+| File                                                      | Feeds                                                                           |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `load-test/results/card-batch-chaos-<commit>-<ts>.json`   | Per-checkpoint timeline + observed/expected effect sets (format = oracle input) |
+| (Planned) `multi-fullmatch-<commit>-<ts>.card-batch.json` | Live 3-node run inject for each checkpoint                                      |
+
+> Note — distinct from C3-owner-failover: that gate covers the
+> owner-lease flip during steady-state rounds; this gate covers a
+> narrower window (mid-batch-failover) and a different dedupe key
+> (effect `seqNo`, not round `eventId`). They MUST stay separated
+> per spec §7 DoD.

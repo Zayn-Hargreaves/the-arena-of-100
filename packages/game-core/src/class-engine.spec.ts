@@ -18,25 +18,25 @@ describe("assignClasses — happy path", () => {
     }
   });
 
-  it("returns only CONG | THU class ids", () => {
+  it("returns only ATTACK | DEFENSE class ids", () => {
     const players = ["p1", "p2", "p3", "p4", "p5", "p6"];
     const result = assignClasses(players, "seed-2");
     for (const r of result) {
-      expect(["CONG", "THU"]).toContain(r.classId);
+      expect(["ATTACK", "DEFENSE"]).toContain(r.classId);
     }
   });
 
   it("yields an exact 50/50 split for 100 players", () => {
     // Per the roll-and-rank algorithm, 100 players (even count)
-    // always produces exactly 50 CONG + 50 THU — no tolerance
+    // always produces exactly 50 ATTACK + 50 DEFENSE — no tolerance
     // band is needed (the spec's soft threshold only matters for
     // odd counts).
     const players = Array.from({ length: 100 }, (_, i) => `p${i}`);
     const result = assignClasses(players, "seed-100");
-    const cong = result.filter((r) => r.classId === "CONG").length;
-    const thu = result.filter((r) => r.classId === "THU").length;
-    expect(cong).toBe(50);
-    expect(thu).toBe(50);
+    const attack = result.filter((r) => r.classId === "ATTACK").length;
+    const defense = result.filter((r) => r.classId === "DEFENSE").length;
+    expect(attack).toBe(50);
+    expect(defense).toBe(50);
   });
 
   it("returns each playerId exactly once (no duplicates)", () => {
@@ -56,7 +56,7 @@ describe("assignClasses — determinism", () => {
 
   it("different seeds produce different mappings (statistical)", () => {
     // The classes-per-position signature is always
-    // alternating (CONG,THU,CONG,THU,...) because the
+    // alternating (ATTACK,DEFENSE,ATTACK,DEFENSE,...) because the
     // implementation assigns via odd/even rank in the
     // roll-sorted order. What VARIES per seed is which
     // playerId lands in each rank. So the test compares
@@ -96,21 +96,23 @@ describe("assignClasses — edge cases", () => {
     const result = assignClasses(["solo"], "solo-seed");
     expect(result).toHaveLength(1);
     expect(result[0]?.playerId).toBe("solo");
-    expect(["CONG", "THU"]).toContain(result[0]?.classId);
+    // Index 0 always gets ATTACK (i % 2 === 0), so a single player
+    // is deterministically ATTACK — lock the invariant.
+    expect(result[0]?.classId).toBe("ATTACK");
   });
 
-  it("handles 2 players — one CONG, one THU", () => {
+  it("handles 2 players — one ATTACK, one DEFENSE", () => {
     const result = assignClasses(["p1", "p2"], "pair-seed");
     const classes = result.map((r) => r.classId).sort();
-    expect(classes).toEqual(["CONG", "THU"]);
+    expect(classes).toEqual(["ATTACK", "DEFENSE"]);
   });
 
-  it("assigns the extra slot to CONG when player count is odd", () => {
+  it("assigns the extra slot to ATTACK when player count is odd", () => {
     const result = assignClasses(["p1", "p2", "p3"], "odd-seed");
-    const congCount = result.filter((r) => r.classId === "CONG").length;
-    const thuCount = result.filter((r) => r.classId === "THU").length;
-    expect(congCount).toBe(2);
-    expect(thuCount).toBe(1);
+    const attackCount = result.filter((r) => r.classId === "ATTACK").length;
+    const defenseCount = result.filter((r) => r.classId === "DEFENSE").length;
+    expect(attackCount).toBe(2);
+    expect(defenseCount).toBe(1);
   });
 
   it("handles duplicate playerIds — comparePlayerId returns 0 for equal strings", () => {

@@ -1,0 +1,70 @@
+-- ============================================================
+-- Phase 3 — MatchPlayer userId-leading index
+--
+-- Adds an explicit (userId, matchId) index to match_players so the
+-- LATERAL aggregate in DailyService.computeLeaderboard and the
+-- aggregate in UsersService.getPhase3Stats can both filter by
+-- mp."userId" without falling back to the (matchId, userId) UNIQUE
+-- index. The existing UNIQUE index is matchId-leading, which is
+-- wrong for these access patterns (every query scans by userId first,
+-- then joins on matchId).
+--
+-- The (userId, matchId) index is additive and does NOT change any
+-- existing constraint.
+--
+-- `CREATE INDEX CONCURRENTLY` cannot run inside a BEGIN/COMMIT
+-- transaction wrapper. The existing migration intentionally omits
+-- one (see `20260606142750_add_leaderboard_indexes/migration.sql`
+-- for the same pattern) so the CONCURRENTLY variant is accepted by
+-- PostgreSQL — the build never has to take an ACCESS EXCLUSIVE
+-- lock on `match_players`.
+--
+-- ============================================================
+-- Recovery runbook (if `CREATE INDEX CONCURRENTLY` is interrupted
+-- or the build leaves the index INVALID):
+--   1. Inspect the index state:
+--        SELECT indexrelid, indisvalid
+--        FROM pg_index
+--        WHERE indexrelid = to_regclass('match_players_user_id_match_id_idx');
+--      `to_regclass(...)` returns NULL when the named index is
+--      absent — using `'<idx>'::regclass` here would THROW an error
+--      on the missing-index path and abort the recovery script
+--      before it can reach the `DROP INDEX CONCURRENTLY IF EXISTS`
+--      branch. The ABSENT signal from this query is a ZERO-ROW
+--      result set: `indexrelid = NULL` evaluates to NULL (not TRUE),
+--      so the predicate filters the row out — there is no row in
+--      `pg_index` carrying a NULL `indexrelid` to inspect. A
+--      present-but-invalid index, by contrast, surfaces as exactly
+--      ONE row with `indisvalid = false`, and the operator runs
+--      the drop + retry. Distinguished states:
+--        - ABSENT       : query returns 0 rows
+--        - INVALID      : query returns 1 row, indisvalid = false
+--        - VALID (skip) : query returns 1 row, indisvalid = true
+--      (a healthy index means the previous run already committed
+--      and the operator should NOT re-apply — see step 3).
+--   2. If `indisvalid = false` (or the index is missing entirely),
+--      drop it CONCURRENTLY — DO NOT use plain `DROP INDEX` because
+--      it takes an ACCESS EXCLUSIVE lock on `match_players`:
+--        DROP INDEX CONCURRENTLY IF EXISTS "match_players_user_id_match_id_idx";
+--   3. Re-run this migration (still no BEGIN/COMMIT wrapper — the
+--      CONCURRENTLY variant is what makes the build online-safe).
+--      NOTE: the CREATE INDEX has NO `IF NOT EXISTS` clause, so a
+--      re-run on a healthy index (`indisvalid = true`) will fail.
+--      That mirrors the failure mode the runbook is meant to gate
+--      against — a healthy index means the previous run already
+--      committed and the operator should NOT re-apply.
+--   4. Verify the retry succeeded:
+--        SELECT indexrelid, indisvalid
+--        FROM pg_index
+--        WHERE indexrelid = to_regclass('match_players_user_id_match_id_idx');
+--      `indisvalid` MUST be `t` before downstream services trust the
+--      index for the LATERAL aggregate in DailyService.computeLeaderboard.
+--
+-- Pipeline coverage: `apps/api/prisma/migrations/__tests__/
+--   concurrent-index-retry.test.ts` simulates a partial
+--   `CREATE INDEX CONCURRENTLY` (returns the index but
+--   `indisvalid = false`) and exercises the drop + retry flow.
+-- ============================================================
+
+CREATE INDEX CONCURRENTLY "match_players_user_id_match_id_idx"
+  ON "match_players"("userId", "matchId");

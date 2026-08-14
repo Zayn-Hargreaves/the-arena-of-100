@@ -39,12 +39,12 @@ function comparePlayerId(a: string, b: string): number {
  *
  * Algorithm: roll-and-rank. Sort the playerIds canonically; draw
  * one RNG float per player; sort the (playerId, roll) pairs by
- * the roll; zip with an alternating [CONG, THU] pattern so the
- * top-ranked half gets CONG and the bottom-ranked half gets THU.
- * For an even player count this yields exactly 50/50; for an odd
- * count the extra rank goes to CONG (the "off-by-one split going
- * in favor of Offensive/CONG" the spec asks for under
- * Decision 2 + Risk 5).
+ * the roll; then assign classes alternately by rank —
+ * ATTACK, DEFENSE, ATTACK, DEFENSE, … — so even ranks (0, 2, 4…)
+ * get ATTACK and odd ranks get DEFENSE. For an even player count
+ * this yields exactly 50/50; for an odd count the extra rank goes
+ * to ATTACK (the "off-by-one split going in favor of
+ * Offensive/ATTACK" the spec asks for under Decision 2 + Risk 5).
  *
  * The roll is deterministic given the seed. Replay the
  * assignments by re-running with the same `seedUsed` — the
@@ -72,11 +72,11 @@ export function assignClasses(
   }));
   drawn.sort((a, b) => a.roll - b.roll);
 
-  // Zip the sorted result with a CONG/THU alternating pattern
-  // — the canonical fair split. For 100 players this yields
+  // Zip the sorted result with an ATTACK/DEFENSE alternating
+  // pattern — the canonical fair split. For 100 players this yields
   // exactly 50/50.
   return drawn.map((d, i) => ({
     playerId: d.playerId,
-    classId: (i % 2 === 0 ? "CONG" : "THU") as ClassId,
+    classId: (i % 2 === 0 ? "ATTACK" : "DEFENSE") as ClassId,
   }));
 }

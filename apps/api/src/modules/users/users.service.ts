@@ -10,7 +10,13 @@ import {
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { MatchStatus, type AvatarSeed } from "@arena/shared";
-import type { HistoryItem, HistoryQuery, StatsResponse } from "./dto";
+import type {
+  HistoryItem,
+  HistoryQuery,
+  StatsResponse,
+  ClassStats,
+  ClassStatsResponse,
+} from "./dto";
 
 const FINISHED = MatchStatus.FINISHED;
 
@@ -283,4 +289,111 @@ export class UsersService {
       select: { id: true, username: true, avatar: true, role: true },
     });
   }
+
+  // ============================================================
+  // getClassStats (class winrate, streak, cards played)
+  // ============================================================
+
+  /**
+   * Aggregate class profile stats (class winrate, current streak,
+   * cards played).
+   *
+   * Executes FOUR database queries:
+   *   1. user.findUnique           — existence check (throws NotFoundException if missing)
+   *   2. $queryRaw                 — class winrate GROUP BY classId over FINISHED matches
+   *   3. dailyAttempt.findFirst    — latest streakAfter + dateKey (current streak)
+   *   4. matchPlayer.aggregate     — SUM(cardsPlayed) across FINISHED matches
+   *
+   * After the existence check, queries 2-4 run concurrently via
+   * Promise.all, so the wall-clock latency is bounded by the slowest
+   * query, not the sum. Read-only; no side effects, no event
+   * emissions. Counts are bounded by indexed predicates
+   * (`userId` + `match.status`) so they stay fast across many
+   * matches — well within the latency budget for the profile page.
+   */
+  async getClassStats(userId: string): Promise<ClassStatsResponse> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+    if (!user) {
+      throw new NotFoundException("USER_NOT_FOUND");
+    }
+
+    const now = new Date();
+    const todayKey = toUtcDateKey(now);
+    const yesterdayKey = toUtcDateKey(new Date(now.getTime() - MS_PER_DAY));
+
+    // ----- Class winrate + current streak + cards played (concurrent) -----
+    const [winrateRows, latestStreakRow, cardsPlayedRow] = await Promise.all([
+      this.prisma.$queryRaw<
+        Array<{ class_id: string | null; plays: bigint; wins: bigint }>
+      >`
+        SELECT
+          mp."classId"                              AS class_id,
+          COUNT(*)::bigint                          AS plays,
+          COUNT(*) FILTER (WHERE m."winnerId" = mp."userId")::bigint AS wins
+        FROM "match_players" mp
+        JOIN "matches" m ON m."id" = mp."matchId"
+        WHERE mp."userId" = ${userId}::text
+          AND m."status"  = ${FINISHED}::text
+          AND mp."classId" IS NOT NULL
+        GROUP BY mp."classId"
+      `,
+      this.prisma.dailyAttempt.findFirst({
+        where: { userId },
+        orderBy: { completedAt: "desc" },
+        select: { streakAfter: true, dateKey: true },
+      }),
+      this.prisma.matchPlayer.aggregate({
+        where: { userId, match: { status: FINISHED } },
+        _sum: { cardsPlayed: true },
+      }),
+    ]);
+
+    const classWinrate: ClassStats["classWinrate"] = {};
+    for (const row of winrateRows) {
+      if (row.class_id !== "ATTACK" && row.class_id !== "DEFENSE") continue;
+      const plays = Number(row.plays);
+      const wins = Number(row.wins);
+      classWinrate[row.class_id] = {
+        plays,
+        wins,
+        winRate: plays > 0 ? wins / plays : 0,
+      };
+    }
+
+    // `currentStreak` only reflects an ACTIVE streak: the most-recent
+    // attempt must be on UTC today or UTC yesterday (the Daily
+    // Challenge resets at 00:00 UTC). Anything older → 0; we don't
+    // surface a stale frozen streak from last week.
+    const currentStreak =
+      latestStreakRow &&
+      (latestStreakRow.dateKey === todayKey ||
+        latestStreakRow.dateKey === yesterdayKey)
+        ? latestStreakRow.streakAfter
+        : 0;
+
+    // ----- Cards played -----
+    // SUM(MatchPlayer.cardsPlayed) across the user's FINISHED matches.
+    // cardsPlayed is the authoritative counter persisted at finishMatch
+    // (derived from CARD_RESOLVED events in the state machine event
+    // log), so this aggregate survives event-log eviction.
+    const cardsPlayed = toSafeNumber(cardsPlayedRow._sum.cardsPlayed ?? 0);
+
+    return {
+      stats: {
+        classWinrate,
+        currentStreak,
+        cardsPlayed,
+      },
+    };
+  }
+}
+
+const MS_PER_DAY = 86_400_000;
+
+/** `YYYY-MM-DD` for the UTC day containing `at`. Matches `daily.service.toDateKey`. */
+function toUtcDateKey(at: Date): string {
+  return at.toISOString().slice(0, 10);
 }

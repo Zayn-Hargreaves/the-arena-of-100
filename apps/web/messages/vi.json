@@ -314,6 +314,21 @@
       "TECHNOLOGY": "Công nghệ",
       "CULTURE": "Văn hóa"
     },
+    "classStats": {
+      "title": "LỚP · CHUỖI · LÁ BÀI",
+      "streak": "CHUỖI THẮNG HIỆN TẠI",
+      "streakHint": "Số ngày Daily Challenge thắng liên tiếp",
+      "cardsPlayed": "SỐ LÁ BÀI ĐÃ CHƠI",
+      "cardsPlayedHint": "Tổng số lá bài đã dùng trong các trận kết thúc",
+      "bestClass": "LỚP MẠNH NHẤT",
+      "bestClassHint": "Tỉ lệ thắng cao hơn giữa CÔNG / THỦ",
+      "matchesWon": "trận thắng",
+      "noClassMatches": "Chưa có trận nào được gán lớp",
+      "class": {
+        "ATTACK": "CÔNG",
+        "DEFENSE": "THỦ"
+      }
+    },
     "error": {
       "loadFailed": "Không tải được dữ liệu hồ sơ.",
       "signinRequired": "Hãy đăng nhập để xem hồ sơ.",
@@ -337,6 +352,13 @@
     },
     "accuracyShort": "Chính xác",
     "empty": "Chưa có dữ liệu xếp hạng.",
+    "cardsThisWeek": "Lá bài đã chơi trong tuần",
+    "cardsLabel": "{count, plural, one {🃏 # lá bài} other {🃏 # lá bài}}",
+    "cardsTier": {
+      "COMMON": "Hạng thường — người chơi nhẹ",
+      "RARE": "Hạng hiếm — người chơi tích cực",
+      "EPIC": "Hạng sử thi — tay chơi bài chuyên nghiệp"
+    },
     "error": {
       "loadFailed": "Không tải được bảng xếp hạng.",
       "rowUnavailable": "Không thể hiển thị hàng bảng xếp hạng.",
@@ -511,13 +533,25 @@
       "copied": "Đã sao chép!",
       "error": "Không thể chia sẻ — thử lại",
       "textTitle": "Arena of 100 — Hằng Ngày",
-      "textScore": "Điểm",
-      "textStreak": "Streak"
+      "textScore": "Điểm: {score} ({correct}/{total})",
+      "textStreak": "Chuỗi: {streak}"
+    },
+    "cardVariant": {
+      "unlockedTitle": "Mở Khóa Biến Thể Thẻ!",
+      "unlockedSubtitle": "Chuỗi thắng hằng ngày vừa chạm mốc mới — ăn mừng nào!",
+      "headline": "Bạn vừa mở khóa biến thể {variant} của {cardName}.",
+      "shareHeadline": "Tôi vừa mở khóa biến thể thẻ mới!",
+      "close": "Đóng"
     },
     "leaderboard": {
       "title": "Bảng Xếp Hạng Hôm Nay",
       "error": "Không tải được bảng xếp hạng.",
-      "empty": "Hôm nay chưa có điểm — hãy là người đầu tiên."
+      "empty": "Hôm nay chưa có điểm — hãy là người đầu tiên.",
+      "cardsTier": {
+        "COMMON": "Hạng thường — người chơi nhẹ",
+        "RARE": "Hạng hiếm — người chơi tích cực",
+        "EPIC": "Hạng sử thi — tay chơi bài chuyên nghiệp"
+      }
     },
     "gate": {
       "title": "Chọn biệt danh",
@@ -566,8 +600,8 @@
     "noCards": "Không có lá bài nào",
     "milestoneOffer": "Round cột mốc — chọn một lá bài để sử dụng",
     "classes": {
-      "CONG": "Tấn công",
-      "THU": "Phòng thủ"
+      "ATTACK": "Tấn công",
+      "DEFENSE": "Phòng thủ"
     },
     "tiers": {
       "COMMON": "Thường",
@@ -582,6 +616,80 @@
       "commandIdConflict": "Xung đột mã lệnh",
       "aoeCapExhausted": "Đã đạt giới hạn AOE",
       "invalidCommandId": "Mã lệnh không hợp lệ"
+    },
+    "byId": {
+      "CB-1": {
+        "name": "Đóng Băng Thời Gian",
+        "description": "Giảm 5s thời gian trả lời của mục tiêu."
+      },
+      "CB-2": {
+        "name": "Phá Hoại Câu Hỏi",
+        "description": "Trì hoãn 3s việc hiển thị câu hỏi của mục tiêu."
+      },
+      "CB-3": {
+        "name": "Thiêu Huỷ Bài",
+        "description": "Phá huỷ 1 lá bài ngẫu nhiên từ tay mục tiêu."
+      },
+      "CB-4": {
+        "name": "Khoá Đáp Án",
+        "description": "Khoá các lựa chọn của mục tiêu trong 2s."
+      },
+      "CB-5": {
+        "name": "Sương Mù Trí Não",
+        "description": "Áp dụng lớp phủ Sương Mù Trí Não trong 5s."
+      },
+      "CB-6": {
+        "name": "Cờ Giả",
+        "description": "Hiển thị 1 lựa chọn cờ giả cho mục tiêu trong 8s."
+      },
+      "CB-7": {
+        "name": "Lật Ngữ Nghĩa",
+        "description": "Đảo ngữ nghĩa câu hỏi của mục tiêu trong 10s."
+      },
+      "CB-8": {
+        "name": "Phân Tâm Diện Rộng",
+        "description": "Trì hoãn 2s việc hiển thị câu hỏi cho tối đa 3 mục tiêu."
+      },
+      "TN-1": {
+        "name": "50:50",
+        "description": "Vô hiệu hoá 2 đáp án sai ngẫu nhiên trong round."
+      },
+      "TN-2": {
+        "name": "Gấp Đôi Điểm",
+        "description": "Gấp đôi điểm cho câu trả lời đúng tiếp theo."
+      },
+      "TN-3": {
+        "name": "Gợi Ý Tiết Lộ",
+        "description": "Tiết lộ ký tự đầu tiên của đáp án đúng."
+      },
+      "TN-4": {
+        "name": "Khiên Chắn",
+        "description": "Chặn 1 lá bài đến trong round tiếp theo."
+      },
+      "TN-5": {
+        "name": "Thưởng Thời Gian",
+        "description": "Cộng 5s vào hạn chót trả lời của bạn."
+      },
+      "TN-6": {
+        "name": "Cơ Hội Hai",
+        "description": "Cho phép bạn nộp lại trước khi hết hạn."
+      },
+      "TN-7": {
+        "name": "Đọc Sâu",
+        "description": "Áp dụng lớp phủ Đọc Sâu trong 5s."
+      },
+      "TN-8": {
+        "name": "Thưởng Thời Gian II",
+        "description": "Cộng 5s vào hạn chót trả lời (biến thể)."
+      },
+      "TN-9": {
+        "name": "Bùng Nổ Trí Não",
+        "description": "x1.5 điểm cho câu trả lời đúng tiếp theo."
+      },
+      "TN-10": {
+        "name": "Ký Ức Hoàn Hảo",
+        "description": "Vô hiệu hoá 1 đáp án sai ngẫu nhiên trong round."
+      }
     }
   }
 }

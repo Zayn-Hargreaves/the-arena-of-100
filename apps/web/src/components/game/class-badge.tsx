@@ -12,22 +12,22 @@ export interface ClassBadgeProps {
 }
 
 const CLASS_STYLES: Record<ClassId, { soft: string; strong: string }> = {
-  CONG: {
+  ATTACK: {
     soft: "bg-candy-red/10 text-candy-red border-candy-red/40",
     strong: "bg-candy-red text-white border-candy-red",
   },
-  THU: {
+  DEFENSE: {
     soft: "bg-candy-mint/30 text-candy-ink border-candy-mint",
     strong: "bg-candy-mint text-candy-ink border-candy-mint",
   },
 };
 
 // `ClassBadge` — surfaces the player's class (Offensive /
-// Defensive — CONG / THU enum identifiers) in the match UI.
+// Defensive — ATTACK / DEFENSE enum identifiers) in the match UI.
 // Spec §3.1 random server-side assignment per match — the
 // badge is read-only after the `CLASS_ASSIGNED` event is
 // applied. Display text is sourced from the i18n bundle under
-// `Cards.classes.CONG` / `Cards.classes.THU`.
+// `Cards.classes.ATTACK` / `Cards.classes.DEFENSE`.
 export function ClassBadge({
   classId,
   variant = "soft",

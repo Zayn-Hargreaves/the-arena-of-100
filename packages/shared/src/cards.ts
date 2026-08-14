@@ -43,8 +43,8 @@ export const PRNG_CONTRACT_VERSION = "mulberry32-substream-v1";
 
 export type CardTier = "COMMON" | "RARE" | "EPIC";
 
-// Card pool v1 — exactly 18 IDs (8 Offensive/CONG + 10
-// Defensive/THU). No other string is a valid `CardId`: the
+// Card pool v1 — exactly 18 IDs (8 Offensive/ATTACK + 10
+// Defensive/DEFENSE). No other string is a valid `CardId`: the
 // API boundary rejects anything outside this union at the
 // Zod layer before any resolver is invoked.
 export type CardId =
@@ -242,17 +242,17 @@ export type CardEffect =
 // Card catalog (v1 — 18 cards)
 // ---------------------------------------------------------------------------
 //
-// Built from spec §3.1 (Offensive/CONG) + §3.2 (Defensive/THU).
+// Built from spec §3.1 (Offensive/ATTACK) + §3.2 (Defensive/DEFENSE).
 // The 18 cards are wired to the appropriate `CardEffectTemplate`
 // + tier + class. The catalog is the canonical source for both
 // the sampling engine (class-pool partition) and the API
 // boundary (per-card validation).
 
 const RAW_CARD_CATALOG: readonly CardDefinition[] = [
-  // Offensive (CONG) — 8 cards
+  // Offensive (ATTACK) — 8 cards
   {
     id: "CB-1",
-    classId: "CONG",
+    classId: "ATTACK",
     tier: "COMMON",
     name: "Time Freeze",
     description: "Reduce a target's answer window by 5s.",
@@ -262,7 +262,7 @@ const RAW_CARD_CATALOG: readonly CardDefinition[] = [
   },
   {
     id: "CB-2",
-    classId: "CONG",
+    classId: "ATTACK",
     tier: "COMMON",
     name: "Sabotage Q",
     description: "Delay a target's question render by 3s.",
@@ -272,7 +272,7 @@ const RAW_CARD_CATALOG: readonly CardDefinition[] = [
   },
   {
     id: "CB-3",
-    classId: "CONG",
+    classId: "ATTACK",
     tier: "COMMON",
     name: "Burn Card",
     description: "Destroy 1 random card from the target's hand.",
@@ -286,7 +286,7 @@ const RAW_CARD_CATALOG: readonly CardDefinition[] = [
   },
   {
     id: "CB-4",
-    classId: "CONG",
+    classId: "ATTACK",
     tier: "RARE",
     name: "Question Lock",
     description: "Lock a target's options for 2s.",
@@ -296,7 +296,7 @@ const RAW_CARD_CATALOG: readonly CardDefinition[] = [
   },
   {
     id: "CB-5",
-    classId: "CONG",
+    classId: "ATTACK",
     tier: "RARE",
     name: "Brain Fog",
     description: "Apply Brain Fog visual overlay for 5s.",
@@ -310,7 +310,7 @@ const RAW_CARD_CATALOG: readonly CardDefinition[] = [
   },
   {
     id: "CB-6",
-    classId: "CONG",
+    classId: "ATTACK",
     tier: "COMMON",
     name: "Fake Flag",
     description: "Show 1 fake flag option to a target for 8s.",
@@ -320,7 +320,7 @@ const RAW_CARD_CATALOG: readonly CardDefinition[] = [
   },
   {
     id: "CB-7",
-    classId: "CONG",
+    classId: "ATTACK",
     tier: "COMMON",
     name: "Question Flip",
     description: "Flip a target's question semantics for 10s.",
@@ -330,7 +330,7 @@ const RAW_CARD_CATALOG: readonly CardDefinition[] = [
   },
   {
     id: "CB-8",
-    classId: "CONG",
+    classId: "ATTACK",
     tier: "EPIC",
     name: "Mass Distraction",
     description: "Delay up to 3 targets' question render by 2s.",
@@ -338,10 +338,10 @@ const RAW_CARD_CATALOG: readonly CardDefinition[] = [
     backfireRate: 0.1,
     cooldownPerMatch: 1,
   },
-  // Defensive (THU) — 10 cards
+  // Defensive (DEFENSE) — 10 cards
   {
     id: "TN-1",
-    classId: "THU",
+    classId: "DEFENSE",
     tier: "COMMON",
     name: "50:50",
     description: "Disable 2 random wrong options for the round.",
@@ -356,7 +356,7 @@ const RAW_CARD_CATALOG: readonly CardDefinition[] = [
   },
   {
     id: "TN-2",
-    classId: "THU",
+    classId: "DEFENSE",
     tier: "COMMON",
     name: "Double Points",
     description: "Double your score for the next correct answer.",
@@ -366,7 +366,7 @@ const RAW_CARD_CATALOG: readonly CardDefinition[] = [
   },
   {
     id: "TN-3",
-    classId: "THU",
+    classId: "DEFENSE",
     tier: "COMMON",
     name: "Hint Reveal",
     description: "Reveal the first character of the correct answer.",
@@ -380,7 +380,7 @@ const RAW_CARD_CATALOG: readonly CardDefinition[] = [
   },
   {
     id: "TN-4",
-    classId: "THU",
+    classId: "DEFENSE",
     tier: "RARE",
     name: "Shield",
     description: "Block 1 incoming card for the next round.",
@@ -393,7 +393,7 @@ const RAW_CARD_CATALOG: readonly CardDefinition[] = [
   },
   {
     id: "TN-5",
-    classId: "THU",
+    classId: "DEFENSE",
     tier: "COMMON",
     name: "Time Bonus",
     description: "Add 5s to your per-question answer deadline.",
@@ -403,7 +403,7 @@ const RAW_CARD_CATALOG: readonly CardDefinition[] = [
   },
   {
     id: "TN-6",
-    classId: "THU",
+    classId: "DEFENSE",
     tier: "COMMON",
     name: "Second Chance",
     description: "Allow yourself to re-submit before the deadline.",
@@ -413,7 +413,7 @@ const RAW_CARD_CATALOG: readonly CardDefinition[] = [
   },
   {
     id: "TN-7",
-    classId: "THU",
+    classId: "DEFENSE",
     tier: "RARE",
     name: "Deep Read",
     description: "Apply Deep Read visual overlay for 5s.",
@@ -427,7 +427,7 @@ const RAW_CARD_CATALOG: readonly CardDefinition[] = [
   },
   {
     id: "TN-8",
-    classId: "THU",
+    classId: "DEFENSE",
     tier: "COMMON",
     name: "Time Bonus",
     description: "Add 5s to your per-question answer deadline.",
@@ -437,7 +437,7 @@ const RAW_CARD_CATALOG: readonly CardDefinition[] = [
   },
   {
     id: "TN-9",
-    classId: "THU",
+    classId: "DEFENSE",
     tier: "RARE",
     name: "Brain Burst",
     description: "×1.5 score for the next correct answer.",
@@ -447,7 +447,7 @@ const RAW_CARD_CATALOG: readonly CardDefinition[] = [
   },
   {
     id: "TN-10",
-    classId: "THU",
+    classId: "DEFENSE",
     tier: "EPIC",
     name: "Perfect Recall",
     description: "Disable 1 random wrong option for the round.",
@@ -515,14 +515,14 @@ export function getCardDefinition(id: CardId): ReadonlyCardDefinition {
 // (push / splice / indexed assignment all throw in strict mode
 // and are no-ops otherwise — the contract is `Object.isFrozen`).
 const CARD_CATALOG_BY_CLASS: Readonly<Record<ClassId, readonly CardId[]>> = {
-  CONG: Object.freeze(
-    CARD_CATALOG.filter((c) => c.classId === "CONG")
+  ATTACK: Object.freeze(
+    CARD_CATALOG.filter((c) => c.classId === "ATTACK")
       .map((c) => c.id)
       .slice()
       .sort(compareCardId),
   ),
-  THU: Object.freeze(
-    CARD_CATALOG.filter((c) => c.classId === "THU")
+  DEFENSE: Object.freeze(
+    CARD_CATALOG.filter((c) => c.classId === "DEFENSE")
       .map((c) => c.id)
       .slice()
       .sort(compareCardId),
@@ -560,3 +560,99 @@ export const AOE_CAP_PER_ROUND = 2;
 export const COMMAND_ID_MAX_LENGTH = 64;
 
 export const MILESTONE_ROUNDS: ReadonlySet<number> = new Set([5, 12, 20]);
+
+// ---------------------------------------------------------------------------
+// Phase 3 — Card variant cosmetics (streak ≥ 7 unlock)
+// ---------------------------------------------------------------------------
+//
+// Spec §2 Decision 19: "Daily streak ≥ 7 unlock 1 card variant
+// (border/glow, no effect change)". The variant is cosmetic only —
+// it swaps the card's visual border/glow in the UI; it does NOT
+// change any card effect, tier, or gameplay property.
+//
+// `CARD_VARIANT_KEYS` is the runtime tuple — single source of truth
+// for "the set of variants the game knows about". The derived
+// `CardVariantKey` and `UnlockableCardVariantKey` types mirror it,
+// so a future variant must be added in ONE place (the tuple) and
+// every consumer picks up the new variant automatically.
+// `CARD_VARIANT_KEYS` mirrors the Prisma `CardVariantKey` enum —
+// the two MUST stay in lockstep. A test in `cards.spec.ts` pins the
+// canonical 3-tuple ordering so a future enum bump on either side
+// cannot silently diverge.
+export const CARD_VARIANT_KEYS = ["DEFAULT", "NEON", "GOLD"] as const;
+export type CardVariantKey = (typeof CARD_VARIANT_KEYS)[number];
+
+// Variants the user can UNLOCK after a streak milestone. `DEFAULT`
+// is the starting variant every player has implicitly; the unlock
+// path only ever grants `NEON` (streak 7) or `GOLD` (streak 14), so
+// downstream DTOs / UI tables that only carry an `unlockedVariant`
+// narrow the type to this subset.
+export type UnlockableCardVariantKey = Exclude<CardVariantKey, "DEFAULT">;
+
+// Typed as a `readonly [...]` tuple (not `readonly UnlockableCardVariantKey[]`)
+// so `z.enum(UNLOCKABLE_CARD_VARIANT_KEYS)` accepts the literal tuple
+// shape Zod expects. The `as const` on the literal pins the readonly
+// modifier + the literal types without widening to `string`.
+export const UNLOCKABLE_CARD_VARIANT_KEYS = [
+  "NEON",
+  "GOLD",
+] as const satisfies readonly UnlockableCardVariantKey[];
+
+// Ordered by unlock tier — `DEFAULT` is the starting variant every
+// player has implicitly; `NEON` is the first unlock (streak 7);
+// `GOLD` is the second unlock (streak 14). The array is the single
+// source of truth for "which variant comes next" — both the API
+// (which decides which variant to grant) and the UI (which knows
+// the order for display) import it.
+export const CARD_VARIANT_ORDER: readonly CardVariantKey[] = CARD_VARIANT_KEYS;
+
+// Streak threshold: every multiple of 7 unlocks the next variant
+// (spec §2 Decision 19). The constant is shared so the service
+// (trigger), the DTO (response shape), and the UI (display) all
+// agree on when an unlock fires.
+export const CARD_VARIANT_STREAK_THRESHOLD = 7;
+
+// Pick the next variant to unlock for a user, given the variants
+// they already own. Returns `null` when the user already owns
+// every variant (v1: DEFAULT + NEON + GOLD = 3, so after 2
+// unlocks there is nothing more to grant).
+//
+// The return type is narrowed to `UnlockableCardVariantKey` rather
+// than the wider `CardVariantKey` because the `DEFAULT` variant is
+// the starting variant every player has implicitly — the unlock
+// path only ever grants `NEON` (streak 7) or `GOLD` (streak 14),
+// so the loop never returns `DEFAULT`. Downstream DTOs / UI tables
+// that only carry an `unlockedVariant` can rely on the narrower
+// type without an extra runtime guard.
+//
+// Pure function — no IO, no side effects — so it is unit-tested
+// directly and stays deterministic across the API boundary.
+export function nextCardVariant(
+  ownedVariants: ReadonlySet<CardVariantKey>,
+): UnlockableCardVariantKey | null {
+  for (const key of CARD_VARIANT_ORDER) {
+    if (key === "DEFAULT") continue;
+    if (!ownedVariants.has(key)) return key;
+  }
+  return null;
+}
+
+// Pick the card to attach the unlock to. v1 strategy: rotate
+// through the user's class-pool cards deterministically by streak
+// count, so consecutive unlocks target different cards. The exact
+// card chosen is cosmetic (no effect), so a simple rotation is
+// sufficient — no RNG, no persistence of "last unlock index"
+// beyond the owned-variant rows themselves.
+//
+// Falls back to the first card in the ATTACK pool if the classId
+// has no pool (unreachable in v1 — both pools are non-empty).
+export function pickCardForVariantUnlock(
+  classId: ClassId,
+  unlockIndex: number,
+): CardId {
+  const pool = getClassPool(classId);
+  if (pool.length === 0) {
+    return CARD_CATALOG[0].id;
+  }
+  return pool[unlockIndex % pool.length];
+}

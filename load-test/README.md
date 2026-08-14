@@ -248,6 +248,87 @@ This section is the direct input to decision **P2** in
 
 ---
 
+## C3 — Card-batch failover oracle (Phase 3)
+
+Chaos-tested gate that proves a node kill at any of the three
+`CARD_RESOLVED` lifecycle checkpoints does not lose or double-apply
+effects.
+
+### Module
+
+`load-test/lib/card-batch-verdict.mjs` — pure oracle (no k6 / no I/O).
+Accepts a `*.card-batch.json` artifact and returns
+`PASS | FAIL` along with a `reasons[]` ledger that pin
+exactly which invariant was violated.
+
+### Helper taxonomy
+
+| Helper                                | Purpose                                                                                                                                                                            |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dedupeEffects(raw)`                  | Drops malformed entries + collapses repeats by the canonical `(playerId, effectId, seqNo)` triple, keeping earliest `t`                                                            |
+| `detectEffectConflicts(raw)`          | Flags `(playerId, effectId)` pairs seen with two distinct `seqNos` — zombie / split-brain fingerprint                                                                              |
+| `findDuplicateObservations(raw)`      | Surfaces transport frames that observed the same canonical `(playerId, effectId, seqNo)` triple more than once — distinct from `dedupeEffects`, which only collapses them silently |
+| `diffEffects(expected, observed)`     | Surfaces dropped (in expected, not seen) + extra (seen, not expected) effects                                                                                                      |
+| `evaluateCardBatchFailover(artifact)` | Top-level oracle; timeline sanity + dedupe + conflict + duplicate + diff + recovery oracle                                                                                         |
+
+### Tests
+
+Run from the **repository root**. The `load-test/vitest.config.mjs`
+sets its own `root:` to `load-test/`, so the trailing test-file
+argument is resolved relative to that directory — `lib/...` (NOT
+`load-test/lib/...`):
+
+```bash
+node_modules/.bin/vitest run --config load-test/vitest.config.mjs \
+  lib/card-batch-verdict.test.mjs
+```
+
+30 cases (measured 2026-08-13):
+
+- 3 checkpoint PASS scenarios: `append_pre_emit`, `mid_batch_flush`,
+  `pre_ack` — each fixture carries a cohort effect that round-trips
+  (persisted before `t_kill`, observed after `t_owner_flip`).
+- 7 artifact/timeline validation cases: invalid checkpoint label,
+  broken timeline (`t_kill >= t_owner_flip`), recovery before owner
+  flip (`t_recover < t_owner_flip`), null / undefined / array
+  artifact, missing `observed_effects`.
+- 2 element-validation cases (added 2026-08-12):
+  `expected_effects: [null]` and `observed_effects` missing
+  `seqNo`. Both must surface as `invalid_artifact` rather than
+  silently underflow the diff.
+- 3 invariant-failure cases: `lost_effect` (one expected effect
+  missing from transport), `double_apply` (zombie re-emit with
+  conflicting `seqNo`), `duplicate_observation` (same canonical
+  triple observed twice).
+- 2 cohort-invariant cases (added 2026-08-12): `cohort_missed`
+  when a cohort effect has no pre-kill expected record, and
+  `cohort_missed` when it has no post-flip canonical observation.
+  Plus a positive control: cohort round-trip PASSES on the happy
+  timeline (counts as part of the 3 checkpoint scenarios above).
+- 4 direct-helper unit tests: `dedupeEffects`,
+  `detectEffectConflicts`, `diffEffects`, `findDuplicateObservations`.
+- 4 cohort-type hardening cases (added 2026-08-12): undefined =
+  no-op, null / number / string = `invalid_artifact`, plus
+  the happy-path positive control (the cohort round-trip PASSES
+  on the happy timeline).
+- 4 encoding-collision regression cases (added 2026-08-13):
+  `dedupeEffects`, `detectEffectConflicts`,
+  `findDuplicateObservations`, and `diffEffects` MUST keep
+  `(playerId="a::b", effectId="c")` distinct from
+  `(playerId="a", effectId="b::c")` after the JSON-tuple key
+  encoding replaced the previous delimiter-joined form.
+
+### Distinct from C3-owner-failover
+
+> Spec §7 DoD explicitly forbids conflating the two gates. The
+> owner-failover oracle (`load-test/lib/failover-verdict.mjs`) covers
+> the owner-lease flip during steady-state rounds and dedupes by
+> round `eventId`. The card-batch oracle covers a narrower window
+> (mid-batch-failover) and dedupes by effect `seqNo`. They never
+> share an artifact or verdict.
+
+---
+
 ## Notes & limitations
 
 - **Match length is elimination-bound.** The server never sends the correct

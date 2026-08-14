@@ -116,7 +116,7 @@ export const SAMPLE_OFFER_COUNT = 3;
 // `CardOfferEvent` so replay can reproduce the same offer
 // byte-for-byte.
 export function sampleOffer(
-  classId: "CONG" | "THU",
+  classId: "ATTACK" | "DEFENSE",
   seed: string,
   customPool?: readonly CardId[],
 ): SamplingResult {

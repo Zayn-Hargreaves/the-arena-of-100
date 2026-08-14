@@ -14,7 +14,8 @@ interface MiniGlyphProps {
     | "display"
     | "players"
     | "speed"
-    | "target";
+    | "target"
+    | "streak";
   className?: string;
 }
 
@@ -32,6 +33,7 @@ const glyphPaths: Record<MiniGlyphProps["variant"], React.ReactNode> = {
   controls: <path d="M7 8h10M7 12h6M7 16h10M17 11l2 2-2 2" />,
   avatar: <path d="M12 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm-6 8a6 6 0 0 1 12 0" />,
   display: <path d="M5 7h14v9H5V7Zm4 13h6" />,
+  streak: <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" />,
   players: (
     <path d="M9 11a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm6 1a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM5.5 18a3.5 3.5 0 0 1 7 0m1 0a3 3 0 0 1 6 0" />
   ),

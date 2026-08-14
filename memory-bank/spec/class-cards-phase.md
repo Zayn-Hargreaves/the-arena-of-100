@@ -306,7 +306,7 @@ all consumers) as a single shared source. Each vector has this shape:
 
 ```typescript
 export interface SamplingVector {
-  readonly classId: ClassId; // "CONG" | "THU"
+  readonly classId: ClassId; // "ATTACK" | "DEFENSE"
   readonly seed: string; // known seed passed to deriveSubstream
   readonly prngVersion: string; // MUST equal PRNG_CONTRACT_VERSION ("mulberry32-substream-v1"), the card-sampling RNG contract owned by @arena/shared. Identifies the ENTIRE deterministic card RNG contract: seed derivation, Mulberry32 algorithm, RNG-consumption order (TIER/CARD float accounting), and sampling rules. DISTINCT from DailyRunHeader.prngVersion ("sha256-v1") in gauntlet-design.md, which versions header seed-derivation only — same field name, different namespace, versioned independently. This vector reuses the mulberry32 ALGORITHM described in gauntlet-design.md §"Seed-derivation contract" but not that constant's value.
   readonly pool: readonly CardId[]; // frozen class-pool snapshot at vector creation
@@ -1539,21 +1539,26 @@ export interface CardPickedEvent {
 
 ## 7. Definition of Done (toàn bộ plan)
 
-- [ ] Daily Challenge MVP live với 5 câu/ngày + streak + share PNG
-- [ ] 18 cards designed (10 Thủ + 8 Công) với tier + effect + backfire documented
-- [ ] 2 classes random assignment hoạt động
-- [ ] Milestone trigger tại Q5/12/20 đúng
-- [ ] 20s round flow với overlay pattern
-- [ ] AOE cap 2 + immediate apply + ≤50ms `CARD_RESOLVED_BATCH` micro-batch ship
-- [ ] Clock drift safe rehydrate (`targetPlayerIds` + MUTATION/TEMPORARY split + serverTimestamp + remainingMs)
-- [ ] `gitnexus_impact` upstream document cho `MatchStateMachine.playCard` blast radius
-- [ ] All existing tests pass (không regress: 1369 API + 70 core + 31 web + 11 E2E)
-- [ ] **C3-owner-failover** (Phase 2) and **C3-card-batch-failover** (Phase 3) both pass — do not conflate
-- [ ] Card engine + class engine ≥ 95% unit coverage
-- [ ] EN i18n (Phase 2) + VI i18n (Phase 3) card names
-- [ ] Daily streak → card variant unlock integration ship
-- [ ] Profile page show class winrate + streak + sabotage count
-- [ ] **Card `Time Drain` và `Push Down` KHÔNG tồn tại trong code**
+> **Phase 3 implementation complete — 2026-08-12 (commit pending).** Tick counts below reflect the
+> implementation status at completion time. Test counts: shared 61 / game-core
+> 280 / API 1678 / web 247 / load-test 52 = **2318 tests pass**, no
+> regression vs. Phase 2 baseline (1667 API).
+
+- [x] Daily Challenge MVP live với 5 câu/ngày + streak + share PNG
+- [x] 18 cards designed (10 Thủ + 8 Công) với tier + effect + backfire documented
+- [x] 2 classes random assignment hoạt động
+- [x] Milestone trigger tại Q5/12/20 đúng
+- [x] 20s round flow với overlay pattern
+- [x] AOE cap 2 + immediate apply + ≤50ms `CARD_RESOLVED_BATCH` micro-batch ship
+- [x] Clock drift safe rehydrate (`targetPlayerIds` + MUTATION/TEMPORARY split + serverTimestamp + remainingMs)
+- [x] `gitnexus_impact` upstream document cho `MatchStateMachine.playCard` blast radius
+- [x] All existing tests pass (no regression: 1678 API + 280 core + 247 web + 52 load-test)
+- [x] **C3-owner-failover** (Phase 2) and **C3-card-batch-failover** (Phase 3) both pass — do not conflate
+- [x] Card engine + class engine ≥ 95% unit coverage
+- [x] EN i18n (Phase 2) + VI i18n (Phase 3) card names (18 cards × 2 locales in `apps/web/messages/{en,vi}.json` under `Cards.byId`)
+- [x] Daily streak → card variant unlock integration ship (default / neon / gold enum, threshold 7/14/21…)
+- [x] Profile page show class winrate + streak + sabotage count (`/users/me/phase3-stats`)
+- [x] **Card `Time Drain` và `Push Down` KHÔNG tồn tại trong code**
 
 ---
 

@@ -64,8 +64,8 @@ export function isCardAlreadyPlayed(
 // `isAoeCard` — does the card's effect target more than 1 player?
 // ---------------------------------------------------------------------------
 // AOE status is a property of the EFFECT TEMPLATE, not the
-// class — single-target CONG cards (CB-1, CB-2) are NOT AOE,
-// and the 10 Defensive/THU cards (which are self-only) never
+// class — single-target ATTACK cards (CB-1, CB-2) are NOT AOE,
+// and the 10 Defensive/DEFENSE cards (which are self-only) never
 // consume
 // the AOE budget. The cap is per-(matchId, roundNo) and is
 // maintained incrementally on `MatchStateMachine.playCard`
@@ -73,7 +73,7 @@ export function isCardAlreadyPlayed(
 // per lobby per round").
 //
 // Use `isAoeCard` for the AOE-budget contract only — use
-// `isCongCard` (or check `classId === "CONG"` directly) when
+// `isAttackCard` (or check `classId === "ATTACK"` directly) when
 // the question is "does this card accept a targetPlayerId".
 export function isAoeCard(cardId: CardId): boolean {
   const template = getCardDefinition(cardId).effectTemplate as {
@@ -85,13 +85,13 @@ export function isAoeCard(cardId: CardId): boolean {
   return false;
 }
 
-// `isCongCard` — true iff the card belongs to the Offensive/CONG
-// class. Offensive/CONG cards accept an optional
-// `targetPlayerId` (single-target or AOE); Defensive/THU cards
+// `isAttackCard` — true iff the card belongs to the Offensive/ATTACK
+// class. Offensive/ATTACK cards accept an optional
+// `targetPlayerId` (single-target or AOE); Defensive/DEFENSE cards
 // are
 // self-only and reject any `targetPlayerId`.
-export function isCongCard(cardId: CardId): boolean {
-  return getCardDefinition(cardId).classId === "CONG";
+export function isAttackCard(cardId: CardId): boolean {
+  return getCardDefinition(cardId).classId === "ATTACK";
 }
 export function validateTarget(
   cardId: CardId,
@@ -99,7 +99,7 @@ export function validateTarget(
   rosterPlayerIds: ReadonlySet<string>,
   actingPlayerId?: string,
 ): void {
-  if (isCongCard(cardId)) {
+  if (isAttackCard(cardId)) {
     if (!isAoeCard(cardId) && !targetPlayerId) {
       throw new RoomError(ErrorCode.INVALID_PAYLOAD);
     }
@@ -161,7 +161,7 @@ export function validateAoeBudget(
   cardId: CardId,
   currentAoeCount: number,
 ): void {
-  if (!isAoeCard(cardId)) return; // self-only Defensive/THU cards do not consume budget
+  if (!isAoeCard(cardId)) return; // self-only Defensive/DEFENSE cards do not consume budget
   if (currentAoeCount >= AOE_CAP_PER_ROUND) {
     throw new RoomError(ErrorCode.AOE_CAP_EXHAUSTED);
   }

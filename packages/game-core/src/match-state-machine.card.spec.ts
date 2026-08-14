@@ -72,11 +72,11 @@ describe("classAssignment — server-side random per-match", () => {
     }
   });
 
-  it("only emits CONG or THU", () => {
+  it("only emits ATTACK or DEFENSE", () => {
     const m = makeMachine();
     const result = m.classAssignment(["p1", "p2", "p3"], "seed-B");
     for (const r of result) {
-      expect(["CONG", "THU"]).toContain(r.classId);
+      expect(["ATTACK", "DEFENSE"]).toContain(r.classId);
     }
   });
 
@@ -235,14 +235,14 @@ describe("playCard — card effect resolution", () => {
     m.classAssignment(["p1"], "mut-seed");
     const cards = m.pickOffer("p1", 5, "mut-1");
     // Pick an Offensive (CB-*) card for the MUTATION test.
-    const congCard = cards.find((c) => c.startsWith("CB-")) ?? cards[0]!;
-    m.pickCard("p1", congCard, 1);
+    const attackCard = cards.find((c) => c.startsWith("CB-")) ?? cards[0]!;
+    m.pickCard("p1", attackCard, 1);
     const effect: CardEffect = {
       kind: "TIMER_MODIFY",
       deltaMs: -5000,
       targetCount: 1,
     };
-    const result = m.playCard("p1", congCard, 1, effect, ["p2"], 1000);
+    const result = m.playCard("p1", attackCard, 1, effect, ["p2"], 1000);
     expect(result.expiresAtServer).toBeNull();
     expect(result.remainingMs).toBeNull();
     let resolved: { payload?: unknown; seqNo: number } | undefined;
@@ -265,8 +265,8 @@ describe("playCard — card effect resolution", () => {
     m.classAssignment(["p1"], "tmp-seed");
     const cards = m.pickOffer("p1", 5, "tmp-1");
     // Pick a Defensive (TN-*) card for the TEMPORARY OPTION_DISABLE test.
-    const thuCard = cards.find((c) => c.startsWith("TN-")) ?? cards[0]!;
-    m.pickCard("p1", thuCard, 1);
+    const defenseCard = cards.find((c) => c.startsWith("TN-")) ?? cards[0]!;
+    m.pickCard("p1", defenseCard, 1);
     const effect: CardEffect = {
       kind: "OPTION_DISABLE",
       indexes: [0, 2],
@@ -274,7 +274,7 @@ describe("playCard — card effect resolution", () => {
       availableAtResolution: 3,
       durationMs: 20000,
     };
-    const result = m.playCard("p1", thuCard, 1, effect, ["p1"], 5000);
+    const result = m.playCard("p1", defenseCard, 1, effect, ["p1"], 5000);
     expect(result.expiresAtServer).toBe(5000 + 20000);
     expect(result.remainingMs).toBe(20000);
     const events = m.getEventLog();
@@ -289,14 +289,14 @@ describe("playCard — card effect resolution", () => {
     const m = makeMachine();
     m.classAssignment(["p1"], "stamp-seed");
     const cards = m.pickOffer("p1", 5, "stamp-1");
-    const cong = cards.filter((c) => c.startsWith("CB-"))[0]!;
-    m.pickCard("p1", cong, 1);
+    const attackCard = cards.filter((c) => c.startsWith("CB-"))[0]!;
+    m.pickCard("p1", attackCard, 1);
     const effect: CardEffect = {
       kind: "TIMER_MODIFY",
       deltaMs: -1000,
       targetCount: 1,
     };
-    m.playCard("p1", cong, 1, effect, ["p2"], 1000, {
+    m.playCard("p1", attackCard, 1, effect, ["p2"], 1000, {
       eventId: "evt-r-1",
       commandId: "cmd-r-1",
     });
@@ -310,8 +310,8 @@ describe("playCard — card effect resolution", () => {
     const m = makeMachine();
     m.classAssignment(["p1"], "ae-seed");
     const cards = m.pickOffer("p1", 5, "ae-1");
-    const thuCard = cards.find((c) => c.startsWith("TN-")) ?? cards[0]!;
-    m.pickCard("p1", thuCard, 1);
+    const defenseCard = cards.find((c) => c.startsWith("TN-")) ?? cards[0]!;
+    m.pickCard("p1", defenseCard, 1);
     const effect: CardEffect = {
       kind: "OPTION_DISABLE",
       indexes: [0],
@@ -319,7 +319,7 @@ describe("playCard — card effect resolution", () => {
       availableAtResolution: 3,
       durationMs: 10000,
     };
-    m.playCard("p1", thuCard, 1, effect, ["p1"], 1000);
+    m.playCard("p1", defenseCard, 1, effect, ["p1"], 1000);
     const active = m.getActiveEffects("p1", 5000);
     expect(active.length).toBe(1);
     // serverNow=1000 + durationMs=10000 → expiresAtServer=11000
@@ -333,8 +333,8 @@ describe("playCard — card effect resolution", () => {
     const m = makeMachine();
     m.classAssignment(["p1"], "exp-seed");
     const cards = m.pickOffer("p1", 5, "exp-1");
-    const thuCard = cards.find((c) => c.startsWith("TN-")) ?? cards[0]!;
-    m.pickCard("p1", thuCard, 1);
+    const defenseCard = cards.find((c) => c.startsWith("TN-")) ?? cards[0]!;
+    m.pickCard("p1", defenseCard, 1);
     const effect: CardEffect = {
       kind: "OPTION_DISABLE",
       indexes: [0],
@@ -342,7 +342,7 @@ describe("playCard — card effect resolution", () => {
       availableAtResolution: 3,
       durationMs: 1000,
     };
-    m.playCard("p1", thuCard, 1, effect, ["p1"], 1000);
+    m.playCard("p1", defenseCard, 1, effect, ["p1"], 1000);
     const active = m.getActiveEffects("p1", 5000);
     expect(active.length).toBe(0); // expired
   });
@@ -351,14 +351,14 @@ describe("playCard — card effect resolution", () => {
     const m = makeMachine();
     m.classAssignment(["p1"], "mt-seed");
     const cards = m.pickOffer("p1", 5, "mt-1");
-    const congCard = cards.find((c) => c.startsWith("CB-")) ?? cards[0]!;
-    m.pickCard("p1", congCard, 1);
+    const attackCard = cards.find((c) => c.startsWith("CB-")) ?? cards[0]!;
+    m.pickCard("p1", attackCard, 1);
     const effect: CardEffect = {
       kind: "TIMER_MODIFY",
       deltaMs: -5000,
       targetCount: 1,
     };
-    m.playCard("p1", congCard, 1, effect, ["p2"], 1000);
+    m.playCard("p1", attackCard, 1, effect, ["p2"], 1000);
     expect(m.getActiveEffects("p1", 1000).length).toBe(0);
   });
 
@@ -366,8 +366,8 @@ describe("playCard — card effect resolution", () => {
     const m = makeMachine();
     m.classAssignment(["p1"], "ck-seed");
     const cards = m.pickOffer("p1", 5, "ck-1");
-    const thuCard = cards.find((c) => c.startsWith("TN-")) ?? cards[0]!;
-    m.pickCard("p1", thuCard, 1);
+    const defenseCard = cards.find((c) => c.startsWith("TN-")) ?? cards[0]!;
+    m.pickCard("p1", defenseCard, 1);
     const effect: CardEffect = {
       kind: "OPTION_DISABLE",
       indexes: [0],
@@ -375,7 +375,7 @@ describe("playCard — card effect resolution", () => {
       availableAtResolution: 3,
       durationMs: 10000,
     };
-    const result = m.playCard("p1", thuCard, 1, effect, ["p1"], 2000);
+    const result = m.playCard("p1", defenseCard, 1, effect, ["p1"], 2000);
     expect(result.remainingMs).toBe(10000);
     // Calling getActiveEffects 5s later with the SAME persisted
     // expiresAtServer recomputes remainingMs from serverNow.
@@ -389,8 +389,8 @@ describe("Phase 2 — rehydrate card state from event log", () => {
     const m1 = makeMachine();
     m1.classAssignment(["p1", "p2"], "rehydrate-seed");
     const cards = m1.pickOffer("p1", 5, "rh-1");
-    const thuCard = cards.find((c) => c.startsWith("TN-")) ?? cards[0]!;
-    m1.pickCard("p1", thuCard, 1);
+    const defenseCard = cards.find((c) => c.startsWith("TN-")) ?? cards[0]!;
+    m1.pickCard("p1", defenseCard, 1);
     const effect: CardEffect = {
       kind: "OPTION_DISABLE",
       indexes: [0],
@@ -398,7 +398,7 @@ describe("Phase 2 — rehydrate card state from event log", () => {
       availableAtResolution: 3,
       durationMs: 10000,
     };
-    m1.playCard("p1", thuCard, 1, effect, ["p1"], 1000);
+    m1.playCard("p1", defenseCard, 1, effect, ["p1"], 1000);
 
     const json = m1.serialize();
     const m2 = MatchStateMachine.deserialize(json);
@@ -462,11 +462,11 @@ describe("Phase 2 — cached state mirrors the event log", () => {
     const m = makeMachine();
     m.classAssignment(["p1"], "pp-seed");
     const cards = m.pickOffer("p1", 5, "pp-1");
-    const cong = cards.filter((c) => c.startsWith("CB-"));
+    const attackCard = cards.filter((c) => c.startsWith("CB-"));
     expect(m.getPickedCards("p1").size).toBe(0);
-    m.pickCard("p1", cong[0]!, 1);
+    m.pickCard("p1", attackCard[0]!, 1);
     expect(m.getPickedCards("p1").size).toBe(1);
-    expect(m.getPickedCards("p1").has(cong[0]!)).toBe(true);
+    expect(m.getPickedCards("p1").has(attackCard[0]!)).toBe(true);
     // played-cards only increments on the matching CARD_RESOLVED.
     expect(m.getPlayedCards("p1").size).toBe(0);
   });
@@ -475,20 +475,20 @@ describe("Phase 2 — cached state mirrors the event log", () => {
     const m = makeMachine();
     m.classAssignment(["p1"], "pp2-seed");
     const cards = m.pickOffer("p1", 5, "pp2-1");
-    const cong = cards.filter((c) => c.startsWith("CB-"))[0]!;
-    m.pickCard("p1", cong, 1);
+    const attackCard = cards.filter((c) => c.startsWith("CB-"))[0]!;
+    m.pickCard("p1", attackCard, 1);
     // The pick is pending until the resolver lands.
     expect(m.getPlayedCards("p1").size).toBe(0);
     m.playCard(
       "p1",
-      cong,
+      attackCard,
       1,
       { kind: "TIMER_MODIFY", deltaMs: -5000, targetCount: 1 },
       ["p2"],
       1000,
     );
     expect(m.getPlayedCards("p1").size).toBe(1);
-    expect(m.getPlayedCards("p1").has(cong)).toBe(true);
+    expect(m.getPlayedCards("p1").has(attackCard)).toBe(true);
   });
 
   it("getPlayedCards returns empty Set for an unknown player", () => {
@@ -500,14 +500,14 @@ describe("Phase 2 — cached state mirrors the event log", () => {
     const m = makeMachine();
     m.classAssignment(["p1"], "aoe-seed");
     const cards = m.pickOffer("p1", 5, "aoe-1");
-    const cong = cards.filter((c) => c.startsWith("CB-"))[0]!;
-    m.pickCard("p1", cong, 1);
+    const attackCard = cards.filter((c) => c.startsWith("CB-"))[0]!;
+    m.pickCard("p1", attackCard, 1);
     const effect: import("@arena/shared").CardEffect = {
       kind: "DELAY_RENDER",
       delayMs: 2000,
       targetCount: 3,
     };
-    m.playCard("p1", cong, 1, effect, ["p1", "p2", "p3"], 1000);
+    m.playCard("p1", attackCard, 1, effect, ["p1", "p2", "p3"], 1000);
     expect(m.getAoeCountForRound(0)).toBe(1); // currentRound.roundNo = 0
   });
 
@@ -515,40 +515,40 @@ describe("Phase 2 — cached state mirrors the event log", () => {
     const m = makeMachine();
     m.classAssignment(["p1"], "single-seed");
     const cards = m.pickOffer("p1", 5, "single-1");
-    const cong = cards.filter((c) => c.startsWith("CB-"))[0]!;
-    m.pickCard("p1", cong, 1);
+    const attackCard = cards.filter((c) => c.startsWith("CB-"))[0]!;
+    m.pickCard("p1", attackCard, 1);
     const effect: import("@arena/shared").CardEffect = {
       kind: "TIMER_MODIFY",
       deltaMs: -5000,
       targetCount: 1,
     };
-    m.playCard("p1", cong, 1, effect, ["p2"], 1000);
+    m.playCard("p1", attackCard, 1, effect, ["p2"], 1000);
     expect(m.getAoeCountForRound(0)).toBe(0); // single-target, not AOE
   });
 
   it("cached state survives serialize/deserialize round-trip", () => {
     const m1 = makeMachine();
     // Use the same seed for classAssignment + pickOffer so p1
-    // deterministically ends up in the CONG class — the
+    // deterministically ends up in the ATTACK class — the
     // round-trip persistence test only cares about state
     // preservation, not the specific card, but the test uses a
-    // CONG-only effect (DELAY_RENDER) below.
+    // ATTACK-only effect (DELAY_RENDER) below.
     m1.classAssignment(["p1", "p2"], "rt-1");
     const cards = m1.pickOffer("p1", 5, "rt-1");
-    const cong = cards.filter((c) => c.startsWith("CB-"))[0]!;
-    m1.pickCard("p1", cong, 1);
+    const attackCard = cards.filter((c) => c.startsWith("CB-"))[0]!;
+    m1.pickCard("p1", attackCard, 1);
     const effect: import("@arena/shared").CardEffect = {
       kind: "DELAY_RENDER",
       delayMs: 2000,
       targetCount: 3,
     };
-    m1.playCard("p1", cong, 1, effect, ["p1", "p2", "p3"], 1000);
+    m1.playCard("p1", attackCard, 1, effect, ["p1", "p2", "p3"], 1000);
 
     const json = m1.serialize();
     const m2 = MatchStateMachine.deserialize(json);
 
-    // played: p1 played `cong`
-    expect(m2.getPlayedCards("p1").has(cong)).toBe(true);
+    // played: p1 played `attackCard`
+    expect(m2.getPlayedCards("p1").has(attackCard)).toBe(true);
     // AOE: 1 AOE-shaped resolution in round 0
     expect(m2.getAoeCountForRound(0)).toBe(1);
   });
@@ -572,15 +572,15 @@ describe("CARD_RESOLVED event payload freeze", () => {
     const m = makeMachine();
     m.classAssignment(["p1"], "freeze-seed");
     const cards = m.pickOffer("p1", 5, "freeze-1");
-    const cong = cards.filter((c) => c.startsWith("CB-"))[0]!;
-    m.pickCard("p1", cong, 1);
+    const attackCard = cards.filter((c) => c.startsWith("CB-"))[0]!;
+    m.pickCard("p1", attackCard, 1);
     const effect: CardEffect = {
       kind: "HAND_DESTROY",
       count: 1,
       availableAtResolution: 0,
       destroyedCardIds: ["CB-1"],
     };
-    m.playCard("p1", cong, 1, effect, ["p2"], 1000);
+    m.playCard("p1", attackCard, 1, effect, ["p2"], 1000);
     let resolved: { payload?: unknown } | undefined;
     m.forEachEvent((entry) => {
       if (entry.type === "CARD_RESOLVED") resolved = entry;
@@ -601,14 +601,14 @@ describe("CARD_RESOLVED event payload freeze", () => {
     const m = makeMachine();
     m.classAssignment(["p1"], "freeze-mut");
     const cards = m.pickOffer("p1", 5, "freeze-mut-1");
-    const cong = cards.filter((c) => c.startsWith("CB-"))[0]!;
-    m.pickCard("p1", cong, 1);
+    const attackCard = cards.filter((c) => c.startsWith("CB-"))[0]!;
+    m.pickCard("p1", attackCard, 1);
     const effect: CardEffect = {
       kind: "TIMER_MODIFY",
       deltaMs: -5000,
       targetCount: 1,
     };
-    m.playCard("p1", cong, 1, effect, ["p2"], 1000);
+    m.playCard("p1", attackCard, 1, effect, ["p2"], 1000);
     let resolved: { payload?: unknown } | undefined;
     m.forEachEvent((entry) => {
       if (entry.type === "CARD_RESOLVED") resolved = entry;

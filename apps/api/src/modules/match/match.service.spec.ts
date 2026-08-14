@@ -3,7 +3,15 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { MatchOwnershipService } from "./match-ownership.service";
 import { NotFoundException } from "@nestjs/common";
-import { MatchStatus, PlayerStatus, ErrorCode } from "@arena/shared";
+import {
+  MatchStatus,
+  PlayerStatus,
+  ErrorCode,
+  MatchEventType,
+  type ClassAssignedEvent,
+  type CardEffect,
+  type CardId,
+} from "@arena/shared";
 import { MatchStateMachine } from "@arena/game-core";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -897,6 +905,214 @@ describe("MatchService", () => {
       >;
       expect(internalMap.has("m3")).toBe(true);
     });
+
+    it("is idempotent across concurrent finishMatch calls (winner vs loser state machine)", async () => {
+      // Two callers race to finish the same matchId with different
+      // winnerIds / state machines. The two-phase claim guards the
+      // invariant: the FIRST caller's pre-check `match.updateMany`
+      // returns count: 1 (claim succeeded), and the second caller's
+      // pre-check returns count: 0 (already FINISHED), so the second
+      // caller short-circuits to the canonical row without re-running
+      // score persistence or Redis cleanup.
+      //
+      // Expected `match.updateMany` call count: 3 — pre-check #1
+      // (claim winner), pre-check #2 (claim loser → count: 0 →
+      // short-circuit), then the in-transaction re-claim inside the
+      // winner's transaction (returns count: 0 — the row is now
+      // FINISHED so the filter rejects it).
+      //
+      // To force a true race — both calls reaching the transaction
+      // step before either resolves — we wrap $transaction in a
+      // barrier. Both finishMatch promises are created, then the
+      // barrier is released; whichever finishes `$transaction` first
+      // wins, the other observes the canonical match row.
+      const room = {
+        id: "r_concurrent",
+        players: [
+          { user: { id: "u1", username: "A" } },
+          { user: { id: "u2", username: "B" } },
+        ],
+      };
+      vi.mocked(prisma.room.findUnique).mockResolvedValue(room as any);
+      vi.mocked(prisma.match.create).mockResolvedValue({
+        id: "m_concurrent",
+        roomId: "r_concurrent",
+      } as any);
+      vi.mocked(prisma.matchPlayer.createMany).mockResolvedValue({
+        count: 2,
+      } as any);
+      vi.mocked(prisma.room.update).mockResolvedValue({} as any);
+      await service.createMatch("r_concurrent");
+
+      const canonicalMatch = {
+        id: "m_concurrent",
+        roomId: "r_concurrent",
+        status: MatchStatus.FINISHED,
+        winnerId: "u1",
+        endedAt: new Date(),
+      };
+      vi.mocked(prisma.match.findUnique).mockResolvedValue(
+        canonicalMatch as any,
+      );
+
+      // Both updateMany calls are mocked up front. The order in which
+      // they fire depends on whichever promise reaches $transaction
+      // first — the test does not assume which one wins. The third
+      // mock covers the in-transaction re-claim inside the winner's
+      // transaction, which returns count: 0 because the pre-claim
+      // already set the row to FINISHED (the `status: { not:
+      // FINISHED }` filter rejects it). Sorted counts must be
+      // {0, 0, 1} — one winner pre-claim, one loser pre-claim, one
+      // safety-net re-claim all returning the expected count.
+      vi.mocked(prisma.match.updateMany)
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 })
+        .mockResolvedValueOnce({ count: 0 });
+
+      // Synchronization barrier — $transaction awaits it before
+      // resolving, so both finishMatch promises queue at the
+      // transaction step and overlap on the status-transition /
+      // score-write phase.
+      let releaseBarrier!: () => void;
+      const barrier = new Promise<void>((resolve) => {
+        releaseBarrier = resolve;
+      });
+
+      vi.mocked(prisma.$transaction).mockImplementation(async (ops) => {
+        await barrier;
+        if (Array.isArray(ops)) return Promise.all(ops);
+        return ops(prisma);
+      });
+
+      const matchPlayerUpdateManyBefore = vi.mocked(
+        prisma.matchPlayer.updateMany,
+      ).mock.calls.length;
+      const redisDelBefore = vi.mocked(redis.del).mock.calls.length;
+
+      // Kick off both finishMatch calls BEFORE awaiting either.
+      const firstPromise = service.finishMatch(
+        "m_concurrent",
+        "u1",
+        "r_concurrent",
+      );
+      const secondPromise = service.finishMatch(
+        "m_concurrent",
+        "u2",
+        "r_concurrent",
+      );
+
+      // Release the barrier so both transactions resolve.
+      releaseBarrier();
+
+      const [firstResult, secondResult] = await Promise.all([
+        firstPromise,
+        secondPromise,
+      ]);
+
+      const matchPlayerUpdateManyAfter = vi.mocked(
+        prisma.matchPlayer.updateMany,
+      ).mock.calls.length;
+      const redisDelAfter = vi.mocked(redis.del).mock.calls.length;
+
+      // Both calls return the canonical match row.
+      expect(firstResult).toEqual(canonicalMatch);
+      expect(secondResult).toEqual(canonicalMatch);
+
+      // Three match.updateMany calls total. The pre-check runs for
+      // BOTH finishMatch callers (each awaits its own `updateMany`
+      // before short-circuiting). The explicit mocks cover those two
+      // pre-checks (count: 1 for the winner, count: 0 for the loser);
+      // the third call is the in-transaction re-claim inside the
+      // winner's transaction, which is mocked to return count: 0 —
+      // the row is already FINISHED by the pre-claim, so the
+      // `status: { not: FINISHED }` filter rejects it and Prisma
+      // reports count: 0 (this is the EXPECTED outcome; no warning
+      // is emitted by `finishMatch`). The exact order depends on
+      // which promise resolved first; the SORTED counts are always
+      // {0, 0, 1}.
+      expect(prisma.match.updateMany).toHaveBeenCalledTimes(3);
+      const updateResults = vi
+        .mocked(prisma.match.updateMany)
+        .mock.results.slice(0, 3)
+        .map((r) => r.value as Promise<{ count: number }>);
+      const counts = await Promise.all(updateResults).then((rows) =>
+        rows.map((r) => r.count).sort(),
+      );
+      expect(counts).toEqual([0, 0, 1]);
+
+      // The in-transaction re-claim returning count: 0 is the
+      // expected successful outcome — it must NOT block the
+      // winner's path through to Redis cleanup. Verify the
+      // winner-side Redis ops ran (see lines further down for the
+      // full Redis-cleanup assertion block).
+
+      // Phase 3 — data-field assertions for the two
+      // `matchPlayer.updateMany` calls. The two-phase claim ensures
+      // ONLY the successful claimant runs `buildScoreUpdateOps` and
+      // submits the score writes — the loser's pre-check returns
+      // count: 0 and short-circuits before any score work is done.
+      // Both finishMatch calls share the in-memory state machine
+      // (the test only calls `createMatch` once, so the event log is
+      // empty here). `cardsPlayed`/`classId` fall back to `0` / `null`
+      // for each player from the empty event log.
+      const playerUpdateCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
+        .calls;
+      expect(playerUpdateCalls.length).toBe(2);
+
+      const seenData = playerUpdateCalls.map(
+        (call) => call[0]?.data as Record<string, unknown>,
+      );
+      // Every data payload has the expected keys + types.
+      for (const data of seenData) {
+        expect(data).toMatchObject({
+          score: expect.any(Number) as unknown,
+          cardsPlayed: 0,
+          classId: null,
+        });
+      }
+      // Each (matchId, userId) pair was written exactly once — only
+      // the winner ran scoreUpdateOps, so no per-player duplicate
+      // writes occur.
+      const wherePairs = new Set(
+        playerUpdateCalls
+          .map(
+            (call) =>
+              (call[0]?.where as { matchId: string; userId: string }) ?? null,
+          )
+          .filter((p): p is { matchId: string; userId: string } => p !== null)
+          .map((p) => `${p.matchId}::${p.userId}`),
+      );
+      expect(wherePairs.has("m_concurrent::u1")).toBe(true);
+      expect(wherePairs.has("m_concurrent::u2")).toBe(true);
+
+      // Score persistence runs ONLY in the winner's path — the two-
+      // phase claim short-circuits the loser before any score work.
+      // The winner's `buildScoreUpdateOps` produces one
+      // matchPlayer.updateMany per player (2 here).
+      expect(matchPlayerUpdateManyAfter - matchPlayerUpdateManyBefore).toBe(2);
+
+      // Redis cleanup ran only on the winner's path — the winner reaches
+      // the post-transaction block which deletes stateKey + revisionKey
+      // (2 calls total). The loser returns early on `count: 0` before
+      // touching Redis, so the total delta is exactly the winner's 2
+      // calls (no doubling).
+      expect(redisDelAfter - redisDelBefore).toBe(2);
+      expect(redis.del).toHaveBeenCalledWith("match:state:m_concurrent");
+
+      // In-memory state-machine eviction. The WINNER's path reaches the
+      // post-transaction block and runs `stateMachines.delete(matchId)`
+      // — the only call site that touches the map. The loser's path
+      // is a pure early-return (sees `count: 0`); it does NOT also
+      // delete the entry, so the winner's `delete` is what makes the
+      // map end up empty after both calls resolve.
+      const internalMap = (service as any).stateMachines as Map<
+        string,
+        unknown
+      >;
+      // After both calls resolve, the state machine map MUST be empty.
+      // The loser's branch doesn't re-evict; the winner's branch does.
+      expect(internalMap.has("m_concurrent")).toBe(false);
+    });
   });
 
   describe("saveRound", () => {
@@ -1362,6 +1578,103 @@ describe("MatchService", () => {
       expect(u1Call![0].data.score).toBe(298);
       // u2: only round 1 correct = 130
       expect(u2Call![0].data.score).toBe(130);
+    });
+
+    it("counts CARD_RESOLVED events per player as cardsPlayed", async () => {
+      await setupMatch("m1", "r1", ["u1", "u2"]);
+
+      // Assign classes so playCard is allowed
+      const sm = await service.getStateMachine("m1");
+      sm!.classAssignment(["u1", "u2"], "seed-1");
+
+      // Play one round normally to get scores
+      await playRound("m1", [
+        { playerId: "u1", answer: "A", isCorrect: true, responseTimeMs: 200 },
+        { playerId: "u2", answer: "A", isCorrect: true, responseTimeMs: 8000 },
+      ]);
+
+      // Manually inject CARD_RESOLVED events via playCard.
+      // `playCard` takes a `CardId` (string) and a `CardEffect` keyed
+      // by `kind`; the legacy `attackCard` object + `{ type, power,
+      // targets }` payload predates the v1 card catalog and is
+      // rejected by the runtime guard.
+      const cardId = "CB-1" as CardId;
+      const effect: CardEffect = {
+        kind: "TIMER_MODIFY",
+        deltaMs: -5000,
+        targetCount: 1,
+      };
+      const result = sm!.playCard("u1", cardId, 1, effect, ["u2"], 1000);
+      // TIMER_MODIFY is a MUTATION effect — must NOT carry an
+      // expiresAtServer stamp on either the return value or the
+      // persisted event payload.
+      expect(result.expiresAtServer).toBeNull();
+      expect(result.remainingMs).toBeNull();
+      // The persisted CARD_RESOLVED event payload must also carry
+      // no expiry stamp (otherwise reconnect/rehydrate would
+      // resurrect a MUTATION effect's "ghost" timer).
+      const resolved = sm!
+        .getEventLog()
+        .find((e) => e.type === "CARD_RESOLVED");
+      expect(resolved).toBeDefined();
+      const payload = resolved!.payload as Record<string, unknown>;
+      expect(payload.expiresAtServer ?? null).toBeNull();
+      expect(payload.remainingMs ?? null).toBeNull();
+
+      await service.finishMatch("m1", "u1", "r1");
+
+      const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
+        .calls as any[][];
+      const u1Call = updateManyCalls.find((c) => c[0].where.userId === "u1");
+      const u2Call = updateManyCalls.find((c) => c[0].where.userId === "u2");
+      expect(u1Call![0].data.cardsPlayed).toBe(1);
+      expect(u2Call![0].data.cardsPlayed).toBe(0);
+    });
+
+    it("sets classId from CLASS_ASSIGNED event", async () => {
+      await setupMatch("m1", "r1", ["u1", "u2"]);
+
+      const sm = await service.getStateMachine("m1");
+      sm!.classAssignment(["u1", "u2"], "seed-2");
+
+      await playRound("m1", [
+        { playerId: "u1", answer: "A", isCorrect: true, responseTimeMs: 200 },
+        { playerId: "u2", answer: "A", isCorrect: true, responseTimeMs: 8000 },
+      ]);
+
+      await service.finishMatch("m1", "u1", "r1");
+
+      const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
+        .calls as any[][];
+      const u1Call = updateManyCalls.find((c) => c[0].where.userId === "u1");
+      const u2Call = updateManyCalls.find((c) => c[0].where.userId === "u2");
+      const classLog = sm!
+        .getEventLog()
+        .find((e) => e.type === MatchEventType.CLASS_ASSIGNED)!
+        .payload as ClassAssignedEvent;
+      const expectedById = new Map(
+        classLog.assignments.map((a) => [a.playerId, a.classId]),
+      );
+      expect(u1Call![0].data.classId).toBe(expectedById.get("u1"));
+      expect(u2Call![0].data.classId).toBe(expectedById.get("u2"));
+    });
+
+    it("defaults cardsPlayed to 0 and classId to null when no events exist", async () => {
+      await setupMatch("m1", "r1", ["u1", "u2"]);
+
+      // Don't assign classes or play cards — just answer
+      await playRound("m1", [
+        { playerId: "u1", answer: "A", isCorrect: true, responseTimeMs: 200 },
+        { playerId: "u2", answer: "A", isCorrect: true, responseTimeMs: 8000 },
+      ]);
+
+      await service.finishMatch("m1", "u1", "r1");
+
+      const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
+        .calls as any[][];
+      const u1Call = updateManyCalls.find((c) => c[0].where.userId === "u1");
+      expect(u1Call![0].data.cardsPlayed).toBe(0);
+      expect(u1Call![0].data.classId).toBeNull();
     });
   });
 

@@ -10,6 +10,7 @@ describe("UsersController", () => {
     getMyStats: any;
     getMyHistory: any;
     updateMyAvatar: any;
+    getClassStats: Pick<UsersService, "getClassStats">["getClassStats"];
   };
 
   const mockReq = {
@@ -25,6 +26,7 @@ describe("UsersController", () => {
       getMyStats: vi.fn(),
       getMyHistory: vi.fn(),
       updateMyAvatar: vi.fn(),
+      getClassStats: vi.fn(),
     };
     controller = new UsersController(service as unknown as UsersService);
   });
@@ -100,6 +102,27 @@ describe("UsersController", () => {
       });
 
       expect(service.updateMyAvatar).toHaveBeenCalledWith("u1", "tux");
+      expect(result).toEqual(expected);
+    });
+  });
+
+  describe("getMyClassStats", () => {
+    it("forwards userId from request to service", async () => {
+      const expected = {
+        stats: {
+          classWinrate: {
+            ATTACK: { plays: 12, wins: 3, winRate: 0.25 },
+            DEFENSE: { plays: 9, wins: 2, winRate: 0.22 },
+          },
+          currentStreak: 7,
+          cardsPlayed: 28,
+        },
+      };
+      vi.mocked(service.getClassStats).mockResolvedValue(expected);
+
+      const result = await controller.getMyClassStats(mockReq);
+
+      expect(service.getClassStats).toHaveBeenCalledWith("u1");
       expect(result).toEqual(expected);
     });
   });

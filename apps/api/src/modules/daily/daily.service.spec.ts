@@ -82,7 +82,22 @@ describe("DailyService", () => {
   let prisma: {
     dailyQuestion: { findFirst: any; findUnique: any };
     dailyAttempt: { count: any; create: any; findUnique: any };
+    userCardVariant: { findMany: any; upsert: any };
+    pendingCardVariantUnlock: {
+      create: any;
+      findMany: any;
+      update: any;
+    };
     $queryRaw: any;
+    // Phase 3 — the cosmetic unlock + drain now run AFTER the
+    // attempt-create transaction commits, so they invoke the same
+    // top-level `prisma` methods the tests mock. The `$transaction`
+    // mock only needs to wrap `dailyAttempt.create`; passing it
+    // through means every assertion (`expect(prisma.userCardVariant
+    // .upsert)…`, `prisma.pendingCardVariantUnlock.create…`,
+    // `prisma.pendingCardVariantUnlock.update…`) still observes the
+    // call without per-test rewrites.
+    $transaction: any;
   };
   let redis: {
     getJSON: any;
@@ -112,7 +127,23 @@ describe("DailyService", () => {
     prisma = {
       dailyQuestion: { findFirst: vi.fn(), findUnique: vi.fn() },
       dailyAttempt: { count: vi.fn(), create: vi.fn(), findUnique: vi.fn() },
+      userCardVariant: {
+        findMany: vi.fn().mockResolvedValue([]),
+        upsert: vi.fn(),
+      },
+      pendingCardVariantUnlock: {
+        create: vi.fn().mockResolvedValue({}),
+        // Default: no pending rows. Tests that exercise the drainer
+        // override this with a pre-seeded row.
+        findMany: vi.fn().mockResolvedValue([]),
+        update: vi.fn().mockResolvedValue({}),
+      },
       $queryRaw: vi.fn(),
+      $transaction: vi
+        .fn()
+        .mockImplementation(async (cb: any) =>
+          typeof cb === "function" ? cb(prisma) : Promise.all(cb),
+        ),
     };
     redis = {
       getJSON: vi.fn(),
@@ -847,6 +878,286 @@ describe("DailyService", () => {
       });
     });
 
+    // Phase 3 — card variant cosmetic unlock on streak milestones.
+    describe("card variant unlock (Phase 3)", () => {
+      it("does NOT unlock when streakAfter is below 7", async () => {
+        prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 5 });
+
+        const result = await service.submit("user-1", submitInput());
+
+        expect(result.streakAfter).toBe(6);
+        expect(result.unlockedVariant).toBeUndefined();
+        expect(prisma.userCardVariant.upsert).not.toHaveBeenCalled();
+      });
+
+      it("does NOT unlock when streakAfter === 0 (streak reset)", async () => {
+        prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 0 });
+
+        const result = await service.submit(
+          "user-1",
+          submitInput([
+            { answer: "A", responseTimeMs: 1000 },
+            { answer: "A", responseTimeMs: 1000 }, // wrong
+            { answer: "A", responseTimeMs: 1000 },
+            { answer: "B", responseTimeMs: 1000 },
+            { answer: "A", responseTimeMs: 1000 },
+          ]),
+        );
+
+        expect(result.streakAfter).toBe(0);
+        expect(result.unlockedVariant).toBeUndefined();
+        expect(prisma.userCardVariant.upsert).not.toHaveBeenCalled();
+      });
+
+      it("unlocks NEON when streakAfter hits 7 (first milestone)", async () => {
+        prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 6 });
+        // user owns only DEFAULT — nextCardVariant returns NEON.
+        prisma.userCardVariant.findMany.mockResolvedValue([]);
+        prisma.userCardVariant.upsert.mockResolvedValue({});
+
+        const result = await service.submit("user-1", submitInput());
+
+        expect(result.streakAfter).toBe(7);
+        expect(result.unlockedVariant).toEqual(
+          expect.objectContaining({ variantKey: "NEON" }),
+        );
+        expect(prisma.userCardVariant.upsert).toHaveBeenCalledTimes(1);
+      });
+
+      it("unlocks GOLD when streakAfter hits 14 (second milestone, NEON already owned)", async () => {
+        prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 13 });
+        prisma.userCardVariant.findMany.mockResolvedValue([
+          { variantKey: "DEFAULT" },
+          { variantKey: "NEON" },
+        ]);
+        prisma.userCardVariant.upsert.mockResolvedValue({});
+
+        const result = await service.submit("user-1", submitInput());
+
+        expect(result.streakAfter).toBe(14);
+        expect(result.unlockedVariant).toEqual(
+          expect.objectContaining({ variantKey: "GOLD" }),
+        );
+      });
+
+      it("returns NO unlockedVariant when user already owns every variant (cap)", async () => {
+        prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 20 });
+        prisma.userCardVariant.findMany.mockResolvedValue([
+          { variantKey: "DEFAULT" },
+          { variantKey: "NEON" },
+          { variantKey: "GOLD" },
+        ]);
+
+        const result = await service.submit("user-1", submitInput());
+
+        expect(result.streakAfter).toBe(21);
+        expect(result.unlockedVariant).toBeUndefined();
+        expect(prisma.userCardVariant.upsert).not.toHaveBeenCalled();
+      });
+
+      it("submit still succeeds when the unlock path throws (DB error)", async () => {
+        prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 6 });
+        prisma.userCardVariant.findMany.mockRejectedValue(new Error("DB down"));
+
+        // The submit MUST NOT fail — the unlock is best-effort.
+        const result = await service.submit("user-1", submitInput());
+
+        expect(result.streakAfter).toBe(7);
+        expect(result.unlockedVariant).toBeUndefined();
+        // The pending-grant row IS written in the same transaction as
+        // dailyAttempt.create — that is the durable recovery signal.
+        expect(prisma.pendingCardVariantUnlock.create).toHaveBeenCalledWith({
+          data: { userId: "user-1", dateKey: "2026-08-09", streakAfter: 7 },
+        });
+      });
+
+      it("retries the unlock on a subsequent submit by draining the pending grant (3 distinct users)", async () => {
+        // Three distinct users — each crosses the streakAfter === 7
+        // threshold on its own submit, then hits a transient DB
+        // error on the cosmetic unlock. Each user gets a pending
+        // grant row written in the same transaction as
+        // `dailyAttempt.create`. The drainer, which runs on every
+        // submit (regardless of `shouldAttemptUnlock`), picks the
+        // pending row up and re-attempts the upsert — except in
+        // this test we have `userCardVariant.findMany` still
+        // throwing, so the drain logs and the row stays pending.
+        //
+        // Using distinct users (not "user-1" three times) is
+        // defensive against a future mock setup that enforces
+        // the `@@unique([dateKey, userId])` constraint on
+        // `daily_attempts` — a retried submit for the same user on
+        // the same dateKey would throw P2002 and surface as a 409,
+        // not a real "retry the unlock" scenario.
+        //
+        // The session-token mock must mirror the userId for each
+        // call (otherwise `claims.sub !== userId` would 400 the
+        // submit before the unlock branch ever runs).
+        const users = ["user-1", "user-2", "user-3"];
+        prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 6 });
+        prisma.userCardVariant.findMany.mockRejectedValue(new Error("DB down"));
+        auth.verifyDailySession.mockImplementation((token: string) => ({
+          sub: token, // token carries the userId in this test
+          dateKey: "2026-08-09",
+          dailyQuestionId: QUESTION_SET_ID,
+          startedAtMs: NOW_MS,
+          iat: Math.floor(NOW_MS / 1000),
+        }));
+        const warnSpy = vi.spyOn(Logger.prototype, "warn");
+
+        for (const user of users) {
+          await service.submit(user, { ...submitInput(), sessionToken: user });
+        }
+
+        // All three submissions succeeded — the submit MUST NOT
+        // surface the unlock failure. (The `await` above would
+        // throw if any submit 400'd, so reaching this line is
+        // itself the assertion.)
+
+        // One pending-grant row written per user. The `streakAfter`
+        // for each user is 7 (threshold crossing).
+        expect(prisma.pendingCardVariantUnlock.create).toHaveBeenCalledTimes(3);
+        const createdCalls = vi.mocked(prisma.pendingCardVariantUnlock.create)
+          .mock.calls;
+        const createdUserIds = createdCalls.map(
+          (entry) => (entry[0] as { data: { userId: string } }).data.userId,
+        );
+        expect(createdUserIds.sort()).toEqual(["user-1", "user-2", "user-3"]);
+
+        // WARN logs emitted per user — three "persisting pending
+        // grant intent" warnings (the drainer also runs and hits
+        // the same DB error, but its WARN is "Pending card-variant
+        // unlock drain failed", which is intentionally a distinct
+        // message so operators can tell the trigger-side failure
+        // apart from the drain-side failure).
+        const pendingIntentWarns = warnSpy.mock.calls
+          .map((call) => call[0])
+          .filter(
+            (msg): msg is string =>
+              typeof msg === "string" &&
+              msg.includes("persisting pending grant intent"),
+          );
+        expect(pendingIntentWarns).toHaveLength(3);
+      });
+
+      // The drain runs on EVERY submit (regardless of
+      // `shouldAttemptUnlock`) so a streak reset zeroes
+      // `streakAfter`, so a user who tripped the unlock once and
+      // then missed a day must still recover the row. These three
+      // tests pin the drain contract:
+      //   1. a fresh pending row on the next submit gets the
+      //      idempotent upsert + `processedAt` mark;
+      //   2. a streak reset (streakAfter = 0, NOT a milestone)
+      //      does not strand the pending row;
+      //   3. a re-drain on the same submit finds `processedAt !=
+      //      null` and skips the upsert (idempotency).
+      it("drains a pending grant on a fresh submit (post-failure recovery)", async () => {
+        // Pre-seed one unprocessed pending row for user-1.
+        prisma.pendingCardVariantUnlock.findMany.mockResolvedValue([
+          {
+            id: "pending-1",
+            userId: "user-1",
+            dateKey: "2026-08-09",
+            streakAfter: 7,
+            createdAt: new Date(),
+            processedAt: null,
+          },
+        ]);
+        // owned variants = empty, so nextCardVariant = NEON.
+        prisma.userCardVariant.findMany.mockResolvedValue([]);
+        prisma.userCardVariant.upsert.mockResolvedValue({});
+        // The drain's in-transaction `SELECT ... FOR UPDATE` lock
+        // query must return the row (no concurrent drainer already
+        // processed it).
+        prisma.$queryRaw.mockResolvedValue([{ id: "pending-1" }]);
+
+        const result = await service.submit("user-1", submitInput());
+
+        // The drain attempted the idempotent upsert via
+        // `maybeUnlockCardVariantInTx`.
+        expect(prisma.userCardVariant.upsert).toHaveBeenCalled();
+        // The pending row was marked processed.
+        expect(prisma.pendingCardVariantUnlock.update).toHaveBeenCalledWith({
+          where: { id: "pending-1" },
+          data: { processedAt: expect.any(Date) as unknown },
+        });
+        // The submit still returns an `unlockedVariant` for THIS
+        // attempt (NEON) because the drain ran as part of the
+        // same transaction — a fresh submit on streakAfter = 6
+        // does NOT cross the threshold (6 % 7 !== 0), so the
+        // user-facing response shape's `unlockedVariant` is the
+        // drain's grant, not the threshold trigger.
+        expect(result.unlockedVariant).toEqual(
+          expect.objectContaining({ variantKey: "NEON" }),
+        );
+      });
+
+      it("drains a pending grant on a streak reset (not a milestone submit)", async () => {
+        // Pre-seed one unprocessed pending row.
+        prisma.pendingCardVariantUnlock.findMany.mockResolvedValue([
+          {
+            id: "pending-1",
+            userId: "user-1",
+            dateKey: "2026-08-09",
+            streakAfter: 7,
+            createdAt: new Date(),
+            processedAt: null,
+          },
+        ]);
+        prisma.userCardVariant.findMany.mockResolvedValue([]);
+        prisma.userCardVariant.upsert.mockResolvedValue({});
+        // Lock query inside the drain transaction returns the row.
+        prisma.$queryRaw.mockResolvedValue([{ id: "pending-1" }]);
+
+        // streakBefore = 6 → streakAfter = 0 (because the user
+        // got an answer wrong, even though they submitted). The
+        // submit's `shouldAttemptUnlock` is FALSE (0 % 7 === 0
+        // but 0 is not > 0). The drain MUST still fire.
+        const result = await service.submit(
+          "user-1",
+          submitInput([
+            { answer: "A", responseTimeMs: 1000 },
+            { answer: "A", responseTimeMs: 1000 }, // wrong
+            { answer: "A", responseTimeMs: 1000 },
+            { answer: "B", responseTimeMs: 1000 },
+            { answer: "A", responseTimeMs: 1000 },
+          ]),
+        );
+
+        expect(result.streakAfter).toBe(0);
+        // The drain STILL ran — pending grants must survive streak
+        // resets so a user who tripped the unlock once and then
+        // missed a day still recovers the row.
+        expect(prisma.userCardVariant.upsert).toHaveBeenCalled();
+        expect(prisma.pendingCardVariantUnlock.update).toHaveBeenCalledWith({
+          where: { id: "pending-1" },
+          data: { processedAt: expect.any(Date) as unknown },
+        });
+      });
+
+      it("filters out already-processed pending rows at the DB level (processedAt IS NULL)", async () => {
+        // The drainer delegates the "skip processed" decision to the
+        // database itself by issuing
+        // `findMany({ where: { processedAt: null } })`. We mock the
+        // result as an empty list to model "no unprocessed rows
+        // returned", and assert both the query's WHERE clause (the
+        // DB-level filter contract) and the absence of any
+        // cosmetic-side writes. A future regression that drops
+        // `processedAt: null` from the WHERE, or moves the drain
+        // out of its own transaction, would be caught here.
+        prisma.pendingCardVariantUnlock.findMany.mockResolvedValue([]);
+
+        await service.submit("user-1", submitInput());
+
+        expect(prisma.pendingCardVariantUnlock.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ processedAt: null }),
+          }),
+        );
+        expect(prisma.userCardVariant.upsert).not.toHaveBeenCalled();
+        expect(prisma.pendingCardVariantUnlock.update).not.toHaveBeenCalled();
+      });
+    });
+
     describe("answer-count mismatch", () => {
       // The DTO pins the array length, but the stored set is the real source
       // of truth. A shorter array used to index past the end and surface as a
@@ -1112,6 +1423,285 @@ describe("DailyService", () => {
       await expect(
         service.getLeaderboard({ dateKey: "2026-08-09", limit: 50 }),
       ).resolves.toMatchObject({ cached: false });
+    });
+
+    it("includes cardsPlayedThisWeek from the lateral join", async () => {
+      redis.getJSON.mockResolvedValue(null);
+      prisma.$queryRaw.mockResolvedValue([
+        {
+          user_id: "u1",
+          username: "Alice",
+          avatar: "jellyfrog",
+          score: 900,
+          correct_count: 5,
+          streak_after: 3,
+          completed_at: new Date("2026-08-09T09:00:00.000Z"),
+          cards_played_this_week: BigInt(14),
+        },
+      ]);
+
+      const result = await service.getLeaderboard({
+        dateKey: "2026-08-09",
+        limit: 50,
+      });
+
+      expect(result.items[0].cardsPlayedThisWeek).toBe(14);
+    });
+  });
+
+  // ---------------------------------------------------------
+  // Pending unlock drain edge cases
+  // ---------------------------------------------------------
+
+  describe("pending unlock drain edge cases", () => {
+    it("logs warning and continues when pending create throws non-P2002", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(NOW_ISO));
+
+      startedAt(NOW_MS - 5000);
+      redis.setIfAbsent.mockResolvedValue(true);
+
+      prisma.dailyQuestion.findUnique.mockResolvedValue({
+        id: QUESTION_SET_ID,
+        dateKey: "2026-08-09",
+        version: 1,
+        questions: QUESTIONS,
+        active: true,
+      });
+      prisma.dailyAttempt.create.mockImplementation(({ data }: any) => ({
+        ...data,
+        completedAt: new Date(NOW_ISO),
+      }));
+      // Previous day's attempt with streakAfter=6 → streakBefore=6
+      prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 6 });
+
+      // Force the unlock path to throw
+      prisma.userCardVariant.findMany.mockRejectedValue(
+        new Error("unlock db error"),
+      );
+      // Make pending create throw with a NON-P2002 error
+      prisma.pendingCardVariantUnlock.create.mockRejectedValue(
+        new Error("pending write failed"),
+      );
+
+      const result = await service.submit("user-1", submitInput());
+
+      // The submit should still succeed despite unlock + pending failures
+      expect(result).toHaveProperty("dateKey");
+      expect(Logger.prototype.warn).toHaveBeenCalledWith(
+        expect.stringContaining("unlock is now lost"),
+      );
+    });
+
+    it("treats P2002 on pending create as a silent no-op", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(NOW_ISO));
+
+      startedAt(NOW_MS - 5000);
+      redis.setIfAbsent.mockResolvedValue(true);
+
+      prisma.dailyQuestion.findUnique.mockResolvedValue({
+        id: QUESTION_SET_ID,
+        dateKey: "2026-08-09",
+        version: 1,
+        questions: QUESTIONS,
+        active: true,
+      });
+      prisma.dailyAttempt.create.mockImplementation(({ data }: any) => ({
+        ...data,
+        completedAt: new Date(NOW_ISO),
+      }));
+      // Previous day's attempt with streakAfter=6 → streakBefore=6
+      prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 6 });
+
+      // Force the unlock path to throw
+      prisma.userCardVariant.findMany.mockRejectedValue(
+        new Error("unlock db error"),
+      );
+      // Make pending create throw with P2002 (unique constraint)
+      const p2002Error = new Prisma.PrismaClientKnownRequestError(
+        "Unique constraint",
+        { code: "P2002", clientVersion: "0.0.0", meta: {} },
+      );
+      prisma.pendingCardVariantUnlock.create.mockRejectedValue(p2002Error);
+
+      const result = await service.submit("user-1", submitInput());
+
+      expect(result).toHaveProperty("dateKey");
+      // P2002 should NOT trigger the "unlock is now lost" warning
+      expect(Logger.prototype.warn).not.toHaveBeenCalledWith(
+        expect.stringContaining("unlock is now lost"),
+      );
+    });
+
+    it("returns null and logs warning when pending drain read fails", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(NOW_ISO));
+
+      startedAt(NOW_MS - 5000);
+      redis.setIfAbsent.mockResolvedValue(true);
+
+      prisma.dailyQuestion.findUnique.mockResolvedValue({
+        id: QUESTION_SET_ID,
+        dateKey: "2026-08-09",
+        version: 1,
+        questions: QUESTIONS,
+        active: true,
+      });
+      prisma.dailyAttempt.create.mockImplementation(({ data }: any) => ({
+        ...data,
+        completedAt: new Date(NOW_ISO),
+      }));
+      prisma.dailyAttempt.findUnique.mockResolvedValue(null);
+
+      // Make the drain read fail
+      prisma.pendingCardVariantUnlock.findMany.mockRejectedValue(
+        new Error("drain read failed"),
+      );
+
+      const result = await service.submit("user-1", submitInput());
+
+      expect(result).toHaveProperty("dateKey");
+      expect(Logger.prototype.warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Pending card-variant unlock drain read failed",
+        ),
+      );
+    });
+
+    it("leaves row unprocessed when individual drain fails", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(NOW_ISO));
+
+      startedAt(NOW_MS - 5000);
+      redis.setIfAbsent.mockResolvedValue(true);
+
+      prisma.dailyQuestion.findUnique.mockResolvedValue({
+        id: QUESTION_SET_ID,
+        dateKey: "2026-08-09",
+        version: 1,
+        questions: QUESTIONS,
+        active: true,
+      });
+      prisma.dailyAttempt.create.mockImplementation(({ data }: any) => ({
+        ...data,
+        completedAt: new Date(NOW_ISO),
+      }));
+      prisma.dailyAttempt.findUnique.mockResolvedValue(null);
+
+      // Return one pending row for drain
+      prisma.pendingCardVariantUnlock.findMany.mockResolvedValue([
+        {
+          id: "pending-1",
+          userId: "user-1",
+          streakAfter: 7,
+          createdAt: new Date(),
+        },
+      ]);
+      // The drain's `SELECT ... FOR UPDATE` lock query returns the
+      // row so the helper proceeds to the unlock + processedAt mark.
+      // We then force the unlock path to throw so the drainer logs
+      // its catch-block warning; the row is left unprocessed and
+      // `pendingCardVariantUnlock.update` MUST NOT be called.
+      prisma.$queryRaw.mockResolvedValue([{ id: "pending-1" }]);
+      prisma.userCardVariant.findMany.mockRejectedValue(
+        new Error("drain failed"),
+      );
+      // Pending update should NOT be called when the drain fails
+      prisma.pendingCardVariantUnlock.update.mockRejectedValue(
+        new Error("should not be called"),
+      );
+
+      const result = await service.submit("user-1", submitInput());
+
+      expect(result).toHaveProperty("dateKey");
+      expect(Logger.prototype.warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Pending card-variant unlock drain failed for pending row",
+        ),
+      );
+      // The row should NOT be marked as processed
+      expect(prisma.pendingCardVariantUnlock.update).not.toHaveBeenCalled();
+    });
+
+    it("handles drain read failure with a non-Error thrown value (String fallback)", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(NOW_ISO));
+
+      startedAt(NOW_MS - 5000);
+      redis.setIfAbsent.mockResolvedValue(true);
+
+      prisma.dailyQuestion.findUnique.mockResolvedValue({
+        id: QUESTION_SET_ID,
+        dateKey: "2026-08-09",
+        version: 1,
+        questions: QUESTIONS,
+        active: true,
+      });
+      prisma.dailyAttempt.create.mockImplementation(({ data }: any) => ({
+        ...data,
+        completedAt: new Date(NOW_ISO),
+      }));
+      prisma.dailyAttempt.findUnique.mockResolvedValue(null);
+
+      // Throw a string (not an Error instance) so the drainer's
+      // `drainReadErr instanceof Error` check falls through to
+      // `String(drainReadErr)`. The submit must still succeed and
+      // the logger must stringify the thrown value.
+      prisma.pendingCardVariantUnlock.findMany.mockRejectedValue(
+        "string-not-error" as unknown,
+      );
+
+      const result = await service.submit("user-1", submitInput());
+
+      expect(result).toHaveProperty("dateKey");
+      expect(Logger.prototype.warn).toHaveBeenCalledWith(
+        expect.stringContaining("string-not-error"),
+      );
+    });
+
+    it("skips a pending row when a concurrent drainer already processed it", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(NOW_ISO));
+
+      startedAt(NOW_MS - 5000);
+      redis.setIfAbsent.mockResolvedValue(true);
+
+      prisma.dailyQuestion.findUnique.mockResolvedValue({
+        id: QUESTION_SET_ID,
+        dateKey: "2026-08-09",
+        version: 1,
+        questions: QUESTIONS,
+        active: true,
+      });
+      prisma.dailyAttempt.create.mockImplementation(({ data }: any) => ({
+        ...data,
+        completedAt: new Date(NOW_ISO),
+      }));
+      prisma.dailyAttempt.findUnique.mockResolvedValue(null);
+
+      // Pre-seed one unprocessed pending row. The drain's
+      // `SELECT ... FOR UPDATE` lock query returns [] because a
+      // concurrent drainer already marked the row processed. The
+      // drainer MUST skip silently without calling
+      // `userCardVariant.upsert` or `pendingCardVariantUnlock.update`.
+      prisma.pendingCardVariantUnlock.findMany.mockResolvedValue([
+        {
+          id: "pending-1",
+          userId: "user-1",
+          streakAfter: 7,
+          createdAt: new Date(),
+          processedAt: null,
+        },
+      ]);
+      prisma.$queryRaw.mockResolvedValue([]);
+      prisma.userCardVariant.upsert.mockResolvedValue({});
+
+      const result = await service.submit("user-1", submitInput());
+
+      expect(result).toHaveProperty("dateKey");
+      expect(prisma.userCardVariant.upsert).not.toHaveBeenCalled();
+      expect(prisma.pendingCardVariantUnlock.update).not.toHaveBeenCalled();
     });
   });
 });

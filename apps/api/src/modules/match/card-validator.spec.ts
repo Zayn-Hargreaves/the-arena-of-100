@@ -75,11 +75,11 @@ describe("assertCardId (CARD_NOT_FOUND)", () => {
 describe("validateTarget", () => {
   const roster = new Set(["p1", "p2", "p3"]);
 
-  it("Offensive/CONG card with targetPlayerId in roster — accepted", () => {
+  it("Offensive/ATTACK card with targetPlayerId in roster — accepted", () => {
     expect(() => validateTarget("CB-1", "p2", roster)).not.toThrow();
   });
 
-  it("Offensive/CONG card with targetPlayerId NOT in roster — PLAYER_NOT_IN_ROOM", () => {
+  it("Offensive/ATTACK card with targetPlayerId NOT in roster — PLAYER_NOT_IN_ROOM", () => {
     try {
       validateTarget("CB-1", "ghost", roster);
       throw new Error("expected throw");
@@ -88,7 +88,7 @@ describe("validateTarget", () => {
     }
   });
 
-  it("Offensive/CONG non-AOE card with no target — INVALID_PAYLOAD", () => {
+  it("Offensive/ATTACK non-AOE card with no target — INVALID_PAYLOAD", () => {
     try {
       validateTarget("CB-1", undefined, roster);
       throw new Error("expected throw");
@@ -97,7 +97,7 @@ describe("validateTarget", () => {
     }
   });
 
-  it("Offensive/CONG card targeting self — INVALID_PAYLOAD", () => {
+  it("Offensive/ATTACK card targeting self — INVALID_PAYLOAD", () => {
     try {
       validateTarget("CB-1", "p1", roster, "p1");
       throw new Error("expected throw");
@@ -106,7 +106,7 @@ describe("validateTarget", () => {
     }
   });
 
-  it("Defensive/THU card with targetPlayerId — INVALID_PAYLOAD (self-only)", () => {
+  it("Defensive/DEFENSE card with targetPlayerId — INVALID_PAYLOAD (self-only)", () => {
     try {
       validateTarget("TN-1", "p2", roster);
       throw new Error("expected throw");
@@ -115,7 +115,7 @@ describe("validateTarget", () => {
     }
   });
 
-  it("Defensive/THU card with no target — accepted", () => {
+  it("Defensive/DEFENSE card with no target — accepted", () => {
     expect(() => validateTarget("TN-1", undefined, roster)).not.toThrow();
   });
 });
@@ -155,16 +155,16 @@ describe("validateAoeBudget", () => {
     }
   });
 
-  it("single-target Offensive/CONG cards (CB-1, CB-2) do not consume AOE budget", () => {
+  it("single-target Offensive/ATTACK cards (CB-1, CB-2) do not consume AOE budget", () => {
     // CB-1 / CB-2 have `targetCount: 1` — they target a single
     // opponent, not a roster, so the AOE cap must NOT apply.
     // Previously these were classified as AOE solely on the
-    // basis of `classId === "CONG"` (single-target AOE bug).
+    // basis of `classId === "ATTACK"` (single-target AOE bug).
     expect(() => validateAoeBudget("CB-1", AOE_CAP_PER_ROUND)).not.toThrow();
     expect(() => validateAoeBudget("CB-2", 1000)).not.toThrow();
   });
 
-  it("Defensive/THU cards never consume AOE budget", () => {
+  it("Defensive/DEFENSE cards never consume AOE budget", () => {
     expect(() => validateAoeBudget("TN-1", AOE_CAP_PER_ROUND)).not.toThrow();
     expect(() => validateAoeBudget("TN-10", 1000)).not.toThrow();
   });
@@ -190,7 +190,7 @@ describe("validateCardCommand — top-level", () => {
     actingPlayerId: "p1" as string,
   };
 
-  it("accepts a valid Offensive/CONG play", () => {
+  it("accepts a valid Offensive/ATTACK play", () => {
     const result = validateCardCommand(baseArgs);
     expect(result.cardId).toBe("CB-1");
     expect(result.template.kind).toBe("TIMER_MODIFY");
@@ -268,7 +268,7 @@ describe("validateCardCommand — top-level", () => {
     expect(result.template.kind).toBe("DELAY_RENDER");
   });
 
-  it("accepts a self-only Defensive/THU play with no target", () => {
+  it("accepts a self-only Defensive/DEFENSE play with no target", () => {
     const result = validateCardCommand({
       ...baseArgs,
       cardId: "TN-1",

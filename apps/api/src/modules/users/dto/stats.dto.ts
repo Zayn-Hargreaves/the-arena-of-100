@@ -1,5 +1,13 @@
 import { z } from "zod";
-import { ApiProperty } from "@nestjs/swagger";
+import { ApiExtraModels, ApiProperty, getSchemaPath } from "@nestjs/swagger";
+import {
+  classWinrateSchema,
+  classStatsSchema,
+  classStatsResponseSchema,
+  type ClassWinrate,
+  type ClassStats,
+  type ClassStatsResponse,
+} from "@arena/shared";
 
 export const userSummarySchema = z.object({
   id: z.string(),
@@ -100,4 +108,79 @@ export class StatsResponseDto implements StatsResponse {
 
   @ApiProperty({ type: StatsDto })
   stats!: StatsDto;
+}
+
+// ============================================================
+// Class stats — Profile stats additions (class winrate, streak,
+// cards played).
+//
+// The Zod schema + Zod-inferred TS types (ClassWinrate,
+// ClassStats, ClassStatsResponse) live in `@arena/shared` so the
+// web hook + this DTO consume the same single source of truth.
+// NestJS-specific Swagger DTOs + decorators stay local so the
+// API package remains the only place that knows about Swagger.
+// ============================================================
+
+// Re-export shared schemas + types for downstream API code that
+// imports them from `./dto` (e.g. users.controller.ts validates the
+// response shape with the same Zod schema).
+export { classWinrateSchema, classStatsSchema, classStatsResponseSchema };
+export type { ClassWinrate, ClassStats, ClassStatsResponse };
+
+export class ClassWinrateDto implements ClassWinrate {
+  @ApiProperty({
+    example: 12,
+    description: "FINISHED matches where the user was this class",
+  })
+  plays!: number;
+
+  @ApiProperty({ example: 3, description: "Wins while this class" })
+  wins!: number;
+
+  @ApiProperty({
+    example: 0.25,
+    description: "wins / plays (0 when plays = 0)",
+  })
+  winRate!: number;
+}
+
+@ApiExtraModels(ClassWinrateDto)
+export class ClassStatsDto implements ClassStats {
+  @ApiProperty({
+    description:
+      "Per-class winrate keyed by ClassId (ATTACK / DEFENSE). Both keys are optional; the value is absent when the user has no class-assigned matches yet.",
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      ATTACK: { allOf: [{ $ref: getSchemaPath(ClassWinrateDto) }] },
+      DEFENSE: { allOf: [{ $ref: getSchemaPath(ClassWinrateDto) }] },
+    },
+    example: {
+      ATTACK: { plays: 12, wins: 3, winRate: 0.25 },
+      DEFENSE: { plays: 9, wins: 2, winRate: 0.22 },
+    },
+  })
+  classWinrate!: {
+    ATTACK?: ClassWinrateDto;
+    DEFENSE?: ClassWinrateDto;
+  };
+
+  @ApiProperty({
+    example: 7,
+    description:
+      "Latest streakAfter from daily attempts (0 if the most-recent attempt is not UTC today or yesterday)",
+  })
+  currentStreak!: number;
+
+  @ApiProperty({
+    example: 28,
+    description:
+      "Total of MatchPlayer.cardsPlayed across the user's FINISHED matches (authoritative counter persisted at finishMatch)",
+  })
+  cardsPlayed!: number;
+}
+
+export class ClassStatsResponseDto implements ClassStatsResponse {
+  @ApiProperty({ type: ClassStatsDto })
+  stats!: ClassStatsDto;
 }

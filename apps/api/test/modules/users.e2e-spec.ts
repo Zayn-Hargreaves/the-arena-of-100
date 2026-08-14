@@ -204,4 +204,64 @@ describe("E2E /users", () => {
       expect(res.statusCode).toBe(400);
     });
   });
+
+  describe("GET /api/v1/users/me/class-stats", () => {
+    it("returns 401 when the Authorization header is missing", async () => {
+      const res = await testApp.inject("GET", "/api/v1/users/me/class-stats");
+      expect(res.statusCode).toBe(401);
+    });
+
+    it("returns 401 when the token is malformed", async () => {
+      const res = await testApp.inject("GET", "/api/v1/users/me/class-stats", {
+        headers: { authorization: "Bearer not-a-real-jwt" },
+      });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it("returns 404 when an authenticated userId has no user row", async () => {
+      // Authenticated but unknown userId — UsersService.getClassStats
+      // throws NotFoundException("USER_NOT_FOUND").
+      const headers = testApp.authedHeaders(
+        "ckldoesnotexist111222333",
+        "GhostPlayer",
+      );
+      const res = await testApp.inject("GET", "/api/v1/users/me/class-stats", {
+        headers,
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it("returns 200 with classWinrate, currentStreak, and cardsPlayed for a persisted demo user", async () => {
+      // The success case — UsersService.getClassStats returns the
+      // ClassStatsResponse envelope for any known user. The demo
+      // user MAY have zero matches; the response still carries the
+      // three required keys (classWinrate defaults to {}, the other
+      // two are 0), so the assertion is safe regardless of seed state.
+      const headers = testApp.authedHeaders(demoUserId, demoUsername);
+      const res = await testApp.inject("GET", "/api/v1/users/me/class-stats", {
+        headers,
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json<{
+        data: {
+          stats: {
+            classWinrate: Record<string, unknown>;
+            currentStreak: number;
+            cardsPlayed: number;
+          };
+        };
+      }>();
+      expect(body.data.stats).toHaveProperty("classWinrate");
+      // `typeof null === "object"` and `Array.isArray([]) === true`,
+      // so a bare `toBeTypeOf("object")` would accept either a
+      // null payload or an array. Tighten to a real Record<string,
+      // unknown>: non-null, non-array, and an object.
+      const classWinrate = body.data.stats.classWinrate;
+      expect(classWinrate).not.toBeNull();
+      expect(Array.isArray(classWinrate)).toBe(false);
+      expect(classWinrate).toBeTypeOf("object");
+      expect(typeof body.data.stats.currentStreak).toBe("number");
+      expect(typeof body.data.stats.cardsPlayed).toBe("number");
+    });
+  });
 });

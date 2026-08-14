@@ -18,10 +18,10 @@ import {
 import { PRNG_CONTRACT_VERSION } from "./cards";
 
 const LABELS = [
-  "cong-class-happy",
-  "thu-class-happy",
-  "shared-seed-cong",
-  "shared-seed-thu",
+  "attack-class-happy",
+  "defense-class-happy",
+  "shared-seed-attack",
+  "shared-seed-defense",
 ] as const;
 
 describe("sampling vectors — vectors exist and pin contract version", () => {

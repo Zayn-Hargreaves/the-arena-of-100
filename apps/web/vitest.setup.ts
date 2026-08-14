@@ -38,17 +38,19 @@ if (typeof HTMLDialogElement !== "undefined") {
 // Wrapped in vi.hoisted() so it is initialized before the hoisted vi.mock
 // factory executes; vi.fn() preserves per-spec override capability
 // (e.g., to assert against resolved locale strings rather than key paths).
-const { useTranslationsMock } = vi.hoisted(() => ({
-  useTranslationsMock: vi.fn(
-    (_namespace?: string) =>
-      (key: string, params?: Record<string, string | number>) => {
-        if (!params) return key;
-        return key.replace(/\{(\w+)\}/g, (_, name) =>
-          String(params[name] ?? ""),
-        );
-      },
-  ),
-}));
+const { useTranslationsMock } = vi.hoisted(() => {
+  const fn = vi.fn((_namespace?: string) => {
+    const t = (key: string, params?: Record<string, string | number>) => {
+      if (!params) return key;
+      return key.replace(/\{(\w+)\}/g, (_, name: string) =>
+        String(params[name] ?? ""),
+      );
+    };
+    t.has = (_key: string) => false;
+    return t;
+  });
+  return { useTranslationsMock: fn };
+});
 
 vi.mock("next-intl", async () => {
   const actual = await vi.importActual<typeof import("next-intl")>("next-intl");

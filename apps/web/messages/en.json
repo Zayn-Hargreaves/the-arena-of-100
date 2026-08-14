@@ -314,6 +314,21 @@
       "TECHNOLOGY": "Technology",
       "CULTURE": "Culture"
     },
+    "classStats": {
+      "title": "CLASS · STREAK · CARDS",
+      "streak": "CURRENT STREAK",
+      "streakHint": "Daily Challenge wins in a row",
+      "cardsPlayed": "CARDS PLAYED",
+      "cardsPlayedHint": "Total cards used across finished matches",
+      "bestClass": "BEST CLASS",
+      "bestClassHint": "Highest winrate between ATTACK / DEFENSE",
+      "matchesWon": "matches won",
+      "noClassMatches": "No class-assigned matches yet",
+      "class": {
+        "ATTACK": "Offensive",
+        "DEFENSE": "Defensive"
+      }
+    },
     "error": {
       "loadFailed": "Failed to load profile data.",
       "signinRequired": "Please sign in to view your profile.",
@@ -337,6 +352,13 @@
     },
     "accuracyShort": "Accuracy",
     "empty": "No leaderboard data yet.",
+    "cardsThisWeek": "Cards played this week",
+    "cardsLabel": "{count, plural, one {🃏 # card} other {🃏 # cards}}",
+    "cardsTier": {
+      "COMMON": "Common card tier — light runner",
+      "RARE": "Rare card tier — active player",
+      "EPIC": "Epic card tier — card-slinging shark"
+    },
     "error": {
       "loadFailed": "Failed to load leaderboard.",
       "rowUnavailable": "Leaderboard row unavailable.",
@@ -511,13 +533,25 @@
       "copied": "Copied!",
       "error": "Couldn't share — try again",
       "textTitle": "Arena of 100 — Daily",
-      "textScore": "Score",
-      "textStreak": "Streak"
+      "textScore": "Score: {score} ({correct}/{total})",
+      "textStreak": "Streak: {streak}"
+    },
+    "cardVariant": {
+      "unlockedTitle": "Card Variant Unlocked!",
+      "unlockedSubtitle": "Your daily streak crossed a new threshold — celebrate!",
+      "headline": "You just unlocked the {variant} variant of {cardName}.",
+      "shareHeadline": "I just unlocked a new card variant!",
+      "close": "Close"
     },
     "leaderboard": {
       "title": "Today's Leaderboard",
       "error": "Leaderboard unavailable.",
-      "empty": "No scores yet today — be the first."
+      "empty": "No scores yet today — be the first.",
+      "cardsTier": {
+        "COMMON": "Common card tier — light runner",
+        "RARE": "Rare card tier — active player",
+        "EPIC": "Epic card tier — card-slinging shark"
+      }
     },
     "gate": {
       "title": "Choose your nickname",
@@ -566,8 +600,8 @@
     "noCards": "No cards in hand",
     "milestoneOffer": "Milestone round — pick a card to play",
     "classes": {
-      "CONG": "Offensive",
-      "THU": "Defensive"
+      "ATTACK": "Offensive",
+      "DEFENSE": "Defensive"
     },
     "tiers": {
       "COMMON": "Common",
@@ -582,6 +616,80 @@
       "commandIdConflict": "Conflict on this command",
       "aoeCapExhausted": "AOE cap exhausted",
       "invalidCommandId": "Invalid command id"
+    },
+    "byId": {
+      "CB-1": {
+        "name": "Time Freeze",
+        "description": "Reduce a target's answer window by 5s."
+      },
+      "CB-2": {
+        "name": "Sabotage Q",
+        "description": "Delay a target's question render by 3s."
+      },
+      "CB-3": {
+        "name": "Burn Card",
+        "description": "Destroy 1 random card from the target's hand."
+      },
+      "CB-4": {
+        "name": "Question Lock",
+        "description": "Lock a target's options for 2s."
+      },
+      "CB-5": {
+        "name": "Brain Fog",
+        "description": "Apply Brain Fog visual overlay for 5s."
+      },
+      "CB-6": {
+        "name": "Fake Flag",
+        "description": "Show 1 fake flag option to a target for 8s."
+      },
+      "CB-7": {
+        "name": "Question Flip",
+        "description": "Flip a target's question semantics for 10s."
+      },
+      "CB-8": {
+        "name": "Mass Distraction",
+        "description": "Delay up to 3 targets' question render by 2s."
+      },
+      "TN-1": {
+        "name": "50:50",
+        "description": "Disable 2 random wrong options for the round."
+      },
+      "TN-2": {
+        "name": "Double Points",
+        "description": "Double your score for the next correct answer."
+      },
+      "TN-3": {
+        "name": "Hint Reveal",
+        "description": "Reveal the first character of the correct answer."
+      },
+      "TN-4": {
+        "name": "Shield",
+        "description": "Block 1 incoming card for the next round."
+      },
+      "TN-5": {
+        "name": "Time Bonus",
+        "description": "Add 5s to your per-question answer deadline."
+      },
+      "TN-6": {
+        "name": "Second Chance",
+        "description": "Allow yourself to re-submit before the deadline."
+      },
+      "TN-7": {
+        "name": "Deep Read",
+        "description": "Apply Deep Read visual overlay for 5s."
+      },
+      "TN-8": {
+        "name": "Time Bonus II",
+        "description": "Add 5s to your per-question answer deadline (alt)."
+      },
+      "TN-9": {
+        "name": "Brain Burst",
+        "description": "x1.5 score for the next correct answer."
+      },
+      "TN-10": {
+        "name": "Perfect Recall",
+        "description": "Disable 1 random wrong option for the round."
+      }
     }
   }
 }

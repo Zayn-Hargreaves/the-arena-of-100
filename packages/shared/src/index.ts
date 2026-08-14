@@ -35,6 +35,11 @@ export {
   canonicalSerialize,
 } from "./cards.sampling-vector-helpers";
 
+// Class stats — profile stats contracts (class winrate + streak +
+// cards played). Shared between `@arena/api` (DTO + Zod parser)
+// and `@arena/web` (useClassStats hook + profile page).
+export * from "./class-stats";
+
 // Game Constants (defined in its own file so schemas.ts can
 // import GAME_CONFIG.MAX_ROUNDS without creating a circular
 // dependency through the index barrel).
