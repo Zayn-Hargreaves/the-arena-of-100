@@ -546,28 +546,30 @@ export function applySnapshotState(
                   )
                 : 0,
               bannedTopics:
-                (state.topicVoting?.matchId === data.matchId &&
-                state.topicVoting.bannedTopics.length > 0
-                  ? state.topicVoting.bannedTopics
-                  : data.bannedTopics) ?? [],
+                (data.bannedTopics !== undefined
+                  ? data.bannedTopics
+                  : state.topicVoting?.matchId === data.matchId
+                    ? state.topicVoting.bannedTopics
+                    : []) ?? [],
               activeTopics:
-                (state.topicVoting?.matchId === data.matchId &&
-                state.topicVoting.activeTopics.length > 0
-                  ? state.topicVoting.activeTopics
-                  : data.activeTopics) ?? [],
+                (data.activeTopics !== undefined
+                  ? data.activeTopics
+                  : state.topicVoting?.matchId === data.matchId
+                    ? state.topicVoting.activeTopics
+                    : []) ?? [],
               isFinished: data.status !== MatchStatus.TOPIC_VOTING,
             }
           : state.topicVoting?.matchId === data.matchId
             ? {
                 ...state.topicVoting,
                 bannedTopics:
-                  state.topicVoting.bannedTopics.length > 0
-                    ? state.topicVoting.bannedTopics
-                    : (data.bannedTopics ?? []),
+                  (data.bannedTopics !== undefined
+                    ? data.bannedTopics
+                    : state.topicVoting.bannedTopics) ?? [],
                 activeTopics:
-                  state.topicVoting.activeTopics.length > 0
-                    ? state.topicVoting.activeTopics
-                    : (data.activeTopics ?? []),
+                  (data.activeTopics !== undefined
+                    ? data.activeTopics
+                    : state.topicVoting.activeTopics) ?? [],
                 isFinished:
                   data.status !== MatchStatus.TOPIC_VOTING
                     ? true

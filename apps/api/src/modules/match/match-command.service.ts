@@ -704,6 +704,14 @@ export class MatchCommandService implements OnModuleDestroy {
     server: Server,
   ): Promise<void> {
     const updatedState = stateMachine.getState();
+    if (
+      updatedState.status !== MatchStatus.TOPIC_VOTING ||
+      (typeof updatedState.phaseEndsAt === "number" &&
+        updatedState.phaseEndsAt <= Date.now())
+    ) {
+      return;
+    }
+
     const candidateTopics = updatedState.candidateTopics ?? [];
     const votes = updatedState.topicVotes ?? {};
     const voteCounts = tallyTopicVotes(votes, candidateTopics);
@@ -724,6 +732,14 @@ export class MatchCommandService implements OnModuleDestroy {
   ): Promise<CommandOutcome> {
     const stateMachine = await this.matchService.getStateMachine(env.matchId);
     if (!stateMachine) return "DUPLICATE_EVENT";
+
+    const state = stateMachine.getState();
+    if (
+      state.status !== MatchStatus.TOPIC_VOTING ||
+      (typeof state.phaseEndsAt === "number" && state.phaseEndsAt <= Date.now())
+    ) {
+      return "DUPLICATE_EVENT";
+    }
 
     let hasCanonicalEvent = false;
     stateMachine.forEachEvent((entry) => {

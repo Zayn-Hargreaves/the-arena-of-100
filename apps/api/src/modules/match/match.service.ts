@@ -105,6 +105,7 @@ export class MatchService implements OnModuleDestroy {
   private readonly persistChains = new Map<string, Promise<void>>();
   private readonly pendingGenerationInvalidations = new Set<string>();
   private readonly invalidationTimers = new Map<string, NodeJS.Timeout>();
+  private readonly invalidationEpochs = new Map<string, number>();
   private isDestroyed = false;
 
   constructor(
@@ -458,6 +459,8 @@ export class MatchService implements OnModuleDestroy {
   }
 
   async invalidateMatchGeneration(matchId: string): Promise<void> {
+    const epoch = (this.invalidationEpochs.get(matchId) ?? 0) + 1;
+    this.invalidationEpochs.set(matchId, epoch);
     this.pendingGenerationInvalidations.add(matchId);
     const existingTimer = this.invalidationTimers.get(matchId);
     if (existingTimer) {
@@ -465,17 +468,23 @@ export class MatchService implements OnModuleDestroy {
       this.invalidationTimers.delete(matchId);
     }
 
-    await this.executeGenerationInvalidation(matchId, 1);
+    await this.executeGenerationInvalidation(matchId, 1, epoch);
   }
 
   private async executeGenerationInvalidation(
     matchId: string,
     attempt: number,
+    epoch: number,
   ): Promise<void> {
-    if (this.isDestroyed) return;
+    if (this.isDestroyed || this.invalidationEpochs.get(matchId) !== epoch) {
+      return;
+    }
 
     try {
       await this.redis.incr(matchGenerationKey(matchId));
+      if (this.isDestroyed || this.invalidationEpochs.get(matchId) !== epoch) {
+        return;
+      }
       if (attempt > 1) {
         try {
           await this.redis.del(matchCacheKey(matchId));
@@ -488,23 +497,30 @@ export class MatchService implements OnModuleDestroy {
           // best-effort
         }
       }
-      this.pendingGenerationInvalidations.delete(matchId);
-      const timer = this.invalidationTimers.get(matchId);
-      if (timer) {
-        clearTimeout(timer);
-        this.invalidationTimers.delete(matchId);
-      }
-    } catch (err) {
-      if (attempt >= MAX_GENERATION_INVALIDATION_ATTEMPTS) {
-        this.logger.error(
-          `finishMatch: exceeded max retry attempts (${MAX_GENERATION_INVALIDATION_ATTEMPTS}) to increment match cache generation for ${matchId}`,
-          err,
-        );
+      if (this.invalidationEpochs.get(matchId) === epoch) {
         this.pendingGenerationInvalidations.delete(matchId);
         const timer = this.invalidationTimers.get(matchId);
         if (timer) {
           clearTimeout(timer);
           this.invalidationTimers.delete(matchId);
+        }
+      }
+    } catch (err) {
+      if (this.isDestroyed || this.invalidationEpochs.get(matchId) !== epoch) {
+        return;
+      }
+      if (attempt >= MAX_GENERATION_INVALIDATION_ATTEMPTS) {
+        this.logger.error(
+          `finishMatch: exceeded max retry attempts (${MAX_GENERATION_INVALIDATION_ATTEMPTS}) to increment match cache generation for ${matchId}`,
+          err,
+        );
+        if (this.invalidationEpochs.get(matchId) === epoch) {
+          this.pendingGenerationInvalidations.delete(matchId);
+          const timer = this.invalidationTimers.get(matchId);
+          if (timer) {
+            clearTimeout(timer);
+            this.invalidationTimers.delete(matchId);
+          }
         }
         return;
       }
@@ -513,12 +529,17 @@ export class MatchService implements OnModuleDestroy {
         `finishMatch: failed to increment match cache generation for ${matchId} (attempt ${attempt}), scheduling retry`,
         err,
       );
-      if (this.isDestroyed) return;
+      if (this.isDestroyed || this.invalidationEpochs.get(matchId) !== epoch) {
+        return;
+      }
 
       const delayMs = Math.min(100 * Math.pow(2, attempt - 1), 2000);
       const timer = setTimeout(() => {
+        if (this.invalidationEpochs.get(matchId) !== epoch) {
+          return;
+        }
         this.invalidationTimers.delete(matchId);
-        void this.executeGenerationInvalidation(matchId, attempt + 1);
+        void this.executeGenerationInvalidation(matchId, attempt + 1, epoch);
       }, delayMs);
       this.invalidationTimers.set(matchId, timer);
     }
@@ -530,6 +551,7 @@ export class MatchService implements OnModuleDestroy {
       clearTimeout(timer);
     }
     this.invalidationTimers.clear();
+    this.invalidationEpochs.clear();
   }
 
   // Get match by ID (with short-lived Redis cache to prevent DB connection spikes)

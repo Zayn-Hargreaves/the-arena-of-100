@@ -105,10 +105,11 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
       {/* Pre-Match Topic Ban Draft Overlay */}
       {Boolean(
         match?.id &&
+        topicVoting &&
+        topicVoting.matchId === match.id &&
         (match.status === "TOPIC_VOTING" ||
-          (topicVoting &&
-            topicVoting.matchId === match.id &&
-            (!topicVoting.isFinished || match.status === "COUNTDOWN"))),
+          !topicVoting.isFinished ||
+          match.status === "COUNTDOWN"),
       ) && <TopicVotingOverlay />}
 
       {/* Drop-in spectator banner: a thin top-of-page strip telling the

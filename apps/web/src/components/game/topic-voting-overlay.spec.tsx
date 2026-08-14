@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import React from "react";
 import { TopicVotingOverlay } from "./topic-voting-overlay";
@@ -81,5 +81,38 @@ describe("TopicVotingOverlay", () => {
     const scienceCard = screen.getByText("Khoa Học & Tự Nhiên");
     fireEvent.click(scienceCard);
     expect(voteBanTopicMock).not.toHaveBeenCalled();
+  });
+
+  it("traps focus and focuses the first interactive element when hydrated after initial empty render", () => {
+    useSocketStore.setState({ topicVoting: null });
+    const { rerender } = render(<TopicVotingOverlay />);
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    act(() => {
+      useSocketStore.setState({
+        topicVoting: {
+          matchId: "m1",
+          candidateTopics: ["SCIENCE", "HISTORY", "TECH"],
+          endsAt: Date.now() + 10000,
+          durationMs: 10000,
+          myVotedTopic: null,
+          voteCounts: { SCIENCE: 0, HISTORY: 0, TECH: 0 },
+          totalVotes: 0,
+          bannedTopics: [],
+          activeTopics: [],
+          isFinished: false,
+        },
+      });
+    });
+
+    rerender(<TopicVotingOverlay />);
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toBeInTheDocument();
+
+    const buttons = screen.getAllByRole("button");
+    expect(buttons.length).toBeGreaterThan(0);
+    expect(document.activeElement).toBe(buttons[0]);
   });
 });

@@ -470,13 +470,13 @@ not the language:
 
 If we want a tangible "ceiling moved from 8k → 12k VU" story for interviews:
 
-| Lever                                       | Effort       | Expected gain                                      | Risk                                                         |
-| ------------------------------------------- | ------------ | -------------------------------------------------- | ------------------------------------------------------------ |
-| **Heartbeat 10s → 25s**                     | Done         | 60% fewer heartbeat emits; 8k presence gate passed | Presence expiry detection rises from ~20s to ~40s            |
-| **Cache match state in Redis with TTL=5s**  | 1-2 hours    | Skip DB lookup on read paths / absorb burst reads  | Stale-cache window of 5s (acceptable for quiz game)          |
-| **`createMany` batching for answer writes** | Already done | One transaction persists round + all answers       | `saveRoundAndAnswers()` already calls `tx.answer.createMany` |
+| Lever                                                      | Effort       | Expected gain                                      | Risk / Implementation notes                                                                                                                                       |
+| ---------------------------------------------------------- | ------------ | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Heartbeat 10s → 25s**                                    | Done         | 60% fewer heartbeat emits; 8k presence gate passed | Presence expiry detection rises from ~20s to ~40s                                                                                                                 |
+| **Cache match state in Redis (generation-based + TTL=5s)** | Done         | Skip DB lookup on read paths / absorb burst reads  | Generation key (`match:gen:<id>`) checked on read; finishMatch invalidates with exponential backoff retry (max 5 attempts) and deletes cache on retry attempt > 1 |
+| **`createMany` batching for answer writes**                | Already done | One transaction persists round + all answers       | `saveRoundAndAnswers()` already calls `tx.answer.createMany`                                                                                                      |
 
-Recommend picking **#2** if we revisit: reduces read load during rapid reconnections and absorbs setup read spikes without adding complex invalidation.
+Generation-based match caching is implemented in `MatchService`: absorbs read spikes during rapid reconnections and setup, backed by serialized retry invalidation (max 5 attempts, exponential backoff) ensuring consistency on match completion.
 
 ### Methodology follow-up (NOT code change)
 

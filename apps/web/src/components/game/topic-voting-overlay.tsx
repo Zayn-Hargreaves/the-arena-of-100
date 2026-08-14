@@ -85,7 +85,13 @@ export function TopicVotingOverlay() {
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
 
+  const isPhaseValid =
+    !match || match.status === "TOPIC_VOTING" || match.status === "COUNTDOWN";
+  const isOpen = Boolean(topicVoting && isPhaseValid);
+
   useEffect(() => {
+    if (!isOpen) return;
+
     previousActiveElement.current =
       document.activeElement as HTMLElement | null;
 
@@ -134,7 +140,7 @@ export function TopicVotingOverlay() {
         previousActiveElement.current.focus();
       }
     };
-  }, []);
+  }, [isOpen]);
 
   useEffect(() => {
     if (!topicVoting) return;
@@ -152,14 +158,7 @@ export function TopicVotingOverlay() {
     return () => clearInterval(interval);
   }, [topicVoting?.endsAt]);
 
-  if (!topicVoting) return null;
-  if (
-    match &&
-    match.status !== "TOPIC_VOTING" &&
-    match.status !== "COUNTDOWN"
-  ) {
-    return null;
-  }
+  if (!isOpen || !topicVoting) return null;
 
   const {
     candidateTopics,

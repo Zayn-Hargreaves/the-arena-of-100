@@ -939,10 +939,11 @@ describe("MatchCommandService (B4a)", () => {
           topic: "SCIENCE",
         },
       };
+      const OWNER = { fence: 5, leaseValue: "node-a:5" };
       const spy = vi.spyOn(service, "applyVoteBanTopicAuthoritative");
       matchService.getStateMachine.mockResolvedValue(undefined);
       await expect(applyPrivate(service, env, server)).resolves.toBe("RETRY");
-      expect(spy).toHaveBeenCalledWith(env, expect.anything(), server);
+      expect(spy).toHaveBeenCalledWith(env, OWNER, server);
     });
   });
 
@@ -1110,8 +1111,72 @@ describe("MatchCommandService (B4a)", () => {
 
       expect(outcome2).toBe("DUPLICATE_SUBMISSION");
       expect(smExpired.getState().topicVotes).toEqual({});
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
       expect(
         recorder.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY).length,
+      ).toBe(0);
+    });
+
+    it("DUPLICATE_EVENT: a redelivered canonical vote emits summary during active voting, and suppresses broadcast after deadline", async () => {
+      // 1. Redelivery during active TOPIC_VOTING
+      redis.sismember.mockResolvedValue(true);
+      const smActive = new MatchStateMachine("m1", "r1", [
+        {
+          id: "p1",
+          name: "Alice",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+      ]);
+      smActive.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"]);
+      smActive.voteBanTopic("p1", "SCIENCE", { eventId: "evt-vote-1" });
+      matchService.getStateMachine.mockResolvedValue(smActive);
+      matchService.getRoomIdByMatchId.mockResolvedValue("r1");
+      const recorder = makeMockServer();
+
+      const outcome1 = await service.applyVoteBanTopicAuthoritative(
+        voteEnv("evt-vote-1", "p1", "SCIENCE"),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome1).toBe("DUPLICATE_EVENT");
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+      expect(
+        recorder.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY).length,
+      ).toBe(1);
+
+      // 2. Redelivery after phase deadline
+      const smExpired = new MatchStateMachine("m1", "r1", [
+        {
+          id: "p1",
+          name: "Alice",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+      ]);
+      smExpired.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"], 1);
+      smExpired.voteBanTopic("p1", "SCIENCE", { eventId: "evt-vote-1" });
+      (smExpired as any).state.phaseEndsAt = Date.now() - 1000;
+      matchService.getStateMachine.mockResolvedValue(smExpired);
+      const recorderExpired = makeMockServer();
+
+      const outcome2 = await service.applyVoteBanTopicAuthoritative(
+        voteEnv("evt-vote-1", "p1", "SCIENCE"),
+        OWNER,
+        recorderExpired.server,
+      );
+
+      expect(outcome2).toBe("DUPLICATE_EVENT");
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+      expect(
+        recorderExpired.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY).length,
       ).toBe(0);
     });
   });
