@@ -357,6 +357,7 @@ export async function playerFlow({
   let lastSeq = 0; // delta-replay cursor for REQUEST_SNAPSHOT on reconnect
   let finished = false;
   let eliminated = false;
+  let demotedToSpectator = false;
 
   // Track the highest event seqNo we've applied so a reconnect can resync
   // with a tight delta instead of a full snapshot.
@@ -377,6 +378,16 @@ export async function playerFlow({
     client.on(ServerEvent.EVENT_BATCH, noteSeq);
     client.on(ServerEvent.ROOM_JOINED, (p) => {
       if (p && p.roomId) roomId = p.roomId;
+      // A player that arrives after START_MATCH is admitted as SPECTATOR
+      // by the server (drop-in policy). Treating it as a real player and
+      // submitting answers would yield SPECTATOR_CANNOT_ANSWER rejections
+      // — correct server behavior, but pure k6 scenario noise. Mirror a
+      // real client: a user who joined too late just watches the rest of
+      // the match, so we stop sending answers and record the demotion.
+      if (p && p.joinedAs === "SPECTATOR") {
+        demotedToSpectator = true;
+        M.playersDemotedToSpectator.add(1);
+      }
     });
 
     client.on(ServerEvent.MATCH_STARTED, (p) => {
@@ -394,7 +405,7 @@ export async function playerFlow({
     client.on(ServerEvent.ROUND_STARTED, (p) => {
       M.roundStarted.add(1);
       const mid = (p && p.matchId) || matchId;
-      if (!mid || finished || eliminated || !p) return;
+      if (!mid || finished || eliminated || demotedToSpectator || !p) return;
 
       const sid = newSubmissionId(vu, p.roundNo);
       pending[sid] = Date.now();

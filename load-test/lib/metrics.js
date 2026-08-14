@@ -32,6 +32,15 @@ export const wsUnexpectedDisconnect = new Counter("ws_unexpected_disconnect");
 // struggling under connect burst even if the run ends green.
 export const handshakeRetries = new Counter("ws_handshake_retries");
 
+// Player admitted as SPECTATOR because they arrived after START_MATCH.
+// This is a k6-scenario quirk (multi-room ramps players concurrently with
+// host START_MATCH), not a server bug — the server correctly demotes them
+// to a read-only role. We surface it as its own counter so app_error_rate
+// stays clean for real server-rejected requests.
+export const playersDemotedToSpectator = new Counter(
+  "players_demoted_to_spectator",
+);
+
 // App-level error rate: false on each successful handshake step, true on
 // each failure. Threshold target is config.errorRateMax (Plan A: < 1%).
 export const appErrorRate = new Rate("app_error_rate");

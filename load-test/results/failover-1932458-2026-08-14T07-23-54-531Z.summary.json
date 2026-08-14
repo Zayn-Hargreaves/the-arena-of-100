@@ -1,0 +1,23 @@
+{
+  "verdict": "FAIL",
+  "reasons": [
+    {
+      "code": "invalid_artifact",
+      "detail": "t_recover must be > 0 (got 0)"
+    }
+  ],
+  "derived": {
+    "tRecoverDerived": null,
+    "timeToRecoverMs": null,
+    "dedupedEventCount": 1,
+    "canonicalRoundEvents": [
+      {
+        "t": 40289,
+        "eventId": "cmssmg2hy04jf01n89e7vn78w:r1",
+        "roundIndex": 1,
+        "fence": 1
+      }
+    ]
+  },
+  "aborted": null
+}
