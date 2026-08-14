@@ -280,16 +280,18 @@ truth: `load-test/MULTI-BASELINE.md` §C3-owner-failover.
 
 ## What Is Not Done Yet
 
-- Single-room Plan A baseline: the 100-user table + P2 (spectator transport
-  split) conclusion in `load-test/README.md` are still unfilled. This is the
-  only k6 evidence still missing — multi-node k6 at 800→3200 VU ran for real
-  on 2026-07-28 (see that milestone + `load-test/results/`). The Plan A
-  harness itself (scenarios, readiness barrier, `sample-monitoring.mjs`,
-  `validate-results.mjs`, `% of 1 core` CPU convention) has been ready
-  end-to-end since before that run.
+- ~~Single-room Plan A baseline: the 100-user table + P2 (spectator transport
+  split) conclusion in `load-test/README.md`~~ ✅ **Filled 2026-08-14** — P2 =
+  **No**. 100 VU on 3-node multi-node cluster, 0 errors, answer p95 = 95.7ms,
+  balanced distribution (35/32/35 across api-1/2/3). 10× latency headroom,
+  5× CPU headroom, 2× RSS headroom, Redis cleanup clean. Defer spectator
+  split until `app_error_rate ≥ 0.5%` OR `answer p95 > 500ms` at any
+  sustained load point. See `load-test/README.md` §Baseline results +
+  `progress.md` §2026-08-14 (Plan A milestone).
 - **Distributed match runtime (Stage B + C harness) — implemented, tested,
-  and measured multi-node (k6, 2026-07-28); **C3-owner-failover** RUN still
-  pending.** Stage B shipped horizontal scale +
+  and measured multi-node (k6, 2026-07-28); **C3-owner-failover** RUN done
+  2026-08-14 (mechanics PASS, oracle verdict INCONCLUSIVE on full
+  `t_recover`).** Stage B shipped horizontal scale +
   failover: Redis Socket.IO adapter (cross-node fan-out), fenced owner-lease
   (`match:owner:<id>` = `nodeId:fence`, 15s TTL + 5s heartbeat), boot/orphan
   takeover with `resumeMatchLoop` rebuilding timers from persisted
@@ -303,15 +305,21 @@ truth: `load-test/MULTI-BASELINE.md` §C3-owner-failover.
   16 vitest cases). Architecture narrative + evidence plan:
   [`docs/architecture-distributed.md`](../docs/architecture-distributed.md).
   **2026-07-28: the multi-node k6 RUN is done** (800→3200 VU, see the
-  2026-07-28 milestone above + `load-test/results/`); still outstanding: the
-  **C3-owner-failover** RUN (baseline owner-lease timeline numbers) and the single-room
-  100-user Plan A baseline table + P2 conclusion in `load-test/README.md`.
+  2026-07-28 milestone above + `load-test/results/`).
+  **2026-08-14: the C3-owner-failover RUN is done** — `api-1:1 → api-2:2`
+  fence flip in 15s, answer p95 recovered to 90ms post-failover, no zombie
+  writes. Oracle verdict INCONCLUSIVE because orchestrator's
+  `--k6-wait-ms=600000` deadline tripped before k6 wrote a clean summary;
+  full `t_recover` measurement is a follow-up
+  (`--k6-wait-ms 900000` to downgrade INCONCLUSIVE → PASS). See
+  `load-test/MULTI-BASELINE.md` §C3-owner-failover + `progress.md`
+  §2026-08-14 (C3 milestone).
   (**C3-card-batch-failover** is a separate Phase 3 gate — do not credit here.)
 - Server-side delta push on auth reconnect still full SNAPSHOT (`auth.handler.syncReconnection`). Client-driven delta after re-auth is shipped: socket store calls `REQUEST_SNAPSHOT(matchId, lastSeenSeqNo)` on `AUTHENTICATED` when match context survives disconnect.
 - Spectator transport split for scale.
 - Full WCAG / Playwright / rematch work.
 - **Class + Card Hybrid (Phase 1-3, locked 2026-07-30, implementation complete 2026-08-12)**: Phase 3 shipped days 25-36 of the locked 8-week plan; spec §7 all 15 DoD items ticked. Source of truth: `memory-bank/spec/class-cards-phase.md`. Phase 1 (Daily Challenge) Week 1-2 ✅; Phase 2 (Class+Card) Week 3-6 ✅; Phase 3 (Integration + VI i18n) Week 7-8 ✅.
-  - **C3-owner-failover RUN** still pending (distinct from Phase 3 `C3-card-batch-failover` which is shipped as a chaos oracle).
+  - **C3-owner-failover RUN** mechanics PASS (oracle INCONCLUSIVE on `t_recover` — follow-up).
 - **Operational follow-ups still pending** (post-Phase-3 hardening queued, not in scope of the locked 8-week plan):
   - `pending_card_variant_unlocks` row written by `DailyService.submit` when the in-tx `userCardVariant.upsert` fails. The unlock error is caught and swallowed before the submit transaction returns, so `dailyAttempt.create` always commits regardless of the unlock's outcome. The pending insert is best-effort: a thrown non-P2002 error on it is logged and the transaction still commits (rare loss path). The next submit drains unprocessed rows (`processedAt IS NULL`) via `drainPendingCardVariantUnlocksInTx` and attempts the idempotent `userCardVariant.upsert`. Idempotency: pending-table `@@unique([userId, dateKey, streakAfter])` (a re-attempt at the same unlock boundary on the same `dateKey` hits P2002 and is swallowed as a no-op; a future submit on a different day that crosses the same `streakAfter` after the previous grant was processed can create a fresh pending row); `user_card_variants` `@@unique([userId, cardId, variantKey])` (drainer's `userCardVariant.upsert` is idempotent on replay). Migration: `20260812130000_phase3_pending_card_variant_unlock/migration.sql`.
 

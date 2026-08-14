@@ -41,10 +41,10 @@
 
 ## Immediate Priority Queue
 
-1. Commit the 2026-08-12 Phase 3 implementation (complete locally 2026-08-12; commit pending) in two groups: (a) DB + service + UI (Days 25-31), (b) chaos oracle + i18n + ship prep (Days 32-36). Finish each group fully before running `gitnexus_detect_changes()`; run it immediately before that group's commit. Verify only expected symbols + execution flows changed. Do NOT mix groups across commits.
-2. Phase 3 → Phase 4 transition: decide whether to ship (a) Ban/pick draft (orthogonal, already deferred), (b) Elo + matchmaking queue (needs Daily + Card data thật), (c) Redis HA (Sentinel) — pick from `career-assessment.md` interview-prep list.
-3. **C3-owner-failover** RUN still pending — distinct from Phase 3 C3-card-batch-failover (which is implementation-complete as chaos oracle).
-4. Plan A single-room 100-user baseline table — still a P2 deliverable.
+1. ~~Commit the 2026-08-12 Phase 3 implementation~~ ✅ Done (PR #88 merged as `6e9179e`).
+2. **Phase 3 → Phase 4 transition**: evidence gates (Plan A + C3-owner-failover) **filled 2026-08-14**. Next decision: pick from (a) Ban/pick draft (orthogonal), (b) Elo + matchmaking queue (needs Daily + Card data thật), (c) Redis HA (Sentinel) — see `career-assessment.md` interview-prep list.
+3. **C3-owner-failover** mechanics PASS (kill+flip+fence increment+latency recovery all green); verdict INCONCLUSIVE on full `t_recover` measurement (k6 deadline issue). Follow-up: re-run with `--kill-at-round 1 --k6-wait-ms 900000` to downgrade INCONCLUSIVE → PASS. Source of truth: `load-test/MULTI-BASELINE.md` §C3-owner-failover.
+4. **Plan A single-room 100-user baseline** ✅ filled 2026-08-14 — `load-test/README.md` §Baseline results table + P2 conclusion = **No spectator transport split**. 100 VU on multi-node, 0 errors, answer p95 = 95.7ms, balanced 3-node distribution.
 5. Optional fixes (cheap, not urgent): Prisma `IN (NULL)` no-ops; `rooms.status` index; harness polling → WS-event wait (needed only to measure >3200).
 6. Historical roadmap reference only: xem `progress.md` §Content Roadmap v1 nếu
    cần rationale cũ của roadmap 2026-07-28 đã bị supersede.
