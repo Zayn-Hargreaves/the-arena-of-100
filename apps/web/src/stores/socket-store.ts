@@ -24,6 +24,9 @@ import {
   type RoundEndedPayload,
   type MatchFinishedPayload,
   type PlayerEliminatedPayload,
+  type TopicVotingStartedPayload,
+  type TopicVotingSummaryPayload,
+  type TopicVotingFinishedPayload,
   ErrorCode,
 } from "@arena/shared";
 import { API_URL } from "@/lib/api";
@@ -57,6 +60,9 @@ import {
   applySnapshotState,
   applyEventBatchState,
   applyUnauthorizedErrorState,
+  applyTopicVotingStartedState,
+  applyTopicVotingSummaryState,
+  applyTopicVotingFinishedState,
 } from "./socket-store.updaters";
 
 export const useSocketStore = create<SocketState>((set, get) => ({
@@ -70,8 +76,10 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   userRole: null,
   room: null,
   match: null,
+  topicVoting: null,
   lastAnswerResult: null,
   pendingAnswer: null,
+
   remainingCount: null,
   lastSeenSeqNo: 0,
   error: null,
@@ -250,6 +258,33 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       (data: RoomPresenceUpdatedPayload) => {
         if (get().socket !== newSocket) return;
         set((state) => applyRoomPresenceUpdatedState(state, data));
+      },
+    );
+
+    newSocket.on(
+      ServerEvent.TOPIC_VOTING_STARTED,
+      (data: TopicVotingStartedPayload) => {
+        if (get().socket !== newSocket) return;
+        set((state) => applyTopicVotingStartedState(state, data));
+        console.log("🗳️ Topic voting started:", data);
+      },
+    );
+
+    newSocket.on(
+      ServerEvent.TOPIC_VOTING_SUMMARY,
+      (data: TopicVotingSummaryPayload) => {
+        if (get().socket !== newSocket) return;
+        set((state) => applyTopicVotingSummaryState(state, data));
+        console.log("🗳️ Topic voting summary:", data);
+      },
+    );
+
+    newSocket.on(
+      ServerEvent.TOPIC_VOTING_FINISHED,
+      (data: TopicVotingFinishedPayload) => {
+        if (get().socket !== newSocket) return;
+        set((state) => applyTopicVotingFinishedState(state, data));
+        console.log("🗳️ Topic voting finished:", data);
       },
     );
 
@@ -666,7 +701,28 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     emitIfConnected(socket, ClientEvent.START_MATCH, { roomId });
   },
 
+  // Vote Ban Topic
+  voteBanTopic: (matchId: string, topic: string) => {
+    const { socket, topicVoting } = get();
+    if (!socket?.connected) return;
+
+    if (topicVoting && topicVoting.matchId === matchId) {
+      set({
+        topicVoting: {
+          ...topicVoting,
+          myVotedTopic: topic,
+        },
+      });
+    }
+
+    emitIfConnected(socket, ClientEvent.VOTE_BAN_TOPIC, {
+      matchId,
+      topic,
+    });
+  },
+
   // Submit Answer
+
   submitAnswer: (matchId: string, roundNo: number, answer: string) => {
     const { socket, pendingAnswer } = get();
     if (!socket?.connected) return null;

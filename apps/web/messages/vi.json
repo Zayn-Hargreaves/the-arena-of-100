@@ -230,8 +230,21 @@
       "bannerBody": "Bạn vào trận đấu này với tư cách khán giả muộn. Chức năng trả lời đã bị tắt — bạn chỉ có thể xem.",
       "infoTitle": "Drop-in spectating",
       "infoBody": "Trận đấu đã bắt đầu trước khi bạn vào. Bạn đang xem trực tiếp với tư cách khán giả."
+    },
+    "topicVoting": {
+      "title": "BÌNH CHỌN CẤM CHỦ ĐỀ",
+      "subtitle": "Chọn 1 chủ đề bạn muốn cấm thi đấu (Top 2 nhiều phiếu nhất sẽ bị loại)",
+      "votingEndsIn": "Thời gian bình chọn còn lại:",
+      "banButton": "CẤM CHỦ ĐỀ",
+      "banned": "ĐÃ CẤM",
+      "active": "HOẠT ĐỘNG",
+      "voted": "ĐÃ CHỌN",
+      "votesCount": "{count, plural, =0 {0 phiếu} one {1 phiếu} other {# phiếu}}",
+      "bannedTopicsHeader": "KẾT QUẢ CẤM CHỦ ĐỀ",
+      "startingMatch": "Đang chuẩn bị vào trận đấu..."
     }
   },
+
   "Result": {
     "reportLabel": "BẢN BÁO CÁO SAU TRẬN ĐẤU",
     "title": "KẾT QUẢ ĐẤU TRƯỜNG",

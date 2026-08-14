@@ -195,3 +195,56 @@ export function emitMatchDisconnected(
     reason: "DISCONNECTED",
   });
 }
+
+// ---------------------------------------------------------------------------
+// Topic Ban Voting Emitters (Pre-match Draft)
+// ---------------------------------------------------------------------------
+
+export function emitTopicVotingStarted(
+  server: Server,
+  roomId: string,
+  matchId: string,
+  candidateTopics: string[],
+  endsAt: number,
+  durationMs: number = GAME_CONFIG.TOPIC_VOTING_DURATION_MS,
+) {
+  const channel = getRoomChannel(roomId);
+  server.to(channel).emit(ServerEvent.TOPIC_VOTING_STARTED, {
+    matchId,
+    candidateTopics,
+    endsAt,
+    durationMs,
+  });
+}
+
+export function emitTopicVotingSummary(
+  server: Server,
+  roomId: string,
+  matchId: string,
+  voteCounts: Record<string, number>,
+  totalVotes: number,
+) {
+  const channel = getRoomChannel(roomId);
+  server.to(channel).emit(ServerEvent.TOPIC_VOTING_SUMMARY, {
+    matchId,
+    voteCounts,
+    totalVotes,
+  });
+}
+
+export function emitTopicVotingFinished(
+  server: Server,
+  roomId: string,
+  matchId: string,
+  bannedTopics: string[],
+  activeTopics: string[],
+  voteCounts: Record<string, number>,
+) {
+  const channel = getRoomChannel(roomId);
+  server.to(channel).emit(ServerEvent.TOPIC_VOTING_FINISHED, {
+    matchId,
+    bannedTopics,
+    activeTopics,
+    voteCounts,
+  });
+}

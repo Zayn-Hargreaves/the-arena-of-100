@@ -19,6 +19,8 @@ import {
   emitPlayerEliminated,
   emitRoundEnded,
   emitRoundStarted,
+  emitTopicVotingStarted,
+  emitTopicVotingFinished,
 } from "./game-loop.events";
 import { recoverRoundEnd, type RoundEndContext } from "./match-round-recovery";
 import {
@@ -95,11 +97,42 @@ export class MatchRoundRunner {
       updatedAt: Date.now(),
     });
 
-    // 2. Transition to COUNTDOWN
-    stateMachine.transition(MatchStatus.COUNTDOWN);
-
     // F2: Init question tracking
     this.timers.initUsedQuestions(matchId);
+
+    const room = await this.roomService.getRoom(roomId);
+    const isAllCategory = !room.category || room.category === "ALL";
+
+    if (isAllCategory) {
+      const candidates = stateMachine.initTopicVoting();
+      const startOutcome = await this.matchService.persistStateMachine(matchId);
+      if (startOutcome !== "APPLIED") {
+        this.logger.warn(
+          `startMatchLoop: persist ${startOutcome} for ${matchId} — no confirmed canonical write, skipping TOPIC_VOTING broadcast`,
+        );
+        return;
+      }
+
+      emitTopicVotingStarted(
+        server,
+        roomId,
+        matchId,
+        candidates,
+        stateMachine.getState().phaseEndsAt ??
+          Date.now() + GAME_CONFIG.TOPIC_VOTING_DURATION_MS,
+        GAME_CONFIG.TOPIC_VOTING_DURATION_MS,
+      );
+
+      this.armPhaseTimer(
+        matchId,
+        this.topicVotingTimerCallback(matchId, roomId, server),
+        GAME_CONFIG.TOPIC_VOTING_DURATION_MS,
+      );
+      return;
+    }
+
+    // 2. Transition to COUNTDOWN
+    stateMachine.transition(MatchStatus.COUNTDOWN);
 
     // F6: Persist state machine to Redis. B2c: only broadcast MATCH_STARTED and
     // arm the countdown once the canonical write LANDS. A non-APPLIED outcome
@@ -168,6 +201,70 @@ export class MatchRoundRunner {
     const timerSet = this.timers.ensureMatch(matchId);
     const timer = setTimeout(callback, remaining);
     timerSet.add(timer);
+  }
+
+  /**
+   * TOPIC_VOTING expiry: resolve banned topics, transition to COUNTDOWN, and arm countdown timer.
+   */
+  private topicVotingTimerCallback(
+    matchId: string,
+    roomId: string,
+    server: Server,
+  ): () => Promise<void> {
+    return async () => {
+      try {
+        if (!(await this.ownership.assertOwnership(matchId))) {
+          this.logger.warn(
+            `topicVoting callback: assertOwnership failed for ${matchId} — not owner, aborting`,
+          );
+          return;
+        }
+
+        const sm = await this.matchService.getStateMachine(matchId);
+        if (!sm) {
+          this.logger.log(
+            `topicVoting callback: state machine gone for match ${matchId}`,
+          );
+          return;
+        }
+        this.logger.log(`Topic voting ended for match ${matchId}`);
+        const result = sm.resolveTopicVoting();
+        sm.transition(MatchStatus.COUNTDOWN);
+
+        const persistOutcome =
+          await this.matchService.persistStateMachine(matchId);
+        if (persistOutcome !== "APPLIED") {
+          this.logger.warn(
+            `topicVoting callback: persistStateMachine returned ${persistOutcome} for ${matchId}, returning without publishing state`,
+          );
+          return;
+        }
+
+        emitTopicVotingFinished(
+          server,
+          roomId,
+          matchId,
+          result.bannedTopics,
+          result.activeTopics,
+          result.voteCounts,
+        );
+
+        emitMatchStarted(
+          server,
+          roomId,
+          matchId,
+          MatchStatus.COUNTDOWN,
+          GAME_CONFIG.COUNTDOWN_DURATION_MS,
+        );
+
+        this.executeCountdown(matchId, roomId, server);
+      } catch (error) {
+        this.logger.error(
+          `Failed to resolve topic voting for match ${matchId}:`,
+          error,
+        );
+      }
+    };
   }
 
   /**
@@ -283,6 +380,17 @@ export class MatchRoundRunner {
 
     // Arm the next timer from status + the persisted deadline.
     switch (state.status) {
+      case MatchStatus.TOPIC_VOTING:
+        this.armPhaseTimer(
+          matchId,
+          this.topicVotingTimerCallback(matchId, roomId, server),
+          this.resumePhaseRemaining(
+            hydratedSm,
+            MatchStatus.TOPIC_VOTING,
+            GAME_CONFIG.TOPIC_VOTING_DURATION_MS,
+          ),
+        );
+        return;
       case MatchStatus.COUNTDOWN:
         this.armPhaseTimer(
           matchId,
@@ -396,6 +504,11 @@ export class MatchRoundRunner {
         const round = hydratedSm.getCurrentRound();
         return round && Number.isFinite(round.endsAt) ? round.endsAt : null;
       }
+      case MatchStatus.TOPIC_VOTING:
+        return typeof state.startedAt === "number" &&
+          Number.isFinite(state.startedAt)
+          ? state.startedAt + GAME_CONFIG.TOPIC_VOTING_DURATION_MS
+          : null;
       case MatchStatus.COUNTDOWN:
         return typeof state.startedAt === "number" &&
           Number.isFinite(state.startedAt)
@@ -454,7 +567,19 @@ export class MatchRoundRunner {
       const excludeIds = [
         ...(this.timers.getUsedQuestions(matchId) ?? new Set<string>()),
       ];
-      question = await this.questionService.getRandom(undefined, excludeIds);
+      const state = stateMachine.getState();
+      const allowedCategories =
+        state.activeTopics && state.activeTopics.length > 0
+          ? state.activeTopics
+          : undefined;
+      question = allowedCategories
+        ? await this.questionService.getRandom(
+            undefined,
+            excludeIds,
+            undefined,
+            allowedCategories,
+          )
+        : await this.questionService.getRandom(undefined, excludeIds);
     } catch (error) {
       this.logger.error(
         `Failed to fetch question for match ${matchId} — ending match`,

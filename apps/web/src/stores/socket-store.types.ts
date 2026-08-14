@@ -77,10 +77,24 @@ export interface ConnectionState {
   userRole: string | null;
 }
 
+export interface TopicVotingState {
+  matchId: string;
+  candidateTopics: string[];
+  endsAt: number;
+  durationMs: number;
+  myVotedTopic: string | null;
+  voteCounts: Record<string, number>;
+  totalVotes: number;
+  bannedTopics: string[];
+  activeTopics: string[];
+  isFinished: boolean;
+}
+
 export interface SocketState extends ConnectionState {
   socket: Socket | null;
   room: Room | null;
   match: Match | null;
+  topicVoting: TopicVotingState | null;
   lastAnswerResult: LastAnswerResult | null;
   pendingAnswer: PendingAnswer | null;
   remainingCount: number | null;
@@ -114,6 +128,7 @@ export interface SocketState extends ConnectionState {
   joinRoom: (roomCode: string) => Promise<void>;
   leaveRoom: (roomId: string) => void;
   startMatch: (roomId: string) => void;
+  voteBanTopic: (matchId: string, topic: string) => void;
   submitAnswer: (
     matchId: string,
     roundNo: number,

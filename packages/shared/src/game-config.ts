@@ -30,4 +30,16 @@ export const GAME_CONFIG = {
   SCORE_BASE_CORRECT: 100,
   SCORE_SPEED_BONUS_WINDOW_MS: 10_000,
   SCORE_SPEED_BONUS_DIVISOR: 200,
+  // Topic Ban Voting (Pre-match Crowd Draft)
+  TOPIC_VOTING_DURATION_MS: 10_000, // 10 seconds for crowd ban voting
+  TOPIC_VOTING_BANNED_COUNT: 2, // Top 2 voted topics get banned
+  TOPIC_VOTING_CANDIDATE_POOL: [
+    "SCIENCE",
+    "HISTORY",
+    "GEOGRAPHY",
+    "TECHNOLOGY",
+    "SPORTS",
+    "CULTURE",
+    "LOGIC",
+  ] as const,
 } as const;

@@ -407,16 +407,29 @@ same cluster + instrumentation setup. Source of truth:
   already uses one transaction for the round plus `tx.answer.createMany(...)`;
   `matchPlayer.createMany(...)` also exists. Mini and 8k persistence completed
   without DB errors.
+- **Final decision — keep `25s/40s`**: the change removes 60% of application
+  heartbeat emits and passed both presence gates without stale-host/disband
+  regressions. Socket.IO still detects normal transport disconnects and starts
+  reconnect immediately; the longer 40s TTL only affects fallback cleanup when
+  no disconnect reaches the server. Do not claim this change raised capacity:
+  the 8k answer p95 still missed the 1s SLO.
+- **Current bottleneck**: Socket.IO handshake/join scheduling, Node event-loop
+  contention, and per-room Socket.IO/Redis broadcast fan-out. Heartbeat is only
+  background traffic, and DB is not the active limiter in the new run (PG
+  active peak 17, 0 connection/Prisma errors, all 80 benchmark matches
+  finished). At 8k, correctness remains intact but latency is over SLO.
 - Source of truth and artifacts: `load-test/CEILING.md` and
   `load-test/results/ceiling-heartbeat25-ramp90-80x100-bca68ea-20260814T111300Z*`.
 
 ## Follow-ups (to consider when product needs >8k concurrent VU)
 
-Recorded 2026-08-14 after ceiling sweep showed 8,000 VU is the hard ceiling.
-Product spec (100-player quiz) doesn't need >8k VU currently — these are
-**future levers**, not urgent fixes.
+Recorded 2026-08-14 after the sweep verified correctness at 8,000 VU but
+exceeded the 1s answer-latency SLO. The hard correctness ceiling above 8,000 VU
+has not been established with a comparable post-change run. Product spec
+(100-player quiz) doesn't need >8k VU currently — these are **future levers**,
+not urgent fixes.
 
-### Why ceiling is 8k VU (NOT a Node.js limit)
+### Why performance degrades at 8k VU (NOT a Node.js language limit)
 
 Node.js runs at scale at Discord, PayPal, Netflix, LinkedIn, Uber — millions
 of concurrent users. The bottleneck is in **3 architectural decisions**,
@@ -430,16 +443,17 @@ not the language:
      benchmark), or Fastify native WS.
    - Effort: medium (rewrite gateway adapter only).
 
-2. **Prisma blocking event loop on every hot-path query** (`match.service.ts`
-   `findUnique` / `updateMany` / `createMany` at lines 82, 101, 146, 385,
-   450). Node.js single-threaded JS loop blocks for each `await prisma.X`
-   call. PG pool briefly saturates during 64-80 room creation storm at
-   6,400-8,000 VU (1 sample at 150/150 active for ~2s, evidence:
-   `load-test/results/clean-{64,80}x100.pg.jsonl`).
-   - Levers: (a) cache frequently-read match state in Redis with TTL ~5s
-     (skip DB on hot path); (b) batch writes with `createMany`; (c) use
-     `$queryRawUnsafe` for the hottest 1-2 queries (bypass Prisma AST).
-   - Effort: low-medium per lever. Each gives ~1.5-2× capacity.
+2. **Node event-loop + HTTP/socket scheduling under the join wave.** The new
+   ramp-90 run reached event-loop lag max 176ms and answer p95 1,768.9ms while
+   PG active peaked at only 17. This rules out DB pool saturation as the
+   current limiter for this run. The older ramp-30 sweep briefly reached
+   144/150 PG connections during setup, but that was a setup burst rather than
+   the gameplay hot path.
+   - Levers: readiness barrier before host start; tune/replace the Socket.IO
+     transport; isolate or distribute the load generator; profile event-loop
+     work during auth/join before adding DB caching.
+   - Do not add answer batching: `saveRoundAndAnswers()` already uses
+     `tx.answer.createMany(...)` in one transaction.
 
 3. **Per-room broadcast × N rooms × 100 players = message amplification**
    (`game-loop.events.ts:37, 68`, `server.to(channel).emit(...)`). Each

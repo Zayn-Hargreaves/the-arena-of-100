@@ -191,6 +191,13 @@ export const CardPlayPayloadSchema = z.object({
 });
 export type CardPlayPayload = z.infer<typeof CardPlayPayloadSchema>;
 
+// VOTE_BAN_TOPIC (Pre-match Topic Draft) -------------------------------------
+export const VoteBanTopicPayloadSchema = z.object({
+  matchId: idSchema,
+  topic: z.string().min(1).max(64),
+});
+export type VoteBanTopicPayload = z.infer<typeof VoteBanTopicPayloadSchema>;
+
 // HEARTBEAT ------------------------------------------------------------------
 
 export const HeartbeatPayloadSchema = z.object({
@@ -214,6 +221,7 @@ export const CLIENT_EVENT_SCHEMAS = {
   request_snapshot: RequestSnapshotPayloadSchema,
   card_pick: CardPickPayloadSchema,
   card_play: CardPlayPayloadSchema,
+  vote_ban_topic: VoteBanTopicPayloadSchema,
   heartbeat: HeartbeatPayloadSchema,
 } as const;
 

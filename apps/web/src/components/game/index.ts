@@ -23,6 +23,7 @@ export {
   type LeaveMatchButtonProps,
 } from "./leave-match-button";
 export { MatchFinishedOverlay } from "./match-finished-overlay";
+export { TopicVotingOverlay } from "./topic-voting-overlay";
 
 // Phase 2 — Class + Card Hybrid UI.
 export {

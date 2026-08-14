@@ -20,8 +20,12 @@ import {
   type RoundStartedPayload,
   type SnapshotPayload,
   type EventBatchPayload,
+  type TopicVotingStartedPayload,
+  type TopicVotingSummaryPayload,
+  type TopicVotingFinishedPayload,
   ReplayEventSchema,
 } from "@arena/shared";
+
 import type {
   LastAnswerResult,
   Player,
@@ -520,6 +524,37 @@ export function applySnapshotState(
     // Plan D: a full hydrate resets the delta cursor to the log head,
     // so subsequent reconnects can ask for only newer events.
     lastSeenSeqNo: data.lastEventSeqNo,
+    topicVoting:
+      data.candidateTopics && data.candidateTopics.length > 0
+        ? {
+            matchId: data.matchId,
+            candidateTopics: data.candidateTopics,
+            endsAt: data.phaseEndsAt ?? data.roundEndTime ?? 0,
+            durationMs: 10000,
+            myVotedTopic:
+              state.topicVoting?.matchId === data.matchId
+                ? state.topicVoting.myVotedTopic
+                : null,
+            voteCounts: data.voteCounts ?? {},
+            totalVotes: data.voteCounts
+              ? Object.values(data.voteCounts).reduce(
+                  (sum: number, n: number) => sum + n,
+                  0,
+                )
+              : 0,
+            bannedTopics:
+              state.topicVoting?.matchId === data.matchId
+                ? state.topicVoting.bannedTopics
+                : [],
+            activeTopics:
+              state.topicVoting?.matchId === data.matchId
+                ? state.topicVoting.activeTopics
+                : [],
+            isFinished: data.status !== MatchStatus.TOPIC_VOTING,
+          }
+        : state.topicVoting?.matchId === data.matchId
+          ? state.topicVoting
+          : null,
   };
 }
 
@@ -710,6 +745,7 @@ export function applyUnauthorizedErrorState(
     username: null,
     room: null,
     match: null,
+    topicVoting: null,
     remainingCount: null,
     lastAnswerResult: null,
     pendingAnswer: null,
@@ -724,5 +760,80 @@ export function applyUnauthorizedErrorState(
     // and any subsequent `if (get().socket === newSocket)` gate would
     // never match — the error message would silently be dropped.
     error: errorMessage,
+  };
+}
+
+export function applyTopicVotingStartedState(
+  state: SocketState,
+  data: TopicVotingStartedPayload,
+): Partial<SocketState> {
+  const currentMatchId = state.room?.currentMatchId ?? state.match?.id;
+  if (currentMatchId && currentMatchId !== data.matchId) {
+    return {};
+  }
+  const initialCounts: Record<string, number> = {};
+  for (const t of data.candidateTopics) {
+    initialCounts[t] = 0;
+  }
+  return {
+    match: state.match
+      ? {
+          ...state.match,
+          status: MatchStatus.TOPIC_VOTING,
+        }
+      : {
+          id: data.matchId,
+          status: MatchStatus.TOPIC_VOTING,
+          currentRoundNo: 0,
+          players: state.room?.players ?? [],
+          currentQuestion: null,
+          roundEndTime: null,
+        },
+    topicVoting: {
+      matchId: data.matchId,
+      candidateTopics: data.candidateTopics,
+      endsAt: data.endsAt,
+      durationMs: data.durationMs,
+      myVotedTopic: null,
+      voteCounts: initialCounts,
+      totalVotes: 0,
+      bannedTopics: [],
+      activeTopics: [],
+      isFinished: false,
+    },
+  };
+}
+
+export function applyTopicVotingSummaryState(
+  state: SocketState,
+  data: TopicVotingSummaryPayload,
+): Partial<SocketState> {
+  if (!state.topicVoting || state.topicVoting.matchId !== data.matchId) {
+    return {};
+  }
+  return {
+    topicVoting: {
+      ...state.topicVoting,
+      voteCounts: data.voteCounts,
+      totalVotes: data.totalVotes,
+    },
+  };
+}
+
+export function applyTopicVotingFinishedState(
+  state: SocketState,
+  data: TopicVotingFinishedPayload,
+): Partial<SocketState> {
+  if (!state.topicVoting || state.topicVoting.matchId !== data.matchId) {
+    return {};
+  }
+  return {
+    topicVoting: {
+      ...state.topicVoting,
+      bannedTopics: data.bannedTopics,
+      activeTopics: data.activeTopics,
+      voteCounts: data.voteCounts,
+      isFinished: true,
+    },
   };
 }

@@ -15,6 +15,7 @@ export enum RoomStatus {
 // Match States (State Machine Pattern)
 export enum MatchStatus {
   CREATED = "CREATED",
+  TOPIC_VOTING = "TOPIC_VOTING",
   COUNTDOWN = "COUNTDOWN",
   ROUND_ACTIVE = "ROUND_ACTIVE",
   ROUND_EVALUATING = "ROUND_EVALUATING",
@@ -93,6 +94,11 @@ export interface MatchState {
   // other phase. B1c's result-display anchor; invariant for v2 blobs:
   // phaseEndsAt === roundResultStartedAt + RESULT_DISPLAY_MS.
   roundResultStartedAt: number | null;
+  // Topic Ban Voting (Pre-match draft)
+  candidateTopics?: string[];
+  topicVotes?: Record<string, string>; // playerId -> topic
+  bannedTopics?: string[];
+  activeTopics?: string[];
 }
 
 // Round State

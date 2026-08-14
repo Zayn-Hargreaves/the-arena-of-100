@@ -1350,6 +1350,51 @@ describe("MatchHandler", () => {
       }
     });
   });
+
+  describe("handleVoteBanTopic", () => {
+    it("forwards vote_ban_topic envelope to owner command channel", async () => {
+      vi.mocked(matchCommand.forward).mockClear();
+
+      await handler.handleVoteBanTopic(client, server, {
+        matchId: "m1",
+        topic: "SCIENCE",
+      });
+
+      expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+      const env = matchCommand.forward.mock.calls[0][0];
+      expect(env).toMatchObject({
+        schemaVersion: 1,
+        matchId: "m1",
+        emittedByNodeId: "node-a",
+        body: {
+          type: "vote_ban_topic",
+          userId: "u1",
+          topic: "SCIENCE",
+        },
+      });
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+    });
+
+    it("emits UNAUTHORIZED when client is not authenticated", async () => {
+      const unauthClient = {
+        data: {},
+        emit: vi.fn(),
+      } as unknown as Socket;
+
+      await handler.handleVoteBanTopic(unauthClient, server, {
+        matchId: "m1",
+        topic: "SCIENCE",
+      });
+
+      expect(unauthClient.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.UNAUTHORIZED,
+          failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+        }),
+      );
+    });
+  });
 });
 
 function findSocketForClient(

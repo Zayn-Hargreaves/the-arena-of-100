@@ -230,8 +230,21 @@
       "bannerBody": "You joined this match as a late spectator. Answer submission is disabled — you can only watch.",
       "infoTitle": "Drop-in spectating",
       "infoBody": "This match started before you joined. You are viewing it as a spectator in real time."
+    },
+    "topicVoting": {
+      "title": "TOPIC BAN DRAFT",
+      "subtitle": "Vote for 1 topic you want to ban (Top 2 most voted will be eliminated)",
+      "votingEndsIn": "Voting ends in:",
+      "banButton": "BAN TOPIC",
+      "banned": "BANNED",
+      "active": "ACTIVE",
+      "voted": "VOTED",
+      "votesCount": "{count, plural, =0 {0 votes} one {1 vote} other {# votes}}",
+      "bannedTopicsHeader": "TOPIC BAN RESULTS",
+      "startingMatch": "Preparing match..."
     }
   },
+
   "Result": {
     "reportLabel": "POST-MATCH REPORT",
     "title": "ARENA RESULTS",

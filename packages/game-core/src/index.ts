@@ -29,6 +29,14 @@ export type { SamplingStep, SamplingResult } from "./card-engine";
 export { assignClasses } from "./class-engine";
 export type { ClassAssignment } from "./class-engine";
 
+// Topic Ban Voting Engine (Pre-match Crowd Draft)
+export {
+  selectCandidateTopics,
+  tallyTopicVotes,
+  resolveBannedTopics,
+} from "./topic-voting";
+export type { TopicVotingResult } from "./topic-voting";
+
 // PRNG primitives
 export {
   mulberry32,

@@ -24,9 +24,45 @@ import {
 /** Bootstrap revision for the fenced match:state CAS (B2c). */
 const INITIAL_STATE_REVISION = 0;
 const STATE_TTL_SEC = 86400; // 24h
+const MATCH_CACHE_TTL_SEC = 5; // 5s short-lived read cache to absorb DB spikes
+
 const stateKey = (matchId: string): string => `match:state:${matchId}`;
 const revisionKey = (matchId: string): string =>
   `match:state-revision:${matchId}`;
+export const matchCacheKey = (matchId: string): string =>
+  `cache:match:${matchId}`;
+export const matchRoomCacheKey = (matchId: string): string =>
+  `cache:match:room:${matchId}`;
+export const matchGenerationKey = (matchId: string): string =>
+  `match:gen:${matchId}`;
+
+function restoreMatchDates<T>(data: T): T {
+  if (!data || typeof data !== "object") return data;
+  const match = data as Record<string, unknown>;
+  return {
+    ...match,
+    startedAt: match.startedAt
+      ? new Date(match.startedAt as string | number | Date)
+      : null,
+    endedAt: match.endedAt
+      ? new Date(match.endedAt as string | number | Date)
+      : null,
+    createdAt: match.createdAt
+      ? new Date(match.createdAt as string | number | Date)
+      : undefined,
+    rounds: Array.isArray(match.rounds)
+      ? match.rounds.map((r: Record<string, unknown>) => ({
+          ...r,
+          startedAt: r.startedAt
+            ? new Date(r.startedAt as string | number | Date)
+            : new Date(),
+          endedAt: r.endedAt
+            ? new Date(r.endedAt as string | number | Date)
+            : null,
+        }))
+      : [],
+  } as T;
+}
 
 /** Outcome of a canonical persist. BLIND = non-owned/legacy path (unfenced,
  *  pre-B4 behavior); RETRY = fenced CAS rejected (lost ownership). */
@@ -138,15 +174,33 @@ export class MatchService {
   // Lightweight match→room lookup for auth gates that must not load
   // the full state machine (Redis deserialize + answer rehydrate).
   // Cache-first: stateMachines stores the roomId alongside the match,
-  // so a hot match avoids a DB round-trip. Falls back to Prisma only
-  // on cache miss (e.g. recovery from Redis before this entry exists).
+  // so a hot match avoids a DB round-trip. Falls back to Redis cache,
+  // then Prisma on cache miss (e.g. recovery from Redis before this entry exists).
   async getRoomIdByMatchId(matchId: string): Promise<string | undefined> {
     const cached = this.stateMachines.get(matchId);
     if (cached) return cached.getState().roomId;
+
+    const cacheKey = matchRoomCacheKey(matchId);
+    try {
+      const cachedRoomId = await this.redis.get(cacheKey);
+      if (cachedRoomId) return cachedRoomId;
+    } catch (err) {
+      this.logger.warn(`Failed to read match room cache for ${matchId}`, err);
+    }
+
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
       select: { roomId: true },
     });
+
+    if (match?.roomId) {
+      try {
+        await this.redis.set(cacheKey, match.roomId, MATCH_CACHE_TTL_SEC);
+      } catch (err) {
+        this.logger.warn(`Failed to set match room cache for ${matchId}`, err);
+      }
+    }
+
     return match?.roomId;
   }
 
@@ -380,8 +434,26 @@ export class MatchService {
     return INITIAL_STATE_REVISION;
   }
 
-  // Get match by ID
+  // Get match by ID (with short-lived Redis cache to prevent DB connection spikes)
   async getMatch(matchId: string) {
+    const cacheKey = matchCacheKey(matchId);
+    try {
+      const cached = await this.redis.get(cacheKey);
+      if (cached) {
+        return restoreMatchDates(JSON.parse(cached));
+      }
+    } catch (err) {
+      this.logger.warn(`Failed to read match cache for ${matchId}`, err);
+    }
+
+    const genKey = matchGenerationKey(matchId);
+    let capturedGen = "0";
+    try {
+      capturedGen = (await this.redis.get(genKey)) ?? "0";
+    } catch {
+      // best-effort
+    }
+
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
       include: {
@@ -394,6 +466,19 @@ export class MatchService {
 
     if (!match) {
       throw new NotFoundException(ErrorCode.MATCH_NOT_FOUND);
+    }
+
+    try {
+      const currentGen = (await this.redis.get(genKey)) ?? "0";
+      if (currentGen === capturedGen) {
+        await this.redis.set(
+          cacheKey,
+          JSON.stringify(match),
+          MATCH_CACHE_TTL_SEC,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(`Failed to set match cache for ${matchId}`, err);
     }
 
     return match;
@@ -557,6 +642,14 @@ export class MatchService {
         // B2c: drop the fenced-CAS revision key alongside the state.
         await this.redis.del(revisionKey(matchId));
       }
+
+      // Increment cache generation to prevent concurrent in-flight DB reads
+      // from rewriting stale snapshots back into Redis cache.
+      await this.redis.incr(matchGenerationKey(matchId));
+
+      // Invalidate short-lived read caches
+      await this.redis.del(matchCacheKey(matchId));
+      await this.redis.del(matchRoomCacheKey(matchId));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(

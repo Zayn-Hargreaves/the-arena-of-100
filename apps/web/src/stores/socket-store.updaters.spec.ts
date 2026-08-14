@@ -15,7 +15,11 @@ import {
   applyRoundStartedState,
   applySnapshotState,
   applyUnauthorizedErrorState,
+  applyTopicVotingStartedState,
+  applyTopicVotingSummaryState,
+  applyTopicVotingFinishedState,
 } from "./socket-store.updaters";
+
 import type { Match, Room, SocketState } from "./socket-store.types";
 import type { EventBatchPayload } from "@arena/shared";
 
@@ -87,6 +91,7 @@ function makeState(overrides: Partial<SocketState> = {}): SocketState {
     socket: null,
     room: null,
     match: null,
+    topicVoting: null,
     lastAnswerResult: null,
     pendingAnswer: null,
     remainingCount: null,
@@ -105,6 +110,7 @@ function makeState(overrides: Partial<SocketState> = {}): SocketState {
     joinRoom: () => Promise.resolve(),
     leaveRoom: () => {},
     startMatch: () => {},
+    voteBanTopic: () => {},
     submitAnswer: () => null,
     requestSnapshot: () => {},
     ...overrides,
@@ -1277,5 +1283,145 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
     expect(result.match?.status).toBe(MatchStatus.FINISHED);
     expect(result.room?.status).toBe(RoomStatus.FINISHED);
     expect(result.room?.countdownEndsAt).toBeNull();
+  });
+
+  describe("Topic Voting Updaters", () => {
+    it("applyTopicVotingStartedState initializes topic voting state", () => {
+      const state = makeState();
+      const result = applyTopicVotingStartedState(state, {
+        matchId: "m1",
+        candidateTopics: ["SCIENCE", "HISTORY", "TECH"],
+        endsAt: 10000,
+        durationMs: 10000,
+      });
+
+      expect(result.match?.status).toBe(MatchStatus.TOPIC_VOTING);
+      expect(result.topicVoting).toEqual({
+        matchId: "m1",
+        candidateTopics: ["SCIENCE", "HISTORY", "TECH"],
+        endsAt: 10000,
+        durationMs: 10000,
+        myVotedTopic: null,
+        voteCounts: { SCIENCE: 0, HISTORY: 0, TECH: 0 },
+        totalVotes: 0,
+        bannedTopics: [],
+        activeTopics: [],
+        isFinished: false,
+      });
+    });
+
+    it("applyTopicVotingSummaryState updates vote counts and total votes", () => {
+      const state = makeState({
+        topicVoting: {
+          matchId: "m1",
+          candidateTopics: ["SCIENCE", "HISTORY"],
+          endsAt: 10000,
+          durationMs: 10000,
+          myVotedTopic: "SCIENCE",
+          voteCounts: { SCIENCE: 0, HISTORY: 0 },
+          totalVotes: 0,
+          bannedTopics: [],
+          activeTopics: [],
+          isFinished: false,
+        },
+      });
+
+      const result = applyTopicVotingSummaryState(state, {
+        matchId: "m1",
+        voteCounts: { SCIENCE: 5, HISTORY: 2 },
+        totalVotes: 7,
+      });
+
+      expect(result.topicVoting?.voteCounts).toEqual({
+        SCIENCE: 5,
+        HISTORY: 2,
+      });
+      expect(result.topicVoting?.totalVotes).toBe(7);
+      expect(result.topicVoting?.myVotedTopic).toBe("SCIENCE");
+    });
+
+    it("applyTopicVotingFinishedState sets banned and active topics and updates voteCounts", () => {
+      const state = makeState({
+        topicVoting: {
+          matchId: "m1",
+          candidateTopics: ["SCIENCE", "HISTORY", "TECH", "SPORTS"],
+          endsAt: 10000,
+          durationMs: 10000,
+          myVotedTopic: "SCIENCE",
+          voteCounts: { SCIENCE: 1, HISTORY: 0, TECH: 0, SPORTS: 0 },
+          totalVotes: 1,
+          bannedTopics: [],
+          activeTopics: [],
+          isFinished: false,
+        },
+      });
+
+      const result = applyTopicVotingFinishedState(state, {
+        matchId: "m1",
+        bannedTopics: ["SCIENCE", "HISTORY"],
+        activeTopics: ["TECH", "SPORTS"],
+        voteCounts: { SCIENCE: 5, HISTORY: 4, TECH: 1, SPORTS: 0 },
+      });
+
+      expect(result.topicVoting?.isFinished).toBe(true);
+      expect(result.topicVoting?.bannedTopics).toEqual(["SCIENCE", "HISTORY"]);
+      expect(result.topicVoting?.activeTopics).toEqual(["TECH", "SPORTS"]);
+      expect(result.topicVoting?.voteCounts).toEqual({
+        SCIENCE: 5,
+        HISTORY: 4,
+        TECH: 1,
+        SPORTS: 0,
+      });
+    });
+
+    it("applyTopicVotingStartedState ignores stale payload from different matchId", () => {
+      const state = makeState({
+        match: {
+          id: "m1",
+          status: MatchStatus.ROUND_ACTIVE,
+          currentRoundNo: 1,
+          players: [],
+          currentQuestion: null,
+          roundEndTime: null,
+        },
+      });
+
+      const result = applyTopicVotingStartedState(state, {
+        matchId: "m-stale",
+        candidateTopics: ["SCIENCE", "HISTORY"],
+        endsAt: 10000,
+        durationMs: 10000,
+      });
+
+      expect(result).toEqual({});
+    });
+
+    it("applySnapshotState restores topicVoting when candidateTopics are present", () => {
+      const state = makeState({
+        userId: "u1",
+      });
+
+      const result = applySnapshotState(state, {
+        matchId: "m1",
+        status: MatchStatus.TOPIC_VOTING,
+        currentRoundNo: 0,
+        players: [],
+        currentQuestion: null,
+        roundEndTime: null,
+        lastEventSeqNo: 1,
+        candidateTopics: ["SCIENCE", "HISTORY", "TECH"],
+        voteCounts: { SCIENCE: 2, HISTORY: 1, TECH: 0 },
+        phaseEndsAt: 15000,
+      });
+
+      expect(result.topicVoting).toMatchObject({
+        matchId: "m1",
+        candidateTopics: ["SCIENCE", "HISTORY", "TECH"],
+        voteCounts: { SCIENCE: 2, HISTORY: 1, TECH: 0 },
+        totalVotes: 3,
+        endsAt: 15000,
+        isFinished: false,
+      });
+    });
   });
 });

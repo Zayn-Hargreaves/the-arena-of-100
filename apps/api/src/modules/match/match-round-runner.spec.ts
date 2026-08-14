@@ -97,6 +97,7 @@ describe("MatchRoundRunner", () => {
       getRoom: vi.fn().mockResolvedValue({
         id: "room-1",
         type: "PUBLIC",
+        category: "SCIENCE",
         status: RoomStatus.WAITING,
         currentMatchId: null,
         players: [{ userId: "p1" }, { userId: "p2" }],
@@ -166,6 +167,40 @@ describe("MatchRoundRunner", () => {
     );
 
     vi.useRealTimers();
+  });
+
+  it("should transition to TOPIC_VOTING when room category is ALL", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(roomService.getRoom).mockResolvedValue({
+        id: "room-1",
+        type: "PUBLIC",
+        category: "ALL",
+        status: RoomStatus.WAITING,
+        currentMatchId: null,
+        players: [{ userId: "p1" }, { userId: "p2" }],
+      } as any);
+
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+      await (runner as any).startMatchLoop(
+        "match-1",
+        "room-1",
+        mockServer as unknown as Server,
+      );
+
+      expect(stateMachine.getState().status).toBe(MatchStatus.TOPIC_VOTING);
+      expect(emitSpy).toHaveBeenCalledWith(
+        ServerEvent.TOPIC_VOTING_STARTED,
+        expect.objectContaining({
+          matchId: "match-1",
+          durationMs: GAME_CONFIG.TOPIC_VOTING_DURATION_MS,
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("should execute countdown and call executeRound after 5 seconds", async () => {

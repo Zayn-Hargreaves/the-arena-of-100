@@ -293,6 +293,7 @@ export class QuestionService {
     difficulty?: QuestionDifficulty,
     excludeIds?: string[],
     category?: string,
+    allowedCategories?: string[],
   ): Promise<Question> {
     const where: Prisma.QuestionWhereInput = {
       active: true,
@@ -302,17 +303,30 @@ export class QuestionService {
       where.difficulty = difficulty;
     }
 
-    if (category && category !== "ALL") {
+    if (
+      category &&
+      category !== "ALL" &&
+      Object.values(PrismaQuestionCategory).includes(
+        category as PrismaQuestionCategory,
+      )
+    ) {
       where.category = category as PrismaQuestionCategory;
+    } else if (allowedCategories && allowedCategories.length > 0) {
+      const validCategories = allowedCategories.filter(
+        (c): c is PrismaQuestionCategory =>
+          c !== "ALL" &&
+          Object.values(PrismaQuestionCategory).includes(
+            c as PrismaQuestionCategory,
+          ),
+      );
+      if (validCategories.length > 0) {
+        where.category = {
+          in: validCategories,
+        };
+      }
     }
 
     if (excludeIds?.length) {
-      where.id = {
-        notIn: excludeIds,
-      };
-    }
-
-    if (excludeIds && excludeIds.length > 0) {
       where.id = {
         notIn: excludeIds,
       };

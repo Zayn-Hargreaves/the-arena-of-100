@@ -9,6 +9,7 @@ import {
   type SubmitAnswerBody,
   type CardPickBody,
   type CardPlayBody,
+  type VoteBanTopicBody,
   type CommandDispatcher,
   type CommandOutcome,
 } from "./match-command.service";
@@ -171,6 +172,7 @@ describe("MatchCommandService (B4a)", () => {
       getStateMachine: vi.fn(),
       persistStateMachine: vi.fn().mockResolvedValue("APPLIED"),
       evictStateMachine: vi.fn(),
+      getRoomIdByMatchId: vi.fn().mockResolvedValue("r1"),
     };
     ownership = {
       currentFence: vi
@@ -922,6 +924,114 @@ describe("MatchCommandService (B4a)", () => {
       };
       matchService.getStateMachine.mockResolvedValue(undefined);
       await expect(applyPrivate(service, env, server)).resolves.toBe("RETRY");
+    });
+
+    it("dispatchBuiltin routes vote_ban_topic through applyVoteBanTopicAuthoritative", async () => {
+      const env: CommandEnvelope<VoteBanTopicBody> = {
+        eventId: "evt-vote-dispatch",
+        schemaVersion: 1,
+        matchId: "m1",
+        emittedByNodeId: "node-b",
+        emittedAt: 1000,
+        body: {
+          type: "vote_ban_topic",
+          userId: "p1",
+          topic: "SCIENCE",
+        },
+      };
+      matchService.getStateMachine.mockResolvedValue(undefined);
+      await expect(applyPrivate(service, env, server)).resolves.toBe("RETRY");
+    });
+  });
+
+  describe("applyVoteBanTopicAuthoritative — full topic voting path", () => {
+    const OWNER = { fence: 5, leaseValue: "node-a:5" };
+
+    const voteEnv = (
+      eventId = "evt-vote-1",
+      userId = "p1",
+      topic = "SCIENCE",
+    ): CommandEnvelope<VoteBanTopicBody> => ({
+      eventId,
+      schemaVersion: 1,
+      matchId: "m1",
+      emittedByNodeId: "node-b",
+      emittedAt: 1000,
+      body: { type: "vote_ban_topic", userId, topic },
+    });
+
+    beforeEach(() => {
+      redis.sismember.mockResolvedValue(false);
+      redis.sadd.mockResolvedValue(1);
+    });
+
+    it("APPLIED: mutates state, persists, marks applied, and emits topic voting summary", async () => {
+      const sm = new MatchStateMachine("m1", "r1", [
+        {
+          id: "p1",
+          name: "Alice",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+      ]);
+      sm.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"]);
+      matchService.getStateMachine.mockResolvedValue(sm);
+      matchService.persistStateMachine.mockResolvedValue("APPLIED");
+      matchService.getRoomIdByMatchId.mockResolvedValue("r1");
+      const recorder = makeMockServer();
+
+      const outcome = await service.applyVoteBanTopicAuthoritative(
+        voteEnv(),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome).toBe("APPLIED");
+      expect(sm.getState().topicVotes).toEqual({ p1: "SCIENCE" });
+      expect(matchService.persistStateMachine).toHaveBeenCalledWith("m1");
+      expect(redis.sadd).toHaveBeenCalledWith("match:applied:m1", "evt-vote-1");
+
+      const summaryCalls = recorder.callsByEvent(
+        ServerEvent.TOPIC_VOTING_SUMMARY,
+      );
+      expect(summaryCalls.length).toBe(1);
+      expect(summaryCalls[0]?.[1]).toMatchObject({
+        matchId: "m1",
+        voteCounts: expect.objectContaining({ SCIENCE: 1 }),
+        totalVotes: 1,
+      });
+    });
+
+    it("returns RETRY without emitting summary when persistStateMachine fails", async () => {
+      const sm = new MatchStateMachine("m1", "r1", [
+        {
+          id: "p1",
+          name: "Alice",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+      ]);
+      sm.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"]);
+      matchService.getStateMachine.mockResolvedValue(sm);
+      matchService.persistStateMachine.mockResolvedValue("RETRY");
+      const recorder = makeMockServer();
+
+      const outcome = await service.applyVoteBanTopicAuthoritative(
+        voteEnv(),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome).toBe("RETRY");
+      expect(
+        recorder.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY).length,
+      ).toBe(0);
     });
   });
 

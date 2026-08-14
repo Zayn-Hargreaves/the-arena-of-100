@@ -49,6 +49,7 @@ describe("MatchService", () => {
       set: vi.fn(),
       get: vi.fn(),
       del: vi.fn(),
+      incr: vi.fn().mockResolvedValue(1),
       fencedStateSet: vi.fn().mockResolvedValue("APPLIED"),
       fencedStateDelete: vi.fn().mockResolvedValue(true),
     } as unknown as RedisService;
@@ -589,13 +590,92 @@ describe("MatchService", () => {
   });
 
   describe("getMatch", () => {
-    it("returns match when found", async () => {
+    it("returns match when found from DB and caches it in Redis", async () => {
+      vi.mocked(redis.get).mockResolvedValue(null);
       vi.mocked(prisma.match.findUnique).mockResolvedValue({ id: "m1" } as any);
       const result = await service.getMatch("m1");
       expect(result.id).toBe("m1");
+      expect(prisma.match.findUnique).toHaveBeenCalledWith({
+        where: { id: "m1" },
+        include: {
+          players: {
+            include: { user: { select: { id: true, username: true } } },
+          },
+          rounds: true,
+        },
+      });
+      expect(redis.set).toHaveBeenCalledWith(
+        "cache:match:m1",
+        JSON.stringify({ id: "m1" }),
+        5,
+      );
+    });
+
+    it("returns cached match from Redis on cache hit without calling Prisma", async () => {
+      const startedAt = new Date("2026-08-14T09:50:00.000Z");
+      const endedAt = new Date("2026-08-14T10:00:00.000Z");
+      const cachedMatch = {
+        id: "m1",
+        roomId: "r1",
+        status: "FINISHED",
+        winnerId: "u1",
+        startedAt: startedAt.toISOString(),
+        endedAt: endedAt.toISOString(),
+        players: [],
+        rounds: [
+          {
+            id: "mr1",
+            matchId: "m1",
+            roundNo: 1,
+            questionId: "q1",
+            startedAt: startedAt.toISOString(),
+            endedAt: endedAt.toISOString(),
+          },
+        ],
+      };
+      vi.mocked(redis.get).mockResolvedValue(JSON.stringify(cachedMatch));
+      const result = await service.getMatch("m1");
+      expect(result.id).toBe("m1");
+      expect(result.status).toBe("FINISHED");
+      expect(result.startedAt).toEqual(startedAt);
+      expect(result.endedAt).toEqual(endedAt);
+      expect(result.rounds[0]?.startedAt).toEqual(startedAt);
+      expect(result.rounds[0]?.endedAt).toEqual(endedAt);
+      expect(prisma.match.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("does not overwrite Redis cache if match generation changed during DB read (race condition with finishMatch)", async () => {
+      vi.mocked(redis.get).mockImplementation(async (key: string) => {
+        if (key === "cache:match:m1") return null;
+        if (key === "match:gen:m1") return "0";
+        return null;
+      });
+
+      vi.mocked(prisma.match.findUnique).mockImplementation((async () => {
+        // simulate finishMatch incrementing generation during DB read
+        vi.mocked(redis.get).mockImplementation(async (key: string) => {
+          if (key === "match:gen:m1") return "1";
+          return null;
+        });
+        return {
+          id: "m1",
+          status: "ROUND_ACTIVE",
+          players: [],
+          rounds: [],
+        } as any;
+      }) as any);
+
+      const result = await service.getMatch("m1");
+      expect(result.id).toBe("m1");
+      expect(redis.set).not.toHaveBeenCalledWith(
+        "cache:match:m1",
+        expect.anything(),
+        expect.anything(),
+      );
     });
 
     it("throws NotFoundException when not found", async () => {
+      vi.mocked(redis.get).mockResolvedValue(null);
       vi.mocked(prisma.match.findUnique).mockResolvedValue(null);
       await expect(service.getMatch("m1")).rejects.toThrow(NotFoundException);
     });
@@ -605,9 +685,9 @@ describe("MatchService", () => {
     // L3-style: a hot match lives in `stateMachines` (set by createMatch);
     // the auth-gate caller in match.handler.ts MUST hit the cache to avoid
     // a Prisma round-trip on every answer snapshot request. Falls back to
-    // Prisma only on cache miss (e.g. before the SM is constructed, or
+    // Redis cache, then Prisma only on cache miss (e.g. before the SM is constructed, or
     // after eviction on finishMatch).
-    it("returns roomId from the cached state machine without calling Prisma", async () => {
+    it("returns roomId from the cached state machine without calling Redis or Prisma", async () => {
       const internalMap = (
         service as unknown as {
           stateMachines: Map<string, { getState: () => { roomId: string } }>;
@@ -618,10 +698,21 @@ describe("MatchService", () => {
       const roomId = await service.getRoomIdByMatchId("m1");
 
       expect(roomId).toBe("r1");
+      expect(redis.get).not.toHaveBeenCalled();
       expect(prisma.match.findUnique).not.toHaveBeenCalled();
     });
 
-    it("falls back to Prisma on cache miss and returns the roomId", async () => {
+    it("returns roomId from Redis cache on state machine miss without calling Prisma", async () => {
+      vi.mocked(redis.get).mockResolvedValue("r-redis");
+
+      const roomId = await service.getRoomIdByMatchId("m-redis");
+
+      expect(roomId).toBe("r-redis");
+      expect(prisma.match.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("falls back to Prisma on cache miss, caches it in Redis and returns the roomId", async () => {
+      vi.mocked(redis.get).mockResolvedValue(null);
       vi.mocked(prisma.match.findUnique).mockResolvedValue({
         roomId: "r-fallback",
       } as never);
@@ -635,9 +726,15 @@ describe("MatchService", () => {
         where: { id: "m-cold" },
         select: { roomId: true },
       });
+      expect(redis.set).toHaveBeenCalledWith(
+        "cache:match:room:m-cold",
+        "r-fallback",
+        5,
+      );
     });
 
     it("returns undefined when both cache and Prisma miss", async () => {
+      vi.mocked(redis.get).mockResolvedValue(null);
       vi.mocked(prisma.match.findUnique).mockResolvedValue(null);
 
       const roomId = await service.getRoomIdByMatchId("m-ghost");
@@ -685,6 +782,8 @@ describe("MatchService", () => {
         },
       });
       expect(redis.del).toHaveBeenCalledWith("match:state:m1");
+      expect(redis.del).toHaveBeenCalledWith("cache:match:m1");
+      expect(redis.del).toHaveBeenCalledWith("cache:match:room:m1");
     });
 
     it("records null winner for admin termination and skips score persistence", async () => {
@@ -1093,11 +1192,16 @@ describe("MatchService", () => {
 
       // Redis cleanup ran only on the winner's path — the winner reaches
       // the post-transaction block which deletes stateKey + revisionKey
-      // (2 calls total). The loser returns early on `count: 0` before
-      // touching Redis, so the total delta is exactly the winner's 2
+      // + 2 short-lived cache keys (4 calls total). The loser returns early on `count: 0` before
+      // touching Redis, so the total delta is exactly the winner's 4
       // calls (no doubling).
-      expect(redisDelAfter - redisDelBefore).toBe(2);
+      expect(redisDelAfter - redisDelBefore).toBe(4);
       expect(redis.del).toHaveBeenCalledWith("match:state:m_concurrent");
+      expect(redis.del).toHaveBeenCalledWith(
+        "match:state-revision:m_concurrent",
+      );
+      expect(redis.del).toHaveBeenCalledWith("cache:match:m_concurrent");
+      expect(redis.del).toHaveBeenCalledWith("cache:match:room:m_concurrent");
 
       // In-memory state-machine eviction. The WINNER's path reaches the
       // post-transaction block and runs `stateMachines.delete(matchId)`
