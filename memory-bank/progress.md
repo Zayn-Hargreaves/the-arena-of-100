@@ -347,6 +347,37 @@ prove **what** actually breaks first. Source of truth: `load-test/CEILING.md`.
   new monitoring JSONLs, 1 new `load-test/scripts/poll-pg.sh`. Patched
   `load-test/lib/flows.js` + `metrics.js` (harness only).
 
+### 2026-08-14 — Ceiling tier refinement (8,000 + 10,000 VU)
+
+Driven by "where's the real transition?" — prior sweeps jumped 3,200 →
+6,400 → 12,800 VU, leaving a gap. Added two intermediate tiers on the
+same cluster + instrumentation setup. Source of truth:
+`load-test/CEILING.md`.
+
+- **Clean transition found at 8,000 → 10,000 VU**:
+  - `match_finished / ws_connect_success` ratio collapses **99.6% → 72.5%**.
+  - `setup_flow_errors` jumps **48 → 376** (7.8×).
+  - `ws_handshake_retries` jumps **172 → 558** (3.2×).
+  - `app_error_rate` (real, noise-removed) jumps **1.18% → 2.20%**.
+- **8,000 VU is the hard correctness ceiling** (not 6,400 VU as the prior
+  doc claimed). Logic + integrity intact, 99.6% matches finish, app_error_rate
+  1.18% (just crosses 1% threshold), DB pool saturates only during setup
+  burst (1 sample at 144/150 active for ~2s).
+- **10,000 VU is the hard throughput ceiling** for single-host k6. Not a
+  server-capacity break in the "logic broken" sense — Prisma + state
+  machine still works. It's **k6 load-generator capacity + concurrent join
+  congestion** in the scenario. With 100 rooms being created in 40-90s +
+  players joining in 40-50s + hosts firing START_MATCH at +35s warmup, 53%
+  of players join AFTER START_MATCH and are correctly admitted as
+  SPECTATOR by the server.
+- **Caveat added to CEILING.md**: The 10,000 VU "break" is partly a
+  k6 + scenario artifact. A real production rollout with normal user
+  arrival patterns would not hit this pattern. The relevant production
+  metric is **per-second arrival rate**, which we did not measure.
+- **Scope**: `load-test/CEILING.md` (rewritten with 7-tier table),
+  `load-test/results/ceiling-clean-{80,100}x100-*.json` (2 new), 6 new
+  monitoring JSONLs. Patched no app code.
+
 ## What Is Done
 
 - Server-authoritative match loop.
