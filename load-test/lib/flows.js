@@ -43,19 +43,19 @@ function newSubmissionId(vu, roundNo) {
   return `lt-${vu}-${roundNo}-${Math.floor(Math.random() * 1e9)}`;
 }
 
-// Mirrors apps/web's socket-store heartbeat (every 10s — comfortably under
-// the server's 20s presence TTL). Without this, a socket that joins and
-// then just waits (e.g. the host during warmup) has its presence key
-// expire and gets swept as "stale" — disbanding the room out from under
-// the rest of the test. `getRoomId` is a thunk because for player/spectator
-// the room id is only known after ROOM_JOINED resolves.
+// Mirrors apps/web's socket-store heartbeat (every 25s — well under the
+// server's 40s presence TTL). At 25s interval, a healthy client's heartbeat
+// refreshes the presence key ~1.6x before TTL expiry; a 6-10s network blip
+// still refreshes in time, while server load drops ~60% vs 10s interval
+// (8,000 VU × 6 hb/min → 8,000 VU × 2.4 hb/min). See `room.service.ts`
+// `updatePresence` for the matching TTL.
 function startHeartbeat(client, getRoomId) {
   const interval = setInterval(() => {
     const roomId = getRoomId();
     if (roomId && client.connected) {
       client.emit(ClientEvent.HEARTBEAT, { roomId, sentAt: Date.now() });
     }
-  }, 10000);
+  }, 25000);
   return () => clearInterval(interval);
 }
 
@@ -332,7 +332,7 @@ async function runReconnectingFlow({
     if (c && c.connected && roomId) {
       c.emit(ClientEvent.HEARTBEAT, { roomId, sentAt: Date.now() });
     }
-  }, 10000);
+  }, 25000);
 
   await sleepMs(lifetimeMs);
   clearInterval(hb);
@@ -357,6 +357,7 @@ export async function playerFlow({
   let lastSeq = 0; // delta-replay cursor for REQUEST_SNAPSHOT on reconnect
   let finished = false;
   let eliminated = false;
+  let demotedToSpectator = false;
 
   // Track the highest event seqNo we've applied so a reconnect can resync
   // with a tight delta instead of a full snapshot.
@@ -377,6 +378,16 @@ export async function playerFlow({
     client.on(ServerEvent.EVENT_BATCH, noteSeq);
     client.on(ServerEvent.ROOM_JOINED, (p) => {
       if (p && p.roomId) roomId = p.roomId;
+      // A player that arrives after START_MATCH is admitted as SPECTATOR
+      // by the server (drop-in policy). Treating it as a real player and
+      // submitting answers would yield SPECTATOR_CANNOT_ANSWER rejections
+      // — correct server behavior, but pure k6 scenario noise. Mirror a
+      // real client: a user who joined too late just watches the rest of
+      // the match, so we stop sending answers and record the demotion.
+      if (p && p.joinedAs === "SPECTATOR") {
+        demotedToSpectator = true;
+        M.playersDemotedToSpectator.add(1);
+      }
     });
 
     client.on(ServerEvent.MATCH_STARTED, (p) => {
@@ -394,7 +405,7 @@ export async function playerFlow({
     client.on(ServerEvent.ROUND_STARTED, (p) => {
       M.roundStarted.add(1);
       const mid = (p && p.matchId) || matchId;
-      if (!mid || finished || eliminated || !p) return;
+      if (!mid || finished || eliminated || demotedToSpectator || !p) return;
 
       const sid = newSubmissionId(vu, p.roundNo);
       pending[sid] = Date.now();
