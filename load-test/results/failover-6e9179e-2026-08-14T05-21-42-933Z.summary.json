@@ -1,0 +1,23 @@
+{
+  "verdict": "INCONCLUSIVE",
+  "reasons": [
+    {
+      "code": "invalid_artifact",
+      "detail": "t_recover must be > 0 (got 0)"
+    }
+  ],
+  "derived": {
+    "tRecoverDerived": null,
+    "timeToRecoverMs": null,
+    "dedupedEventCount": 1,
+    "canonicalRoundEvents": [
+      {
+        "t": 40705,
+        "eventId": "cmssi2xet00bk01qpvzf9a1hn:r1",
+        "roundIndex": 1,
+        "fence": 1
+      }
+    ]
+  },
+  "aborted": "k6 did not finish before deadline (600000ms) — summary incomplete"
+}

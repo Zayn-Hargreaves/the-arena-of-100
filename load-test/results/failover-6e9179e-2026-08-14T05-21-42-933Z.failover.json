@@ -1,0 +1,56 @@
+{
+  "t_start": 0,
+  "t_match_started": 40704,
+  "t_kill": 40918,
+  "t_owner_flip": 55955,
+  "t_recover": 0,
+  "time_to_recover_ms": 0,
+  "owner_before": {
+    "nodeId": "api-1",
+    "fence": 1
+  },
+  "owner_after": {
+    "nodeId": "api-2",
+    "fence": 2
+  },
+  "nodes_alive_after": ["api-2", "api-3"],
+  "rounds_before": 1,
+  "rounds_after": 0,
+  "round_events": [
+    {
+      "t": 40705,
+      "eventId": "cmssi2xet00bk01qpvzf9a1hn:r1",
+      "roundIndex": 1,
+      "fence": 1
+    }
+  ],
+  "duplicate_round_check": {
+    "passed": null,
+    "deduped_event_count": null,
+    "violations": []
+  },
+  "match_finished": false,
+  "answer_p95_failover_ms": null,
+  "steady_state_p95_ms": 95.7,
+  "reconnect": {
+    "successes": 0,
+    "unexpected_closes": 0,
+    "rate": 1,
+    "p95_ms": 0
+  },
+  "thresholds": {
+    "answer_p95_multiplier_max": 5,
+    "time_to_recover_max_ms": 20000,
+    "reconnect_success_min": 0.99,
+    "min_unexpected_closes": 1
+  },
+  "_meta": {
+    "matchId": "cmssi2xet00bk01qpvzf9a1hn",
+    "killedContainer": "arena-api-1",
+    "killMode": "kill",
+    "authFailures": 0,
+    "k6Exit": null,
+    "aborted": "k6 did not finish before deadline (600000ms) — summary incomplete"
+  },
+  "verdict": "INCONCLUSIVE"
+}

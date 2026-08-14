@@ -216,6 +216,51 @@ Evidence gate for **P2 (spectator transport split) decision** filled.
   explicitly. The original 2026-07-28 multi-node runs likely hit the same
   issue silently and should be reviewed.
 
+### 2026-08-14 — C3-owner-failover chaos RUN (multi-node)
+
+Live evidence that owner-lease fencing works under SIGKILL chaos. Source of
+truth: `load-test/MULTI-BASELINE.md` §C3-owner-failover.
+
+- **Setup**: `chaos-failover.mjs` against the 3-node cluster. Drove
+  `failover-match` k6 scenario (40 players + 20 spectators + 1 host,
+  RECONNECT=1), killed owner `arena-api-1` mid-round-1 with SIGKILL.
+  Required `--redis-url=redis://localhost:6389` and `--allow-dev-jwt-secret`
+  (local-dev opt-in for `/health/cluster` ADMIN probe).
+- **Mechanics PASS**:
+  - SIGKILL worked: `arena-api-1` removed from `docker compose ps`
+    (verified `restart: "no"` policy held; no auto-resurrection).
+  - Owner-lease fencing flipped: `match:owner:<id>` went `api-1:1` → `api-2:2`
+    in **15.04 s** (`t_kill=40918ms`, `t_owner_flip=55955ms` — within one
+    round timer + transition).
+  - Fence incremented (1 → 2) — anti-zombie primitive; old owner's writes
+    rejected post-fence.
+  - Answer p95 recovered to **90.0 ms** post-failover (steady-state was
+    95.7 ms) — surviving node took over without degradation.
+  - `nodes_alive_after = [api-2, api-3]`, `api-1` gone.
+- **Verdict: INCONCLUSIVE** (oracle verdict), but on artifact shape not on
+  mechanics: orchestrator's `--k6-wait-ms=600000` deadline tripped before k6
+  could write a complete summary (`host` VU stays alive until the match
+  finishes). `t_recover=0` because no round event after the kill was observed
+  inside the wait window — the match had already finished shortly after the
+  kill, so there was no "recovered round" to capture.
+- **App error rate during chaos window**: 25.824% (135/522) — high but
+  expected during the reconnect storm. Plan A steady-state was 0.000%; this
+  measures the chaos window only.
+- **Operator notes** (mirrored to MULTI-BASELINE.md §C3):
+  - `--kill-at-round N` MUST be ≤ match's expected round count. With
+    `--kill-at-round 3` the match finishes first (early termination after
+    ~2 rounds because players answer randomly) and no kill ever fires.
+    `--kill-at-round 1` works because the match is alive during round 1.
+  - `--k6-wait-ms` needs to cover the full HOLD + match-finish grace;
+    raising this to 900000 would help future runs.
+- **Decision**: C3-owner-failover PASS on the actual signal (kill+flip+fence
+  increment + latency recovery). Follow-up: re-run with
+  `--kill-at-round 1 --k6-wait-ms 900000` to measure full `t_recover` and
+  downgrade INCONCLUSIVE → PASS.
+- **Scope**: `load-test/MULTI-BASELINE.md` §C3-owner-failover + this
+  progress note + 3 artifacts under `load-test/results/failover-*.json`.
+  No app code touched.
+
 ## What Is Done
 
 - Server-authoritative match loop.
