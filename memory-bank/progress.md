@@ -378,6 +378,82 @@ same cluster + instrumentation setup. Source of truth:
   `load-test/results/ceiling-clean-{80,100}x100-*.json` (2 new), 6 new
   monitoring JSONLs. Patched no app code.
 
+## Follow-ups (to consider when product needs >8k concurrent VU)
+
+Recorded 2026-08-14 after ceiling sweep showed 8,000 VU is the hard ceiling.
+Product spec (100-player quiz) doesn't need >8k VU currently — these are
+**future levers**, not urgent fixes.
+
+### Why ceiling is 8k VU (NOT a Node.js limit)
+
+Node.js runs at scale at Discord, PayPal, Netflix, LinkedIn, Uber — millions
+of concurrent users. The bottleneck is in **3 architectural decisions**,
+not the language:
+
+1. **Socket.IO per-connection overhead** (`apps/api/package.json:46`,
+   `socket.io@4.8.1`). Engine.IO handshake + heartbeat tracking + room
+   subscription bookkeeping per socket adds ~10× overhead vs native `ws`.
+   At 8k sockets × overhead = GB-scale RAM + CPU for socket bookkeeping.
+   - Levers: switch gateway to `uWebSockets.js` (3-5× capacity per
+     benchmark), or Fastify native WS.
+   - Effort: medium (rewrite gateway adapter only).
+
+2. **Prisma blocking event loop on every hot-path query** (`match.service.ts`
+   `findUnique` / `updateMany` / `createMany` at lines 82, 101, 146, 385,
+   450). Node.js single-threaded JS loop blocks for each `await prisma.X`
+   call. PG pool briefly saturates during 64-80 room creation storm at
+   6,400-8,000 VU (1 sample at 150/150 active for ~2s, evidence:
+   `load-test/results/clean-{64,80}x100.pg.jsonl`).
+   - Levers: (a) cache frequently-read match state in Redis with TTL ~5s
+     (skip DB on hot path); (b) batch writes with `createMany`; (c) use
+     `$queryRawUnsafe` for the hottest 1-2 queries (bypass Prisma AST).
+   - Effort: low-medium per lever. Each gives ~1.5-2× capacity.
+
+3. **Per-room broadcast × N rooms × 100 players = message amplification**
+   (`game-loop.events.ts:37, 68`, `server.to(channel).emit(...)`). Each
+   round event fans out to 100 sockets per room. 100 rooms × 5 rounds =
+   50,000 messages through Redis pub/sub adapter per match window.
+   `http_req_duration p95 = 11.7s` at 8k VU is socket accept queue +
+   Redis fan-out, NOT server handler time (max 2.5s).
+   - Levers: (a) batch multiple events per emit; (b) per-room Redis
+     channel sharding; (c) move inter-node to gRPC streaming (lower
+     latency than Redis pub/sub).
+   - Effort: medium-high. (b) is biggest gain.
+
+### Cheapest "show don't tell" candidates (effort vs demo value)
+
+If we want a tangible "ceiling moved from 8k → 12k VU" story for interviews:
+
+| Lever                                       | Effort           | Expected gain                                        | Risk                                                          |
+| ------------------------------------------- | ---------------- | ---------------------------------------------------- | ------------------------------------------------------------- |
+| **Heartbeat 10s → 25s**                     | 5 min (1 config) | ~30-40% less WS message traffic                      | Players see stale "disconnect" for 25s instead of 10s         |
+| **Cache match state in Redis with TTL=5s**  | 1-2 hours        | Skip DB lookup on hot path, removes DB pool pressure | Stale-cache window of 5s (acceptable for quiz game)           |
+| **`createMany` batching for answer writes** | 30 min           | 2-3× fewer Prisma roundtrips                         | None (already exists in match.service.ts:101 for matchPlayer) |
+
+Recommend picking **#2** if we revisit: removes the DB pool saturate burst,
+which is the most "showable" data point.
+
+### Methodology follow-up (NOT code change)
+
+12,800 VU ceiling is partly confounded by single-host k6 hitting its own
+~13k VU / 5 GB RAM ceiling. To definitively find the SERVER ceiling,
+distribute k6 across ≥2 load-generator hosts. Required infra investment
+(2nd VM / container with k6 + cluster isolation). Mark as: P3 nice-to-have.
+
+### Why NOT switch language
+
+| Language | Effort vs current Node | When worth it                                      |
+| -------- | ---------------------- | -------------------------------------------------- |
+| Go       | Rewrite, 1-2 months    | Only if ceiling must exceed ~30k VU                |
+| Rust     | Rewrite, 2-3 months    | Only if predictable latency required <1ms p99      |
+| Elixir   | Rewrite, 1-2 months    | Only if BEAM-style million-WS is core product      |
+| Java     | Rewrite, 2-3 months    | Only if team has Java skills + need Netty maturity |
+
+For the actual product (100-player quiz), 8k VU = 80 concurrent matches
+= **way more than needed**. Switching language is over-engineering for
+this use case. Revisit only if product expands to 1000+ player or
+cross-game lobby.
+
 ## What Is Done
 
 - Server-authoritative match loop.
