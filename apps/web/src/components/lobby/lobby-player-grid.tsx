@@ -41,12 +41,13 @@ export const LobbyPlayerGrid: FC<LobbyPlayerGridProps> = ({
       return { seed, name, isAnimated, spritesheet };
     }
 
-    const hash = Array.from(player.name).reduce(
-      (acc, char) => acc + (char.codePointAt(0) ?? 0),
-      0,
-    );
+    let hash = 0;
+    for (let i = 0; i < player.name.length; i++) {
+      hash += player.name.charCodeAt(i);
+    }
     const index = hash % avatars.length;
-    const avatar = avatars[index];
+    const avatar = avatars[index]!;
+
     return {
       seed: avatar.seed,
       name: avatar.name,

@@ -52,3 +52,21 @@ export function expectLuaOutcomes<T extends string>(
       `(expected one of: ${valid.join(", ")})`,
   );
 }
+
+/**
+ * Creates a ref-like object with getter/setter backed by accessor closures,
+ * avoiding `this` aliasing in object literals.
+ */
+export function createRef<T>(
+  getter: () => T,
+  setter: (value: T) => void,
+): { current: T } {
+  return {
+    get current() {
+      return getter();
+    },
+    set current(value: T) {
+      setter(value);
+    },
+  };
+}

@@ -13,13 +13,19 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { MatchOwnershipService } from "./match-ownership.service";
 import { ownerKey, fenceKey } from "./match-ownership.store";
-import { MatchStateMachine } from "@arena/game-core";
+import {
+  MatchStateMachine,
+  calculateMultiplayerElo,
+  assignPlacements,
+  type EloPlayerInput,
+} from "@arena/game-core";
 import {
   MatchStatus,
   MatchEventType,
   RoomStatus,
   PlayerStatus,
   ErrorCode,
+  DEFAULT_ELO,
   type CardEffectEvent,
   type ClassAssignedEvent,
   type PlayerInfo,
@@ -899,16 +905,59 @@ export class MatchService implements OnModuleDestroy {
       }
     }
 
-    return playerScores.map((p) =>
-      this.prisma.matchPlayer.updateMany({
+    // Phase 4 — ELO Rating calculation (Multiplayer Battle Royale ELO).
+    // Fetch starting ELO for all participating users, assign placements
+    // based on scores, calculate new ELO ratings, and persist both
+    // MatchPlayer history and User.elo.
+    const userIds = Array.from(new Set(playerScores.map((p) => p.userId)));
+    const userRows = await this.prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, elo: true },
+    });
+    const eloByUser = new Map<string, number>(
+      userRows.map((u) => [u.id, u.elo]),
+    );
+
+    const placedPlayers = assignPlacements(
+      playerScores.map((p) => ({
+        userId: p.userId,
+        score: p.score,
+      })),
+    );
+
+    const eloInputs: EloPlayerInput[] = placedPlayers.map((p) => ({
+      userId: p.userId,
+      currentElo: eloByUser.get(p.userId) ?? DEFAULT_ELO,
+      placement: p.placement,
+      score: p.score,
+    }));
+
+    const eloResults = calculateMultiplayerElo(eloInputs);
+    const eloResultByUser = new Map(eloResults.map((r) => [r.userId, r]));
+
+    const matchPlayerUpdates = playerScores.map((p) => {
+      const eloRes = eloResultByUser.get(p.userId);
+      return this.prisma.matchPlayer.updateMany({
         where: { matchId, userId: p.userId },
         data: {
           score: p.score,
           cardsPlayed: cardsPlayedByUser.get(p.userId) ?? 0,
           classId: classByUser.get(p.userId) ?? null,
+          eloBefore: eloRes?.currentElo ?? null,
+          eloAfter: eloRes?.newElo ?? null,
+          eloDelta: eloRes?.delta ?? null,
         },
+      });
+    });
+
+    const userEloUpdates = Array.from(eloResultByUser.values()).map((r) =>
+      this.prisma.user.update({
+        where: { id: r.userId },
+        data: { elo: r.newElo },
       }),
     );
+
+    return [...matchPlayerUpdates, ...userEloUpdates];
   }
 
   // Save round result

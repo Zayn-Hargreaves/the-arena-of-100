@@ -85,6 +85,8 @@ describe("RankingsService", () => {
         userId: "u1",
         username: "Alice",
         avatar: "jellyfrog",
+        elo: 1200,
+        rankTier: "SILVER",
         wins: 5,
         matchesPlayed: 10,
         accuracy: 0.8,

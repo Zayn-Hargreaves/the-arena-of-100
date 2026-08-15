@@ -61,6 +61,8 @@ export type AvatarSeed = (typeof AVATAR_SEEDS)[number];
  */
 export const DEFAULT_AVATAR_SEED: AvatarSeed = "jellyfrog";
 
+const AVATAR_SEEDS_SET: ReadonlySet<string> = new Set(AVATAR_SEEDS);
+
 export function isValidAvatarSeed(seed: string): seed is AvatarSeed {
-  return (AVATAR_SEEDS as readonly string[]).includes(seed);
+  return AVATAR_SEEDS_SET.has(seed);
 }

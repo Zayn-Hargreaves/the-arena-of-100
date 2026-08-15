@@ -10,6 +10,7 @@ export const historyItemSchema = z.object({
   score: z.number().int().nonnegative(),
   status: z.enum(["WON", "ELIMINATED", "ABANDONED"]),
   durationSec: z.number().nonnegative(),
+  eloDelta: z.number().int().nullable().optional(),
 });
 
 export const historyResponseSchema = z.object({
@@ -48,6 +49,14 @@ export class HistoryItemDto implements HistoryItem {
 
   @ApiProperty({ example: 312, description: "Match duration in seconds" })
   durationSec!: number;
+
+  @ApiProperty({
+    example: 16,
+    nullable: true,
+    required: false,
+    description: "ELO change in this match",
+  })
+  eloDelta?: number | null;
 }
 
 export class HistoryResponseDto implements HistoryResponse {

@@ -43,6 +43,11 @@ describe("MatchService", () => {
       matchRound: { create: vi.fn(), findUnique: vi.fn() },
       answer: { create: vi.fn(), createMany: vi.fn() },
       question: { findUnique: vi.fn() },
+      user: {
+        findUnique: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+        update: vi.fn().mockResolvedValue({}),
+      },
       $transaction: vi.fn(async (ops) => {
         // Execute all operations sequentially for test fidelity
         if (Array.isArray(ops)) {
@@ -1864,13 +1869,12 @@ describe("MatchService", () => {
       const finishResult = await service.finishMatch("m1", "u1", "r1");
 
       // Verify $transaction was invoked with an array containing
-      // 2 score updateMany operations + match.update + room.update
-      // (4 total). The H2 fix unified score+match+room writes into
-      // a single atomic $transaction.
+      // 2 matchPlayer.updateMany ops + 2 user.update ELO ops + match.updateMany + room.update
+      // (6 total).
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       const txArg = vi.mocked(prisma.$transaction).mock.calls[0][0];
       expect(Array.isArray(txArg)).toBe(true);
-      expect(txArg).toHaveLength(4);
+      expect(txArg).toHaveLength(6);
 
       // Regression for the H2 + scoreUpdateOps spread bug: the
       // returned match object must be the result of match.update

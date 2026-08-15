@@ -24,6 +24,10 @@ import { Question } from "./entities/question.entity";
 import { QuestionResponseDto } from "./dto/question-response.dto";
 import { BulkImportDto } from "./dto/bulk-import.dto";
 
+const VALID_PRISMA_QUESTION_CATEGORIES: ReadonlySet<string> = new Set(
+  Object.values(PrismaQuestionCategory),
+);
+
 @Injectable()
 export class QuestionService {
   private readonly MAX_LIMIT = 100;
@@ -306,11 +310,7 @@ export class QuestionService {
     if (category) {
       if (category === "ALL") {
         // "ALL" represents all categories, no filter applied
-      } else if (
-        Object.values(PrismaQuestionCategory).includes(
-          category as PrismaQuestionCategory,
-        )
-      ) {
+      } else if (VALID_PRISMA_QUESTION_CATEGORIES.has(category)) {
         where.category = category as PrismaQuestionCategory;
       } else {
         throw new BadRequestException(`Invalid category: ${category}`);
@@ -321,9 +321,7 @@ export class QuestionService {
       } else {
         const validCategories = allowedCategories.filter(
           (c): c is PrismaQuestionCategory =>
-            Object.values(PrismaQuestionCategory).includes(
-              c as PrismaQuestionCategory,
-            ),
+            VALID_PRISMA_QUESTION_CATEGORIES.has(c),
         );
         if (validCategories.length === 0) {
           throw new BadRequestException(

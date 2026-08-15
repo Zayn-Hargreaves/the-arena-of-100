@@ -9,13 +9,14 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { MatchStatus, type AvatarSeed } from "@arena/shared";
+import { MatchStatus, getRankTier, type AvatarSeed } from "@arena/shared";
 import type {
   HistoryItem,
   HistoryQuery,
   StatsResponse,
   ClassStats,
   ClassStatsResponse,
+  UserSummary,
 } from "./dto";
 
 const FINISHED = MatchStatus.FINISHED;
@@ -105,7 +106,7 @@ export class UsersService {
   async getMyStats(userId: string): Promise<StatsResponse> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, username: true, avatar: true, role: true },
+      select: { id: true, username: true, avatar: true, role: true, elo: true },
     });
     if (!user) {
       throw new NotFoundException("USER_NOT_FOUND");
@@ -172,6 +173,8 @@ export class UsersService {
         username: user.username,
         avatar: user.avatar,
         role: user.role,
+        elo: user.elo,
+        rankTier: getRankTier(user.elo),
       },
       stats: {
         matchesPlayed,
@@ -222,7 +225,7 @@ export class UsersService {
     // Compute rank per (matchId, userId) with a single raw SQL trip
     // using a window function (RANK() OVER PARTITION BY matchId).
     // Stable order: score DESC, userId ASC — matches getMyStats.
-    const matchIds = page.map((r) => r.matchId);
+    const matchIds = Array.from(new Set(page.map((r) => r.matchId)));
     const rankRows = await this.prisma.$queryRaw<
       Array<{ match_id: string; user_id: string; rank: number | bigint }>
     >`
@@ -236,17 +239,17 @@ export class UsersService {
       FROM "match_players"
       WHERE "matchId" IN (${Prisma.join(matchIds)})
     `;
-    const rankByMatchAndUser = new Map<string, Map<string, number>>();
+    const rankByMatchAndUser = new Map<string, number>();
     for (const row of rankRows) {
-      const inner =
-        rankByMatchAndUser.get(row.match_id) ?? new Map<string, number>();
-      inner.set(row.user_id, Number(row.rank));
-      rankByMatchAndUser.set(row.match_id, inner);
+      rankByMatchAndUser.set(
+        `${row.match_id}:${row.user_id}`,
+        Number(row.rank),
+      );
     }
 
     const items: HistoryItem[] = page.map((row) => {
       const m = row.match;
-      const rank = rankByMatchAndUser.get(m.id)?.get(userId);
+      const rank = rankByMatchAndUser.get(`${m.id}:${userId}`);
       if (rank == null) {
         throw new InternalServerErrorException(
           `MATCH_HISTORY_RANK_MISSING:${m.id}:${userId}`,
@@ -271,6 +274,7 @@ export class UsersService {
         score: row.score,
         status,
         durationSec,
+        eloDelta: row.eloDelta ?? null,
       };
     });
 
@@ -282,12 +286,19 @@ export class UsersService {
   }
 
   // PATCH /users/me/avatar
-  async updateMyAvatar(userId: string, avatar: AvatarSeed) {
-    return this.prisma.user.update({
+  async updateMyAvatar(
+    userId: string,
+    avatar: AvatarSeed,
+  ): Promise<UserSummary> {
+    const user = await this.prisma.user.update({
       where: { id: userId },
       data: { avatar },
-      select: { id: true, username: true, avatar: true, role: true },
+      select: { id: true, username: true, avatar: true, role: true, elo: true },
     });
+    return {
+      ...user,
+      rankTier: getRankTier(user.elo),
+    };
   }
 
   // ============================================================

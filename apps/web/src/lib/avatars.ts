@@ -54,8 +54,6 @@ const AVATAR_METADATA: Record<AvatarSeed, { name: string }> = {
   totoro: { name: "Totoro (Community)" },
 };
 
-// Derived from AVATAR_SEEDS (const from @arena/shared) and therefore
-// guaranteed to be non-empty at runtime; no empty-list guard needed.
 export const avatars: AvatarOption[] = AVATAR_SEEDS.map((seed) => ({
   seed,
   name: AVATAR_METADATA[seed].name,
@@ -63,11 +61,15 @@ export const avatars: AvatarOption[] = AVATAR_SEEDS.map((seed) => ({
   spritesheet: `${SPRITESHEET_PATH}/${seed}_spritesheet.webp`,
 }));
 
+const AVATARS_BY_SEED: ReadonlyMap<AvatarSeed, AvatarOption> = new Map(
+  avatars.map((a) => [a.seed, a]),
+);
+
 export function findAvatarBySeed(seed: AvatarSeed): AvatarOption {
   if (avatars.length === 0) {
     throw new Error(
       "findAvatarBySeed: AVATAR_SEEDS yielded no entries; avatar catalog is empty.",
     );
   }
-  return avatars.find((a) => a.seed === seed) ?? (avatars[0] as AvatarOption);
+  return AVATARS_BY_SEED.get(seed) ?? (avatars[0] as AvatarOption);
 }

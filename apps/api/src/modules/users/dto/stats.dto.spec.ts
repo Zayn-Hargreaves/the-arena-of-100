@@ -23,6 +23,8 @@ describe("StatsDto & Schema", () => {
         username: "Zero_Cool",
         avatar: "jellyfrog",
         role: "GUEST",
+        elo: 1200,
+        rankTier: "SILVER" as const,
       };
       expect(userSummarySchema.parse(input)).toEqual(input);
     });
@@ -138,6 +140,8 @@ describe("StatsDto & Schema", () => {
           username: "Alice",
           avatar: "jellyfrog",
           role: "GUEST",
+          elo: 1200,
+          rankTier: "SILVER" as const,
         },
         stats: {
           matchesPlayed: 0,
@@ -177,6 +181,8 @@ describe("StatsDto & Schema", () => {
           username: "Alice",
           avatar: "jellyfrog",
           role: "GUEST",
+          elo: 1200,
+          rankTier: "SILVER" as const,
         },
         stats: { matchesPlayed: -1 },
       };
@@ -191,10 +197,14 @@ describe("StatsDto & Schema", () => {
       dto.username = "Alice";
       dto.avatar = "jellyfrog";
       dto.role = "GUEST";
+      dto.elo = 1200;
+      dto.rankTier = "SILVER";
       expect(dto.id).toBe("u1");
       expect(dto.username).toBe("Alice");
       expect(dto.avatar).toBe("jellyfrog");
       expect(dto.role).toBe("GUEST");
+      expect(dto.elo).toBe(1200);
+      expect(dto.rankTier).toBe("SILVER");
     });
 
     it("StatsDto should instantiate and preserve properties", () => {

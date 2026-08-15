@@ -276,7 +276,8 @@
       "eliminatedRound": "Eliminated In",
       "roundValue": "Round {round}",
       "accuracy": "Accuracy",
-      "reactionSpeed": "Reaction Speed"
+      "reactionSpeed": "Reaction Speed",
+      "elo": "ELO Rating"
     },
     "actions": {
       "rematch": "Start a New Match",
@@ -303,10 +304,25 @@
       "guestPlayer": "Guest Player"
     }
   },
+  "rank": {
+    "title": "Rank Tier",
+    "elo": "ELO",
+    "tiers": {
+      "bronze": "Bronze",
+      "silver": "Silver",
+      "gold": "Gold",
+      "platinum": "Platinum",
+      "diamond": "Diamond",
+      "master": "Master",
+      "grandmaster": "Grandmaster"
+    }
+  },
   "profile": {
     "registeredToday": "REGISTERED: TODAY",
     "stats": {
       "title": "SURVIVAL STATS",
+      "elo": "ELO RATING",
+      "rankTier": "RANK TIER",
       "matches": "TOTAL MATCHES",
       "wins": "VICTORIES (WINS)",
       "averageResponse": "AVERAGE RESPONSE",
@@ -321,6 +337,7 @@
     "history": {
       "title": "RECENT BATTLE HISTORY",
       "score": "SCORE",
+      "elo": "ELO",
       "rank": "RANK",
       "players": "PLAYERS",
       "duration": "DURATION",
@@ -374,6 +391,7 @@
     "columns": {
       "rank": "Rank",
       "player": "Player",
+      "elo": "ELO",
       "score": "Score",
       "speed": "Speed",
       "accuracy": "Accuracy"

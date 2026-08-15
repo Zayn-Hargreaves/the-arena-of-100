@@ -9,6 +9,7 @@ import { MiniGlyph } from "@/components/ui/mini-glyph";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SpriteFrame } from "@/components/ui/sprite-frame";
 import { Spinner } from "@/components/ui/spinner";
+import { RankBadge } from "@/components/atoms/rank-badge";
 import { avatars, findAvatarBySeed, type AvatarOption } from "@/lib/avatars";
 import {
   DEFAULT_AVATAR_SEED,
@@ -321,6 +322,20 @@ function HistorySection({
                 <p className="font-mono text-base font-black text-candy-blue">
                   {item.score.toLocaleString()} PTS
                 </p>
+                {item.eloDelta !== null && item.eloDelta !== undefined && (
+                  <span
+                    className={`block text-[10px] font-mono font-black ${
+                      item.eloDelta > 0
+                        ? "text-candy-mint"
+                        : item.eloDelta < 0
+                          ? "text-candy-red"
+                          : "text-candy-ink/60"
+                    }`}
+                  >
+                    {item.eloDelta > 0 ? `+${item.eloDelta}` : item.eloDelta}{" "}
+                    ELO
+                  </span>
+                )}
               </div>
               <div>
                 <p className="text-[10px] text-candy-ink/60 font-mono font-black uppercase">
@@ -600,6 +615,13 @@ export default function ProfilePage() {
                 {activeAvatar?.name ??
                   findAvatarBySeed(DEFAULT_AVATAR_SEED).name}
               </span>
+              <RankBadge
+                tier={profile?.user.rankTier ?? "SILVER"}
+                elo={profile?.user.elo ?? 1200}
+                size="md"
+                showElo={true}
+                className="w-fit mx-auto sm:mx-0 shadow-[2px_2px_0_0_#2B2D42]"
+              />
             </div>
             <div className="flex justify-center sm:justify-start gap-4 text-xs font-mono font-black text-candy-ink/80">
               <span className="flex items-center gap-1 leading-5">

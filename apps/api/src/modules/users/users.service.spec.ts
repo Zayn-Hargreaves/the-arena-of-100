@@ -50,6 +50,7 @@ describe("UsersService", () => {
       username: "Alice",
       avatar: "jellyfrog",
       role: Role.GUEST,
+      elo: 1200,
     };
 
     it("throws NotFoundException when user does not exist", async () => {
@@ -58,7 +59,13 @@ describe("UsersService", () => {
       await expect(service.getMyStats("u1")).rejects.toThrow(NotFoundException);
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
         where: { id: "u1" },
-        select: { id: true, username: true, avatar: true, role: true },
+        select: {
+          id: true,
+          username: true,
+          avatar: true,
+          role: true,
+          elo: true,
+        },
       });
     });
 
@@ -75,7 +82,7 @@ describe("UsersService", () => {
       const result = await service.getMyStats("u1");
 
       expect(result).toEqual({
-        user: mockUser,
+        user: { ...mockUser, rankTier: "SILVER" },
         stats: {
           matchesPlayed: 0,
           wins: 0,
@@ -100,7 +107,7 @@ describe("UsersService", () => {
       const result = await service.getMyStats("u1");
 
       expect(result).toEqual({
-        user: mockUser,
+        user: { ...mockUser, rankTier: "SILVER" },
         stats: {
           matchesPlayed: 0,
           wins: 0,
@@ -633,16 +640,23 @@ describe("UsersService", () => {
         username: "Alice",
         avatar: "tux",
         role: Role.GUEST,
+        elo: 1200,
       };
       vi.mocked(prisma.user.update).mockResolvedValue(updated);
 
       const result = await service.updateMyAvatar("u1", "tux");
 
-      expect(result).toEqual(updated);
+      expect(result).toEqual({ ...updated, rankTier: "SILVER" });
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: "u1" },
         data: { avatar: "tux" },
-        select: { id: true, username: true, avatar: true, role: true },
+        select: {
+          id: true,
+          username: true,
+          avatar: true,
+          role: true,
+          elo: true,
+        },
       });
     });
   });

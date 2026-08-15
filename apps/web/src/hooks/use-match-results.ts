@@ -7,7 +7,10 @@ export interface MatchResultApiResponse {
   players?: Array<{
     userId?: string;
     score?: number;
-    user?: { id?: string; username?: string };
+    eloBefore?: number | null;
+    eloAfter?: number | null;
+    eloDelta?: number | null;
+    user?: { id?: string; username?: string; elo?: number };
   }>;
 }
 
@@ -35,6 +38,8 @@ export interface PerformanceViewModel {
   speed: string;
   accuracy: string;
   eliminatedRound?: number | null;
+  eloDelta?: number | null;
+  eloAfter?: number | null;
 }
 
 function buildRequestSignal(
@@ -190,11 +195,27 @@ export function useMatchResults(matchId: string, userId: string | null) {
     [players],
   );
 
+  const playerById = useMemo(
+    () => new Map(players.map((p) => [p.id, p])),
+    [players],
+  );
+
+  const playerRankById = useMemo(
+    () => new Map(sortedPlayers.map((p, idx) => [p.id, idx + 1])),
+    [sortedPlayers],
+  );
+
+  const rawPlayerById = useMemo(
+    () =>
+      new Map(
+        (payload?.players ?? []).map((p) => [p.userId ?? p.user?.id ?? "", p]),
+      ),
+    [payload?.players],
+  );
+
   const winner = useMemo<WinnerViewModel>(() => {
     const winnerId = payload?.winnerId ?? null;
-    const winnerFromServer = winnerId
-      ? players.find((player) => player.id === winnerId)
-      : undefined;
+    const winnerFromServer = winnerId ? playerById.get(winnerId) : undefined;
     // Only honor a server-provided winnerId that resolves to a known
     // player. A missing `payload.winnerId` (incomplete payload, race
     // with the finalization broadcast) or an unmatched id leaves the
@@ -221,24 +242,24 @@ export function useMatchResults(matchId: string, userId: string | null) {
       accuracy: "--",
       survivedRounds: "--",
     };
-  }, [players, payload?.winnerId, t]);
+  }, [playerById, payload?.winnerId, t]);
 
   const yourPerformance = useMemo<PerformanceViewModel>(() => {
-    const currentPlayer = userId
-      ? players.find((player) => player.id === userId)
-      : undefined;
+    const currentPlayer = userId ? playerById.get(userId) : undefined;
+    const rawPlayer = userId ? rawPlayerById.get(userId) : undefined;
     return {
       name: currentPlayer?.name ?? t("guestPlayer"),
       rank: currentPlayer
-        ? sortedPlayers.findIndex((player) => player.id === currentPlayer.id) +
-            1 || null
+        ? (playerRankById.get(currentPlayer.id) ?? null)
         : null,
       score: currentPlayer?.score ?? 0,
       speed: "--",
       accuracy: "--",
       eliminatedRound: null,
+      eloDelta: rawPlayer?.eloDelta ?? null,
+      eloAfter: rawPlayer?.eloAfter ?? rawPlayer?.user?.elo ?? null,
     };
-  }, [players, sortedPlayers, t, userId]);
+  }, [playerById, playerRankById, rawPlayerById, t, userId]);
 
   const winnerId = payload?.winnerId ?? null;
   const opponents = winnerId

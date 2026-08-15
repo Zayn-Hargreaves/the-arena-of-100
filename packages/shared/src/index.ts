@@ -40,6 +40,9 @@ export {
 // and `@arena/web` (useClassStats hook + profile page).
 export * from "./class-stats";
 
+// ELO & Rank Tiers (Phase 4 — ELO Rating Engine)
+export * from "./elo";
+
 // Game Constants (defined in its own file so schemas.ts can
 // import GAME_CONFIG.MAX_ROUNDS without creating a circular
 // dependency through the index barrel).

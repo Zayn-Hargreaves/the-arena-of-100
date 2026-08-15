@@ -543,8 +543,9 @@ export class LobbyCountdownService implements OnModuleInit {
     if (!countdown) return;
 
     const room = await this.roomService.getRoom(roomId);
+    const leavingPlayerIdsSet = new Set(leavingPlayerIds);
     const remainingPlayersCount = room.players.filter(
-      (p) => !leavingPlayerIds.includes(p.userId),
+      (p) => !leavingPlayerIdsSet.has(p.userId),
     ).length;
 
     if (
