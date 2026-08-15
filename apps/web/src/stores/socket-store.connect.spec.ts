@@ -605,25 +605,51 @@ describe("socket-store connect heartbeat ownership", () => {
   });
 
   describe("voteBanTopic rollback handling", () => {
+    async function setupConnectedSocket() {
+      await useSocketStore.getState().connect();
+      const socket = useSocketStore.getState().socket;
+      expect(socket).not.toBeNull();
+      if (!socket) {
+        throw new Error("Socket is not initialized");
+      }
+      let isConnected = true;
+      Object.defineProperty(socket, "connected", {
+        configurable: true,
+        get: () => isConnected,
+        set: (v) => {
+          isConnected = v;
+        },
+      });
+      const emitSpy = vi.spyOn(
+        socket as unknown as { emit: (...args: unknown[]) => unknown },
+        "emit",
+      );
+      return { socket, emitSpy };
+    }
+
+    function extractVoteCommandId(
+      emitSpy: { mock: { calls: unknown[][] } },
+      topic: string,
+    ): string {
+      const voteCall = emitSpy.mock.calls.find(
+        (c) =>
+          c[0] === ClientEvent.VOTE_BAN_TOPIC &&
+          (c[1] as VoteBanTopicPayload | undefined)?.topic === topic,
+      );
+      expect(voteCall).toBeDefined();
+      const commandId = (voteCall![1] as VoteBanTopicPayload).commandId;
+      expect(typeof commandId).toBe("string");
+      return commandId;
+    }
+
     it("rolls back two consecutive votes correctly when both receive matching error payloads", async () => {
       waitForSocketAckMock.mockResolvedValueOnce(undefined);
       let socket: ReturnType<typeof useSocketStore.getState>["socket"] = null;
 
       try {
-        await useSocketStore.getState().connect();
-        socket = useSocketStore.getState().socket;
-        let isConnected = true;
-        Object.defineProperty(socket, "connected", {
-          configurable: true,
-          get: () => isConnected,
-          set: (v) => {
-            isConnected = v;
-          },
-        });
-        const emitSpy = vi.spyOn(
-          socket as unknown as { emit: (...args: unknown[]) => unknown },
-          "emit",
-        );
+        const setup = await setupConnectedSocket();
+        socket = setup.socket;
+        const { emitSpy } = setup;
 
         useSocketStore.setState({
           topicVoting: {
@@ -645,30 +671,14 @@ describe("socket-store connect heartbeat ownership", () => {
         expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
           "SCIENCE",
         );
-
-        const vote1Call = emitSpy.mock.calls.find(
-          (c) =>
-            c[0] === ClientEvent.VOTE_BAN_TOPIC &&
-            (c[1] as VoteBanTopicPayload | undefined)?.topic === "SCIENCE",
-        );
-        expect(vote1Call).toBeDefined();
-        const commandId1 = (vote1Call![1] as VoteBanTopicPayload).commandId;
-        expect(typeof commandId1).toBe("string");
+        const commandId1 = extractVoteCommandId(emitSpy, "SCIENCE");
 
         // Vote 2: cast subsequent vote for HISTORY
         useSocketStore.getState().voteBanTopic("m1", "HISTORY");
         expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
           "HISTORY",
         );
-
-        const vote2Call = emitSpy.mock.calls.find(
-          (c) =>
-            c[0] === ClientEvent.VOTE_BAN_TOPIC &&
-            (c[1] as VoteBanTopicPayload | undefined)?.topic === "HISTORY",
-        );
-        expect(vote2Call).toBeDefined();
-        const commandId2 = (vote2Call![1] as VoteBanTopicPayload).commandId;
-        expect(typeof commandId2).toBe("string");
+        const commandId2 = extractVoteCommandId(emitSpy, "HISTORY");
         expect(commandId2).not.toBe(commandId1);
 
         // Error for Vote 2 arrives first
@@ -705,20 +715,9 @@ describe("socket-store connect heartbeat ownership", () => {
       let socket: ReturnType<typeof useSocketStore.getState>["socket"] = null;
 
       try {
-        await useSocketStore.getState().connect();
-        socket = useSocketStore.getState().socket;
-        let isConnected = true;
-        Object.defineProperty(socket, "connected", {
-          configurable: true,
-          get: () => isConnected,
-          set: (v) => {
-            isConnected = v;
-          },
-        });
-        const emitSpy = vi.spyOn(
-          socket as unknown as { emit: (...args: unknown[]) => unknown },
-          "emit",
-        );
+        const setup = await setupConnectedSocket();
+        socket = setup.socket;
+        const { emitSpy } = setup;
 
         useSocketStore.setState({
           topicVoting: {
@@ -740,30 +739,14 @@ describe("socket-store connect heartbeat ownership", () => {
         expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
           "SCIENCE",
         );
-
-        const vote1Call = emitSpy.mock.calls.find(
-          (c) =>
-            c[0] === ClientEvent.VOTE_BAN_TOPIC &&
-            (c[1] as VoteBanTopicPayload | undefined)?.topic === "SCIENCE",
-        );
-        expect(vote1Call).toBeDefined();
-        const commandId1 = (vote1Call![1] as VoteBanTopicPayload).commandId;
-        expect(typeof commandId1).toBe("string");
+        const commandId1 = extractVoteCommandId(emitSpy, "SCIENCE");
 
         // Vote 2: cast subsequent vote for HISTORY
         useSocketStore.getState().voteBanTopic("m1", "HISTORY");
         expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
           "HISTORY",
         );
-
-        const vote2Call = emitSpy.mock.calls.find(
-          (c) =>
-            c[0] === ClientEvent.VOTE_BAN_TOPIC &&
-            (c[1] as VoteBanTopicPayload | undefined)?.topic === "HISTORY",
-        );
-        expect(vote2Call).toBeDefined();
-        const commandId2 = (vote2Call![1] as VoteBanTopicPayload).commandId;
-        expect(typeof commandId2).toBe("string");
+        const commandId2 = extractVoteCommandId(emitSpy, "HISTORY");
         expect(commandId2).not.toBe(commandId1);
 
         // Error for Vote 1 arrives first
@@ -800,16 +783,8 @@ describe("socket-store connect heartbeat ownership", () => {
       let socket: ReturnType<typeof useSocketStore.getState>["socket"] = null;
 
       try {
-        await useSocketStore.getState().connect();
-        socket = useSocketStore.getState().socket;
-        let isConnected = true;
-        Object.defineProperty(socket, "connected", {
-          configurable: true,
-          get: () => isConnected,
-          set: (v) => {
-            isConnected = v;
-          },
-        });
+        const setup = await setupConnectedSocket();
+        socket = setup.socket;
 
         useSocketStore.setState({
           topicVoting: {
@@ -862,20 +837,9 @@ describe("socket-store connect heartbeat ownership", () => {
       let socket: ReturnType<typeof useSocketStore.getState>["socket"] = null;
 
       try {
-        await useSocketStore.getState().connect();
-        socket = useSocketStore.getState().socket;
-        let isConnected = true;
-        Object.defineProperty(socket, "connected", {
-          configurable: true,
-          get: () => isConnected,
-          set: (v) => {
-            isConnected = v;
-          },
-        });
-        const emitSpy = vi.spyOn(
-          socket as unknown as { emit: (...args: unknown[]) => unknown },
-          "emit",
-        );
+        const setup = await setupConnectedSocket();
+        socket = setup.socket;
+        const { emitSpy } = setup;
 
         // 1. TOPIC_VOTING_STARTED scenario: new phase resets pending vote state
         useSocketStore.setState({
@@ -895,12 +859,7 @@ describe("socket-store connect heartbeat ownership", () => {
 
         // Cast vote
         useSocketStore.getState().voteBanTopic("m1", "SCIENCE");
-        const voteCall = emitSpy.mock.calls.find(
-          (c) =>
-            c[0] === ClientEvent.VOTE_BAN_TOPIC &&
-            (c[1] as VoteBanTopicPayload | undefined)?.topic === "SCIENCE",
-        );
-        const commandId = (voteCall![1] as VoteBanTopicPayload).commandId;
+        const commandId = extractVoteCommandId(emitSpy, "SCIENCE");
 
         // TOPIC_VOTING_STARTED for new phase resets pending vote state
         triggerSocketEvent(socket, ServerEvent.TOPIC_VOTING_STARTED, {
@@ -941,13 +900,7 @@ describe("socket-store connect heartbeat ownership", () => {
         expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
           "HISTORY",
         );
-        const voteCallFinished = emitSpy.mock.calls.find(
-          (c) =>
-            c[0] === ClientEvent.VOTE_BAN_TOPIC &&
-            (c[1] as VoteBanTopicPayload | undefined)?.topic === "HISTORY",
-        );
-        const commandIdFinished = (voteCallFinished![1] as VoteBanTopicPayload)
-          .commandId;
+        const commandIdFinished = extractVoteCommandId(emitSpy, "HISTORY");
 
         // TOPIC_VOTING_FINISHED marks the phase as finished and retains voted topic
         triggerSocketEvent(socket, ServerEvent.TOPIC_VOTING_FINISHED, {

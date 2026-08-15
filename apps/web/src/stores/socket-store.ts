@@ -87,6 +87,14 @@ function clearTopicVoteState(matchId?: string) {
   }
 }
 
+function getEffectiveTopicVote(matchId: string): string | null {
+  const pending = pendingTopicVoteCommandsByMatch.get(matchId);
+  if (pending && pending.length > 0) {
+    return pending[pending.length - 1].topic;
+  }
+  return confirmedTopicVoteBaselineByMatch.get(matchId) ?? null;
+}
+
 export const useSocketStore = create<SocketState>((set, get) => ({
   // Initial state
   socket: null,
@@ -475,16 +483,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           const matchPending =
             pendingTopicVoteCommandsByMatch.get(failedCmd.matchId) ?? [];
           const hasRemainingMatchCmds = matchPending.length > 0;
-          const baselineTopic = confirmedTopicVoteBaselineByMatch.has(
-            failedCmd.matchId,
-          )
-            ? confirmedTopicVoteBaselineByMatch.get(failedCmd.matchId)!
-            : null;
-
-          let recomputedTopic = baselineTopic;
-          for (const cmd of matchPending) {
-            recomputedTopic = cmd.topic;
-          }
+          const recomputedTopic = getEffectiveTopicVote(failedCmd.matchId);
 
           if (!hasRemainingMatchCmds) {
             confirmedTopicVoteBaselineByMatch.delete(failedCmd.matchId);
@@ -803,11 +802,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       matchCmds.push(newCmd);
       pendingTopicVoteCommandsByMatch.set(matchId, matchCmds);
 
-      const baseline = confirmedTopicVoteBaselineByMatch.get(matchId) ?? null;
-      let effectiveTopic = baseline;
-      for (const cmd of matchCmds) {
-        effectiveTopic = cmd.topic;
-      }
+      const effectiveTopic = getEffectiveTopicVote(matchId);
 
       set({
         topicVoting: {
