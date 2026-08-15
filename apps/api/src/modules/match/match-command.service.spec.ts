@@ -1178,6 +1178,94 @@ describe("MatchCommandService (B4a)", () => {
       expect(
         recorderExpired.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY).length,
       ).toBe(0);
+
+      // 3. Duplicate event where SM is undefined returns DUPLICATE_EVENT
+      matchService.getStateMachine.mockResolvedValueOnce(undefined);
+      const outcomeNullSm = await service.applyVoteBanTopicAuthoritative(
+        voteEnv("evt-vote-1", "p1", "SCIENCE"),
+        OWNER,
+        recorder.server,
+      );
+      expect(outcomeNullSm).toBe("DUPLICATE_EVENT");
+
+      // 4. Duplicate event without canonical event in event log returns DUPLICATE_EVENT without emitting summary
+      const smNoCanonical = new MatchStateMachine("m1", "r1", [
+        {
+          id: "p1",
+          name: "Alice",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+      ]);
+      smNoCanonical.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"]);
+      matchService.getStateMachine.mockResolvedValue(smNoCanonical);
+      const recorderNoCanonical = makeMockServer();
+
+      const outcomeNoCanonical = await service.applyVoteBanTopicAuthoritative(
+        voteEnv("evt-vote-unrelated", "p-other", "SCIENCE"),
+        OWNER,
+        recorderNoCanonical.server,
+      );
+      expect(outcomeNoCanonical).toBe("DUPLICATE_EVENT");
+      expect(
+        recorderNoCanonical.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY)
+          .length,
+      ).toBe(0);
+
+      // 5. Duplicate event where payload.playerId matches env.body.userId finds canonical event
+      const smPlayerMatch = new MatchStateMachine("m1", "r1", [
+        {
+          id: "p1",
+          name: "Alice",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+        {
+          id: "p2",
+          name: "Bob",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+      ]);
+      smPlayerMatch.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"]);
+      // Create competing canonical vote from p2 first
+      smPlayerMatch.voteBanTopic("p2", "HISTORY", {
+        eventId: "evt-competing-p2",
+      });
+      // Create canonical vote from p1
+      smPlayerMatch.voteBanTopic("p1", "SCIENCE", {
+        eventId: "evt-original-p1",
+      });
+      matchService.getStateMachine.mockResolvedValue(smPlayerMatch);
+      const recorderPlayerMatch = makeMockServer();
+
+      const outcomePlayerMatch = await service.applyVoteBanTopicAuthoritative(
+        voteEnv("evt-retry-diff-id", "p1", "SCIENCE"),
+        OWNER,
+        recorderPlayerMatch.server,
+      );
+      expect(outcomePlayerMatch).toBe("DUPLICATE_EVENT");
+      const summaryCalls = recorderPlayerMatch.callsByEvent(
+        ServerEvent.TOPIC_VOTING_SUMMARY,
+      );
+      expect(summaryCalls.length).toBe(1);
+      expect(summaryCalls[0]?.[1]).toMatchObject({
+        matchId: "m1",
+        voteCounts: expect.objectContaining({
+          SCIENCE: 1,
+          HISTORY: 1,
+        }),
+        totalVotes: 2,
+      });
     });
 
     it("suppresses topic voting summary if status changes during roomId lookup", async () => {

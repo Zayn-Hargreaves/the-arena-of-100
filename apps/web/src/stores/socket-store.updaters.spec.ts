@@ -3,14 +3,28 @@ import {
   PlayerStatus,
   RoomStatus,
   type SnapshotPayload,
+  type RoomCreatedPayload,
+  type RoomJoinedPayload,
 } from "@arena/shared";
 import type { JoinMode, RoomType } from "@arena/shared";
 import { describe, expect, it } from "vitest";
 import {
   applyAnswerResultState,
+  applyAuthenticatedState,
   applyEventBatchState,
   applyMatchFinishedState,
   applyMatchStartedState,
+  applyMatchStartingState,
+  applyPlayerEliminatedState,
+  applyPlayerJoinedState,
+  applyPlayerLeftState,
+  applyRoomCountdownCancelledState,
+  applyRoomCountdownStartedState,
+  applyRoomCreatedState,
+  applyRoomJoinedState,
+  applyRoomPresenceUpdatedState,
+  applyRoomStatusUpdatedState,
+  applyRoomTerminatedState,
   applyRoundEndedState,
   applyRoundStartedState,
   applySnapshotState,
@@ -1626,6 +1640,549 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
       });
 
       expect(result.topicVoting).toBeNull();
+    });
+
+    it("applySnapshotState handles COUNTDOWN status with existing topic voting matchId to set isFinished true", () => {
+      const state = makeState({
+        topicVoting: {
+          matchId: "m1",
+          candidateTopics: ["SCIENCE"],
+          endsAt: 10000,
+          durationMs: 10000,
+          myVotedTopic: null,
+          voteCounts: {},
+          totalVotes: 0,
+          bannedTopics: [],
+          activeTopics: [],
+          isFinished: false,
+        },
+      });
+
+      const res = applySnapshotState(state, {
+        matchId: "m1",
+        status: MatchStatus.COUNTDOWN,
+        currentRoundNo: 0,
+        players: [],
+        currentQuestion: null,
+        roundEndTime: null,
+        lastEventSeqNo: 3,
+      });
+
+      expect(res.topicVoting?.isFinished).toBe(true);
+    });
+
+    it("applySnapshotState handles activeTopics only when candidateTopics is empty", () => {
+      const state = makeState({ topicVoting: null });
+      const res = applySnapshotState(state, {
+        matchId: "m1",
+        status: MatchStatus.COUNTDOWN,
+        currentRoundNo: 0,
+        players: [],
+        currentQuestion: null,
+        roundEndTime: null,
+        lastEventSeqNo: 3,
+        activeTopics: ["SCIENCE", "TECH"],
+      });
+
+      expect(res.topicVoting?.activeTopics).toEqual(["SCIENCE", "TECH"]);
+      expect(res.topicVoting?.candidateTopics).toEqual([]);
+    });
+
+    it("applySnapshotState updates room state when state.room is present", () => {
+      const state = makeState({
+        room: makeRoom({
+          status: RoomStatus.COUNTDOWN,
+          countdownEndsAt: 12345,
+          currentMatchId: null,
+        }),
+      });
+      const res = applySnapshotState(state, {
+        matchId: "m1",
+        status: MatchStatus.ROUND_ACTIVE,
+        currentRoundNo: 1,
+        players: [],
+        currentQuestion: null,
+        roundEndTime: 20000,
+        lastEventSeqNo: 5,
+      });
+      expect(res.room?.status).toBe(RoomStatus.IN_GAME);
+      expect(res.room?.currentMatchId).toBe("m1");
+      expect(res.room?.countdownEndsAt).toBeNull();
+    });
+
+    it("applySnapshotState updates room currentMatchId from a different previous match ID", () => {
+      const state = makeState({
+        room: makeRoom({
+          status: RoomStatus.WAITING,
+          currentMatchId: "m-prev",
+        }),
+      });
+      const res = applySnapshotState(state, {
+        matchId: "m1",
+        status: MatchStatus.ROUND_ACTIVE,
+        currentRoundNo: 1,
+        players: [],
+        currentQuestion: null,
+        roundEndTime: 20000,
+        lastEventSeqNo: 5,
+      });
+      expect(res.room?.currentMatchId).toBe("m1");
+    });
+
+    it("applySnapshotState preserves prior bannedTopics/activeTopics when candidateTopics present and snapshot topic arrays are undefined", () => {
+      const state = makeState({
+        topicVoting: {
+          matchId: "m1",
+          candidateTopics: ["SCIENCE", "TECH"],
+          endsAt: 10000,
+          durationMs: 10000,
+          myVotedTopic: "SCIENCE",
+          voteCounts: {},
+          totalVotes: 0,
+          bannedTopics: ["HISTORY"],
+          activeTopics: ["SCIENCE"],
+          isFinished: false,
+        },
+      });
+
+      const res = applySnapshotState(state, {
+        matchId: "m1",
+        status: MatchStatus.TOPIC_VOTING,
+        currentRoundNo: 0,
+        players: [],
+        currentQuestion: null,
+        roundEndTime: null,
+        lastEventSeqNo: 2,
+        candidateTopics: ["SCIENCE", "TECH"],
+      });
+
+      expect(res.topicVoting?.bannedTopics).toEqual(["HISTORY"]);
+      expect(res.topicVoting?.activeTopics).toEqual(["SCIENCE"]);
+      expect(res.topicVoting?.myVotedTopic).toBe("SCIENCE");
+    });
+
+    it("applySnapshotState returns null topicVoting on COUNTDOWN when all topic arrays are empty and topicVoting is null", () => {
+      const state = makeState({ topicVoting: null });
+      const res = applySnapshotState(state, {
+        matchId: "m1",
+        status: MatchStatus.COUNTDOWN,
+        currentRoundNo: 0,
+        players: [],
+        currentQuestion: null,
+        roundEndTime: null,
+        lastEventSeqNo: 3,
+      });
+
+      expect(res.topicVoting).toBeNull();
+    });
+
+    it("applySnapshotState handles null userId without throwing and sets isEliminated false", () => {
+      const state = makeState({ userId: null });
+      const res = applySnapshotState(state, {
+        matchId: "m1",
+        status: MatchStatus.ROUND_ACTIVE,
+        currentRoundNo: 1,
+        players: [
+          {
+            id: "p1",
+            name: "Alice",
+            status: PlayerStatus.ACTIVE,
+            score: 0,
+            isOnline: true,
+          },
+        ],
+        currentQuestion: null,
+        roundEndTime: null,
+        lastEventSeqNo: 1,
+      });
+      expect(res.isEliminated).toBe(false);
+    });
+  });
+
+  describe("applyRoundEndedState with priorForThisRound", () => {
+    it("copies prior isCorrect and responseTimeMs into lastAnswerResult", () => {
+      const state = makeState({ match: makeMatch() });
+      const res = applyRoundEndedState(
+        state,
+        {
+          matchId: "m1",
+          roundNo: 1,
+          correctAnswer: "A",
+          eliminatedPlayerIds: [],
+          survivingPlayerIds: ["p1", "p2"],
+        },
+        {
+          matchId: "m1",
+          roundNo: 1,
+          isCorrect: true,
+          responseTimeMs: 350,
+          correctAnswer: "A",
+        },
+      );
+
+      expect(res.lastAnswerResult?.isCorrect).toBe(true);
+      expect(res.lastAnswerResult?.responseTimeMs).toBe(350);
+    });
+  });
+
+  describe("applyAuthenticatedState", () => {
+    it("updates authentication credentials and flags", () => {
+      const res = applyAuthenticatedState({
+        userId: "u1",
+        username: "Player1",
+      });
+      expect(res).toEqual({
+        isAuthenticated: true,
+        userId: "u1",
+        username: "Player1",
+      });
+    });
+  });
+
+  describe("applyRoomCreatedState and applyRoomJoinedState", () => {
+    it("applyRoomCreatedState initializes room and resets match/answer state", () => {
+      const payload = {
+        roomId: "r1",
+        code: "ABC",
+        roomStatus: RoomStatus.WAITING,
+        hostId: "u1",
+        roomType: "CUSTOM" satisfies RoomType,
+        maxPlayers: 10,
+        currentMatchId: null,
+        joinedAs: "PLAYER" satisfies JoinMode,
+        players: [{ playerId: "u1", playerName: "Host", isOnline: true }],
+      } satisfies RoomCreatedPayload;
+      const res = applyRoomCreatedState(payload);
+
+      expect(res.room?.id).toBe("r1");
+      expect(res.room?.players).toHaveLength(1);
+      expect(res.match).toBeNull();
+      expect(res.isEliminated).toBe(false);
+    });
+
+    it("applyRoomJoinedState initializes joined room", () => {
+      const payload = {
+        roomId: "r2",
+        code: "XYZ",
+        roomStatus: RoomStatus.WAITING,
+        hostId: "u1",
+        roomType: "CUSTOM" satisfies RoomType,
+        maxPlayers: 10,
+        currentMatchId: null,
+        countdownEndsAt: 12345,
+        joinedAs: "SPECTATOR" satisfies JoinMode,
+        players: [{ playerId: "u2", playerName: "Guest", isOnline: true }],
+      } satisfies RoomJoinedPayload;
+      const res = applyRoomJoinedState(payload);
+
+      expect(res.room?.id).toBe("r2");
+      expect(res.room?.joinMode).toBe("SPECTATOR");
+      expect(res.room?.countdownEndsAt).toBe(12345);
+    });
+  });
+
+  describe("applyPlayerJoinedState and applyPlayerLeftState", () => {
+    it("applyPlayerJoinedState adds a new player when not in room", () => {
+      const state = makeState({
+        room: makeRoom({ players: [basePlayers[0]] }),
+      });
+      const res = applyPlayerJoinedState(state, {
+        roomId: "r1",
+        playerId: "p2",
+        playerName: "Bob",
+        isOnline: true,
+      });
+
+      expect(res.room?.players).toHaveLength(2);
+      expect(res.room?.players.some((p) => p.id === "p2")).toBe(true);
+    });
+
+    it("applyPlayerJoinedState updates player info when already in room", () => {
+      const state = makeState({
+        room: makeRoom({ players: basePlayers }),
+      });
+      const res = applyPlayerJoinedState(state, {
+        roomId: "r1",
+        playerId: "p1",
+        playerName: "AliceUpdated",
+        isOnline: false,
+      });
+
+      expect(res.room?.players[0].name).toBe("AliceUpdated");
+      expect(res.room?.players[0].isOnline).toBe(false);
+      expect(res.room?.players[1].name).toBe("Bob");
+    });
+
+    it("applyPlayerJoinedState returns state unchanged when roomId does not match", () => {
+      const state = makeState({ room: makeRoom() });
+      const res = applyPlayerJoinedState(state, {
+        roomId: "r-other",
+        playerId: "p2",
+        playerName: "Bob",
+        isOnline: true,
+      });
+      expect(res).toBe(state);
+    });
+
+    it("applyPlayerLeftState removes player from matching room", () => {
+      const state = makeState({ room: makeRoom({ players: basePlayers }) });
+      const res = applyPlayerLeftState(state, {
+        roomId: "r1",
+        playerId: "p1",
+      });
+      expect(res.room?.players).toHaveLength(1);
+      expect(res.room?.players[0].id).toBe("p2");
+    });
+
+    it("applyPlayerLeftState returns state unchanged when roomId does not match", () => {
+      const state = makeState({ room: makeRoom() });
+      const res = applyPlayerLeftState(state, {
+        roomId: "r-other",
+        playerId: "p1",
+      });
+      expect(res).toBe(state);
+    });
+  });
+
+  describe("Room lifecycle updaters (status, countdown, presence, termination)", () => {
+    it("applyRoomStatusUpdatedState updates status and nulls countdownEndsAt", () => {
+      const state = makeState({ room: makeRoom() });
+      const res = applyRoomStatusUpdatedState(state, {
+        roomId: "r1",
+        roomStatus: RoomStatus.COUNTDOWN,
+        currentMatchId: "m1",
+      });
+      expect(res.room?.status).toBe(RoomStatus.COUNTDOWN);
+      expect(res.room?.countdownEndsAt).toBeNull();
+    });
+
+    it("applyRoomStatusUpdatedState returns state when roomId differs", () => {
+      const state = makeState({ room: makeRoom() });
+      const res = applyRoomStatusUpdatedState(state, {
+        roomId: "r-diff",
+        roomStatus: RoomStatus.COUNTDOWN,
+      });
+      expect(res).toBe(state);
+    });
+
+    it("applyRoomCountdownStartedState sets countdown timestamp", () => {
+      const state = makeState({ room: makeRoom() });
+      const res = applyRoomCountdownStartedState(state, {
+        roomId: "r1",
+        roomStatus: RoomStatus.COUNTDOWN,
+        countdownEndsAt: 99999,
+      });
+      expect(res.room?.countdownEndsAt).toBe(99999);
+    });
+
+    it("applyRoomCountdownStartedState returns state when roomId differs", () => {
+      const state = makeState({ room: makeRoom() });
+      const res = applyRoomCountdownStartedState(state, {
+        roomId: "r-diff",
+        roomStatus: RoomStatus.COUNTDOWN,
+        countdownEndsAt: 99999,
+      });
+      expect(res).toBe(state);
+    });
+
+    it("applyRoomCountdownCancelledState resets countdown timestamp", () => {
+      const state = makeState({
+        room: makeRoom({ countdownEndsAt: 99999 }),
+      });
+      const res = applyRoomCountdownCancelledState(state, {
+        roomId: "r1",
+        roomStatus: RoomStatus.WAITING,
+      });
+      expect(res.room?.countdownEndsAt).toBeNull();
+      expect(res.room?.status).toBe(RoomStatus.WAITING);
+    });
+
+    it("applyRoomCountdownCancelledState returns state when roomId differs", () => {
+      const state = makeState({ room: makeRoom() });
+      const res = applyRoomCountdownCancelledState(state, {
+        roomId: "r-diff",
+        roomStatus: RoomStatus.WAITING,
+      });
+      expect(res).toBe(state);
+    });
+
+    it("applyRoomPresenceUpdatedState updates online status of matching player", () => {
+      const state = makeState({ room: makeRoom({ players: basePlayers }) });
+      const res = applyRoomPresenceUpdatedState(state, {
+        roomId: "r1",
+        playerId: "p1",
+        isOnline: false,
+      });
+      expect(res.room?.players.find((p) => p.id === "p1")?.isOnline).toBe(
+        false,
+      );
+      expect(res.room?.players.find((p) => p.id === "p2")?.isOnline).toBe(true);
+    });
+
+    it("applyRoomPresenceUpdatedState returns state when roomId differs", () => {
+      const state = makeState({ room: makeRoom() });
+      const res = applyRoomPresenceUpdatedState(state, {
+        roomId: "r-diff",
+        playerId: "p1",
+        isOnline: false,
+      });
+      expect(res).toBe(state);
+    });
+
+    it("applyRoomTerminatedState cleans up room and match state", () => {
+      const res = applyRoomTerminatedState({
+        roomId: "r1",
+        message: "Room closed by administrator",
+      });
+      expect(res.room).toBeNull();
+      expect(res.match).toBeNull();
+      expect(res.roomTerminated).toBe(true);
+      expect(res.roomTerminationMessage).toBe("Room closed by administrator");
+    });
+  });
+
+  describe("Match starting and elimination updaters", () => {
+    it("applyMatchStartingState sets room status to STARTING", () => {
+      const state = makeState({ room: makeRoom() });
+      const res = applyMatchStartingState(state, { matchId: "m1" });
+      expect(res.room?.status).toBe(RoomStatus.STARTING);
+      expect(res.room?.currentMatchId).toBe("m1");
+    });
+
+    it("applyMatchStartingState handles null room safely", () => {
+      const state = makeState({ room: null });
+      const res = applyMatchStartingState(state, { matchId: "m1" });
+      expect(res.room).toBeNull();
+    });
+
+    it("applyMatchStartedState handles null room safely", () => {
+      const state = makeState({ room: null });
+      const res = applyMatchStartedState(state, {
+        matchId: "m1",
+        status: MatchStatus.COUNTDOWN,
+      });
+      expect(res.room).toBeNull();
+      expect(res.match?.id).toBe("m1");
+    });
+
+    it("applyPlayerEliminatedState marks eliminated player in match", () => {
+      const state = makeState({ match: makeMatch({ players: basePlayers }) });
+      const res = applyPlayerEliminatedState(state, {
+        matchId: "m1",
+        playerId: "p1",
+        eliminatedCount: 1,
+        remainingCount: 1,
+      });
+      expect(res.match?.players.find((p) => p.id === "p1")?.status).toBe(
+        PlayerStatus.ELIMINATED,
+      );
+    });
+
+    it("applyPlayerEliminatedState returns state unchanged when match is null", () => {
+      const state = makeState({ match: null });
+      const res = applyPlayerEliminatedState(state, {
+        matchId: "m1",
+        playerId: "p1",
+        eliminatedCount: 1,
+        remainingCount: 0,
+      });
+      expect(res).toBe(state);
+    });
+  });
+
+  describe("Topic Voting additional branch coverage", () => {
+    it("applyTopicVotingStartedState updates existing match status and fields", () => {
+      const state = makeState({
+        match: makeMatch({ id: "m1", status: MatchStatus.COUNTDOWN }),
+      });
+      const res = applyTopicVotingStartedState(state, {
+        matchId: "m1",
+        candidateTopics: ["SCIENCE", "HISTORY"],
+        endsAt: 10000,
+        durationMs: 10000,
+      });
+      expect(res.match?.status).toBe(MatchStatus.TOPIC_VOTING);
+      expect(res.topicVoting?.candidateTopics).toEqual(["SCIENCE", "HISTORY"]);
+    });
+
+    it("applyTopicVotingSummaryState returns empty object when topicVoting is null or matchId mismatch", () => {
+      const state = makeState({ topicVoting: null });
+      expect(
+        applyTopicVotingSummaryState(state, {
+          matchId: "m1",
+          voteCounts: {},
+          totalVotes: 0,
+        }),
+      ).toEqual({});
+
+      const state2 = makeState({
+        topicVoting: {
+          matchId: "m1",
+          candidateTopics: ["SCIENCE"],
+          endsAt: 10000,
+          durationMs: 10000,
+          myVotedTopic: null,
+          voteCounts: {},
+          totalVotes: 0,
+          bannedTopics: [],
+          activeTopics: [],
+          isFinished: false,
+        },
+      });
+      expect(
+        applyTopicVotingSummaryState(state2, {
+          matchId: "m-diff",
+          voteCounts: {},
+          totalVotes: 0,
+        }),
+      ).toEqual({});
+    });
+
+    it("applyTopicVotingFinishedState returns empty object when topicVoting is null or matchId mismatch", () => {
+      const state = makeState({ topicVoting: null });
+      expect(
+        applyTopicVotingFinishedState(state, {
+          matchId: "m1",
+          bannedTopics: [],
+          activeTopics: [],
+          voteCounts: {},
+        }),
+      ).toEqual({});
+
+      const state2 = makeState({
+        topicVoting: {
+          matchId: "m1",
+          candidateTopics: ["SCIENCE"],
+          endsAt: 10000,
+          durationMs: 10000,
+          myVotedTopic: null,
+          voteCounts: {},
+          totalVotes: 0,
+          bannedTopics: [],
+          activeTopics: [],
+          isFinished: false,
+        },
+      });
+      expect(
+        applyTopicVotingFinishedState(state2, {
+          matchId: "m-diff",
+          bannedTopics: [],
+          activeTopics: [],
+          voteCounts: {},
+        }),
+      ).toEqual({});
+    });
+
+    it("applyAnswerResultState returns empty object when state.match.id does not match data.matchId", () => {
+      const state = makeState({ match: makeMatch({ id: "m-other" }) });
+      const res = applyAnswerResultState(state, {
+        matchId: "m-new",
+        roundNo: 1,
+        submissionId: "sub1",
+        isCorrect: true,
+        responseTimeMs: 200,
+      });
+      expect(res).toEqual({});
     });
   });
 });

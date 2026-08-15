@@ -142,4 +142,101 @@ describe("TopicVotingOverlay", () => {
     expect(buttons.length).toBeGreaterThan(0);
     expect(document.activeElement).toBe(buttons[0]);
   });
+
+  it("handles unknown topic fallback and all standard topic metadata", () => {
+    useSocketStore.setState({
+      topicVoting: {
+        matchId: "m1",
+        candidateTopics: [
+          "GENERAL",
+          "GEOGRAPHY",
+          "ENTERTAINMENT",
+          "SPORTS",
+          "LOGIC",
+          "CUSTOM_UNKNOWN_TOPIC",
+        ],
+        endsAt: Date.now() + 10000,
+        durationMs: 10000,
+        myVotedTopic: "GENERAL",
+        voteCounts: { GENERAL: 4, CUSTOM_UNKNOWN_TOPIC: 1 },
+        totalVotes: 5,
+        bannedTopics: [],
+        activeTopics: [],
+        isFinished: false,
+      },
+    });
+
+    render(<TopicVotingOverlay />);
+    expect(screen.getByText("Kiến Thức Chung")).toBeInTheDocument();
+    expect(screen.getByText("Địa Lý & Quốc Gia")).toBeInTheDocument();
+    expect(screen.getByText("Giải Trí & Pop Culture")).toBeInTheDocument();
+    expect(screen.getByText("Thể Thao & Esports")).toBeInTheDocument();
+    expect(screen.getByText("Tư Duy & Câu Đố")).toBeInTheDocument();
+    expect(screen.getAllByText("CUSTOM_UNKNOWN_TOPIC").length).toBe(2);
+  });
+
+  it("handles timer tick, zero clamp, and keyboard escape", () => {
+    vi.useFakeTimers();
+    useSocketStore.setState({
+      topicVoting: {
+        matchId: "m1",
+        candidateTopics: ["SCIENCE"],
+        endsAt: Date.now() + 2000,
+        durationMs: 10000,
+        myVotedTopic: null,
+        voteCounts: { SCIENCE: 0 },
+        totalVotes: 0,
+        bannedTopics: [],
+        activeTopics: [],
+        isFinished: false,
+      },
+    });
+
+    render(<TopicVotingOverlay />);
+    expect(screen.getByText("2s")).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(screen.getByText("0s")).toBeInTheDocument();
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    // Mandatory voting overlay remains open and non-dismissible on Escape
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(useSocketStore.getState().topicVoting).not.toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("handles tab navigation wrapping within focus trap", () => {
+    useSocketStore.setState({
+      topicVoting: {
+        matchId: "m1",
+        candidateTopics: ["SCIENCE", "HISTORY"],
+        endsAt: Date.now() + 10000,
+        durationMs: 10000,
+        myVotedTopic: null,
+        voteCounts: {},
+        totalVotes: 0,
+        bannedTopics: [],
+        activeTopics: [],
+        isFinished: false,
+      },
+    });
+
+    render(<TopicVotingOverlay />);
+    const buttons = screen.getAllByRole("button");
+    buttons[buttons.length - 1].focus();
+
+    fireEvent.keyDown(window, { key: "Tab", shiftKey: false });
+    expect(document.activeElement).toBe(buttons[0]);
+
+    buttons[0].focus();
+    fireEvent.keyDown(window, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(buttons[buttons.length - 1]);
+  });
 });

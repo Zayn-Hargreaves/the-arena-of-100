@@ -334,6 +334,33 @@ describe("MatchRoundRunner", () => {
     vi.useRealTimers();
   });
 
+  it("should pass activeTopics as allowedCategories to getRandom when activeTopics exist", async () => {
+    vi.useFakeTimers();
+
+    const emitSpy = vi.fn();
+    (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+    stateMachine.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"]);
+    stateMachine.voteBanTopic("p1", "HISTORY");
+    stateMachine.resolveTopicVoting(1);
+    stateMachine.transition(MatchStatus.COUNTDOWN);
+
+    (runner as any).timers.initUsedQuestions("match-1");
+
+    await (runner as any).executeRound("match-1", "room-1", mockServer);
+
+    const getRandomCalls = vi.mocked(questionService.getRandom).mock.calls;
+    const lastCall = getRandomCalls.at(-1);
+    expect(lastCall).toBeDefined();
+    const allowedCategories = lastCall?.[3];
+    expect(Array.isArray(allowedCategories)).toBe(true);
+    expect(new Set(allowedCategories)).toEqual(new Set(["SCIENCE", "LOGIC"]));
+    expect(allowedCategories).toHaveLength(2);
+    expect(allowedCategories).not.toContain("HISTORY");
+
+    vi.useRealTimers();
+  });
+
   it("should evaluate round, save results, and broadcast events", async () => {
     vi.useFakeTimers();
 
