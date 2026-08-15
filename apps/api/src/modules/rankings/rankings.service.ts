@@ -6,7 +6,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { CACHE_TTL } from "../../common/config/cache-ttl";
-import { getRankTier } from "@arena/shared";
+import { DEFAULT_ELO, getRankTier } from "@arena/shared";
 import {
   type LeaderboardItem,
   type LeaderboardQuery,
@@ -60,7 +60,7 @@ export class RankingsService {
   }
 
   private cacheKey(period: string, limit: number): string {
-    return `leaderboard:${period}:limit=${limit}`;
+    return `leaderboard:v2:${period}:limit=${limit}`;
   }
 
   private async safeGetCache(
@@ -197,7 +197,7 @@ export class RankingsService {
           `;
 
     return rows.map((row, idx) => {
-      const elo = Number(row.elo ?? 1200);
+      const elo = Number(row.elo ?? DEFAULT_ELO);
       return {
         rank: idx + 1,
         userId: row.user_id,

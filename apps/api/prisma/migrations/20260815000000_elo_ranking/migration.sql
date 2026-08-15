@@ -7,4 +7,5 @@ ADD COLUMN "eloAfter" INTEGER,
 ADD COLUMN "eloDelta" INTEGER;
 
 -- CreateIndex
-CREATE INDEX "users_elo_idx" ON "users"("elo" DESC);
+-- Keep this migration free of explicit BEGIN/COMMIT wrappers so PostgreSQL accepts concurrent index creation.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "users_elo_idx" ON "users"("elo" DESC);

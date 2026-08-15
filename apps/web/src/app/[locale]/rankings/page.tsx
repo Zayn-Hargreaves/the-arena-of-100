@@ -276,7 +276,7 @@ export default function RankingsPage() {
                         <div className="p-4 flex-1 min-w-0 border-r-[2px] border-candy-ink">
                           {t("columns.player")}
                         </div>
-                        <div className="p-4 text-center shrink-0 hidden md:block border-r-[2px] border-candy-ink">
+                        <div className="p-4 w-44 text-center shrink-0 hidden md:block border-r-[2px] border-candy-ink">
                           {t("columns.elo")}
                         </div>
                         <div className="p-4 text-right shrink-0 border-r-[2px] border-candy-ink">
@@ -364,7 +364,7 @@ export default function RankingsPage() {
                                   </div>
                                 </div>
                               </div>
-                              <div className="p-4 hidden md:flex items-center justify-center shrink-0 border-r-[2px] border-candy-ink">
+                              <div className="p-4 w-44 hidden md:flex items-center justify-center shrink-0 border-r-[2px] border-candy-ink">
                                 <RankBadge
                                   tier={item.rankTier ?? "SILVER"}
                                   elo={item.elo ?? 1200}

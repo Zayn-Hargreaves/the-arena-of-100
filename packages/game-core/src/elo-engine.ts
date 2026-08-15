@@ -35,7 +35,7 @@ export interface EloCalculationResult {
  * Guarantees:
  * - Deterministic, pure function without external dependencies.
  * - Scales to any player count N >= 2 (tested from 2 to 100 players).
- * - Symmetrical zero-sum property before non-negative clamping.
+ * - Approximate zero-sum property (subject to Math.round rounding and non-negative ELO clamping).
  */
 export function calculateMultiplayerElo(
   players: EloPlayerInput[],
@@ -89,8 +89,9 @@ export function calculateMultiplayerElo(
     }
 
     const rawDelta = kNorm * (actualSum - expectedSum);
-    const delta = Math.round(rawDelta);
-    const newElo = Math.max(0, playerI.currentElo + delta);
+    const roundedDelta = Math.round(rawDelta);
+    const newElo = Math.max(0, playerI.currentElo + roundedDelta);
+    const delta = newElo - playerI.currentElo;
 
     results.push({
       userId: playerI.userId,
@@ -115,8 +116,8 @@ export function assignPlacements<
 >(players: T[]): Array<T & { placement: number }> {
   const sorted = [...players].sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
-    const aSpeed = a.avgResponseMs ?? 0;
-    const bSpeed = b.avgResponseMs ?? 0;
+    const aSpeed = a.avgResponseMs ?? Number.POSITIVE_INFINITY;
+    const bSpeed = b.avgResponseMs ?? Number.POSITIVE_INFINITY;
     if (aSpeed !== bSpeed) return aSpeed - bSpeed;
     return a.userId.localeCompare(b.userId);
   });

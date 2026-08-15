@@ -146,7 +146,10 @@ export function TopicVotingOverlay() {
 
   const endsAt = topicVoting?.endsAt;
   useEffect(() => {
-    if (!endsAt) return;
+    if (!endsAt) {
+      setTimeLeft(0);
+      return;
+    }
 
     const calculateRemaining = () => {
       const remaining = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
@@ -206,7 +209,7 @@ export function TopicVotingOverlay() {
             {isFinished ? t("bannedTopicsHeader") : t("subtitle")}
           </h2>
 
-          {!isFinished && (
+          {!isFinished && endsAt && (
             <div className="flex items-center justify-center gap-2 text-slate-400 text-sm font-medium">
               <Clock className="w-4 h-4 text-amber-400 animate-pulse" />
               <span>{t("votingEndsIn")}</span>

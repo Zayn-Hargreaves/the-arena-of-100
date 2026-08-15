@@ -257,7 +257,7 @@ export function useMatchResults(matchId: string, userId: string | null) {
       accuracy: "--",
       eliminatedRound: null,
       eloDelta: rawPlayer?.eloDelta ?? null,
-      eloAfter: rawPlayer?.eloAfter ?? rawPlayer?.user?.elo ?? null,
+      eloAfter: rawPlayer?.eloAfter ?? null,
     };
   }, [playerById, playerRankById, rawPlayerById, t, userId]);
 

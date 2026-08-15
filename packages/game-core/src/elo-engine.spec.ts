@@ -145,15 +145,26 @@ describe("elo-engine", () => {
       expect(Math.abs(totalDelta)).toBeLessThanOrEqual(2);
     });
 
-    it("clamps newElo at 0 and never produces negative rating", () => {
+    it("clamps newElo at 0 and maintains currentElo + delta === newElo invariant", () => {
       const players: EloPlayerInput[] = [
         { userId: "p1", currentElo: 5, placement: 1, score: 200 },
         { userId: "low_elo", currentElo: 5, placement: 2, score: 0 },
       ];
       const results = calculateMultiplayerElo(players, 32);
       const lowElo = results.find((r) => r.userId === "low_elo")!;
-      expect(lowElo.delta).toBe(-16);
       expect(lowElo.newElo).toBe(0);
+      expect(lowElo.delta).toBe(-5);
+      expect(lowElo.currentElo + lowElo.delta).toBe(lowElo.newElo);
+    });
+
+    it("uses default kFactor when kFactor is omitted", () => {
+      const players: EloPlayerInput[] = [
+        { userId: "u1", currentElo: 1200, placement: 1, score: 100 },
+        { userId: "u2", currentElo: 1200, placement: 2, score: 50 },
+      ];
+      const results = calculateMultiplayerElo(players);
+      expect(results[0]?.delta).toBe(16);
+      expect(results[1]?.delta).toBe(-16);
     });
   });
 
@@ -178,6 +189,18 @@ describe("elo-engine", () => {
       expect(result[0]!.userId).toBe("pFast");
       expect(result[0]!.placement).toBe(1);
       expect(result[1]!.userId).toBe("pSlow");
+      expect(result[1]!.placement).toBe(2);
+    });
+
+    it("ranks player with measured avgResponseMs ahead of player without avgResponseMs on score tie", () => {
+      const input = [
+        { userId: "pNoSpeed", score: 300 },
+        { userId: "pSpeed", score: 300, avgResponseMs: 1200 },
+      ];
+      const result = assignPlacements(input);
+      expect(result[0]!.userId).toBe("pSpeed");
+      expect(result[0]!.placement).toBe(1);
+      expect(result[1]!.userId).toBe("pNoSpeed");
       expect(result[1]!.placement).toBe(2);
     });
 

@@ -615,13 +615,15 @@ export default function ProfilePage() {
                 {activeAvatar?.name ??
                   findAvatarBySeed(DEFAULT_AVATAR_SEED).name}
               </span>
-              <RankBadge
-                tier={profile?.user.rankTier ?? "SILVER"}
-                elo={profile?.user.elo ?? 1200}
-                size="md"
-                showElo={true}
-                className="w-fit mx-auto sm:mx-0 shadow-[2px_2px_0_0_#2B2D42]"
-              />
+              {profile && (
+                <RankBadge
+                  tier={profile.user.rankTier ?? "SILVER"}
+                  elo={profile.user.elo ?? 1200}
+                  size="md"
+                  showElo={true}
+                  className="w-fit mx-auto sm:mx-0 shadow-[2px_2px_0_0_#2B2D42]"
+                />
+              )}
             </div>
             <div className="flex justify-center sm:justify-start gap-4 text-xs font-mono font-black text-candy-ink/80">
               <span className="flex items-center gap-1 leading-5">

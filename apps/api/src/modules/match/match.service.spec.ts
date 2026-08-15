@@ -45,8 +45,12 @@ describe("MatchService", () => {
       question: { findUnique: vi.fn() },
       user: {
         findUnique: vi.fn(),
-        findMany: vi.fn().mockResolvedValue([]),
+        findMany: vi.fn().mockResolvedValue([
+          { id: "u1", elo: 1200 },
+          { id: "u2", elo: 1200 },
+        ]),
         update: vi.fn().mockResolvedValue({}),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
       $transaction: vi.fn(async (ops) => {
         // Execute all operations sequentially for test fidelity
@@ -1888,7 +1892,7 @@ describe("MatchService", () => {
         expect.objectContaining({ id: "m1", roomId: "r1" }),
       );
 
-      // Inspect each updateMany call's args to verify scores
+      // Inspect each updateMany call's args to verify scores and ELO
       const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
         .calls as any[][];
       const u1Call = updateManyCalls.find((c) => c[0].where.userId === "u1");
@@ -1898,8 +1902,29 @@ describe("MatchService", () => {
       // u1: rt=200 → (10000-200)/200 = 49 → total=149
       expect(u1Call![0].where.matchId).toBe("m1");
       expect(u1Call![0].data.score).toBe(149);
+      expect(u1Call![0].data.eloBefore).toBe(1200);
+      expect(u1Call![0].data.eloAfter).toBe(1216);
+      expect(u1Call![0].data.eloDelta).toBe(16);
+
       // u2: rt=8000 → (10000-8000)/200 = 10 → total=110
       expect(u2Call![0].data.score).toBe(110);
+      expect(u2Call![0].data.eloBefore).toBe(1200);
+      expect(u2Call![0].data.eloAfter).toBe(1184);
+      expect(u2Call![0].data.eloDelta).toBe(-16);
+
+      // Inspect user.updateMany ELO delta updates
+      const userUpdateManyCalls = vi.mocked(prisma.user.updateMany).mock
+        .calls as any[][];
+      const u1UserCall = userUpdateManyCalls.find((c) =>
+        c[0].where.id.in.includes("u1"),
+      );
+      const u2UserCall = userUpdateManyCalls.find((c) =>
+        c[0].where.id.in.includes("u2"),
+      );
+      expect(u1UserCall).toBeDefined();
+      expect(u2UserCall).toBeDefined();
+      expect(u1UserCall![0].data.elo).toEqual({ increment: 16 });
+      expect(u2UserCall![0].data.elo).toEqual({ increment: -16 });
     });
 
     it("skips score persistence when state machine is no longer in memory", async () => {

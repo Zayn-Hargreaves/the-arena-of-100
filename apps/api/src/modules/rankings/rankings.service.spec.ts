@@ -52,7 +52,9 @@ describe("RankingsService", () => {
       expect(prisma.$queryRaw).not.toHaveBeenCalled();
       expect(redis.setJSON).not.toHaveBeenCalled();
       // Cache key encodes period + limit
-      expect(redis.getJSON).toHaveBeenCalledWith("leaderboard:weekly:limit=50");
+      expect(redis.getJSON).toHaveBeenCalledWith(
+        "leaderboard:v2:weekly:limit=50",
+      );
     });
   });
 
@@ -94,7 +96,7 @@ describe("RankingsService", () => {
         totalScore: 1000,
       });
       expect(redis.setJSON).toHaveBeenCalledWith(
-        "leaderboard:weekly:limit=50",
+        "leaderboard:v2:weekly:limit=50",
         expect.objectContaining({
           period: "weekly",
           items: expect.any(Array),
@@ -115,7 +117,7 @@ describe("RankingsService", () => {
       expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
       // generatedAt is ISO; period is preserved in cache
       expect(redis.setJSON).toHaveBeenCalledWith(
-        "leaderboard:weekly:limit=10",
+        "leaderboard:v2:weekly:limit=10",
         expect.objectContaining({ period: "weekly" }),
         LEADERBOARD_CACHE_TTL_SEC,
       );
@@ -129,7 +131,7 @@ describe("RankingsService", () => {
 
       expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
       expect(redis.setJSON).toHaveBeenCalledWith(
-        "leaderboard:all:limit=10",
+        "leaderboard:v2:all:limit=10",
         expect.objectContaining({ period: "all" }),
         LEADERBOARD_CACHE_TTL_SEC,
       );
@@ -144,11 +146,11 @@ describe("RankingsService", () => {
 
       expect(redis.getJSON).toHaveBeenNthCalledWith(
         1,
-        "leaderboard:weekly:limit=25",
+        "leaderboard:v2:weekly:limit=25",
       );
       expect(redis.getJSON).toHaveBeenNthCalledWith(
         2,
-        "leaderboard:weekly:limit=100",
+        "leaderboard:v2:weekly:limit=100",
       );
     });
   });

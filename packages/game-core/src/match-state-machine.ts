@@ -621,10 +621,18 @@ export class MatchStateMachine {
   }
 
   // Get accumulated scores for all players (B2: for DB persistence at match end)
-  getPlayerScores(): Array<{ userId: string; score: number }> {
+  getPlayerScores(): Array<{
+    userId: string;
+    score: number;
+    avgResponseMs?: number;
+  }> {
     return Array.from(this.state.players.entries()).map(([userId, p]) => ({
       userId,
       score: p.score,
+      avgResponseMs:
+        p.correctAnswers > 0
+          ? p.totalResponseTimeMs / p.correctAnswers
+          : undefined,
     }));
   }
 

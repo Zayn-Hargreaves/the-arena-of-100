@@ -922,6 +922,7 @@ export class MatchService implements OnModuleDestroy {
       playerScores.map((p) => ({
         userId: p.userId,
         score: p.score,
+        avgResponseMs: p.avgResponseMs,
       })),
     );
 
@@ -950,11 +951,19 @@ export class MatchService implements OnModuleDestroy {
       });
     });
 
-    const userEloUpdates = Array.from(eloResultByUser.values()).map((r) =>
-      this.prisma.user.update({
-        where: { id: r.userId },
-        data: { elo: r.newElo },
-      }),
+    const deltaToUserIds = new Map<number, string[]>();
+    for (const r of eloResults) {
+      const group = deltaToUserIds.get(r.delta) ?? [];
+      group.push(r.userId);
+      deltaToUserIds.set(r.delta, group);
+    }
+
+    const userEloUpdates = Array.from(deltaToUserIds.entries()).map(
+      ([delta, ids]) =>
+        this.prisma.user.updateMany({
+          where: { id: { in: ids } },
+          data: { elo: { increment: delta } },
+        }),
     );
 
     return [...matchPlayerUpdates, ...userEloUpdates];

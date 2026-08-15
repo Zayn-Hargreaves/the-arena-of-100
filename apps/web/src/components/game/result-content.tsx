@@ -132,7 +132,7 @@ export function ResultContent({
               value={
                 performance.eloDelta !== undefined &&
                 performance.eloDelta !== null
-                  ? `${performance.eloDelta > 0 ? "+" : ""}${performance.eloDelta} PTS`
+                  ? `${performance.eloDelta > 0 ? "+" : ""}${performance.eloDelta} ELO`
                   : "--"
               }
               color={

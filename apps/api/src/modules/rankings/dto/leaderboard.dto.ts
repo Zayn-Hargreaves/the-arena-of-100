@@ -1,15 +1,20 @@
 import { z } from "zod";
 import { ApiProperty } from "@nestjs/swagger";
 import { leaderboardPeriodSchema } from "./leaderboard-query.dto";
-import { rankTierSchema, type RankTier } from "@arena/shared";
+import {
+  DEFAULT_ELO,
+  getRankTier,
+  rankTierSchema,
+  type RankTier,
+} from "@arena/shared";
 
 export const leaderboardItemSchema = z.object({
   rank: z.number().int().positive(),
   userId: z.string(),
   username: z.string(),
   avatar: z.string(),
-  elo: z.number().int().nonnegative().default(1200),
-  rankTier: rankTierSchema.default("SILVER"),
+  elo: z.number().int().nonnegative().default(DEFAULT_ELO),
+  rankTier: rankTierSchema.default(getRankTier(DEFAULT_ELO)),
   wins: z.number().int().nonnegative(),
   matchesPlayed: z.number().int().nonnegative(),
   accuracy: z.number().min(0).max(1),
@@ -44,15 +49,7 @@ export class LeaderboardItemDto implements LeaderboardItem {
   elo!: number;
 
   @ApiProperty({
-    enum: [
-      "BRONZE",
-      "SILVER",
-      "GOLD",
-      "PLATINUM",
-      "DIAMOND",
-      "MASTER",
-      "GRANDMASTER",
-    ],
+    enum: rankTierSchema.options,
     example: "SILVER",
   })
   rankTier!: RankTier;
