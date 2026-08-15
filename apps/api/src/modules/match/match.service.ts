@@ -243,6 +243,22 @@ export class MatchService implements OnModuleDestroy {
   }
 
   /**
+   * Get bot user IDs participating in the match.
+   */
+  async getBotPlayerIds(matchId: string): Promise<Set<string>> {
+    const botPlayers = await this.prisma.matchPlayer.findMany({
+      where: {
+        matchId,
+        user: {
+          guestId: { startsWith: "bot_" },
+        },
+      },
+      select: { userId: true },
+    });
+    return new Set(botPlayers.map((p) => p.userId));
+  }
+
+  /**
    * B4b snapshot-restore safety: drop the cached in-memory state machine so the
    * next `getStateMachine` reloads the canonical `match:state` from Redis. The
    * authoritative answer apply calls this after a fenced-persist RETRY (lease

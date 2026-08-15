@@ -31,6 +31,48 @@ describe("BotService", () => {
     expect(mockPrisma.user.upsert).toHaveBeenCalledTimes(2);
   });
 
+  it("uses guestId as upsert key and excludes non-bot users", async () => {
+    mockPrisma.user.findMany.mockResolvedValueOnce([
+      { id: "b1", username: "Bot_1", guestId: "bot_123", elo: 1200 },
+    ]);
+
+    const bots = await service.ensureBotUsers(2);
+    expect(mockPrisma.user.findMany).toHaveBeenCalledWith({
+      where: { guestId: { startsWith: "bot_" } },
+      take: 2,
+    });
+    expect(mockPrisma.user.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          guestId: expect.stringMatching(/^bot_/),
+        }),
+      }),
+    );
+    expect(bots.every((b) => b.guestId?.startsWith("bot_"))).toBe(true);
+  });
+
+  it("handles username collision by retrying with a different username", async () => {
+    mockPrisma.user.findMany.mockResolvedValueOnce([]);
+    mockPrisma.user.upsert
+      .mockRejectedValueOnce(new Error("Unique constraint failed on username"))
+      .mockReturnValueOnce({
+        id: "bot_new",
+        username: "Bot_Retry_999",
+        guestId: "bot_unique_123",
+        elo: 1200,
+      });
+
+    const bots = await service.ensureBotUsers(1);
+    expect(bots).toHaveLength(1);
+    expect(mockPrisma.user.upsert).toHaveBeenCalledTimes(2);
+
+    const firstCallUsername =
+      mockPrisma.user.upsert.mock.calls[0][0].create.username;
+    const secondCallUsername =
+      mockPrisma.user.upsert.mock.calls[1][0].create.username;
+    expect(firstCallUsername).not.toBe(secondCallUsername);
+  });
+
   it("returns early when count is 0 or negative", async () => {
     const bots = await service.ensureBotUsers(0);
     expect(bots).toEqual([]);

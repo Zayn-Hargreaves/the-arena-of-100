@@ -74,6 +74,7 @@ describe("MatchRoundRunner", () => {
       // H2-style endRound fix: round + answers are persisted
       // atomically in a single $transaction call.
       saveRoundAndAnswers: vi.fn().mockResolvedValue({ id: "round-1" }),
+      getBotPlayerIds: vi.fn().mockResolvedValue(new Set()),
     } as unknown as MatchService;
 
     questionService = {

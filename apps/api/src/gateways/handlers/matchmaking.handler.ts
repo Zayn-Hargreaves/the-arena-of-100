@@ -42,6 +42,9 @@ export class MatchmakingHandler extends BaseHandler {
       },
       (error) => {
         this.logger.error("Error handling join_matchmaking", error);
+        const code = this.getErrorCode(error);
+        const message = this.getErrorMessage(error);
+        this.emitError(client, code, message);
       },
     );
   }
@@ -61,6 +64,9 @@ export class MatchmakingHandler extends BaseHandler {
       },
       (error) => {
         this.logger.error("Error handling leave_matchmaking", error);
+        const code = this.getErrorCode(error);
+        const message = this.getErrorMessage(error);
+        this.emitError(client, code, message);
       },
     );
   }
@@ -71,7 +77,15 @@ export class MatchmakingHandler extends BaseHandler {
   async handleDisconnect(client: Socket) {
     const userId = client.data?.userId as string | undefined;
     if (userId) {
-      await this.matchmakingService.leaveQueue(userId);
+      try {
+        await this.matchmakingService.leaveQueue(userId);
+      } catch (error) {
+        this.logger.warn(
+          `Failed to leave queue on socket disconnect: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
     }
   }
 }

@@ -1,10 +1,23 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useSocketStore } from "@/stores/socket-store";
 import { useRouter } from "@/i18n/routing";
 import { Zap, Swords, X } from "lucide-react";
 import { MiniGlyph } from "@/components/ui/mini-glyph";
+
+interface FocusableElement {
+  focus: (options?: FocusOptions) => void;
+}
+
+function isFocusableElement(element: unknown): element is FocusableElement {
+  return (
+    element !== null &&
+    typeof element === "object" &&
+    "focus" in element &&
+    typeof (element as { focus: unknown }).focus === "function"
+  );
+}
 
 export function MatchmakingModal() {
   const router = useRouter();
@@ -12,21 +25,117 @@ export function MatchmakingModal() {
     useSocketStore();
 
   const [displaySeconds, setDisplaySeconds] = useState(0);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previouslyFocusedElementRef = useRef<FocusableElement | null>(null);
 
-  // Local ticker for smooth second counting
+  const isVisible = Boolean(
+    matchmaking.isQueued || matchmaking.matchedRoomCode,
+  );
+  const isMatched = Boolean(matchmaking.matchedRoomCode);
+
+  // Save previously focused element on open and restore on close
+  useEffect(() => {
+    if (isVisible) {
+      const active =
+        typeof document !== "undefined" ? document.activeElement : null;
+      previouslyFocusedElementRef.current = isFocusableElement(active)
+        ? active
+        : null;
+
+      return () => {
+        previouslyFocusedElementRef.current?.focus();
+      };
+    }
+    return undefined;
+  }, [isVisible]);
+
+  // Focus management on open and when isMatched changes
+  useEffect(() => {
+    if (!isVisible) return undefined;
+
+    const timer = setTimeout(() => {
+      if (dialogRef.current) {
+        if (isMatched) {
+          dialogRef.current.focus();
+        } else {
+          const focusable = dialogRef.current.querySelector<HTMLElement>(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+          );
+          if (focusable) {
+            focusable.focus();
+          } else {
+            dialogRef.current.focus();
+          }
+        }
+      }
+    }, 50);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [isVisible, isMatched]);
+
+  // Keydown handler for Escape and Focus Trap
+  useEffect(() => {
+    if (!isVisible) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !isMatched) {
+        e.preventDefault();
+        leaveMatchmaking();
+        return;
+      }
+
+      if (e.key === "Tab" && dialogRef.current) {
+        const focusableElements =
+          dialogRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          );
+        if (focusableElements.length === 0) {
+          e.preventDefault();
+          dialogRef.current.focus();
+          return;
+        }
+
+        const firstElement = focusableElements[0];
+        const lastElement = focusableElements[focusableElements.length - 1];
+
+        if (e.shiftKey) {
+          if (document.activeElement === firstElement) {
+            e.preventDefault();
+            lastElement.focus();
+          }
+        } else {
+          if (document.activeElement === lastElement) {
+            e.preventDefault();
+            firstElement.focus();
+          }
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isVisible, isMatched, leaveMatchmaking]);
+
+  // Local ticker for smooth second counting starting from matchmaking.elapsedSeconds
   useEffect(() => {
     if (!matchmaking.isQueued || !matchmaking.queuedAt) {
       setDisplaySeconds(0);
       return;
     }
 
+    const startClientTime = Date.now();
+    const baseElapsed = matchmaking.elapsedSeconds ?? 0;
+    setDisplaySeconds(baseElapsed);
+
     const interval = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - matchmaking.queuedAt!) / 1000);
-      setDisplaySeconds(Math.max(0, elapsed));
+      const delta = Math.floor((Date.now() - startClientTime) / 1000);
+      setDisplaySeconds(baseElapsed + delta);
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [matchmaking.isQueued, matchmaking.queuedAt]);
+  }, [matchmaking.isQueued, matchmaking.queuedAt, matchmaking.elapsedSeconds]);
 
   // Handle match found auto-redirect
   useEffect(() => {
@@ -42,7 +151,7 @@ export function MatchmakingModal() {
     return undefined;
   }, [matchmaking.matchedRoomCode, clearMatchmakingMatched, router]);
 
-  if (!matchmaking.isQueued && !matchmaking.matchedRoomCode) {
+  if (!isVisible) {
     return null;
   }
 
@@ -51,14 +160,22 @@ export function MatchmakingModal() {
     .padStart(2, "0");
   const seconds = (displaySeconds % 60).toString().padStart(2, "0");
 
-  const isMatched = Boolean(matchmaking.matchedRoomCode);
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-md bg-white border-4 border-candy-ink rounded-3xl p-6 shadow-[8px_8px_0_0_#2B2D42] overflow-hidden">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="matchmaking-modal-title"
+        tabIndex={-1}
+        className="relative w-full max-w-md bg-white border-4 border-candy-ink rounded-3xl p-6 shadow-[8px_8px_0_0_#2B2D42] overflow-hidden outline-none"
+      >
         {/* Playful Top Badge */}
         <div className="flex justify-between items-center mb-4">
-          <div className="inline-flex items-center gap-2 bg-candy-purple text-white font-display text-xs px-3 py-1.5 border-3 border-candy-ink rounded-full shadow-[2px_2px_0_0_#2B2D42]">
+          <div
+            id="matchmaking-modal-title"
+            className="inline-flex items-center gap-2 bg-candy-purple text-white font-display text-xs px-3 py-1.5 border-3 border-candy-ink rounded-full shadow-[2px_2px_0_0_#2B2D42]"
+          >
             <Zap className="w-4 h-4 text-candy-yellow fill-candy-yellow" />
             <span className="font-black uppercase tracking-wider">
               {isMatched ? "TRẬN ĐẤU ĐÃ TÌM THẤY!" : "ĐANG TÌM TRẬN ĐẤU..."}
@@ -68,6 +185,7 @@ export function MatchmakingModal() {
           {!isMatched && (
             <button
               onClick={leaveMatchmaking}
+              aria-label="Hủy tìm trận"
               className="p-1.5 rounded-xl border-2 border-candy-ink bg-candy-cloud hover:bg-candy-red hover:text-white transition-colors cursor-pointer"
               title="Hủy tìm trận"
             >
@@ -135,6 +253,7 @@ export function MatchmakingModal() {
           <div className="mt-2">
             <button
               onClick={leaveMatchmaking}
+              aria-label="Hủy tìm trận"
               className="w-full py-3 bg-white hover:bg-candy-red hover:text-white text-candy-ink border-3 border-candy-ink rounded-2xl font-display font-black text-sm uppercase shadow-[3px_3px_0_0_#2B2D42] hover:translate-y-[-1px] active:translate-y-[1px] transition-all cursor-pointer"
             >
               HỦY TÌM TRẬN

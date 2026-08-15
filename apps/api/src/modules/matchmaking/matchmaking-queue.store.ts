@@ -135,6 +135,16 @@ export class MatchmakingQueueStore {
         end
       end
       
+      if not foundAll then
+        for i, key in ipairs(KEYS) do
+          local val = redis.call('GET', key)
+          if not val then
+            redis.call('ZREM', '${MATCHMAKING_QUEUE_ZSET}', ARGV[i])
+          end
+        end
+        return {}
+      end
+      
       -- Remove from zset and delete keys
       for i, userId in ipairs(ARGV) do
         redis.call('ZREM', '${MATCHMAKING_QUEUE_ZSET}', userId)

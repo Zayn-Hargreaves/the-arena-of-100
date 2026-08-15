@@ -145,4 +145,10 @@ describe("MatchmakingQueueStore", () => {
     expect(popped).toEqual([]);
     expect(mockClient.eval).not.toHaveBeenCalled();
   });
+
+  it("returns empty array when Lua script finds missing tickets", async () => {
+    mockClient.eval.mockResolvedValueOnce([]);
+    const popped = await store.atomicPopTickets(["u1", "u2"]);
+    expect(popped).toEqual([]);
+  });
 });

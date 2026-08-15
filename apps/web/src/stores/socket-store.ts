@@ -216,12 +216,22 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       if (hb) {
         clearInterval(hb);
       }
-      set({
+      set((state) => ({
         isConnected: false,
         isAuthenticated: false,
         pendingAnswer: null,
         heartbeatInterval: null,
-      });
+        matchmaking: {
+          ...state.matchmaking,
+          isQueued: false,
+          queuedAt: null,
+          elapsedSeconds: 0,
+          estimatedWaitSeconds: 0,
+          playersInQueue: 0,
+          matchedRoomCode: state.matchmaking.matchedRoomCode,
+          matchedRoomId: state.matchmaking.matchedRoomId,
+        },
+      }));
       console.log("🔌 Disconnected from game server");
     });
 
@@ -547,7 +557,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         if (get().socket === newSocket) {
           const { heartbeatInterval: hb } = get();
           if (hb) clearInterval(hb);
-          set(applyUnauthorizedErrorState(data.message));
+          set((state) => applyUnauthorizedErrorState(data.message, state));
         }
         newSocket.disconnect();
       }
@@ -603,7 +613,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     if (socket) {
       clearTopicVoteState();
       socket.disconnect();
-      set({
+      set((state) => ({
         socket: null,
         isConnected: false,
         isAuthenticated: false,
@@ -620,13 +630,22 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         heartbeatInterval: null,
         roomTerminated: false,
         roomTerminationMessage: null,
+        matchmaking: {
+          isQueued: false,
+          queuedAt: null,
+          elapsedSeconds: 0,
+          estimatedWaitSeconds: 0,
+          playersInQueue: 0,
+          matchedRoomCode: state.matchmaking.matchedRoomCode,
+          matchedRoomId: state.matchmaking.matchedRoomId,
+        },
         // Plan D — reset the delta cursor alongside match/room so a
         // stale seqNo from the previous session cannot qualify for
         // delta delivery on the next reconnect. The next
         // REQUEST_SNAPSHOT will be a full SNAPSHOT, then delta kicks
         // in from there.
         lastSeenSeqNo: 0,
-      });
+      }));
     }
   },
 
@@ -819,6 +838,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         queuedAt: Date.now(),
         elapsedSeconds: 0,
         estimatedWaitSeconds: 15,
+        playersInQueue: 0,
         matchedRoomCode: null,
         matchedRoomId: null,
       },
@@ -837,6 +857,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         queuedAt: null,
         elapsedSeconds: 0,
         estimatedWaitSeconds: 0,
+        playersInQueue: 0,
         matchedRoomCode: null,
         matchedRoomId: null,
       },

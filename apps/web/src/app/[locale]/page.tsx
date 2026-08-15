@@ -117,7 +117,7 @@ export default function HomePage() {
     });
   };
 
-  const triggerSubmitTransition = (
+  const triggerSubmitTransition = async (
     e: React.SubmitEvent,
     callback: () => void,
   ) => {
@@ -129,7 +129,6 @@ export default function HomePage() {
 
     const activeAvatar = avatars[avatarIndex];
     saveAvatarToLocalStorage(nickname.trim(), activeAvatar);
-    handleSaveNickname();
 
     // Trigger confetti from screen coordinates of submit button
     const target = e.currentTarget as HTMLFormElement;
@@ -141,11 +140,21 @@ export default function HomePage() {
       createConfetti(clickX, clickY);
     }
 
-    setTimeout(callback, 650);
+    try {
+      await authenticate(nickname.trim());
+      callback();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : t("alerts.enterNickname");
+      toast({
+        variant: "error",
+        description: message,
+      });
+    }
   };
 
   const handleQuickMatchSubmit = (e: React.SubmitEvent) => {
-    triggerSubmitTransition(e, () => {
+    void triggerSubmitTransition(e, () => {
       joinMatchmaking();
     });
   };

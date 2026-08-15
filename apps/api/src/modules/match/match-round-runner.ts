@@ -30,7 +30,6 @@ import {
   disconnectMatchPlayer,
   leaveMatchPlayer,
 } from "./match-player-lifecycle";
-import { isBotName } from "../matchmaking/bot.service";
 
 // ============================================================
 // MatchRoundRunner — the timer-driven match loop
@@ -659,7 +658,7 @@ export class MatchRoundRunner {
     );
 
     // 6. Schedule simulated bot answers if any bot players are active
-    this.scheduleBotAnswers(matchId, roomId, server, stateMachine, {
+    await this.scheduleBotAnswers(matchId, roomId, server, stateMachine, {
       id: question.id,
       correctAnswer: question.correctAnswer,
       options: question.options,
@@ -677,7 +676,7 @@ export class MatchRoundRunner {
   /**
    * Schedule simulated answers for bot players during ROUND_ACTIVE.
    */
-  private scheduleBotAnswers(
+  private async scheduleBotAnswers(
     matchId: string,
     roomId: string,
     server: Server,
@@ -688,12 +687,15 @@ export class MatchRoundRunner {
       options: string[];
       difficulty?: string;
     },
-  ): void {
+  ): Promise<void> {
     const state = stateMachine.getState();
-    const botPlayerIds = state.survivingPlayerIds.filter((pid) => {
-      const p = state.players.get(pid);
-      return p ? isBotName(p.name) : false;
-    });
+    const botIds =
+      typeof this.matchService.getBotPlayerIds === "function"
+        ? await this.matchService.getBotPlayerIds(matchId)
+        : new Set<string>();
+    const botPlayerIds = state.survivingPlayerIds.filter((pid) =>
+      botIds.has(pid),
+    );
 
     if (botPlayerIds.length === 0) return;
 
@@ -714,8 +716,7 @@ export class MatchRoundRunner {
       const chosenAnswer =
         isCorrect || wrongOptions.length === 0
           ? question.correctAnswer
-          : wrongOptions[Math.floor(Math.random() * wrongOptions.length)] ||
-            question.correctAnswer;
+          : wrongOptions[Math.floor(Math.random() * wrongOptions.length)];
 
       const responseTimeMs = Math.floor(
         minDelay + Math.random() * (maxDelay - minDelay),
@@ -733,10 +734,19 @@ export class MatchRoundRunner {
             const round = sm.getCurrentRound();
             if (!round) return;
 
+            const serialized = sm.serialize();
             const result = sm.submitAnswer(botId, chosenAnswer, responseTimeMs);
             const outcome =
               await this.matchService.persistStateMachine(matchId);
-            if (outcome !== "APPLIED") return;
+            if (outcome !== "APPLIED") {
+              this.matchService.evictStateMachine(matchId);
+              const canonical = MatchStateMachine.deserialize(serialized);
+              Object.assign(sm, canonical);
+              this.logger.warn(
+                `bot submission callback: persistStateMachine returned ${outcome} for match ${matchId} bot ${botId}`,
+              );
+              return;
+            }
 
             emitAnswerResult(
               server,
@@ -748,8 +758,13 @@ export class MatchRoundRunner {
             );
 
             await this.checkEarlyTermination(matchId, roomId, server);
-          } catch {
+          } catch (error) {
             // best-effort bot submission
+            this.logger.warn(
+              `Bot submission failed for match ${matchId}, bot ${botId}: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
           }
         },
         responseTimeMs,

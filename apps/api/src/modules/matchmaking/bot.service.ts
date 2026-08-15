@@ -88,7 +88,7 @@ export class BotService {
       const suffix =
         BOT_NAME_SUFFIXES[Math.floor(Math.random() * BOT_NAME_SUFFIXES.length)];
       const randomNum = Math.floor(Math.random() * 900) + 100;
-      const username = `${prefix}_${suffix}_${randomNum}`;
+      let username = `${prefix}_${suffix}_${randomNum}`;
       const guestId = `bot_${nanoid(12)}`;
       const avatar =
         AVATAR_SEEDS[Math.floor(Math.random() * AVATAR_SEEDS.length)];
@@ -97,20 +97,29 @@ export class BotService {
       const eloVariance = Math.floor(Math.random() * 200) - 100;
       const botElo = Math.max(800, baseElo + eloVariance);
 
-      try {
-        const bot = await this.prisma.user.upsert({
-          where: { username },
-          update: { elo: botElo, avatar },
-          create: {
-            username,
-            guestId,
-            avatar,
-            elo: botElo,
-          },
-        });
-        createdBots.push(bot);
-      } catch (err) {
-        this.logger.warn(`Failed to create bot user ${username}`, err);
+      let created = false;
+      let attempts = 0;
+      while (!created && attempts < 3) {
+        attempts++;
+        try {
+          const bot = await this.prisma.user.upsert({
+            where: { guestId },
+            update: { elo: botElo, avatar },
+            create: {
+              username,
+              guestId,
+              avatar,
+              elo: botElo,
+            },
+          });
+          createdBots.push(bot);
+          created = true;
+        } catch (err) {
+          username = `${prefix}_${suffix}_${Math.floor(Math.random() * 9000) + 1000}`;
+          if (attempts >= 3) {
+            this.logger.warn(`Failed to create bot user ${username}`, err);
+          }
+        }
       }
     }
 

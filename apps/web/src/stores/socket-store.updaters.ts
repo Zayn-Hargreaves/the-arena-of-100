@@ -794,6 +794,7 @@ export function applyRoomTerminatedState(
 
 export function applyUnauthorizedErrorState(
   errorMessage: string | null,
+  state?: SocketState,
 ): Partial<SocketState> {
   return {
     socket: null,
@@ -814,6 +815,15 @@ export function applyUnauthorizedErrorState(
     heartbeatInterval: null,
     roomTerminated: false,
     roomTerminationMessage: null,
+    matchmaking: {
+      isQueued: false,
+      queuedAt: null,
+      elapsedSeconds: 0,
+      estimatedWaitSeconds: 0,
+      playersInQueue: 0,
+      matchedRoomCode: state?.matchmaking?.matchedRoomCode ?? null,
+      matchedRoomId: state?.matchmaking?.matchedRoomId ?? null,
+    },
     // Include the error message in the SAME set call that resets the
     // socket/heartbeat state. A separate follow-up `set({ error })`
     // would be a no-op because this function sets `socket: null`,

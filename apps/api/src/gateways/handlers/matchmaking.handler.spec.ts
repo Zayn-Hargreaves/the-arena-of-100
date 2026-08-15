@@ -65,8 +65,57 @@ describe("MatchmakingHandler", () => {
     );
   });
 
+  it("emits error and skips joinQueue when client is unauthenticated", async () => {
+    mockSocket.data.userId = undefined;
+    await handler.handleJoinMatchmaking(mockSocket);
+
+    expect(mockMatchmakingService.joinQueue).not.toHaveBeenCalled();
+    expect(mockSocket.emit).toHaveBeenCalledWith(
+      ServerEvent.ERROR,
+      expect.objectContaining({ code: "UNAUTHORIZED" }),
+    );
+  });
+
+  it("uses default 'Player' username when username is missing", async () => {
+    delete mockSocket.data.username;
+    delete mockSocket.data.user;
+    await handler.handleJoinMatchmaking(mockSocket);
+
+    expect(mockMatchmakingService.joinQueue).toHaveBeenCalledWith(
+      { id: "user-123", username: "Player" },
+      "socket-123",
+      undefined,
+    );
+  });
+
+  it("contains joinQueue rejection and emits error event", async () => {
+    mockMatchmakingService.joinQueue.mockRejectedValueOnce(
+      new Error("Queue error"),
+    );
+    await expect(
+      handler.handleJoinMatchmaking(mockSocket),
+    ).resolves.toBeUndefined();
+    expect(mockSocket.emit).toHaveBeenCalledWith(
+      ServerEvent.ERROR,
+      expect.objectContaining({ message: "Queue error" }),
+    );
+  });
+
   it("cleans up on socket disconnect", async () => {
     await handler.handleDisconnect(mockSocket);
     expect(mockMatchmakingService.leaveQueue).toHaveBeenCalledWith("user-123");
+  });
+
+  it("skips leaveQueue on disconnect when userId is absent", async () => {
+    mockSocket.data = {};
+    await handler.handleDisconnect(mockSocket);
+    expect(mockMatchmakingService.leaveQueue).not.toHaveBeenCalled();
+  });
+
+  it("handles leaveQueue failure during disconnect without throwing", async () => {
+    mockMatchmakingService.leaveQueue.mockRejectedValueOnce(
+      new Error("Redis error"),
+    );
+    await expect(handler.handleDisconnect(mockSocket)).resolves.toBeUndefined();
   });
 });

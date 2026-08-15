@@ -10,6 +10,7 @@ import {
 } from "@nestjs/common";
 import { Server } from "socket.io";
 import {
+  GAME_CONFIG,
   MATCHMAKING_CONFIG,
   ServerEvent,
   type MatchmakingMatchedPayload,
@@ -23,7 +24,12 @@ import { RoomService } from "../room/room.service";
 import { GameLoopService } from "../match/game-loop.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
+import { ClusterService } from "../cluster/cluster.service";
 import { roomPlayersKey } from "../room/room-cache.store";
+
+const MATCHMAKING_LEADER_KEY = "matchmaking:leader";
+const MATCHMAKING_LEADER_TTL_SEC = 5;
+const MATCHMAKING_LEADER_FENCE_KEY = "matchmaking:leader:fence";
 
 @Injectable()
 export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
@@ -31,6 +37,7 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
   private timer: NodeJS.Timeout | null = null;
   private isProcessing = false;
   private server?: Server;
+  private leaderToken?: string;
 
   constructor(
     private readonly queueStore: MatchmakingQueueStore,
@@ -39,6 +46,7 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
     private readonly gameLoopService: GameLoopService,
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly clusterService: ClusterService,
   ) {}
 
   setServer(server: Server): void {
@@ -51,11 +59,43 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
     }, MATCHMAKING_CONFIG.TICK_INTERVAL_MS);
   }
 
-  onModuleDestroy() {
+  async onModuleDestroy() {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
+    if (this.leaderToken) {
+      try {
+        await this.redis.releaseLease(MATCHMAKING_LEADER_KEY, this.leaderToken);
+      } catch {
+        // best-effort cleanup on shutdown
+      }
+      this.leaderToken = undefined;
+    }
+  }
+
+  /**
+   * Acquire or renew matchmaking worker leadership across cluster instances.
+   */
+  private async acquireOrRenewLeadership(): Promise<string | null> {
+    if (this.leaderToken) {
+      const renewed = await this.redis.renewLease(
+        MATCHMAKING_LEADER_KEY,
+        this.leaderToken,
+        MATCHMAKING_LEADER_TTL_SEC,
+      );
+      if (renewed) return this.leaderToken;
+      this.leaderToken = undefined;
+    }
+    const fence = await this.redis.incr(MATCHMAKING_LEADER_FENCE_KEY);
+    const token = `${this.clusterService.nodeId}:${fence}`;
+    const acquired = await this.redis.acquireLease(
+      MATCHMAKING_LEADER_KEY,
+      token,
+      MATCHMAKING_LEADER_TTL_SEC,
+    );
+    this.leaderToken = acquired ? token : undefined;
+    return acquired ? token : null;
   }
 
   /**
@@ -68,6 +108,9 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
 
     this.isProcessing = true;
     try {
+      const token = await this.acquireOrRenewLeadership();
+      if (!token) return;
+
       await this.processQueue();
     } catch (err) {
       this.logger.error("Error during matchmaking worker tick", err);
@@ -102,14 +145,16 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
         expansionSteps * MATCHMAKING_CONFIG.ELO_EXPANSION_STEP;
 
       const isTimedOut = seedWaitMs >= MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS;
+      const seedCategory = seed.category ?? "ALL";
 
       // Filter available candidates
       const candidates: MatchmakingTicket[] = [];
       for (const t of tickets) {
         if (matchedUserIds.has(t.userId)) continue;
 
-        // Check category compatibility if specified
-        if (seed.category && t.category && seed.category !== t.category) {
+        // Check category compatibility (normalized with fallback to ALL)
+        const candidateCategory = t.category ?? "ALL";
+        if (candidateCategory !== seedCategory) {
           continue;
         }
 
@@ -129,6 +174,15 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
         continue;
       }
 
+      // Re-verify / renew leadership lease before popping tickets and launching match
+      const activeToken = await this.acquireOrRenewLeadership();
+      if (!activeToken) {
+        this.logger.warn(
+          "Lost matchmaking leadership lease during queue processing; halting batch",
+        );
+        break;
+      }
+
       // Select group of players
       const selected = candidates.slice(
         0,
@@ -139,6 +193,9 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
       // Atomically pop selected tickets from Redis
       const popped = await this.queueStore.atomicPopTickets(selectedIds);
       if (popped.length < MATCHMAKING_CONFIG.MIN_PLAYERS_TO_MATCH) {
+        for (const ticket of popped) {
+          await this.queueStore.addTicket(ticket);
+        }
         continue;
       }
 
@@ -162,10 +219,12 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
       const room = await this.roomService.createRoom(
         host.userId,
         "PUBLIC",
-        100,
+        GAME_CONFIG.MAX_PLAYERS,
         15,
         category,
       );
+
+      const successfulPlayers: MatchmakingTicket[] = [host];
 
       // 2. Add remaining human players to the room
       for (let i = 1; i < players.length; i++) {
@@ -178,6 +237,7 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
             },
           });
           await this.redis.sadd(roomPlayersKey(room.id), player.userId);
+          successfulPlayers.push(player);
         } catch (err) {
           this.logger.warn(
             `Failed to add human player ${player.userId} to matched room ${room.id}`,
@@ -187,14 +247,17 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
       }
 
       // 3. Auto-fill bots if enabled
+      let botCount = 0;
       if (
         MATCHMAKING_CONFIG.AUTO_FILL_BOTS &&
-        players.length < MATCHMAKING_CONFIG.TARGET_PLAYERS_PER_MATCH
+        successfulPlayers.length < MATCHMAKING_CONFIG.TARGET_PLAYERS_PER_MATCH
       ) {
         const neededBots =
-          MATCHMAKING_CONFIG.TARGET_PLAYERS_PER_MATCH - players.length;
+          MATCHMAKING_CONFIG.TARGET_PLAYERS_PER_MATCH -
+          successfulPlayers.length;
         const avgElo = Math.round(
-          players.reduce((sum, p) => sum + p.elo, 0) / players.length,
+          successfulPlayers.reduce((sum, p) => sum + p.elo, 0) /
+            successfulPlayers.length,
         );
 
         const bots = await this.botService.ensureBotUsers(neededBots, avgElo);
@@ -207,6 +270,7 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
               },
             });
             await this.redis.sadd(roomPlayersKey(room.id), bot.id);
+            botCount++;
           } catch (err) {
             this.logger.warn(
               `Failed to add bot ${bot.username} to matched room ${room.id}`,
@@ -215,7 +279,7 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
           }
         }
         this.logger.log(
-          `Filled room ${room.code} with ${bots.length} AI bots (total ${players.length + bots.length} players)`,
+          `Filled room ${room.code} with ${botCount} AI bots (total ${successfulPlayers.length + botCount} players)`,
         );
       }
 
@@ -226,14 +290,14 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
         matchId: null,
       };
 
-      for (const player of players) {
+      for (const player of successfulPlayers) {
         this.server
           .to(player.socketId)
           .emit(ServerEvent.MATCHMAKING_MATCHED, payload);
       }
 
       this.logger.log(
-        `Match formed for room ${room.code} with ${players.length} real players. Starting match loop...`,
+        `Match formed for room ${room.code} with ${successfulPlayers.length} real players. Starting match loop...`,
       );
 
       // 5. Trigger game loop launch
