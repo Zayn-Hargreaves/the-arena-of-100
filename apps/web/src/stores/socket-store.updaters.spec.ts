@@ -2246,8 +2246,9 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
       expect(res).toEqual({});
     });
 
-    it("applyMatchmakingStatusState updates matchmaking state correctly", () => {
+    it("applyMatchmakingStatusState updates matchmaking state correctly and clears stale error", () => {
       const state = makeState({
+        error: "Previous socket error",
         matchmaking: {
           isQueued: false,
           queuedAt: null,
@@ -2265,6 +2266,7 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         estimatedWaitSeconds: 20,
         playersInQueue: 5,
       });
+      expect(res.error).toBeNull();
       expect(res.matchmaking).toEqual({
         isQueued: true,
         queuedAt: 1000,

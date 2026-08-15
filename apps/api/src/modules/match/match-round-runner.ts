@@ -657,20 +657,20 @@ export class MatchRoundRunner {
       round.endsAt,
     );
 
-    // 6. Schedule simulated bot answers if any bot players are active
+    // 6. Set 15s timer → endRound (shared registration path with resume).
+    this.armPhaseTimer(
+      matchId,
+      this.roundEndTimerCallback(matchId, roomId, server),
+      GAME_CONFIG.ROUND_DURATION_MS,
+    );
+
+    // 7. Schedule simulated bot answers if any bot players are active
     await this.scheduleBotAnswers(matchId, roomId, server, stateMachine, {
       id: question.id,
       correctAnswer: question.correctAnswer,
       options: question.options,
       difficulty: question.difficulty,
     });
-
-    // 7. Set 15s timer → endRound (shared registration path with resume).
-    this.armPhaseTimer(
-      matchId,
-      this.roundEndTimerCallback(matchId, roomId, server),
-      GAME_CONFIG.ROUND_DURATION_MS,
-    );
   }
 
   /**
@@ -689,7 +689,16 @@ export class MatchRoundRunner {
     },
   ): Promise<void> {
     const state = stateMachine.getState();
-    const botIds = await this.matchService.getBotPlayerIds(matchId);
+    let botIds: Set<string>;
+    try {
+      botIds = await this.matchService.getBotPlayerIds(matchId);
+    } catch (err) {
+      this.logger.warn(
+        `scheduleBotAnswers: failed to get bot player IDs for match ${matchId}`,
+        err,
+      );
+      return;
+    }
     const botPlayerIds = state.survivingPlayerIds.filter((pid) =>
       botIds.has(pid),
     );

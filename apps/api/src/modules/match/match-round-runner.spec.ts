@@ -2907,79 +2907,133 @@ describe("MatchRoundRunner", () => {
   });
 
   describe("scheduleBotAnswers", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it("executes bot answers simulation with fake timers and records nonzero response time", async () => {
       vi.useFakeTimers();
-      const testPlayers = [
-        {
-          id: "p1",
-          name: "Player 1",
-          status: PlayerStatus.ACTIVE,
-          score: 0,
-          totalResponseTimeMs: 0,
-          correctAnswers: 0,
-          isOnline: true,
-        },
-        {
-          id: "bot_1",
-          name: "Bot_1",
-          status: PlayerStatus.ACTIVE,
-          score: 0,
-          totalResponseTimeMs: 0,
-          correctAnswers: 0,
-          isOnline: true,
-        },
-      ];
-      const smWithBot = new MatchStateMachine("match-1", "room-1", testPlayers);
-      smWithBot.transition(MatchStatus.COUNTDOWN);
-      smWithBot.transition(MatchStatus.ROUND_ACTIVE);
-      smWithBot.startRound({
-        id: "q1",
-        content: "Test question",
-        options: ["A", "B", "C", "D"],
-        correctAnswer: "A",
-        difficulty: "EASY",
-      });
-
-      (matchService.getStateMachine as any).mockResolvedValue(smWithBot);
-      (matchService.getBotPlayerIds as any).mockResolvedValue(
-        new Set(["bot_1"]),
-      );
-
-      const submitAnswerSpy = vi.spyOn(smWithBot, "submitAnswer");
-
-      await (runner as any).scheduleBotAnswers(
-        "match-1",
-        "room-1",
-        mockServer,
-        smWithBot,
-        {
+      try {
+        const testPlayers = [
+          {
+            id: "p1",
+            name: "Player 1",
+            status: PlayerStatus.ACTIVE,
+            score: 0,
+            totalResponseTimeMs: 0,
+            correctAnswers: 0,
+            isOnline: true,
+          },
+          {
+            id: "bot_1",
+            name: "Bot_1",
+            status: PlayerStatus.ACTIVE,
+            score: 0,
+            totalResponseTimeMs: 0,
+            correctAnswers: 0,
+            isOnline: true,
+          },
+        ];
+        const smWithBot = new MatchStateMachine(
+          "match-1",
+          "room-1",
+          testPlayers,
+        );
+        smWithBot.transition(MatchStatus.COUNTDOWN);
+        smWithBot.transition(MatchStatus.ROUND_ACTIVE);
+        smWithBot.startRound({
           id: "q1",
-          correctAnswer: "A",
+          content: "Test question",
           options: ["A", "B", "C", "D"],
+          correctAnswer: "A",
           difficulty: "EASY",
-        },
-      );
+        });
 
-      // Advance timers by max bot answer delay
-      await vi.advanceTimersByTimeAsync(
-        MATCHMAKING_CONFIG.MAX_BOT_ANSWER_DELAY_MS + 100,
-      );
+        (matchService.getStateMachine as any).mockResolvedValue(smWithBot);
+        (matchService.getBotPlayerIds as any).mockResolvedValue(
+          new Set(["bot_1"]),
+        );
 
-      expect(submitAnswerSpy).toHaveBeenCalledTimes(1);
-      const [botId, answer, serverTimestamp, submissionId] =
-        submitAnswerSpy.mock.calls[0];
-      expect(botId).toBe("bot_1");
-      expect(["A", "B", "C", "D"]).toContain(answer);
-      expect(typeof serverTimestamp).toBe("number");
-      expect(serverTimestamp).toBeGreaterThan(0);
-      expect(submissionId).toMatch(/^bot_sub_/);
+        const submitAnswerSpy = vi.spyOn(smWithBot, "submitAnswer");
 
-      const round = smWithBot.getCurrentRound();
-      const botAnswer = round?.answers.get("bot_1");
-      expect(botAnswer).toBeDefined();
-      expect(botAnswer?.responseTimeMs).toBeGreaterThan(0);
+        await (runner as any).scheduleBotAnswers(
+          "match-1",
+          "room-1",
+          mockServer,
+          smWithBot,
+          {
+            id: "q1",
+            correctAnswer: "A",
+            options: ["A", "B", "C", "D"],
+            difficulty: "EASY",
+          },
+        );
 
-      vi.useRealTimers();
+        // Advance timers by max bot answer delay
+        await vi.advanceTimersByTimeAsync(
+          MATCHMAKING_CONFIG.MAX_BOT_ANSWER_DELAY_MS + 100,
+        );
+
+        expect(submitAnswerSpy).toHaveBeenCalledTimes(1);
+        const [botId, answer, serverTimestamp, submissionId] =
+          submitAnswerSpy.mock.calls[0];
+        expect(botId).toBe("bot_1");
+        expect(["A", "B", "C", "D"]).toContain(answer);
+        expect(typeof serverTimestamp).toBe("number");
+        expect(serverTimestamp).toBeGreaterThan(0);
+        expect(submissionId).toMatch(/^bot_sub_/);
+
+        const round = smWithBot.getCurrentRound();
+        const botAnswer = round?.answers.get("bot_1");
+        expect(botAnswer).toBeDefined();
+        expect(botAnswer?.responseTimeMs).toBeGreaterThan(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("handles getBotPlayerIds failure gracefully without extending round end or failing executeRound", async () => {
+      vi.useFakeTimers();
+      try {
+        const stateMachine = new MatchStateMachine("match-err", "room-1", [
+          {
+            id: "p1",
+            name: "Player 1",
+            status: PlayerStatus.ACTIVE,
+            score: 0,
+            totalResponseTimeMs: 0,
+            correctAnswers: 0,
+            isOnline: true,
+          },
+        ]);
+        stateMachine.transition(MatchStatus.COUNTDOWN);
+
+        (matchService.getStateMachine as any).mockResolvedValue(stateMachine);
+        (matchService.persistStateMachine as any).mockResolvedValue("APPLIED");
+        (matchService.getBotPlayerIds as any).mockRejectedValue(
+          new Error("Redis connection failure"),
+        );
+
+        const endRoundSpy = vi
+          .spyOn(runner as any, "endRound")
+          .mockResolvedValue(undefined);
+
+        // executeRound should succeed and arm round-end timer despite bot lookup error
+        await expect(
+          (runner as any).executeRound("match-err", "room-1", mockServer),
+        ).resolves.toBeUndefined();
+
+        // Advance 15s to verify round end timer executes on schedule
+        await vi.advanceTimersByTimeAsync(GAME_CONFIG.ROUND_DURATION_MS);
+
+        expect(endRoundSpy).toHaveBeenCalledWith(
+          "match-err",
+          "room-1",
+          mockServer,
+        );
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

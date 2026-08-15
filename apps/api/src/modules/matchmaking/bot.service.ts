@@ -113,14 +113,30 @@ export class BotService {
           createdBots.push(bot);
           created = true;
         } catch (err) {
+          const isP2002 =
+            err &&
+            typeof err === "object" &&
+            (err as { code?: string }).code === "P2002";
+          const target = (err as { meta?: { target?: unknown } })?.meta?.target;
+          const isUsernameConflict =
+            isP2002 &&
+            ((Array.isArray(target) && target.includes("username")) ||
+              target === "username" ||
+              (typeof target === "string" && target.includes("username")));
+
+          if (!isUsernameConflict) {
+            throw err;
+          }
+
           const failedUsername = username;
-          username = `${prefix}_${suffix}_${Math.floor(Math.random() * 9000) + 1000}`;
           if (attempts >= 3) {
             this.logger.warn(
-              `Failed to create bot user ${failedUsername}`,
+              `Failed to create bot user ${failedUsername} after ${attempts} attempts`,
               err,
             );
+            throw err;
           }
+          username = `${prefix}_${suffix}_${Math.floor(Math.random() * 9000) + 1000}`;
         }
       }
     }
@@ -132,13 +148,7 @@ export class BotService {
    * Simulates answer submissions for bot players for a given round.
    */
   simulateBotAnswers(
-    question: {
-      id: string;
-      answer?: string;
-      correctAnswer?: string;
-      options: string[];
-      difficulty?: string;
-    },
+    question: BotQuestionInput,
     botUserIds: string[],
   ): BotAnswerSimulation[] {
     return simulateBotAnswers(question, botUserIds);
@@ -147,16 +157,26 @@ export class BotService {
   static simulateBotAnswers = simulateBotAnswers;
 }
 
+export type BotQuestionInput = {
+  id: string;
+  options: string[];
+  difficulty?: string;
+} & (
+  | { answer: string; correctAnswer?: string }
+  | { correctAnswer: string; answer?: string }
+);
+
 export function simulateBotAnswers(
-  question: {
-    id: string;
-    answer?: string;
-    correctAnswer?: string;
-    options: string[];
-    difficulty?: string;
-  },
+  question: BotQuestionInput,
   botUserIds: string[],
 ): BotAnswerSimulation[] {
+  const correctAnswer = question.correctAnswer || question.answer;
+  if (!correctAnswer) {
+    throw new Error(
+      "simulateBotAnswers requires question to have a non-empty 'correctAnswer' or 'answer'",
+    );
+  }
+
   const now = Date.now();
   const simulations: BotAnswerSimulation[] = [];
 
@@ -166,7 +186,6 @@ export function simulateBotAnswers(
   if (diff === "EASY") correctProbability = 0.85;
   else if (diff === "HARD") correctProbability = 0.45;
 
-  const correctAnswer = question.correctAnswer ?? question.answer ?? "";
   const wrongOptions = question.options.filter((opt) => opt !== correctAnswer);
 
   for (const userId of botUserIds) {

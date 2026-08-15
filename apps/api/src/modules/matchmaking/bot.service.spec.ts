@@ -58,8 +58,16 @@ describe("BotService", () => {
 
   it("handles username collision by retrying with a different username", async () => {
     mockPrisma.user.findMany.mockResolvedValueOnce([]);
+    const p2002UsernameErr = Object.assign(
+      new Error("Unique constraint failed on the fields: (`username`)"),
+      {
+        code: "P2002",
+        meta: { target: ["username"] },
+      },
+    );
+
     mockPrisma.user.create
-      .mockRejectedValueOnce(new Error("Unique constraint failed on username"))
+      .mockRejectedValueOnce(p2002UsernameErr)
       .mockResolvedValueOnce({
         id: "bot_new",
         username: "Bot_Retry_999",
@@ -76,6 +84,36 @@ describe("BotService", () => {
     const secondCallUsername =
       mockPrisma.user.create.mock.calls[1][0].data.username;
     expect(firstCallUsername).not.toBe(secondCallUsername);
+  });
+
+  it("immediately rethrows non-username collision errors without retrying", async () => {
+    mockPrisma.user.findMany.mockResolvedValueOnce([]);
+    const p2002OtherErr = Object.assign(
+      new Error("Unique constraint failed on guestId"),
+      {
+        code: "P2002",
+        meta: { target: ["guestId"] },
+      },
+    );
+    mockPrisma.user.create.mockRejectedValueOnce(p2002OtherErr);
+
+    await expect(service.ensureBotUsers(1)).rejects.toThrow(p2002OtherErr);
+    expect(mockPrisma.user.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws the final username-conflict error when attempts limit is reached", async () => {
+    mockPrisma.user.findMany.mockResolvedValueOnce([]);
+    const p2002UsernameErr = Object.assign(
+      new Error("Unique constraint failed on username"),
+      {
+        code: "P2002",
+        meta: { target: ["username"] },
+      },
+    );
+    mockPrisma.user.create.mockRejectedValue(p2002UsernameErr);
+
+    await expect(service.ensureBotUsers(1)).rejects.toThrow(p2002UsernameErr);
+    expect(mockPrisma.user.create).toHaveBeenCalledTimes(3);
   });
 
   it("returns early when count is 0 or negative", async () => {
@@ -106,6 +144,17 @@ describe("BotService", () => {
       );
       expect(ans.submissionId).toMatch(/^bot_sub_/);
     }
+  });
+
+  it("throws when simulateBotAnswers receives a question missing both answer and correctAnswer", () => {
+    const invalidQuestion = {
+      id: "q_invalid",
+      options: ["A", "B", "C", "D"],
+    } as any;
+
+    expect(() =>
+      service.simulateBotAnswers(invalidQuestion, ["b1", "b2"]),
+    ).toThrow(/simulateBotAnswers requires question to have a non-empty/);
   });
 
   describe("isBotName", () => {

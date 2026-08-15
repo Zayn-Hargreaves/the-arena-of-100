@@ -19,6 +19,7 @@ import type { GameLoopService } from "../match/game-loop.service";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { RedisService } from "../redis/redis.service";
 import type { ClusterService } from "../cluster/cluster.service";
+import { MATCHMAKING_CONFIG } from "@arena/shared";
 
 describe("MatchmakingWorkerService", () => {
   let worker: MatchmakingWorkerService;
@@ -52,7 +53,7 @@ describe("MatchmakingWorkerService", () => {
             username: `User_${id}`,
             elo: 1200,
             socketId: id === "u1" ? "s1" : id === "u2" ? "s2" : `socket_${id}`,
-            joinedAt: Date.now() - 35000, // 35s ago -> timed out
+            joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 5000), // timed out
           })),
         ),
       ),
@@ -142,14 +143,14 @@ describe("MatchmakingWorkerService", () => {
         username: "Alice",
         elo: 1200,
         socketId: "s1",
-        joinedAt: Date.now() - 65000, // 65s ago (timeout > 60s)
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 5000), // timeout > 60s
       },
       {
         userId: "u2",
         username: "Bob",
         elo: 1250,
         socketId: "s2",
-        joinedAt: Date.now() - 62000, // 62s ago
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 2000),
       },
     ];
 
@@ -181,7 +182,7 @@ describe("MatchmakingWorkerService", () => {
         username: "Alice",
         elo: 1200,
         socketId: "s1",
-        joinedAt: Date.now() - 65000, // 65s ago
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 5000),
       },
     ];
 
@@ -208,7 +209,7 @@ describe("MatchmakingWorkerService", () => {
         username: "Alice",
         elo: 1200,
         socketId: "s1",
-        joinedAt: Date.now() - 65000,
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 5000),
       },
     ];
 
@@ -227,14 +228,14 @@ describe("MatchmakingWorkerService", () => {
         username: "Alice",
         elo: 1200,
         socketId: "s1",
-        joinedAt: Date.now() - 65000,
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 5000),
       },
       {
         userId: "u2",
         username: "Bob",
         elo: 1250,
         socketId: "s2",
-        joinedAt: Date.now() - 62000,
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 2000),
       },
     ];
 
@@ -260,14 +261,14 @@ describe("MatchmakingWorkerService", () => {
         username: "Alice",
         elo: 1200,
         socketId: "s1",
-        joinedAt: Date.now() - 65000,
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 5000),
       },
       {
         userId: "u2",
         username: "Bob",
         elo: 1250,
         socketId: "s2",
-        joinedAt: Date.now() - 62000,
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 2000),
       },
     ];
 
@@ -278,6 +279,34 @@ describe("MatchmakingWorkerService", () => {
     expect(mockQueueStore.addTicket).toHaveBeenCalledTimes(2);
   });
 
+  it("does not re-enqueue tickets into queueStore if forceStartRoomMatch fails after room creation", async () => {
+    const tickets: MatchmakingTicket[] = [
+      {
+        userId: "u1",
+        username: "Alice",
+        elo: 1200,
+        socketId: "s1",
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 5000),
+      },
+      {
+        userId: "u2",
+        username: "Bob",
+        elo: 1250,
+        socketId: "s2",
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 2000),
+      },
+    ];
+
+    mockQueueStore.getAllTickets.mockResolvedValueOnce(tickets);
+    mockGameLoopService.forceStartRoomMatch.mockRejectedValueOnce(
+      new Error("Failed to start loop"),
+    );
+
+    await expect(worker.tick()).resolves.toBeUndefined();
+    expect(mockRoomService.createRoom).toHaveBeenCalledTimes(1);
+    expect(mockQueueStore.addTicket).not.toHaveBeenCalled();
+  });
+
   it("halts queue processing if leadership lease is lost before forming match", async () => {
     const tickets: MatchmakingTicket[] = [
       {
@@ -285,14 +314,14 @@ describe("MatchmakingWorkerService", () => {
         username: "Alice",
         elo: 1200,
         socketId: "s1",
-        joinedAt: Date.now() - 65000,
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 5000),
       },
       {
         userId: "u2",
         username: "Bob",
         elo: 1250,
         socketId: "s2",
-        joinedAt: Date.now() - 62000,
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 2000),
       },
     ];
 
@@ -316,7 +345,8 @@ describe("MatchmakingWorkerService", () => {
         username: "Alice",
         elo: 1200,
         socketId: "s1",
-        joinedAt: Date.now() - 5000, // 5s ago (not timed out)
+        joinedAt:
+          Date.now() - Math.floor(MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS / 12), // not timed out
         category: "SCIENCE",
       },
       {
@@ -324,7 +354,8 @@ describe("MatchmakingWorkerService", () => {
         username: "Bob",
         elo: 1250,
         socketId: "s2",
-        joinedAt: Date.now() - 4000, // 4s ago (not timed out)
+        joinedAt:
+          Date.now() - Math.floor(MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS / 15), // not timed out
         category: "HISTORY",
       },
     ];

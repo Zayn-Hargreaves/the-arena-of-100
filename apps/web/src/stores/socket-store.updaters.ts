@@ -915,6 +915,7 @@ export function applyMatchmakingStatusState(
   data: MatchmakingStatusPayload,
 ): Partial<SocketState> {
   return {
+    ...(data.isQueued ? { error: null } : {}),
     matchmaking: {
       isQueued: data.isQueued,
       queuedAt: data.queuedAt,

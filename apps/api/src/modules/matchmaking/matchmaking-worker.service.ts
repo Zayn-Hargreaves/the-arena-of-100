@@ -211,19 +211,36 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
   private async launchMatchedGame(players: MatchmakingTicket[]): Promise<void> {
     if (!this.server || players.length === 0) return;
 
-    try {
-      const host = players[0];
-      const category = host.category ?? "ALL";
+    const host = players[0];
+    const category = host.category ?? "ALL";
+    let room: Awaited<ReturnType<RoomService["createRoom"]>>;
 
-      // 1. Create PUBLIC room in Postgres
-      const room = await this.roomService.createRoom(
+    // 1. Create PUBLIC room in Postgres (pre-room creation phase)
+    try {
+      room = await this.roomService.createRoom(
         host.userId,
         "PUBLIC",
         GAME_CONFIG.MAX_PLAYERS,
         15,
         category,
       );
+    } catch (error) {
+      this.logger.error("Failed to create room for matched players", error);
+      for (const player of players) {
+        try {
+          await this.queueStore.addTicket(player);
+        } catch (reErr) {
+          this.logger.warn(
+            `Failed to re-enqueue ticket for user ${player.userId}`,
+            reErr,
+          );
+        }
+      }
+      return;
+    }
 
+    // Post-room creation phase: room is created in DB; never re-enqueue tickets to queueStore
+    try {
       const successfulPlayers: MatchmakingTicket[] = [host];
 
       // 2. Add remaining human players to the room
@@ -303,17 +320,10 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
       // 5. Trigger game loop launch
       await this.gameLoopService.forceStartRoomMatch(room.id, this.server);
     } catch (error) {
-      this.logger.error("Failed to launch matched game", error);
-      for (const player of players) {
-        try {
-          await this.queueStore.addTicket(player);
-        } catch (reErr) {
-          this.logger.warn(
-            `Failed to re-enqueue ticket for user ${player.userId}`,
-            reErr,
-          );
-        }
-      }
+      this.logger.error(
+        `Failed to complete post-creation launch for room ${room.id}`,
+        error,
+      );
     }
   }
 }
