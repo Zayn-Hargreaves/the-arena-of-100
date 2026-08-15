@@ -14,6 +14,9 @@ import { ArrowRight, UserCheck } from "lucide-react";
 import { avatars, type AvatarOption } from "@/lib/avatars";
 import type { CreateTypes } from "canvas-confetti";
 
+/**
+ * Renders the game entry page for selecting an avatar and joining a match or room.
+ */
 export default function HomePage() {
   const router = useRouter();
   const t = useTranslations("HomePage");

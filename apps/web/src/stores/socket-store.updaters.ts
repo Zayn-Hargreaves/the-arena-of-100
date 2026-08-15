@@ -792,6 +792,13 @@ export function applyRoomTerminatedState(
   };
 }
 
+/**
+ * Resets authentication and connection state after an unauthorized error.
+ *
+ * @param errorMessage - The error message to store, or `null` to clear it
+ * @param state - Current socket state used to preserve matched-room identifiers
+ * @returns The socket state updates that reset authentication, room, match, and matchmaking data
+ */
 export function applyUnauthorizedErrorState(
   errorMessage: string | null,
   state: SocketState,
@@ -892,6 +899,12 @@ export function applyTopicVotingSummaryState(
   };
 }
 
+/**
+ * Completes topic voting for the matching match and records the final topic results.
+ *
+ * @param data - The completed voting results for the match
+ * @returns State updates containing the final topic-voting data, or an empty object when the match does not match the active voting session
+ */
 export function applyTopicVotingFinishedState(
   state: SocketState,
   data: TopicVotingFinishedPayload,
@@ -910,6 +923,12 @@ export function applyTopicVotingFinishedState(
   };
 }
 
+/**
+ * Updates matchmaking queue status and metrics while preserving matched-room identifiers.
+ *
+ * @param data - The latest queue status and matchmaking metrics
+ * @returns The matchmaking state updates
+ */
 export function applyMatchmakingStatusState(
   state: SocketState,
   data: MatchmakingStatusPayload,
@@ -928,6 +947,12 @@ export function applyMatchmakingStatusState(
   };
 }
 
+/**
+ * Stores the matched room details and stops matchmaking.
+ *
+ * @param data - The matched room code and identifier
+ * @returns The matchmaking state with queueing cleared and matched room details recorded
+ */
 export function applyMatchmakingMatchedState(
   state: SocketState,
   data: MatchmakingMatchedPayload,

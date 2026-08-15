@@ -11,6 +11,12 @@ interface FocusableElement {
   focus: (options?: FocusOptions) => void;
 }
 
+/**
+ * Determines whether a value can receive focus.
+ *
+ * @param element - The value to inspect
+ * @returns `true` if the value has a callable `focus` method, `false` otherwise.
+ */
 function isFocusableElement(element: unknown): element is FocusableElement {
   return (
     element !== null &&
@@ -20,6 +26,9 @@ function isFocusableElement(element: unknown): element is FocusableElement {
   );
 }
 
+/**
+ * Displays matchmaking progress and provides controls for cancelling the search or transitioning to the matched room.
+ */
 export function MatchmakingModal() {
   const t = useTranslations("MatchmakingModal");
   const router = useRouter();

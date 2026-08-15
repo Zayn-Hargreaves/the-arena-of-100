@@ -35,6 +35,12 @@ export const BOT_NAME_PREFIXES = [
 
 export const BOT_NAME_PREFIX_SET = new Set<string>(BOT_NAME_PREFIXES);
 
+/**
+ * Determines whether a name uses a recognized bot prefix.
+ *
+ * @param name - The name to inspect
+ * @returns `true` if the name begins with a recognized bot prefix, `false` otherwise.
+ */
 export function isBotName(name?: string | null): boolean {
   if (!name) return false;
   const prefix = name.split("_")[0];
@@ -166,6 +172,14 @@ export type BotQuestionInput = {
   | { correctAnswer: string; answer?: string }
 );
 
+/**
+ * Simulates answer submissions from bot users for a question.
+ *
+ * @param question - The question and answer options used to generate simulated responses
+ * @param botUserIds - The user IDs of the bots submitting answers
+ * @returns One simulated answer record for each bot user
+ * @throws Error if the question has no non-empty `correctAnswer` or `answer`
+ */
 export function simulateBotAnswers(
   question: BotQuestionInput,
   botUserIds: string[],
