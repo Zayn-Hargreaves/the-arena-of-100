@@ -49,12 +49,17 @@ export { GAME_CONFIG } from "./game-config";
 export { DAILY_QUESTION_COUNT } from "./daily-config";
 import { GAME_CONFIG } from "./game-config";
 
-export type RoomCategory =
-  | "ALL"
+export type QuestionCategory =
+  | "GENERAL"
   | "SCIENCE"
   | "HISTORY"
+  | "GEOGRAPHY"
   | "TECHNOLOGY"
-  | "CULTURE";
+  | "SPORTS"
+  | "CULTURE"
+  | "LOGIC";
+
+export type RoomCategory = "ALL" | QuestionCategory;
 
 export interface RoomCategoryOption {
   value: RoomCategory;
@@ -65,8 +70,11 @@ export const ROOM_CATEGORY_OPTIONS: readonly RoomCategoryOption[] = [
   { value: "ALL", label: "profile.roomCategory.ALL" },
   { value: "SCIENCE", label: "profile.roomCategory.SCIENCE" },
   { value: "HISTORY", label: "profile.roomCategory.HISTORY" },
+  { value: "GEOGRAPHY", label: "profile.roomCategory.GEOGRAPHY" },
   { value: "TECHNOLOGY", label: "profile.roomCategory.TECHNOLOGY" },
+  { value: "SPORTS", label: "profile.roomCategory.SPORTS" },
   { value: "CULTURE", label: "profile.roomCategory.CULTURE" },
+  { value: "LOGIC", label: "profile.roomCategory.LOGIC" },
 ] as const;
 
 // Room Code Alphabet (excluding ambiguous chars: 0, O, I, 1, l)
@@ -120,6 +128,8 @@ export const ERROR_MESSAGE_KEYS: Record<ErrorCode, string> = {
   [ErrorCode.CARD_NOT_IN_HAND]: "Cards.errors.cardNotInHand",
   [ErrorCode.CARD_NOT_FOUND]: "Cards.errors.cardNotFound",
   [ErrorCode.INVALID_COMMAND_ID]: "Cards.errors.invalidCommandId",
+  [ErrorCode.TOPIC_VOTING_CLOSED]: "Errors.TOPIC_VOTING_CLOSED",
+  [ErrorCode.INVALID_TOPIC]: "Errors.INVALID_TOPIC",
 };
 
 // Backwards-compatible alias — callers still see ERROR_MESSAGES

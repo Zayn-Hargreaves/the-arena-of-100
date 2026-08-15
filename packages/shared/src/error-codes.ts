@@ -54,4 +54,7 @@ export enum ErrorCode {
   // Phase 2 — `commandId` is missing or malformed (≤64 chars,
   // non-empty). The API boundary rejects BEFORE any resolver work.
   INVALID_COMMAND_ID = "INVALID_COMMAND_ID",
+  // Topic voting error codes
+  TOPIC_VOTING_CLOSED = "TOPIC_VOTING_CLOSED",
+  INVALID_TOPIC = "INVALID_TOPIC",
 }

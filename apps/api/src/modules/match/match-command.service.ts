@@ -27,6 +27,7 @@ import {
   type SubmitAnswerBody,
   type CardPickBody,
   type CardPlayBody,
+  type VoteBanTopicBody,
 } from "./dto/match-command.dto";
 import {
   applyAnswerCommand,
@@ -37,7 +38,17 @@ import {
   applyCardPickCommand,
   applyCardPlayCommand,
 } from "./match-card-command-authoritative";
+import { emitPlayerCommandError } from "./match-card-command.helpers";
 import { appliedSetKey } from "./match-command.keys";
+import {
+  ClientEvent,
+  ErrorCode,
+  MatchStatus,
+  RoomError,
+  type MatchState,
+} from "@arena/shared";
+import { MatchStateMachine, tallyTopicVotes } from "@arena/game-core";
+import { emitTopicVotingSummary } from "./game-loop.events";
 
 export {
   type CommandEnvelope,
@@ -47,6 +58,7 @@ export {
   type SubmitAnswerBody,
   type CardPickBody,
   type CardPlayBody,
+  type VoteBanTopicBody,
 } from "./dto/match-command.dto";
 
 /**
@@ -493,6 +505,13 @@ export class MatchCommandService implements OnModuleDestroy {
         server,
       );
     }
+    if (env.body.type === "vote_ban_topic") {
+      return this.applyVoteBanTopicAuthoritative(
+        env as CommandEnvelope<VoteBanTopicBody>,
+        owner,
+        server,
+      );
+    }
     // player_disconnect → B5 (optional until wired). eventId dedup mirrors
     // submit_answer so a redelivery / XAUTOCLAIM of an already-applied
     // disconnect is acked without re-broadcasting PLAYER_LEFT.
@@ -592,6 +611,185 @@ export class MatchCommandService implements OnModuleDestroy {
     server: Server,
   ): Promise<CommandOutcome> {
     return applyCardPlayCommand(this.authoritativeContext(), env, server);
+  }
+
+  /**
+   * Owner-side authoritative apply for `vote_ban_topic` envelopes.
+   * eventId dedup → state machine mutate → fenced persist → emit summary → mark applied.
+   */
+  async applyVoteBanTopicAuthoritative(
+    env: CommandEnvelope<VoteBanTopicBody>,
+    _owner: { fence: number; leaseValue: string },
+    server: Server,
+  ): Promise<CommandOutcome> {
+    const applied = appliedSetKey(env.matchId);
+    let alreadyApplied: boolean;
+    try {
+      alreadyApplied = await this.redis.sismember(applied, env.eventId);
+    } catch (error) {
+      this.logger.warn(
+        `applyVoteBanTopicAuthoritative: dedup read failed for ${env.matchId} (RETRY): ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return "RETRY";
+    }
+    if (alreadyApplied) {
+      return this.recoverDuplicateVoteBanTopic(env, server);
+    }
+
+    const stateMachine = await this.matchService.getStateMachine(env.matchId);
+    if (!stateMachine) return "RETRY";
+
+    const state = stateMachine.getState();
+    if (this.isTopicVotingClosed(state)) {
+      this.logger.warn(
+        `applyVoteBanTopicAuthoritative: voteBanTopic rejected for ${env.matchId}/${env.body.userId} (TOPIC_VOTING_CLOSED)`,
+      );
+      emitPlayerCommandError(
+        this.logger,
+        server,
+        env.body.userId,
+        ClientEvent.VOTE_BAN_TOPIC,
+        env.body.commandId,
+        new RoomError(ErrorCode.TOPIC_VOTING_CLOSED),
+      );
+      return "DUPLICATE_SUBMISSION";
+    }
+
+    let hasExistingVoteEvent = false;
+    stateMachine.forEachEvent((entry) => {
+      if (entry.type === "TOPIC_VOTE_SUBMITTED") {
+        const payload = (entry.payload ?? {}) as Record<string, unknown>;
+        if (payload.eventId === env.eventId) {
+          hasExistingVoteEvent = true;
+          return false;
+        }
+      }
+      return true;
+    }, "reverse");
+
+    if (hasExistingVoteEvent) {
+      return this.recoverDuplicateVoteBanTopic(env, server);
+    }
+
+    const serialized = stateMachine.serialize();
+
+    try {
+      stateMachine.voteBanTopic(env.body.userId, env.body.topic, {
+        eventId: env.eventId,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `applyVoteBanTopicAuthoritative: voteBanTopic rejected for ${env.matchId}/${env.body.userId} (acking as no-op): ${error instanceof Error ? error.message : String(error)}`,
+      );
+      emitPlayerCommandError(
+        this.logger,
+        server,
+        env.body.userId,
+        ClientEvent.VOTE_BAN_TOPIC,
+        env.body.commandId,
+        error,
+      );
+      return "DUPLICATE_SUBMISSION";
+    }
+
+    const persistOutcome = await this.matchService.persistStateMachine(
+      env.matchId,
+    );
+    if (persistOutcome !== "APPLIED") {
+      this.matchService.evictStateMachine(env.matchId);
+      const canonical = MatchStateMachine.deserialize(serialized);
+      Object.assign(stateMachine, canonical);
+      this.logger.warn(
+        `applyVoteBanTopicAuthoritative: persistStateMachine returned ${persistOutcome} for ${env.matchId} (RETRY)`,
+      );
+      return "RETRY";
+    }
+
+    await this.emitTopicVotingSummaryFromSM(env.matchId, stateMachine, server);
+
+    try {
+      await this.redis.sadd(applied, env.eventId);
+    } catch (error) {
+      this.logger.warn(
+        `applyVoteBanTopicAuthoritative: sadd applied failed for ${env.matchId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    return "APPLIED";
+  }
+
+  private isTopicVotingClosed(state: MatchState): boolean {
+    return (
+      state.status !== MatchStatus.TOPIC_VOTING ||
+      (typeof state.phaseEndsAt === "number" && state.phaseEndsAt <= Date.now())
+    );
+  }
+
+  private async emitTopicVotingSummaryFromSM(
+    matchId: string,
+    stateMachine: MatchStateMachine,
+    server: Server,
+  ): Promise<void> {
+    const updatedState = stateMachine.getState();
+    if (this.isTopicVotingClosed(updatedState)) {
+      return;
+    }
+
+    const candidateTopics = updatedState.candidateTopics ?? [];
+    const votes = updatedState.topicVotes ?? {};
+    const voteCounts = tallyTopicVotes(votes, candidateTopics);
+    const totalVotes = Object.values(voteCounts).reduce(
+      (sum: number, n: number) => sum + n,
+      0,
+    );
+
+    const roomId = await this.matchService.getRoomIdByMatchId(matchId);
+    if (!roomId) {
+      return;
+    }
+
+    const latestState = stateMachine.getState();
+    if (this.isTopicVotingClosed(latestState)) {
+      return;
+    }
+
+    emitTopicVotingSummary(server, roomId, matchId, voteCounts, totalVotes);
+  }
+
+  private async recoverDuplicateVoteBanTopic(
+    env: CommandEnvelope<VoteBanTopicBody>,
+    server: Server,
+  ): Promise<CommandOutcome> {
+    const stateMachine = await this.matchService.getStateMachine(env.matchId);
+    if (!stateMachine) return "DUPLICATE_EVENT";
+
+    const state = stateMachine.getState();
+    if (this.isTopicVotingClosed(state)) {
+      return "DUPLICATE_EVENT";
+    }
+
+    let hasCanonicalEvent = false;
+    stateMachine.forEachEvent((entry) => {
+      if (entry.type === "TOPIC_VOTE_SUBMITTED") {
+        const payload = (entry.payload ?? {}) as Record<string, unknown>;
+        if (
+          payload.eventId === env.eventId ||
+          payload.playerId === env.body.userId
+        ) {
+          hasCanonicalEvent = true;
+          return false;
+        }
+      }
+      return true;
+    }, "reverse");
+
+    if (!hasCanonicalEvent) {
+      return "DUPLICATE_EVENT";
+    }
+
+    await this.emitTopicVotingSummaryFromSM(env.matchId, stateMachine, server);
+
+    return "DUPLICATE_EVENT";
   }
   /**
    * Runtime schema validation. Returns the typed envelope, or null when the

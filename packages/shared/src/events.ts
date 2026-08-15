@@ -42,6 +42,10 @@ export enum MatchEventType {
   CARD_OFFER = "CARD_OFFER",
   CARD_PICKED = "CARD_PICKED",
   CARD_RESOLVED = "CARD_RESOLVED",
+  // Topic Ban Voting (Pre-match draft)
+  TOPIC_VOTING_STARTED = "TOPIC_VOTING_STARTED",
+  TOPIC_VOTE_SUBMITTED = "TOPIC_VOTE_SUBMITTED",
+  TOPIC_VOTING_FINISHED = "TOPIC_VOTING_FINISHED",
 }
 
 export enum TransportFrameType {
@@ -214,6 +218,39 @@ export interface PlayerReconnectedPayload {
   lastSeenSeqNo: number;
   reconnectedAt: number;
 }
+
+// Topic Ban Voting (Pre-match draft) Event Payloads
+export interface TopicVotingStartedEventPayload {
+  matchId: string;
+  candidateTopics: string[];
+  endsAt: number;
+  durationMs: number;
+}
+
+export interface TopicVoteSubmittedEventPayload {
+  matchId: string;
+  playerId: string;
+  topic: string;
+  eventId?: string;
+}
+
+export interface TopicVotingSummaryEventPayload {
+  matchId: string;
+  voteCounts: Record<string, number>;
+  totalVotes: number;
+}
+
+export interface TopicVotingFinishedEventPayload {
+  matchId: string;
+  bannedTopics: string[];
+  activeTopics: string[];
+  voteCounts: Record<string, number>;
+}
+
+export type TopicVotingStartedPayload = TopicVotingStartedEventPayload;
+export type TopicVoteSubmittedPayload = TopicVoteSubmittedEventPayload;
+export type TopicVotingSummaryPayload = TopicVotingSummaryEventPayload;
+export type TopicVotingFinishedPayload = TopicVotingFinishedEventPayload;
 
 // ---------------------------------------------------------------------------
 // Phase 2 — Class + Card Hybrid event payloads

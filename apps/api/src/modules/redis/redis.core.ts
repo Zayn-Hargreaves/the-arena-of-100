@@ -56,6 +56,14 @@ export async function get(client: Redis, key: string): Promise<string | null> {
   return client.get(key);
 }
 
+export async function mget(
+  client: Redis,
+  ...keys: string[]
+): Promise<(string | null)[]> {
+  if (keys.length === 0) return [];
+  return client.mget(...keys);
+}
+
 export async function set(
   client: Redis,
   key: string,
@@ -83,6 +91,35 @@ export async function setIfAbsent(
     ? await client.set(key, value, "EX", ttl, "NX")
     : await client.set(key, value, "NX");
   return result === "OK";
+}
+
+export async function setIfGenMatches(
+  client: Redis,
+  genKey: string,
+  cacheKey: string,
+  expectedGen: string,
+  value: string,
+  ttlSec: number,
+): Promise<boolean> {
+  const script = `
+    local currentGen = redis.call('GET', KEYS[1]) or '0'
+    if currentGen == ARGV[1] then
+      redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
+      return 1
+    else
+      return 0
+    end
+  `;
+  const result = await client.eval(
+    script,
+    2,
+    genKey,
+    cacheKey,
+    expectedGen,
+    value,
+    String(ttlSec),
+  );
+  return result === 1;
 }
 
 export async function del(client: Redis, key: string): Promise<void> {

@@ -407,16 +407,29 @@ same cluster + instrumentation setup. Source of truth:
   already uses one transaction for the round plus `tx.answer.createMany(...)`;
   `matchPlayer.createMany(...)` also exists. Mini and 8k persistence completed
   without DB errors.
+- **Final decision — keep `25s/40s`**: the change removes 60% of application
+  heartbeat emits and passed both presence gates without stale-host/disband
+  regressions. Socket.IO still detects normal transport disconnects and starts
+  reconnect immediately; the longer 40s TTL only affects fallback cleanup when
+  no disconnect reaches the server. Do not claim this change raised capacity:
+  the 8k answer p95 still missed the 1s SLO.
+- **Current bottleneck**: Socket.IO handshake/join scheduling, Node event-loop
+  contention, and per-room Socket.IO/Redis broadcast fan-out. Heartbeat is only
+  background traffic, and DB is not the active limiter in the new run (PG
+  active peak 17, 0 connection/Prisma errors, all 80 benchmark matches
+  finished). At 8k, correctness remains intact but latency is over SLO.
 - Source of truth and artifacts: `load-test/CEILING.md` and
   `load-test/results/ceiling-heartbeat25-ramp90-80x100-bca68ea-20260814T111300Z*`.
 
 ## Follow-ups (to consider when product needs >8k concurrent VU)
 
-Recorded 2026-08-14 after ceiling sweep showed 8,000 VU is the hard ceiling.
-Product spec (100-player quiz) doesn't need >8k VU currently — these are
-**future levers**, not urgent fixes.
+Recorded 2026-08-14 after the sweep verified correctness at 8,000 VU but
+exceeded the 1s answer-latency SLO. The hard correctness ceiling above 8,000 VU
+has not been established with a comparable post-change run. Product spec
+(100-player quiz) doesn't need >8k VU currently — these are **future levers**,
+not urgent fixes.
 
-### Why ceiling is 8k VU (NOT a Node.js limit)
+### Why performance degrades at 8k VU (NOT a Node.js language limit)
 
 Node.js runs at scale at Discord, PayPal, Netflix, LinkedIn, Uber — millions
 of concurrent users. The bottleneck is in **3 architectural decisions**,
@@ -430,16 +443,19 @@ not the language:
      benchmark), or Fastify native WS.
    - Effort: medium (rewrite gateway adapter only).
 
-2. **Prisma blocking event loop on every hot-path query** (`match.service.ts`
-   `findUnique` / `updateMany` / `createMany` at lines 82, 101, 146, 385,
-   450). Node.js single-threaded JS loop blocks for each `await prisma.X`
-   call. PG pool briefly saturates during 64-80 room creation storm at
-   6,400-8,000 VU (1 sample at 150/150 active for ~2s, evidence:
-   `load-test/results/clean-{64,80}x100.pg.jsonl`).
-   - Levers: (a) cache frequently-read match state in Redis with TTL ~5s
-     (skip DB on hot path); (b) batch writes with `createMany`; (c) use
-     `$queryRawUnsafe` for the hottest 1-2 queries (bypass Prisma AST).
-   - Effort: low-medium per lever. Each gives ~1.5-2× capacity.
+2. **Node event-loop + HTTP/socket scheduling under the join wave.** The new
+   ramp-90 run reached event-loop lag max 176ms and answer p95 1,768.9ms while
+   PG active peaked at only 17. This rules out DB pool saturation as the
+   current limiter for this run. The older ramp-30 sweep briefly reached
+   144/150 PG connections during setup, but that was a setup burst rather than
+   the gameplay hot path.
+   - Levers: readiness barrier before host start; tune/replace the Socket.IO
+     transport; isolate or distribute the load generator; profile event-loop
+     work during auth/join before considering additional DB caching (distinguished
+     from the completed Redis match-state cache; additional caching should only
+     be considered after profiling confirms a database read-path bottleneck).
+   - Do not add answer batching: `saveRoundAndAnswers()` already uses
+     `tx.answer.createMany(...)` in one transaction.
 
 3. **Per-room broadcast × N rooms × 100 players = message amplification**
    (`game-loop.events.ts:37, 68`, `server.to(channel).emit(...)`). Each
@@ -456,14 +472,13 @@ not the language:
 
 If we want a tangible "ceiling moved from 8k → 12k VU" story for interviews:
 
-| Lever                                       | Effort       | Expected gain                                        | Risk                                                         |
-| ------------------------------------------- | ------------ | ---------------------------------------------------- | ------------------------------------------------------------ |
-| **Heartbeat 10s → 25s**                     | Done         | 60% fewer heartbeat emits; 8k presence gate passed   | Presence expiry detection rises from ~20s to ~40s            |
-| **Cache match state in Redis with TTL=5s**  | 1-2 hours    | Skip DB lookup on hot path, removes DB pool pressure | Stale-cache window of 5s (acceptable for quiz game)          |
-| **`createMany` batching for answer writes** | Already done | One transaction persists round + all answers         | `saveRoundAndAnswers()` already calls `tx.answer.createMany` |
+| Lever                                                      | Effort       | Expected gain                                      | Risk / Implementation notes                                                                                                                                       |
+| ---------------------------------------------------------- | ------------ | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Heartbeat 10s → 25s**                                    | Done         | 60% fewer heartbeat emits; 8k presence gate passed | Presence expiry detection rises from ~20s to ~40s                                                                                                                 |
+| **Cache match state in Redis (generation-based + TTL=5s)** | Done         | Skip DB lookup on read paths / absorb burst reads  | Generation key (`match:gen:<id>`) checked on read; finishMatch invalidates with exponential backoff retry (max 5 attempts) and deletes cache on retry attempt > 1 |
+| **`createMany` batching for answer writes**                | Already done | One transaction persists round + all answers       | `saveRoundAndAnswers()` already calls `tx.answer.createMany`                                                                                                      |
 
-Recommend picking **#2** if we revisit: removes the DB pool saturate burst,
-which is the most "showable" data point.
+Generation-based match caching is implemented in `MatchService`: absorbs read spikes during rapid reconnections and setup, providing bounded eventual consistency through the 5-second TTL, best-effort invalidation retries (max 5 attempts, exponential backoff), and epoch fencing (noting concurrent redis.incr operations may occur).
 
 ### Methodology follow-up (NOT code change)
 

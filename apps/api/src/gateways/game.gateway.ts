@@ -21,6 +21,7 @@ import {
   type LeaveRoomPayload,
   type RequestSnapshotPayload,
   type SubmitAnswerPayload,
+  type VoteBanTopicPayload,
   // Zod schemas (used by per-event validation pipes below)
   AuthenticatePayloadSchema,
   CreateRoomPayloadSchema,
@@ -30,6 +31,7 @@ import {
   RequestSnapshotPayloadSchema,
   StartMatchPayloadSchema,
   SubmitAnswerPayloadSchema,
+  VoteBanTopicPayloadSchema,
 } from "@arena/shared";
 import { AuthHandler, RoomHandler, MatchHandler } from "./handlers";
 import { AuthService } from "../modules/auth/auth.service";
@@ -69,6 +71,9 @@ const SubmitAnswerPayloadPipe = new WsValidationPipe<SubmitAnswerPayload>(
 );
 const RequestSnapshotPayloadPipe = new WsValidationPipe<RequestSnapshotPayload>(
   RequestSnapshotPayloadSchema,
+);
+const VoteBanTopicPayloadPipe = new WsValidationPipe<VoteBanTopicPayload>(
+  VoteBanTopicPayloadSchema,
 );
 const HeartbeatPayloadPipe = new WsValidationPipe<HeartbeatPayload>(
   HeartbeatPayloadSchema,
@@ -204,6 +209,14 @@ export class GameGateway
     @MessageBody(SubmitAnswerPayloadPipe) payload: SubmitAnswerPayload,
   ) {
     return this.matchHandler.handleSubmitAnswer(client, payload);
+  }
+
+  @SubscribeMessage(ClientEvent.VOTE_BAN_TOPIC)
+  handleVoteBanTopic(
+    @ConnectedSocket() client: Socket,
+    @MessageBody(VoteBanTopicPayloadPipe) payload: VoteBanTopicPayload,
+  ) {
+    return this.matchHandler.handleVoteBanTopic(client, this._server, payload);
   }
 
   @SubscribeMessage(ClientEvent.REQUEST_SNAPSHOT)

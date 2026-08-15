@@ -2,7 +2,12 @@
 // Match Service - Match Management Logic
 // ============================================================
 
-import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleDestroy,
+} from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
@@ -24,16 +29,74 @@ import {
 /** Bootstrap revision for the fenced match:state CAS (B2c). */
 const INITIAL_STATE_REVISION = 0;
 const STATE_TTL_SEC = 86400; // 24h
+export const MATCH_CACHE_TTL_SEC = 5; // 5s short-lived read cache to absorb DB spikes
+
+/**
+ * Atomic Lua script to increment match generation counter and set expiration TTL.
+ * ARGV[1] carries the TTL in seconds (must be at least MATCH_CACHE_TTL_SEC).
+ * Returns the incremented generation counter.
+ */
+export const INCR_MATCH_GENERATION_SCRIPT = `
+local v = redis.call('incr', KEYS[1])
+redis.call('expire', KEYS[1], tonumber(ARGV[1]))
+return v
+`;
+
+const MAX_GENERATION_INVALIDATION_ATTEMPTS = 5;
+
 const stateKey = (matchId: string): string => `match:state:${matchId}`;
 const revisionKey = (matchId: string): string =>
   `match:state-revision:${matchId}`;
+export const matchCacheKey = (matchId: string): string =>
+  `cache:match:v2:${matchId}`;
+export const matchRoomCacheKey = (matchId: string): string =>
+  `cache:match:room:${matchId}`;
+export const matchGenerationKey = (matchId: string): string =>
+  `match:gen:${matchId}`;
+
+function restoreMatchDates<T>(data: T): T {
+  if (!data || typeof data !== "object") return data;
+  const match = data as Record<string, unknown>;
+  return {
+    ...match,
+    startedAt: match.startedAt
+      ? new Date(match.startedAt as string | number | Date)
+      : null,
+    endedAt: match.endedAt
+      ? new Date(match.endedAt as string | number | Date)
+      : null,
+    createdAt: match.createdAt
+      ? new Date(match.createdAt as string | number | Date)
+      : undefined,
+    rounds: Array.isArray(match.rounds)
+      ? match.rounds.map((r: Record<string, unknown>) => ({
+          ...r,
+          startedAt: r.startedAt
+            ? new Date(r.startedAt as string | number | Date)
+            : null,
+          endedAt: r.endedAt
+            ? new Date(r.endedAt as string | number | Date)
+            : null,
+        }))
+      : [],
+  } as T;
+}
+
+export type MatchWithDetails = Prisma.MatchGetPayload<{
+  include: {
+    players: {
+      include: { user: { select: { id: true; username: true } } };
+    };
+    rounds: true;
+  };
+}>;
 
 /** Outcome of a canonical persist. BLIND = non-owned/legacy path (unfenced,
  *  pre-B4 behavior); RETRY = fenced CAS rejected (lost ownership). */
 export type PersistOutcome = "APPLIED" | "RETRY" | "BLIND";
 
 @Injectable()
-export class MatchService {
+export class MatchService implements OnModuleDestroy {
   private readonly logger = new Logger(MatchService.name);
   private readonly stateMachines = new Map<string, MatchStateMachine>();
   // Per-match state revision this node has applied (B2c fenced CAS), BOUND to
@@ -51,6 +114,11 @@ export class MatchService {
   // otherwise both read the same expected revision and the loser's CAS would
   // spuriously RETRY, dropping a legitimate owner's canonical write.
   private readonly persistChains = new Map<string, Promise<void>>();
+  private readonly pendingGenerationInvalidations = new Set<string>();
+  private readonly invalidationTimers = new Map<string, NodeJS.Timeout>();
+  private readonly invalidationEpochs = new Map<string, number>();
+  private nextInvalidationEpoch = 0;
+  private isDestroyed = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -138,15 +206,33 @@ export class MatchService {
   // Lightweight match→room lookup for auth gates that must not load
   // the full state machine (Redis deserialize + answer rehydrate).
   // Cache-first: stateMachines stores the roomId alongside the match,
-  // so a hot match avoids a DB round-trip. Falls back to Prisma only
-  // on cache miss (e.g. recovery from Redis before this entry exists).
+  // so a hot match avoids a DB round-trip. Falls back to Redis cache,
+  // then Prisma on cache miss (e.g. recovery from Redis before this entry exists).
   async getRoomIdByMatchId(matchId: string): Promise<string | undefined> {
     const cached = this.stateMachines.get(matchId);
     if (cached) return cached.getState().roomId;
+
+    const cacheKey = matchRoomCacheKey(matchId);
+    try {
+      const cachedRoomId = await this.redis.get(cacheKey);
+      if (cachedRoomId) return cachedRoomId;
+    } catch (err) {
+      this.logger.warn(`Failed to read match room cache for ${matchId}`, err);
+    }
+
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
       select: { roomId: true },
     });
+
+    if (match?.roomId) {
+      try {
+        await this.redis.set(cacheKey, match.roomId, MATCH_CACHE_TTL_SEC);
+      } catch (err) {
+        this.logger.warn(`Failed to set match room cache for ${matchId}`, err);
+      }
+    }
+
     return match?.roomId;
   }
 
@@ -380,8 +466,144 @@ export class MatchService {
     return INITIAL_STATE_REVISION;
   }
 
-  // Get match by ID
-  async getMatch(matchId: string) {
+  hasPendingGenerationInvalidation(matchId: string): boolean {
+    return this.pendingGenerationInvalidations.has(matchId);
+  }
+
+  async invalidateMatchGeneration(matchId: string): Promise<void> {
+    const epoch = ++this.nextInvalidationEpoch;
+    this.invalidationEpochs.set(matchId, epoch);
+    this.pendingGenerationInvalidations.add(matchId);
+    const existingTimer = this.invalidationTimers.get(matchId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      this.invalidationTimers.delete(matchId);
+    }
+
+    await this.executeGenerationInvalidation(matchId, 1, epoch);
+  }
+
+  private async executeGenerationInvalidation(
+    matchId: string,
+    attempt: number,
+    epoch: number,
+  ): Promise<void> {
+    if (this.isDestroyed || this.invalidationEpochs.get(matchId) !== epoch) {
+      return;
+    }
+
+    try {
+      await this.redis.eval(
+        INCR_MATCH_GENERATION_SCRIPT,
+        [matchGenerationKey(matchId)],
+        [String(MATCH_CACHE_TTL_SEC)],
+      );
+      if (this.isDestroyed || this.invalidationEpochs.get(matchId) !== epoch) {
+        return;
+      }
+      if (attempt > 1) {
+        try {
+          await this.redis.del(matchCacheKey(matchId));
+        } catch {
+          // best-effort
+        }
+        try {
+          await this.redis.del(matchRoomCacheKey(matchId));
+        } catch {
+          // best-effort
+        }
+      }
+      if (this.invalidationEpochs.get(matchId) === epoch) {
+        this.invalidationEpochs.delete(matchId);
+        this.pendingGenerationInvalidations.delete(matchId);
+        const timer = this.invalidationTimers.get(matchId);
+        if (timer) {
+          clearTimeout(timer);
+          this.invalidationTimers.delete(matchId);
+        }
+      }
+    } catch (err) {
+      if (this.isDestroyed || this.invalidationEpochs.get(matchId) !== epoch) {
+        return;
+      }
+      if (attempt >= MAX_GENERATION_INVALIDATION_ATTEMPTS) {
+        this.logger.error(
+          `finishMatch: exceeded max retry attempts (${MAX_GENERATION_INVALIDATION_ATTEMPTS}) to increment match cache generation for ${matchId}`,
+          err,
+        );
+        if (this.invalidationEpochs.get(matchId) === epoch) {
+          this.invalidationEpochs.delete(matchId);
+          this.pendingGenerationInvalidations.delete(matchId);
+          const timer = this.invalidationTimers.get(matchId);
+          if (timer) {
+            clearTimeout(timer);
+            this.invalidationTimers.delete(matchId);
+          }
+        }
+        return;
+      }
+
+      this.logger.warn(
+        `finishMatch: failed to increment match cache generation for ${matchId} (attempt ${attempt}), scheduling retry`,
+        err,
+      );
+      if (this.isDestroyed || this.invalidationEpochs.get(matchId) !== epoch) {
+        return;
+      }
+
+      const delayMs = Math.min(100 * Math.pow(2, attempt - 1), 2000);
+      const timer = setTimeout(() => {
+        if (this.invalidationEpochs.get(matchId) !== epoch) {
+          return;
+        }
+        this.invalidationTimers.delete(matchId);
+        void this.executeGenerationInvalidation(matchId, attempt + 1, epoch);
+      }, delayMs);
+      this.invalidationTimers.set(matchId, timer);
+    }
+  }
+
+  onModuleDestroy() {
+    this.isDestroyed = true;
+    for (const timer of this.invalidationTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.invalidationTimers.clear();
+    this.invalidationEpochs.clear();
+  }
+
+  // Get match by ID (with short-lived Redis cache to prevent DB connection spikes)
+  async getMatch(matchId: string): Promise<MatchWithDetails> {
+    const cacheKey = matchCacheKey(matchId);
+    const genKey = matchGenerationKey(matchId);
+
+    let capturedGen: string | null = null;
+
+    if (!this.pendingGenerationInvalidations.has(matchId)) {
+      try {
+        const [cached, gen] = await this.redis.mget(cacheKey, genKey);
+        const currentGen = gen ?? "0";
+        capturedGen = currentGen;
+        if (cached) {
+          const parsed = JSON.parse(cached) as {
+            gen?: string;
+            data?: MatchWithDetails;
+          };
+          if (
+            parsed &&
+            typeof parsed === "object" &&
+            parsed.gen !== undefined &&
+            parsed.gen === currentGen &&
+            parsed.data
+          ) {
+            return restoreMatchDates(parsed.data);
+          }
+        }
+      } catch (err) {
+        this.logger.warn(`Failed to read match cache for ${matchId}`, err);
+      }
+    }
+
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
       include: {
@@ -394,6 +616,27 @@ export class MatchService {
 
     if (!match) {
       throw new NotFoundException(ErrorCode.MATCH_NOT_FOUND);
+    }
+
+    if (
+      capturedGen !== null &&
+      !this.pendingGenerationInvalidations.has(matchId)
+    ) {
+      try {
+        const payload = JSON.stringify({
+          gen: capturedGen,
+          data: match,
+        });
+        await this.redis.setIfGenMatches(
+          genKey,
+          cacheKey,
+          capturedGen,
+          payload,
+          MATCH_CACHE_TTL_SEC,
+        );
+      } catch (err) {
+        this.logger.warn(`Failed to set match cache for ${matchId}`, err);
+      }
     }
 
     return match;
@@ -527,6 +770,15 @@ export class MatchService {
       where: { id: matchId },
     });
 
+    // Increment cache generation immediately after the DB transaction
+    // completes, before and independently of Redis state cleanup,
+    // so cleanup failures cannot leave the generation unchanged.
+    // Note: pendingGenerationInvalidations is an in-memory set local to this
+    // node only; other nodes may continue serving cached match data within the
+    // 5-second TTL window until their local cache expires or generation is bumped.
+    // If redis.incr fails, this node persistently retries with backoff.
+    await this.invalidateMatchGeneration(matchId);
+
     // M4 fix: Redis cleanup BEFORE in-memory cleanup. If Redis throws,
     // the in-memory state is still present, so getStateMachine will
     // keep returning the (now-fully-FINISHED) machine and the API
@@ -561,6 +813,17 @@ export class MatchService {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(
         `Failed to delete Redis state for match ${matchId} (will be cleaned on next Redis flush): ${message}`,
+      );
+    }
+
+    try {
+      // Invalidate short-lived read caches independently of state cleanup
+      await this.redis.del(matchCacheKey(matchId));
+      await this.redis.del(matchRoomCacheKey(matchId));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Failed to delete Redis read caches for match ${matchId}: ${message}`,
       );
     }
 

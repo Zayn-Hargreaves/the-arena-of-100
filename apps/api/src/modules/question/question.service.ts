@@ -293,6 +293,7 @@ export class QuestionService {
     difficulty?: QuestionDifficulty,
     excludeIds?: string[],
     category?: string,
+    allowedCategories?: string[],
   ): Promise<Question> {
     const where: Prisma.QuestionWhereInput = {
       active: true,
@@ -302,17 +303,40 @@ export class QuestionService {
       where.difficulty = difficulty;
     }
 
-    if (category && category !== "ALL") {
-      where.category = category as PrismaQuestionCategory;
+    if (category) {
+      if (category === "ALL") {
+        // "ALL" represents all categories, no filter applied
+      } else if (
+        Object.values(PrismaQuestionCategory).includes(
+          category as PrismaQuestionCategory,
+        )
+      ) {
+        where.category = category as PrismaQuestionCategory;
+      } else {
+        throw new BadRequestException(`Invalid category: ${category}`);
+      }
+    } else if (allowedCategories && allowedCategories.length > 0) {
+      if (allowedCategories.includes("ALL")) {
+        // "ALL" represents all categories, no filter applied
+      } else {
+        const validCategories = allowedCategories.filter(
+          (c): c is PrismaQuestionCategory =>
+            Object.values(PrismaQuestionCategory).includes(
+              c as PrismaQuestionCategory,
+            ),
+        );
+        if (validCategories.length === 0) {
+          throw new BadRequestException(
+            "No valid categories provided in allowedCategories",
+          );
+        }
+        where.category = {
+          in: validCategories,
+        };
+      }
     }
 
     if (excludeIds?.length) {
-      where.id = {
-        notIn: excludeIds,
-      };
-    }
-
-    if (excludeIds && excludeIds.length > 0) {
       where.id = {
         notIn: excludeIds,
       };

@@ -128,6 +128,10 @@ export class RedisService implements OnModuleDestroy {
     return core.get(this.client, key);
   }
 
+  mget(...keys: string[]): Promise<(string | null)[]> {
+    return core.mget(this.client, ...keys);
+  }
+
   set(key: string, value: string, ttl?: number): Promise<void> {
     return core.set(this.client, key, value, ttl);
   }
@@ -138,6 +142,27 @@ export class RedisService implements OnModuleDestroy {
   // Returns true if the key was created, false if it already existed.
   setIfAbsent(key: string, value: string, ttl?: number): Promise<boolean> {
     return core.setIfAbsent(this.client, key, value, ttl);
+  }
+
+  // Atomic CAS write: writes `cacheKey` with `ttlSec` only when the value at
+  // `genKey` strictly equals `expectedGen`. Treats a missing `genKey` as
+  // generation "0". Callers must use "0" when no generation is present to avoid
+  // silent write failures.
+  setIfGenMatches(
+    genKey: string,
+    cacheKey: string,
+    expectedGen: string,
+    value: string,
+    ttlSec: number,
+  ): Promise<boolean> {
+    return core.setIfGenMatches(
+      this.client,
+      genKey,
+      cacheKey,
+      expectedGen,
+      value,
+      ttlSec,
+    );
   }
 
   del(key: string): Promise<void> {

@@ -1350,6 +1350,133 @@ describe("MatchHandler", () => {
       }
     });
   });
+
+  describe("handleVoteBanTopic", () => {
+    it("forwards vote_ban_topic envelope to owner command channel", async () => {
+      const machine = {
+        getState: vi.fn().mockReturnValue({
+          players: new Map([["u1", { id: "u1", status: PlayerStatus.ACTIVE }]]),
+        }),
+      } as any;
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+      vi.mocked(matchCommand.forward).mockClear();
+
+      await handler.handleVoteBanTopic(client, server, {
+        matchId: "m1",
+        topic: "SCIENCE",
+      });
+
+      expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+      const env = matchCommand.forward.mock.calls[0][0];
+      expect(env).toMatchObject({
+        schemaVersion: 1,
+        matchId: "m1",
+        emittedByNodeId: "node-a",
+        body: {
+          type: "vote_ban_topic",
+          userId: "u1",
+          topic: "SCIENCE",
+        },
+      });
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+    });
+
+    it("forwards vote_ban_topic envelope preserving commandId", async () => {
+      const machine = {
+        getState: vi.fn().mockReturnValue({
+          players: new Map([["u1", { id: "u1", status: PlayerStatus.ACTIVE }]]),
+        }),
+      } as any;
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+      vi.mocked(matchCommand.forward).mockClear();
+
+      await handler.handleVoteBanTopic(client, server, {
+        matchId: "m1",
+        topic: "SCIENCE",
+        commandId: "cmd-vote-1",
+      });
+
+      expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+      const env = matchCommand.forward.mock.calls[0][0];
+      expect(env).toMatchObject({
+        schemaVersion: 1,
+        matchId: "m1",
+        emittedByNodeId: "node-a",
+        body: {
+          type: "vote_ban_topic",
+          userId: "u1",
+          topic: "SCIENCE",
+          commandId: "cmd-vote-1",
+        },
+      });
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+    });
+
+    it("emits MATCH_NOT_FOUND and does not forward when matchId is nonexistent", async () => {
+      vi.mocked(matchService.getRoomIdByMatchId).mockResolvedValueOnce(
+        undefined,
+      );
+      vi.mocked(matchCommand.forward).mockClear();
+
+      await handler.handleVoteBanTopic(client, server, {
+        matchId: "m-nonexistent",
+        topic: "SCIENCE",
+      });
+
+      expect(client.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.MATCH_NOT_FOUND,
+          failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+        }),
+      );
+      expect(matchCommand.forward).not.toHaveBeenCalled();
+    });
+
+    it("emits UNAUTHORIZED and does not forward when client is not in socket room", async () => {
+      const outsideClient = {
+        emit: vi.fn(),
+        data: { userId: "u1", username: "Alice" },
+        rooms: new Set<string>(["room:other-room"]),
+      } as unknown as Socket;
+      vi.mocked(matchService.getRoomIdByMatchId).mockResolvedValueOnce("r1");
+      vi.mocked(matchCommand.forward).mockClear();
+
+      await handler.handleVoteBanTopic(outsideClient, server, {
+        matchId: "m1",
+        topic: "SCIENCE",
+      });
+
+      expect(outsideClient.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.UNAUTHORIZED,
+          failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+        }),
+      );
+      expect(matchCommand.forward).not.toHaveBeenCalled();
+    });
+
+    it("emits UNAUTHORIZED when client is not authenticated", async () => {
+      const unauthClient = {
+        data: {},
+        emit: vi.fn(),
+      } as unknown as Socket;
+
+      await handler.handleVoteBanTopic(unauthClient, server, {
+        matchId: "m1",
+        topic: "SCIENCE",
+      });
+
+      expect(unauthClient.emit).toHaveBeenCalledWith(
+        ServerEvent.ERROR,
+        expect.objectContaining({
+          code: ErrorCode.UNAUTHORIZED,
+          failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+        }),
+      );
+    });
+  });
 });
 
 function findSocketForClient(

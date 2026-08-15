@@ -1,3 +1,4 @@
+import { COMMAND_ID_MAX_LENGTH } from "@arena/shared";
 import { z } from "zod";
 
 // ---- Zod Validation Schemas ---------------------------------
@@ -39,11 +40,19 @@ export const cardPlayBodySchema = z.object({
   targetPlayerId: z.string().min(1).optional(),
 });
 
+export const voteBanTopicBodySchema = z.object({
+  type: z.literal("vote_ban_topic"),
+  userId: z.string().min(1),
+  topic: z.string().min(1),
+  commandId: z.string().min(1).max(COMMAND_ID_MAX_LENGTH).optional(),
+});
+
 export const commandBodySchema = z.discriminatedUnion("type", [
   submitAnswerBodySchema,
   playerDisconnectBodySchema,
   cardPickBodySchema,
   cardPlayBodySchema,
+  voteBanTopicBodySchema,
 ]);
 
 export const commandEnvelopeSchema = z.object({
@@ -61,6 +70,7 @@ export type SubmitAnswerBody = z.infer<typeof submitAnswerBodySchema>;
 export type PlayerDisconnectBody = z.infer<typeof playerDisconnectBodySchema>;
 export type CardPickBody = z.infer<typeof cardPickBodySchema>;
 export type CardPlayBody = z.infer<typeof cardPlayBodySchema>;
+export type VoteBanTopicBody = z.infer<typeof voteBanTopicBodySchema>;
 export type OwnerCommandBody = z.infer<typeof commandBodySchema>;
 
 export interface CommandEnvelope<

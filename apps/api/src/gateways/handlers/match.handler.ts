@@ -11,10 +11,12 @@ import {
   type RequestSnapshotPayload,
   type CardPickPayload,
   type CardPlayPayload,
+  type VoteBanTopicPayload,
   RoomError,
   ERROR_MESSAGE_KEYS,
 } from "@arena/shared";
 import { RoomService } from "../../modules/room/room.service";
+
 import { MatchService } from "../../modules/match/match.service";
 import { GameLoopService } from "../../modules/match/game-loop.service";
 import {
@@ -440,5 +442,65 @@ export class MatchHandler extends BaseHandler {
     if (player.status === PlayerStatus.DISCONNECTED) {
       throw new RoomError(ErrorCode.PLAYER_DISCONNECTED);
     }
+  }
+
+  async handleVoteBanTopic(
+    client: Socket,
+    _server: Server,
+    payload: VoteBanTopicPayload,
+  ) {
+    return this.runSafely(
+      client,
+      async () => {
+        const userId = this.requireAuth(client);
+
+        const roomId = await this.matchService.getRoomIdByMatchId(
+          payload.matchId,
+        );
+        if (!roomId) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
+        if (!client.rooms.has(`room:${roomId}`)) {
+          throw new RoomError(ErrorCode.UNAUTHORIZED);
+        }
+        const stateMachine = await this.matchService.getStateMachine(
+          payload.matchId,
+        );
+        if (!stateMachine) throw new RoomError(ErrorCode.MATCH_NOT_FOUND);
+
+        const state = stateMachine.getState();
+        this.assertActivePlayer(state, userId);
+
+        await this.matchCommand.forward(
+          makeCommandEnvelope({
+            matchId: payload.matchId,
+            emittedByNodeId: this.cluster.nodeId,
+            body: {
+              type: "vote_ban_topic",
+              userId,
+              topic: payload.topic,
+              ...(payload.commandId ? { commandId: payload.commandId } : {}),
+            },
+          }),
+        );
+
+        this.logger.log(
+          `Vote ban topic forwarded to owner channel: ${userId} (match ${payload.matchId}, topic ${payload.topic})`,
+        );
+      },
+      (error) => {
+        const rawCode = error instanceof RoomError ? error.code : null;
+        const code = rawCode ?? this.getErrorCode(error);
+        let msg = ERROR_MESSAGE_KEYS[code] ?? this.getErrorMessage(error);
+        if (code === ErrorCode.INTERNAL_ERROR) {
+          this.logger.error("Error voting ban topic:", error);
+          msg = ERROR_MESSAGE_KEYS[ErrorCode.INTERNAL_ERROR];
+        }
+        client.emit(ServerEvent.ERROR, {
+          code,
+          message: msg,
+          failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+          commandId: payload.commandId,
+        });
+      },
+    );
   }
 }

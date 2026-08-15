@@ -333,6 +333,26 @@ describe("emitPlayerCommandError", () => {
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy.mock.calls[0]?.[0] as string).toContain("synthetic failure");
   });
+
+  it("omits commandId from error payload when commandId is undefined", () => {
+    const recorder = makeMockServer();
+    emitPlayerCommandError(
+      logger,
+      recorder.server,
+      "p1",
+      ClientEvent.VOTE_BAN_TOPIC,
+      undefined,
+      new RoomError(ErrorCode.TOPIC_VOTING_CLOSED),
+    );
+
+    const errors = recorder.callsByEvent(ServerEvent.ERROR);
+    expect(errors.length).toBe(1);
+    const payload = errors[0]?.[1] as Record<string, unknown>;
+    expect(payload.code).toBe(ErrorCode.TOPIC_VOTING_CLOSED);
+    expect(payload.failedEvent).toBe(ClientEvent.VOTE_BAN_TOPIC);
+    expect(payload.commandId).toBeUndefined();
+    expect("commandId" in payload).toBe(false);
+  });
 });
 
 describe("sanitizeCardEffect", () => {

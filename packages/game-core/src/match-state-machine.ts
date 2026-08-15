@@ -28,6 +28,12 @@ import {
 } from "./round-elimination";
 import { assignClasses } from "./class-engine";
 import { sampleOffer } from "./card-engine";
+import {
+  selectCandidateTopics,
+  resolveBannedTopics,
+  tallyTopicVotes,
+  type TopicVotingResult,
+} from "./topic-voting";
 
 type RoundRuntimeState = RoundState & {
   correctAnswer?: string;
@@ -43,7 +49,8 @@ export interface StateTransitionHandler {
 
 // Valid State Transitions
 const VALID_TRANSITIONS: Record<MatchStatus, MatchStatus[]> = {
-  [MatchStatus.CREATED]: [MatchStatus.COUNTDOWN],
+  [MatchStatus.CREATED]: [MatchStatus.COUNTDOWN, MatchStatus.TOPIC_VOTING],
+  [MatchStatus.TOPIC_VOTING]: [MatchStatus.COUNTDOWN, MatchStatus.FINISHED],
   [MatchStatus.COUNTDOWN]: [MatchStatus.ROUND_ACTIVE, MatchStatus.FINISHED],
   [MatchStatus.ROUND_ACTIVE]: [
     MatchStatus.ROUND_EVALUATING,
@@ -140,6 +147,18 @@ export class MatchStateMachine {
       ),
       survivingPlayerIds: [...this.state.survivingPlayerIds],
       eliminatedPlayerIds: [...this.state.eliminatedPlayerIds],
+      candidateTopics: this.state.candidateTopics
+        ? [...this.state.candidateTopics]
+        : undefined,
+      topicVotes: this.state.topicVotes
+        ? { ...this.state.topicVotes }
+        : undefined,
+      bannedTopics: this.state.bannedTopics
+        ? [...this.state.bannedTopics]
+        : undefined,
+      activeTopics: this.state.activeTopics
+        ? [...this.state.activeTopics]
+        : undefined,
     };
   }
 
@@ -199,6 +218,12 @@ export class MatchStateMachine {
     // failover rebuilds the next timer from) and roundResultStartedAt (the
     // result-phase anchor), so no stale value survives a phase change.
     switch (to) {
+      case MatchStatus.TOPIC_VOTING:
+        this.state.startedAt = Date.now();
+        this.state.phaseEndsAt =
+          Date.now() + GAME_CONFIG.TOPIC_VOTING_DURATION_MS;
+        this.state.roundResultStartedAt = null;
+        break;
       case MatchStatus.COUNTDOWN:
         this.state.startedAt = Date.now();
         this.state.phaseEndsAt = Date.now() + GAME_CONFIG.COUNTDOWN_DURATION_MS;
@@ -612,7 +637,18 @@ export class MatchStateMachine {
     currentQuestion: { id: string; content: string; options: string[] } | null;
     roundEndTime: number | null;
     lastEventSeqNo: number;
+    candidateTopics?: string[];
+    voteCounts?: Record<string, number>;
+    phaseEndsAt?: number | null;
+    bannedTopics?: string[];
+    activeTopics?: string[];
   } {
+    const candidateTopics = this.state.candidateTopics;
+    const voteCounts =
+      candidateTopics && candidateTopics.length > 0
+        ? tallyTopicVotes(this.state.topicVotes ?? {}, candidateTopics)
+        : undefined;
+
     return {
       matchId: this.state.id,
       status: this.state.status,
@@ -621,6 +657,15 @@ export class MatchStateMachine {
       currentQuestion: this.currentRound?.question ?? null,
       roundEndTime: this.currentRound?.endsAt ?? null,
       lastEventSeqNo,
+      candidateTopics: candidateTopics ? [...candidateTopics] : undefined,
+      voteCounts,
+      phaseEndsAt: this.state.phaseEndsAt,
+      bannedTopics: this.state.bannedTopics
+        ? [...this.state.bannedTopics]
+        : undefined,
+      activeTopics: this.state.activeTopics
+        ? [...this.state.activeTopics]
+        : undefined,
     };
   }
 
@@ -744,6 +789,109 @@ export class MatchStateMachine {
     (
       this.currentRound as RoundState & { correctAnswer: string }
     ).correctAnswer = correctAnswer;
+  }
+
+  // -------------------------------------------------------------------------
+  // Topic Ban Voting (Pre-match Crowd Draft)
+  // -------------------------------------------------------------------------
+
+  initTopicVoting(candidateTopics?: string[], durationMs?: number): string[] {
+    const candidates =
+      candidateTopics && candidateTopics.length > 0
+        ? candidateTopics
+        : selectCandidateTopics(this.state.id);
+
+    this.state.candidateTopics = [...candidates];
+    this.state.topicVotes = {};
+    this.state.bannedTopics = [];
+    this.state.activeTopics = [];
+
+    const duration = durationMs ?? GAME_CONFIG.TOPIC_VOTING_DURATION_MS;
+    this.transition(MatchStatus.TOPIC_VOTING);
+    this.state.phaseEndsAt = (this.state.startedAt ?? Date.now()) + duration;
+
+    this.logEvent("TOPIC_VOTING_STARTED", {
+      matchId: this.state.id,
+      candidateTopics: this.state.candidateTopics,
+      durationMs: duration,
+      endsAt: this.state.phaseEndsAt,
+    });
+
+    return this.state.candidateTopics;
+  }
+
+  voteBanTopic(
+    playerId: string,
+    topic: string,
+    metadata?: { eventId?: string },
+  ): boolean {
+    if (
+      this.state.status !== MatchStatus.TOPIC_VOTING ||
+      (this.state.phaseEndsAt !== undefined &&
+        this.state.phaseEndsAt !== null &&
+        Date.now() >= this.state.phaseEndsAt)
+    ) {
+      throw new RoomError(ErrorCode.TOPIC_VOTING_CLOSED);
+    }
+
+    const player = this.state.players.get(playerId);
+    if (!player || player.status !== PlayerStatus.ACTIVE) {
+      throw new RoomError(ErrorCode.PLAYER_NOT_IN_ROOM);
+    }
+
+    if (!this.state.candidateTopics?.includes(topic)) {
+      throw new RoomError(ErrorCode.INVALID_TOPIC);
+    }
+
+    if (!this.state.topicVotes) {
+      this.state.topicVotes = {};
+    }
+
+    const previousVote = this.state.topicVotes[playerId];
+    if (previousVote === topic) {
+      return true;
+    }
+
+    this.state.topicVotes[playerId] = topic;
+
+    const payload: Record<string, unknown> = {
+      matchId: this.state.id,
+      playerId,
+      topic,
+    };
+    if (metadata?.eventId) {
+      payload.eventId = metadata.eventId;
+    }
+
+    this.logEvent("TOPIC_VOTE_SUBMITTED", payload);
+
+    return true;
+  }
+
+  resolveTopicVoting(
+    bannedCount: number = GAME_CONFIG.TOPIC_VOTING_BANNED_COUNT,
+  ): TopicVotingResult {
+    const candidates = this.state.candidateTopics ?? [];
+    const votes = this.state.topicVotes ?? {};
+
+    const result = resolveBannedTopics(
+      candidates,
+      votes,
+      this.state.id,
+      bannedCount,
+    );
+
+    this.state.bannedTopics = [...result.bannedTopics];
+    this.state.activeTopics = [...result.activeTopics];
+
+    this.logEvent("TOPIC_VOTING_FINISHED", {
+      matchId: this.state.id,
+      bannedTopics: this.state.bannedTopics,
+      activeTopics: this.state.activeTopics,
+      voteCounts: result.voteCounts,
+    });
+
+    return result;
   }
 
   // -------------------------------------------------------------------------

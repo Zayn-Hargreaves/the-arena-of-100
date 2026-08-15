@@ -826,6 +826,48 @@ describe("QuestionService", () => {
       });
     });
 
+    it("should throw BadRequestException when category is invalid", async () => {
+      await expect(
+        service.getRandom(undefined, undefined, "INVALID"),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("should ignore category filter when allowedCategories is ['ALL']", async () => {
+      mockPrismaService.question.count.mockResolvedValueOnce(5);
+      mockPrismaService.question.findFirst.mockResolvedValueOnce(mockQuestion);
+
+      await service.getRandom(undefined, undefined, undefined, ["ALL"]);
+
+      expect(mockPrismaService.question.count).toHaveBeenCalledWith({
+        where: { active: true },
+      });
+    });
+
+    it("should throw BadRequestException when allowedCategories contains only invalid categories", async () => {
+      await expect(
+        service.getRandom(undefined, undefined, undefined, ["INVALID"]),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("should filter by valid categories when allowedCategories contains both valid and invalid categories", async () => {
+      mockPrismaService.question.count.mockResolvedValueOnce(5);
+      mockPrismaService.question.findFirst.mockResolvedValueOnce(mockQuestion);
+
+      await service.getRandom(undefined, undefined, undefined, [
+        "INVALID",
+        QuestionCategory.SCIENCE,
+      ]);
+
+      expect(mockPrismaService.question.count).toHaveBeenCalledWith({
+        where: {
+          active: true,
+          category: {
+            in: [QuestionCategory.SCIENCE],
+          },
+        },
+      });
+    });
+
     it("should combine category, difficulty, and excludeIds filters", async () => {
       mockPrismaService.question.count.mockResolvedValueOnce(3);
       mockPrismaService.question.findFirst.mockResolvedValueOnce(mockQuestion);

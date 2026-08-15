@@ -5,6 +5,7 @@ import {
   PlayerStatus,
   MatchStatus,
   type SnapshotPayload,
+  type VoteBanTopicPayload,
 } from "@arena/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -599,6 +600,337 @@ describe("socket-store connect heartbeat ownership", () => {
         expect(useSocketStore.getState().lastSeenSeqNo).toBe(42);
       } finally {
         vi.useRealTimers();
+      }
+    });
+  });
+
+  describe("voteBanTopic rollback handling", () => {
+    async function setupConnectedSocket() {
+      await useSocketStore.getState().connect();
+      const socket = useSocketStore.getState().socket;
+      expect(socket).not.toBeNull();
+      if (!socket) {
+        throw new Error("Socket is not initialized");
+      }
+      let isConnected = true;
+      Object.defineProperty(socket, "connected", {
+        configurable: true,
+        get: () => isConnected,
+        set: (v) => {
+          isConnected = v;
+        },
+      });
+      const emitSpy = vi.spyOn(
+        socket as unknown as { emit: (...args: unknown[]) => unknown },
+        "emit",
+      );
+      return { socket, emitSpy };
+    }
+
+    function extractVoteCommandId(
+      emitSpy: { mock: { calls: unknown[][] } },
+      topic: string,
+    ): string {
+      const voteCall = emitSpy.mock.calls.find(
+        (c) =>
+          c[0] === ClientEvent.VOTE_BAN_TOPIC &&
+          (c[1] as VoteBanTopicPayload | undefined)?.topic === topic,
+      );
+      expect(voteCall).toBeDefined();
+      const commandId = (voteCall![1] as VoteBanTopicPayload).commandId;
+      expect(typeof commandId).toBe("string");
+      return commandId;
+    }
+
+    it("rolls back two consecutive votes correctly when both receive matching error payloads", async () => {
+      waitForSocketAckMock.mockResolvedValueOnce(undefined);
+      let socket: ReturnType<typeof useSocketStore.getState>["socket"] = null;
+
+      try {
+        const setup = await setupConnectedSocket();
+        socket = setup.socket;
+        const { emitSpy } = setup;
+
+        useSocketStore.setState({
+          topicVoting: {
+            matchId: "m1",
+            candidateTopics: ["SCIENCE", "HISTORY"],
+            endsAt: Date.now() + 10_000,
+            durationMs: 10_000,
+            voteCounts: { SCIENCE: 0, HISTORY: 0 },
+            myVotedTopic: null,
+            totalVotes: 0,
+            bannedTopics: [],
+            activeTopics: [],
+            isFinished: false,
+          },
+        });
+
+        // Vote 1: cast vote for SCIENCE
+        useSocketStore.getState().voteBanTopic("m1", "SCIENCE");
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
+          "SCIENCE",
+        );
+        const commandId1 = extractVoteCommandId(emitSpy, "SCIENCE");
+
+        // Vote 2: cast subsequent vote for HISTORY
+        useSocketStore.getState().voteBanTopic("m1", "HISTORY");
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
+          "HISTORY",
+        );
+        const commandId2 = extractVoteCommandId(emitSpy, "HISTORY");
+        expect(commandId2).not.toBe(commandId1);
+
+        // Error for Vote 2 arrives first
+        triggerSocketEvent(socket, ServerEvent.ERROR, {
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "Vote 2 failed",
+          failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+          commandId: commandId2,
+        });
+
+        // Should restore Vote 2's previous topic (SCIENCE)
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
+          "SCIENCE",
+        );
+
+        // Error for Vote 1 arrives
+        triggerSocketEvent(socket, ServerEvent.ERROR, {
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "Vote 1 failed",
+          failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+          commandId: commandId1,
+        });
+
+        // Should restore Vote 1's previous topic (null)
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBeNull();
+      } finally {
+        socket?.removeAllListeners();
+        socket?.disconnect();
+      }
+    });
+
+    it("rolls back two consecutive votes correctly when error for commandId1 arrives before commandId2", async () => {
+      waitForSocketAckMock.mockResolvedValueOnce(undefined);
+      let socket: ReturnType<typeof useSocketStore.getState>["socket"] = null;
+
+      try {
+        const setup = await setupConnectedSocket();
+        socket = setup.socket;
+        const { emitSpy } = setup;
+
+        useSocketStore.setState({
+          topicVoting: {
+            matchId: "m1",
+            candidateTopics: ["SCIENCE", "HISTORY"],
+            endsAt: Date.now() + 10_000,
+            durationMs: 10_000,
+            voteCounts: { SCIENCE: 0, HISTORY: 0 },
+            myVotedTopic: null,
+            totalVotes: 0,
+            bannedTopics: [],
+            activeTopics: [],
+            isFinished: false,
+          },
+        });
+
+        // Vote 1: cast vote for SCIENCE
+        useSocketStore.getState().voteBanTopic("m1", "SCIENCE");
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
+          "SCIENCE",
+        );
+        const commandId1 = extractVoteCommandId(emitSpy, "SCIENCE");
+
+        // Vote 2: cast subsequent vote for HISTORY
+        useSocketStore.getState().voteBanTopic("m1", "HISTORY");
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
+          "HISTORY",
+        );
+        const commandId2 = extractVoteCommandId(emitSpy, "HISTORY");
+        expect(commandId2).not.toBe(commandId1);
+
+        // Error for Vote 1 arrives first
+        triggerSocketEvent(socket, ServerEvent.ERROR, {
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "Vote 1 failed",
+          failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+          commandId: commandId1,
+        });
+
+        // Assert myVotedTopic remains HISTORY after the first rollback
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
+          "HISTORY",
+        );
+
+        // Error for Vote 2 arrives second
+        triggerSocketEvent(socket, ServerEvent.ERROR, {
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "Vote 2 failed",
+          failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+          commandId: commandId2,
+        });
+
+        // Assert myVotedTopic becomes null after the second rollback
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBeNull();
+      } finally {
+        socket?.removeAllListeners();
+        socket?.disconnect();
+      }
+    });
+
+    it("does not roll back when error commandId is mismatched or missing", async () => {
+      waitForSocketAckMock.mockResolvedValueOnce(undefined);
+      let socket: ReturnType<typeof useSocketStore.getState>["socket"] = null;
+
+      try {
+        const setup = await setupConnectedSocket();
+        socket = setup.socket;
+
+        useSocketStore.setState({
+          topicVoting: {
+            matchId: "m1",
+            candidateTopics: ["SCIENCE", "HISTORY"],
+            endsAt: Date.now() + 10_000,
+            durationMs: 10_000,
+            voteCounts: { SCIENCE: 0, HISTORY: 0 },
+            myVotedTopic: null,
+            totalVotes: 0,
+            bannedTopics: [],
+            activeTopics: [],
+            isFinished: false,
+          },
+        });
+
+        useSocketStore.getState().voteBanTopic("m1", "SCIENCE");
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
+          "SCIENCE",
+        );
+
+        // Error without commandId
+        triggerSocketEvent(socket, ServerEvent.ERROR, {
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "unrelated error",
+          failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+        });
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
+          "SCIENCE",
+        );
+
+        // Error with mismatched commandId
+        triggerSocketEvent(socket, ServerEvent.ERROR, {
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "mismatched commandId",
+          failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+          commandId: "wrong-command-id",
+        });
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
+          "SCIENCE",
+        );
+      } finally {
+        socket?.removeAllListeners();
+        socket?.disconnect();
+      }
+    });
+
+    it("clears pending vote state on TOPIC_VOTING_STARTED and TOPIC_VOTING_FINISHED", async () => {
+      waitForSocketAckMock.mockResolvedValue(undefined);
+      let socket: ReturnType<typeof useSocketStore.getState>["socket"] = null;
+
+      try {
+        const setup = await setupConnectedSocket();
+        socket = setup.socket;
+        const { emitSpy } = setup;
+
+        // 1. TOPIC_VOTING_STARTED scenario: new phase resets pending vote state
+        useSocketStore.setState({
+          topicVoting: {
+            matchId: "m1",
+            candidateTopics: ["SCIENCE", "HISTORY"],
+            endsAt: Date.now() + 10_000,
+            durationMs: 10_000,
+            voteCounts: { SCIENCE: 0, HISTORY: 0 },
+            myVotedTopic: null,
+            totalVotes: 0,
+            bannedTopics: [],
+            activeTopics: [],
+            isFinished: false,
+          },
+        });
+
+        // Cast vote
+        useSocketStore.getState().voteBanTopic("m1", "SCIENCE");
+        const commandId = extractVoteCommandId(emitSpy, "SCIENCE");
+
+        // TOPIC_VOTING_STARTED for new phase resets pending vote state
+        triggerSocketEvent(socket, ServerEvent.TOPIC_VOTING_STARTED, {
+          matchId: "m1",
+          candidateTopics: ["TECH", "SPORTS"],
+          endsAt: Date.now() + 15_000,
+          durationMs: 15_000,
+        });
+
+        // A late arriving error from previous phase should not roll back the new phase
+        triggerSocketEvent(socket, ServerEvent.ERROR, {
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "stale vote failed",
+          failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+          commandId,
+        });
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBeNull();
+
+        // 2. TOPIC_VOTING_FINISHED scenario: phase is marked finished, final myVotedTopic is retained, and only stale errors are ignored
+        emitSpy.mockClear();
+        useSocketStore.setState({
+          topicVoting: {
+            matchId: "m2",
+            candidateTopics: ["SCIENCE", "HISTORY"],
+            endsAt: Date.now() + 10_000,
+            durationMs: 10_000,
+            voteCounts: { SCIENCE: 0, HISTORY: 0 },
+            myVotedTopic: null,
+            totalVotes: 0,
+            bannedTopics: [],
+            activeTopics: [],
+            isFinished: false,
+          },
+        });
+
+        // Cast vote
+        useSocketStore.getState().voteBanTopic("m2", "HISTORY");
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
+          "HISTORY",
+        );
+        const commandIdFinished = extractVoteCommandId(emitSpy, "HISTORY");
+
+        // TOPIC_VOTING_FINISHED marks the phase as finished and retains voted topic
+        triggerSocketEvent(socket, ServerEvent.TOPIC_VOTING_FINISHED, {
+          matchId: "m2",
+          bannedTopics: ["HISTORY"],
+          activeTopics: ["SCIENCE"],
+          voteCounts: { SCIENCE: 0, HISTORY: 1 },
+        });
+        expect(useSocketStore.getState().topicVoting?.isFinished).toBe(true);
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
+          "HISTORY",
+        );
+
+        // Stale ERROR with commandId from finished phase must not roll back topicVoting
+        triggerSocketEvent(socket, ServerEvent.ERROR, {
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "stale error after voting finished",
+          failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+          commandId: commandIdFinished,
+        });
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
+          "HISTORY",
+        );
+        expect(useSocketStore.getState().topicVoting?.isFinished).toBe(true);
+        expect(useSocketStore.getState().topicVoting?.bannedTopics).toEqual([
+          "HISTORY",
+        ]);
+      } finally {
+        socket?.removeAllListeners();
+        socket?.disconnect();
       }
     });
   });

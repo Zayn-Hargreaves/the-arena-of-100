@@ -3,6 +3,9 @@ import {
   ServerEvent,
   getPlayerChannel,
   getRoomChannel,
+  type TopicVotingStartedPayload,
+  type TopicVotingSummaryPayload,
+  type TopicVotingFinishedPayload,
 } from "@arena/shared";
 import type { Server } from "socket.io";
 
@@ -194,4 +197,60 @@ export function emitMatchDisconnected(
     playerId,
     reason: "DISCONNECTED",
   });
+}
+
+// ---------------------------------------------------------------------------
+// Topic Ban Voting Emitters (Pre-match Draft)
+// ---------------------------------------------------------------------------
+
+export function emitTopicVotingStarted(
+  server: Server,
+  roomId: string,
+  matchId: string,
+  candidateTopics: string[],
+  endsAt: number,
+  durationMs: number = GAME_CONFIG.TOPIC_VOTING_DURATION_MS,
+) {
+  const channel = getRoomChannel(roomId);
+  const payload: TopicVotingStartedPayload = {
+    matchId,
+    candidateTopics,
+    endsAt,
+    durationMs,
+  };
+  server.to(channel).emit(ServerEvent.TOPIC_VOTING_STARTED, payload);
+}
+
+export function emitTopicVotingSummary(
+  server: Server,
+  roomId: string,
+  matchId: string,
+  voteCounts: Record<string, number>,
+  totalVotes: number,
+) {
+  const channel = getRoomChannel(roomId);
+  const payload: TopicVotingSummaryPayload = {
+    matchId,
+    voteCounts,
+    totalVotes,
+  };
+  server.to(channel).emit(ServerEvent.TOPIC_VOTING_SUMMARY, payload);
+}
+
+export function emitTopicVotingFinished(
+  server: Server,
+  roomId: string,
+  matchId: string,
+  bannedTopics: string[],
+  activeTopics: string[],
+  voteCounts: Record<string, number>,
+) {
+  const channel = getRoomChannel(roomId);
+  const payload: TopicVotingFinishedPayload = {
+    matchId,
+    bannedTopics,
+    activeTopics,
+    voteCounts,
+  };
+  server.to(channel).emit(ServerEvent.TOPIC_VOTING_FINISHED, payload);
 }

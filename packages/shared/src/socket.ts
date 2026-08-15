@@ -27,6 +27,9 @@ export enum ClientEvent {
   CARD_PICK = "card_pick",
   CARD_PLAY = "card_play",
 
+  // Topic Ban Voting
+  VOTE_BAN_TOPIC = "vote_ban_topic",
+
   // Connection Events
   AUTHENTICATE = "authenticate",
   HEARTBEAT = "heartbeat",
@@ -74,6 +77,11 @@ export enum ServerEvent {
   CARD_RESOLVED_BATCH = "card_resolved_batch",
   CLASS_ASSIGNED = "class_assigned",
 
+  // Topic Ban Voting (Pre-match draft)
+  TOPIC_VOTING_STARTED = "topic_voting_started",
+  TOPIC_VOTING_SUMMARY = "topic_voting_summary",
+  TOPIC_VOTING_FINISHED = "topic_voting_finished",
+
   // Operator Events
   ROOM_TERMINATED = "room_terminated",
 
@@ -101,6 +109,7 @@ export type {
   RequestSnapshotPayload,
   CardPickPayload,
   CardPlayPayload,
+  VoteBanTopicPayload,
   AuthenticatePayload,
   HeartbeatPayload,
 } from "./schemas";
@@ -110,6 +119,7 @@ export interface ErrorPayload {
   code: string;
   message: string;
   submissionId?: string;
+  commandId?: string;
   failedEvent?: ClientEvent;
   // Optional per-field validation details, populated for
   // `INVALID_PAYLOAD` from `WsValidationError` so the client can
@@ -126,6 +136,7 @@ export interface SnapshotPayload {
     name: string;
     status: string;
     score: number;
+    isOnline?: boolean;
   }>;
   currentQuestion: {
     id: string;
@@ -134,6 +145,11 @@ export interface SnapshotPayload {
   } | null;
   roundEndTime: number | null;
   lastEventSeqNo: number;
+  candidateTopics?: string[];
+  voteCounts?: Record<string, number>;
+  phaseEndsAt?: number | null;
+  bannedTopics?: string[];
+  activeTopics?: string[];
 }
 
 // Delta replay batch (ServerEvent.EVENT_BATCH). Emitted instead of a

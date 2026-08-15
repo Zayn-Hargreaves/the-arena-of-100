@@ -13,7 +13,9 @@ import {
   LeaveMatchButton,
   MatchFinishedOverlay,
   LeaveMatchModal,
+  TopicVotingOverlay,
 } from "@/components/game";
+
 import { useSocketStore } from "@/stores/socket-store";
 import { useRouter } from "@/i18n/routing";
 import { useGameRoundState } from "@/hooks/use-game-round-state";
@@ -45,6 +47,7 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
     roomTerminationMessage,
     room,
     requestSnapshot,
+    topicVoting,
   } = useSocketStore();
 
   // Drop-in spectating baseline: a late-joiner entered the room as
@@ -98,6 +101,14 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
   return (
     <AppShellLayout>
       {isEliminated && <EliminatedOverlay reason={eliminationReason} />}
+
+      {/* Pre-Match Topic Ban Draft Overlay */}
+      {Boolean(
+        match?.id &&
+        topicVoting &&
+        topicVoting.matchId === match.id &&
+        !topicVoting.isFinished,
+      ) && <TopicVotingOverlay />}
 
       {/* Drop-in spectator banner: a thin top-of-page strip telling the
           user they joined as a late spectator. Lighter than the

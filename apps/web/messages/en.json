@@ -46,6 +46,8 @@
     "UNAUTHORIZED": "Unauthorized action!",
     "INVALID_PAYLOAD": "Invalid request payload!",
     "INTERNAL_ERROR": "An internal error occurred. Please try again!",
+    "TOPIC_VOTING_CLOSED": "Topic voting has closed!",
+    "INVALID_TOPIC": "Invalid topic for voting!",
     "UNKNOWN_ERROR": "An unknown error occurred. Please try again!"
   },
   "admin": {
@@ -230,8 +232,31 @@
       "bannerBody": "You joined this match as a late spectator. Answer submission is disabled — you can only watch.",
       "infoTitle": "Drop-in spectating",
       "infoBody": "This match started before you joined. You are viewing it as a spectator in real time."
+    },
+    "topicVoting": {
+      "title": "TOPIC BAN DRAFT",
+      "subtitle": "Vote for 1 topic you want to ban (Top 2 most voted will be eliminated)",
+      "votingEndsIn": "Voting ends in:",
+      "banButton": "BAN TOPIC",
+      "banned": "BANNED",
+      "active": "ACTIVE",
+      "voted": "VOTED",
+      "votesCount": "{count, plural, =0 {votes} one {vote} other {votes}}",
+      "bannedTopicsHeader": "TOPIC BAN RESULTS",
+      "startingMatch": "Preparing match...",
+      "GENERAL": "General Knowledge",
+      "SCIENCE": "Science & Nature",
+      "HISTORY": "History & World",
+      "TECH": "Technology & IT",
+      "TECHNOLOGY": "Technology & IT",
+      "ENTERTAINMENT": "Entertainment & Pop",
+      "SPORTS": "Sports & Esports",
+      "GEOGRAPHY": "Geography & Maps",
+      "LOGIC": "Logic & Puzzles",
+      "CULTURE": "Culture & Arts"
     }
   },
+
   "Result": {
     "reportLabel": "POST-MATCH REPORT",
     "title": "ARENA RESULTS",
@@ -311,8 +336,11 @@
       "ALL": "All",
       "SCIENCE": "Science",
       "HISTORY": "History",
+      "GEOGRAPHY": "Geography",
       "TECHNOLOGY": "Technology",
-      "CULTURE": "Culture"
+      "SPORTS": "Sports",
+      "CULTURE": "Culture",
+      "LOGIC": "Logic"
     },
     "classStats": {
       "title": "CLASS · STREAK · CARDS",

@@ -1,4 +1,10 @@
-import { MatchService } from "./match.service";
+import {
+  MatchService,
+  matchCacheKey,
+  matchGenerationKey,
+  INCR_MATCH_GENERATION_SCRIPT,
+  MATCH_CACHE_TTL_SEC,
+} from "./match.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { MatchOwnershipService } from "./match-ownership.service";
@@ -13,7 +19,7 @@ import {
   type CardId,
 } from "@arena/shared";
 import { MatchStateMachine } from "@arena/game-core";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 describe("MatchService", () => {
   let service: MatchService;
@@ -48,9 +54,19 @@ describe("MatchService", () => {
     redis = {
       set: vi.fn(),
       get: vi.fn(),
+      mget: vi
+        .fn()
+        .mockImplementation(
+          async (...keys: string[]): Promise<(string | null)[]> => {
+            return keys.map(() => null);
+          },
+        ),
       del: vi.fn(),
+      incr: vi.fn().mockResolvedValue(1),
+      eval: vi.fn().mockResolvedValue(1),
       fencedStateSet: vi.fn().mockResolvedValue("APPLIED"),
       fencedStateDelete: vi.fn().mockResolvedValue(true),
+      setIfGenMatches: vi.fn().mockResolvedValue(true),
     } as unknown as RedisService;
     // B2c: default to "not owned by this node" so persistStateMachine takes the
     // BLIND (pre-B2c blind redis.set) path — matching the existing assertions.
@@ -589,15 +605,215 @@ describe("MatchService", () => {
   });
 
   describe("getMatch", () => {
-    it("returns match when found", async () => {
+    it("returns match when found from DB and caches it in Redis", async () => {
+      vi.mocked(redis.mget).mockResolvedValue([null, null]);
       vi.mocked(prisma.match.findUnique).mockResolvedValue({ id: "m1" } as any);
       const result = await service.getMatch("m1");
       expect(result.id).toBe("m1");
+      expect(redis.mget).toHaveBeenCalledTimes(1);
+      expect(redis.mget).toHaveBeenCalledWith(
+        matchCacheKey("m1"),
+        matchGenerationKey("m1"),
+      );
+      expect(redis.get).not.toHaveBeenCalled();
+      expect(prisma.match.findUnique).toHaveBeenCalledWith({
+        where: { id: "m1" },
+        include: {
+          players: {
+            include: { user: { select: { id: true, username: true } } },
+          },
+          rounds: true,
+        },
+      });
+      expect(redis.setIfGenMatches).toHaveBeenCalledWith(
+        "match:gen:m1",
+        matchCacheKey("m1"),
+        "0",
+        JSON.stringify({ gen: "0", data: { id: "m1" } }),
+        5,
+      );
+    });
+
+    it("returns cached match from Redis on cache hit without calling Prisma", async () => {
+      const startedAt = new Date("2026-08-14T09:50:00.000Z");
+      const endedAt = new Date("2026-08-14T10:00:00.000Z");
+      const cachedMatch = {
+        id: "m1",
+        roomId: "r1",
+        status: "FINISHED",
+        winnerId: "u1",
+        startedAt: startedAt.toISOString(),
+        endedAt: endedAt.toISOString(),
+        players: [],
+        rounds: [
+          {
+            id: "mr1",
+            matchId: "m1",
+            roundNo: 1,
+            questionId: "q1",
+            startedAt: startedAt.toISOString(),
+            endedAt: endedAt.toISOString(),
+          },
+        ],
+      };
+      vi.mocked(redis.mget).mockResolvedValue([
+        JSON.stringify({ gen: "0", data: cachedMatch }),
+        "0",
+      ]);
+      const result = await service.getMatch("m1");
+      expect(result.id).toBe("m1");
+      expect(result.status).toBe("FINISHED");
+      expect(result.startedAt).toEqual(startedAt);
+      expect(result.endedAt).toEqual(endedAt);
+      expect(result.rounds[0]?.startedAt).toEqual(startedAt);
+      expect(result.rounds[0]?.endedAt).toEqual(endedAt);
+      expect(redis.mget).toHaveBeenCalledTimes(1);
+      expect(redis.mget).toHaveBeenCalledWith(
+        matchCacheKey("m1"),
+        matchGenerationKey("m1"),
+      );
+      expect(redis.get).not.toHaveBeenCalled();
+      expect(prisma.match.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("treats cached payload with generation mismatch as cache miss", async () => {
+      vi.mocked(redis.mget).mockResolvedValue([
+        JSON.stringify({
+          gen: "0",
+          data: { id: "m1", status: "STALE" },
+        }),
+        "1",
+      ]);
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
+        id: "m1",
+        status: "FINISHED",
+        players: [],
+        rounds: [],
+      } as any);
+
+      const result = await service.getMatch("m1");
+      expect(result.id).toBe("m1");
+      expect(result.status).toBe("FINISHED");
+      expect(redis.mget).toHaveBeenCalledTimes(1);
+      expect(redis.mget).toHaveBeenCalledWith(
+        matchCacheKey("m1"),
+        matchGenerationKey("m1"),
+      );
+      expect(redis.get).not.toHaveBeenCalled();
+      expect(prisma.match.findUnique).toHaveBeenCalled();
+    });
+
+    it("does not overwrite Redis cache if match generation changed after captured generation read", async () => {
+      let currentGen = "0";
+      let cacheValue: string | null = null;
+
+      vi.mocked(redis.mget).mockImplementation(async () => [
+        cacheValue,
+        currentGen,
+      ]);
+
+      (prisma.match.findUnique as any).mockImplementation(async () => {
+        // Generation changes before setIfGenMatches is invoked
+        currentGen = "1";
+        return {
+          id: "m1",
+          status: "ROUND_ACTIVE",
+          players: [],
+          rounds: [],
+        };
+      });
+
+      vi.mocked(redis.setIfGenMatches).mockImplementation(
+        async (_genKey, _cacheKey, expectedGen, value) => {
+          if (currentGen === expectedGen) {
+            cacheValue = value;
+            return true;
+          }
+          return false;
+        },
+      );
+
+      const result = await service.getMatch("m1");
+      expect(result.id).toBe("m1");
+      expect(redis.mget).toHaveBeenCalledTimes(1);
+      expect(redis.mget).toHaveBeenCalledWith(
+        matchCacheKey("m1"),
+        matchGenerationKey("m1"),
+      );
+      expect(redis.get).not.toHaveBeenCalled();
+      expect(redis.setIfGenMatches).toHaveBeenCalledWith(
+        "match:gen:m1",
+        matchCacheKey("m1"),
+        "0",
+        expect.any(String),
+        expect.any(Number),
+      );
+      expect(cacheValue).toBeNull();
+      expect(redis.set).not.toHaveBeenCalledWith(
+        matchCacheKey("m1"),
+        expect.anything(),
+        expect.anything(),
+      );
     });
 
     it("throws NotFoundException when not found", async () => {
+      vi.mocked(redis.mget).mockResolvedValue([null, null]);
       vi.mocked(prisma.match.findUnique).mockResolvedValue(null);
       await expect(service.getMatch("m1")).rejects.toThrow(NotFoundException);
+      expect(redis.mget).toHaveBeenCalledTimes(1);
+      expect(redis.mget).toHaveBeenCalledWith(
+        matchCacheKey("m1"),
+        matchGenerationKey("m1"),
+      );
+      expect(redis.get).not.toHaveBeenCalled();
+    });
+
+    it("skips writing to Redis cache if reading match generation from Redis threw an error", async () => {
+      vi.mocked(redis.mget).mockRejectedValue(
+        new Error("Redis connection dropped"),
+      );
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
+        id: "m1",
+        status: "FINISHED",
+        players: [],
+        rounds: [],
+      } as any);
+
+      const result = await service.getMatch("m1");
+      expect(result.id).toBe("m1");
+      expect(redis.mget).toHaveBeenCalledTimes(1);
+      expect(redis.mget).toHaveBeenCalledWith(
+        matchCacheKey("m1"),
+        matchGenerationKey("m1"),
+      );
+      expect(redis.get).not.toHaveBeenCalled();
+      expect(prisma.match.findUnique).toHaveBeenCalled();
+      expect(redis.setIfGenMatches).not.toHaveBeenCalled();
+    });
+
+    it("bypasses reading cache and skips writing to cache when pending generation invalidation exists for match", async () => {
+      (service as any).pendingGenerationInvalidations.add("m1");
+      vi.mocked(redis.mget).mockResolvedValue([
+        JSON.stringify({
+          gen: "0",
+          data: { id: "m1", status: "STALE_IN_PROGRESS" },
+        }),
+        "0",
+      ]);
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
+        id: "m1",
+        status: "FINISHED",
+        players: [],
+        rounds: [],
+      } as any);
+
+      const result = await service.getMatch("m1");
+      expect(result.id).toBe("m1");
+      expect(result.status).toBe("FINISHED");
+      expect(redis.mget).not.toHaveBeenCalled();
+      expect(redis.get).not.toHaveBeenCalled();
+      expect(prisma.match.findUnique).toHaveBeenCalled();
+      expect(redis.setIfGenMatches).not.toHaveBeenCalled();
     });
   });
 
@@ -605,9 +821,9 @@ describe("MatchService", () => {
     // L3-style: a hot match lives in `stateMachines` (set by createMatch);
     // the auth-gate caller in match.handler.ts MUST hit the cache to avoid
     // a Prisma round-trip on every answer snapshot request. Falls back to
-    // Prisma only on cache miss (e.g. before the SM is constructed, or
+    // Redis cache, then Prisma only on cache miss (e.g. before the SM is constructed, or
     // after eviction on finishMatch).
-    it("returns roomId from the cached state machine without calling Prisma", async () => {
+    it("returns roomId from the cached state machine without calling Redis or Prisma", async () => {
       const internalMap = (
         service as unknown as {
           stateMachines: Map<string, { getState: () => { roomId: string } }>;
@@ -618,10 +834,21 @@ describe("MatchService", () => {
       const roomId = await service.getRoomIdByMatchId("m1");
 
       expect(roomId).toBe("r1");
+      expect(redis.get).not.toHaveBeenCalled();
       expect(prisma.match.findUnique).not.toHaveBeenCalled();
     });
 
-    it("falls back to Prisma on cache miss and returns the roomId", async () => {
+    it("returns roomId from Redis cache on state machine miss without calling Prisma", async () => {
+      vi.mocked(redis.get).mockResolvedValue("r-redis");
+
+      const roomId = await service.getRoomIdByMatchId("m-redis");
+
+      expect(roomId).toBe("r-redis");
+      expect(prisma.match.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("falls back to Prisma on cache miss, caches it in Redis and returns the roomId", async () => {
+      vi.mocked(redis.get).mockResolvedValue(null);
       vi.mocked(prisma.match.findUnique).mockResolvedValue({
         roomId: "r-fallback",
       } as never);
@@ -635,9 +862,15 @@ describe("MatchService", () => {
         where: { id: "m-cold" },
         select: { roomId: true },
       });
+      expect(redis.set).toHaveBeenCalledWith(
+        "cache:match:room:m-cold",
+        "r-fallback",
+        5,
+      );
     });
 
     it("returns undefined when both cache and Prisma miss", async () => {
+      vi.mocked(redis.get).mockResolvedValue(null);
       vi.mocked(prisma.match.findUnique).mockResolvedValue(null);
 
       const roomId = await service.getRoomIdByMatchId("m-ghost");
@@ -685,6 +918,8 @@ describe("MatchService", () => {
         },
       });
       expect(redis.del).toHaveBeenCalledWith("match:state:m1");
+      expect(redis.del).toHaveBeenCalledWith(matchCacheKey("m1"));
+      expect(redis.del).toHaveBeenCalledWith("cache:match:room:m1");
     });
 
     it("records null winner for admin termination and skips score persistence", async () => {
@@ -1093,11 +1328,16 @@ describe("MatchService", () => {
 
       // Redis cleanup ran only on the winner's path — the winner reaches
       // the post-transaction block which deletes stateKey + revisionKey
-      // (2 calls total). The loser returns early on `count: 0` before
-      // touching Redis, so the total delta is exactly the winner's 2
+      // + 2 short-lived cache keys (4 calls total). The loser returns early on `count: 0` before
+      // touching Redis, so the total delta is exactly the winner's 4
       // calls (no doubling).
-      expect(redisDelAfter - redisDelBefore).toBe(2);
+      expect(redisDelAfter - redisDelBefore).toBe(4);
       expect(redis.del).toHaveBeenCalledWith("match:state:m_concurrent");
+      expect(redis.del).toHaveBeenCalledWith(
+        "match:state-revision:m_concurrent",
+      );
+      expect(redis.del).toHaveBeenCalledWith(matchCacheKey("m_concurrent"));
+      expect(redis.del).toHaveBeenCalledWith("cache:match:room:m_concurrent");
 
       // In-memory state-machine eviction. The WINNER's path reaches the
       // post-transaction block and runs `stateMachines.delete(matchId)`
@@ -1112,6 +1352,201 @@ describe("MatchService", () => {
       // After both calls resolve, the state machine map MUST be empty.
       // The loser's branch doesn't re-evict; the winner's branch does.
       expect(internalMap.has("m_concurrent")).toBe(false);
+    });
+  });
+
+  describe("finishMatch generation invalidation & persistent retry", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      service.onModuleDestroy();
+      vi.useRealTimers();
+    });
+
+    it("persists generation invalidation retry when redis.eval fails initially, recovering on timer tick", async () => {
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
+        id: "m_retry",
+        roomId: "r_retry",
+      } as any);
+
+      // Fail initial redis.eval
+      vi.mocked(redis.eval).mockRejectedValueOnce(
+        new Error("Redis transient error"),
+      );
+
+      await service.finishMatch("m_retry", "u1", "r_retry");
+
+      expect(redis.eval).toHaveBeenCalledWith(
+        INCR_MATCH_GENERATION_SCRIPT,
+        [matchGenerationKey("m_retry")],
+        [String(MATCH_CACHE_TTL_SEC)],
+      );
+
+      // Verify pending invalidation flag is set
+      expect(service.hasPendingGenerationInvalidation("m_retry")).toBe(true);
+
+      // While invalidation is pending, getMatch should not write to cache
+      vi.mocked(redis.mget).mockResolvedValue([null, null]);
+      await service.getMatch("m_retry");
+      expect(redis.mget).not.toHaveBeenCalled();
+      expect(redis.get).not.toHaveBeenCalled();
+      expect(redis.setIfGenMatches).not.toHaveBeenCalled();
+
+      // Fast-forward timer to trigger retry (attempt 2 delay: 100ms)
+      vi.mocked(redis.eval).mockResolvedValue(2 as any);
+      vi.mocked(redis.del).mockClear();
+      await vi.advanceTimersByTimeAsync(100);
+
+      // Verify retry succeeded, flag is cleared, cache was cleared
+      expect(service.hasPendingGenerationInvalidation("m_retry")).toBe(false);
+      expect(redis.del).toHaveBeenCalledWith(matchCacheKey("m_retry"));
+      expect(redis.del).toHaveBeenCalledWith("cache:match:room:m_retry");
+
+      // Now subsequent getMatch is free to cache
+      await service.getMatch("m_retry");
+      expect(redis.mget).toHaveBeenCalledTimes(1);
+      expect(redis.mget).toHaveBeenNthCalledWith(
+        1,
+        matchCacheKey("m_retry"),
+        matchGenerationKey("m_retry"),
+      );
+      expect(redis.get).not.toHaveBeenCalled();
+      expect(redis.setIfGenMatches).toHaveBeenCalled();
+    });
+
+    it("retries with exponential backoff on multiple redis.eval failures until recovery", async () => {
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
+        id: "m_backoff",
+        roomId: "r_backoff",
+      } as any);
+
+      // Fail attempts 1, 2, 3
+      vi.mocked(redis.eval)
+        .mockRejectedValueOnce(new Error("Redis error 1"))
+        .mockRejectedValueOnce(new Error("Redis error 2"))
+        .mockRejectedValueOnce(new Error("Redis error 3"))
+        .mockResolvedValue(4 as any);
+
+      await service.finishMatch("m_backoff", "u1", "r_backoff");
+      expect(service.hasPendingGenerationInvalidation("m_backoff")).toBe(true);
+
+      // Attempt 2 fires at +100ms
+      await vi.advanceTimersByTimeAsync(100);
+      expect(service.hasPendingGenerationInvalidation("m_backoff")).toBe(true);
+
+      // Attempt 3 fires at +200ms
+      await vi.advanceTimersByTimeAsync(200);
+      expect(service.hasPendingGenerationInvalidation("m_backoff")).toBe(true);
+
+      // Attempt 4 fires at +400ms and succeeds
+      await vi.advanceTimersByTimeAsync(400);
+      expect(service.hasPendingGenerationInvalidation("m_backoff")).toBe(false);
+    });
+
+    it("stops retrying and clears pending invalidation when retry attempts exceed maximum limit", async () => {
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
+        id: "m_max_retries",
+        roomId: "r_max_retries",
+      } as any);
+
+      // Always fail redis.eval
+      vi.mocked(redis.eval).mockRejectedValue(
+        new Error("Redis persistent failure"),
+      );
+
+      await service.finishMatch("m_max_retries", "u1", "r_max_retries");
+      expect(service.hasPendingGenerationInvalidation("m_max_retries")).toBe(
+        true,
+      );
+
+      // Attempt 1 failed in finishMatch.
+      // Attempt 2 fires at +100ms
+      await vi.advanceTimersByTimeAsync(100);
+      expect(service.hasPendingGenerationInvalidation("m_max_retries")).toBe(
+        true,
+      );
+
+      // Attempt 3 fires at +200ms
+      await vi.advanceTimersByTimeAsync(200);
+      expect(service.hasPendingGenerationInvalidation("m_max_retries")).toBe(
+        true,
+      );
+
+      // Attempt 4 fires at +400ms
+      await vi.advanceTimersByTimeAsync(400);
+      expect(service.hasPendingGenerationInvalidation("m_max_retries")).toBe(
+        true,
+      );
+
+      // Attempt 5 fires at +800ms (reaches MAX_GENERATION_INVALIDATION_ATTEMPTS = 5)
+      await vi.advanceTimersByTimeAsync(800);
+      expect(service.hasPendingGenerationInvalidation("m_max_retries")).toBe(
+        false,
+      );
+
+      // Advance time further to confirm no further retries occur
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(redis.eval).toHaveBeenCalledTimes(5);
+    });
+
+    it("handles two overlapping invalidations on the same matchId without orphan timers or premature state clearing", async () => {
+      let resolveFirstIncr!: (val: number) => void;
+      const firstIncrPromise = new Promise<number>((resolve) => {
+        resolveFirstIncr = resolve;
+      });
+
+      // First invalidation starts but remains pending on redis.eval
+      vi.mocked(redis.eval).mockImplementationOnce(() => firstIncrPromise);
+      void service.invalidateMatchGeneration("m_overlap");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(service.hasPendingGenerationInvalidation("m_overlap")).toBe(true);
+
+      // Second invalidation is triggered while first is still pending, but fails attempt 1
+      vi.mocked(redis.eval).mockRejectedValueOnce(new Error("Redis error 2"));
+      void service.invalidateMatchGeneration("m_overlap");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(service.hasPendingGenerationInvalidation("m_overlap")).toBe(true);
+
+      // Resolve the first invalidation's redis.eval call
+      resolveFirstIncr(1);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Assert the older epoch cannot clear the newer pending state
+      expect(service.hasPendingGenerationInvalidation("m_overlap")).toBe(true);
+
+      // Second invalidation's retry attempt 2 succeeds at +100ms
+      vi.mocked(redis.eval).mockResolvedValueOnce(2);
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(service.hasPendingGenerationInvalidation("m_overlap")).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+      expect((service as any).invalidationTimers.has("m_overlap")).toBe(false);
+
+      // Advance time further to confirm no further retries occur
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(redis.eval).toHaveBeenCalledTimes(3);
+      expect(service.hasPendingGenerationInvalidation("m_overlap")).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("cleans up all pending invalidation timers onModuleDestroy", async () => {
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
+        id: "m_destroy",
+        roomId: "r_destroy",
+      } as any);
+      vi.mocked(redis.eval).mockRejectedValueOnce(new Error("Redis error"));
+
+      await service.finishMatch("m_destroy", "u1", "r_destroy");
+      expect(service.hasPendingGenerationInvalidation("m_destroy")).toBe(true);
+
+      service.onModuleDestroy();
+
+      // Advance timers — no further retry should run
+      await vi.advanceTimersByTimeAsync(5000);
+      // Redis.eval only called once for the initial attempt
+      expect(redis.eval).toHaveBeenCalledTimes(1);
     });
   });
 

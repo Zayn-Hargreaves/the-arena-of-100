@@ -97,6 +97,7 @@ describe("MatchRoundRunner", () => {
       getRoom: vi.fn().mockResolvedValue({
         id: "room-1",
         type: "PUBLIC",
+        category: "SCIENCE",
         status: RoomStatus.WAITING,
         currentMatchId: null,
         players: [{ userId: "p1" }, { userId: "p2" }],
@@ -168,6 +169,98 @@ describe("MatchRoundRunner", () => {
     vi.useRealTimers();
   });
 
+  it("should transition to TOPIC_VOTING when room category is ALL", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(roomService.getRoom).mockResolvedValue({
+        id: "room-1",
+        type: "PUBLIC",
+        category: "ALL",
+        status: RoomStatus.WAITING,
+        currentMatchId: null,
+        players: [{ userId: "p1" }, { userId: "p2" }],
+      } as any);
+
+      const emitSpy = vi.fn();
+      (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+      await (runner as any).startMatchLoop(
+        "match-1",
+        "room-1",
+        mockServer as unknown as Server,
+      );
+
+      expect(stateMachine.getState().status).toBe(MatchStatus.TOPIC_VOTING);
+      expect(emitSpy).toHaveBeenCalledWith(
+        ServerEvent.TOPIC_VOTING_STARTED,
+        expect.objectContaining({
+          matchId: "match-1",
+          durationMs: GAME_CONFIG.TOPIC_VOTING_DURATION_MS,
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("starts topic-voting live timer with resumePhaseRemaining accounting for persist delay", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(roomService.getRoom).mockResolvedValue({
+        id: "room-1",
+        type: "PUBLIC",
+        category: "ALL",
+        status: RoomStatus.WAITING,
+        currentMatchId: null,
+        players: [{ userId: "p1" }, { userId: "p2" }],
+      } as any);
+
+      vi.mocked(matchService.persistStateMachine).mockImplementation(
+        async () => {
+          vi.advanceTimersByTime(2000);
+          return "APPLIED";
+        },
+      );
+
+      const armSpy = vi.spyOn(runner as any, "armPhaseTimer");
+
+      await (runner as any).startMatchLoop(
+        "match-1",
+        "room-1",
+        mockServer as unknown as Server,
+      );
+
+      expect(armSpy).toHaveBeenCalledWith(
+        "match-1",
+        expect.any(Function),
+        GAME_CONFIG.TOPIC_VOTING_DURATION_MS - 2000,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("evicts state machine and restores pre-mutation state if persistStateMachine fails in topicVoting callback", async () => {
+    stateMachine.initTopicVoting(["SCIENCE", "HISTORY", "TECH"]);
+    const expectedSnapshot = stateMachine.serialize();
+    vi.mocked(matchService.persistStateMachine).mockResolvedValueOnce("RETRY");
+    const emitSpy = vi.fn();
+    (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+    const callback = (runner as any).topicVotingTimerCallback(
+      "match-1",
+      "room-1",
+      mockServer as unknown as Server,
+    );
+
+    await callback();
+
+    expect(matchService.evictStateMachine).toHaveBeenCalledWith("match-1");
+    expect(stateMachine.getState().status).toBe(MatchStatus.TOPIC_VOTING);
+    expect(stateMachine.serialize()).toBe(expectedSnapshot);
+    expect(emitSpy).not.toHaveBeenCalled();
+  });
+
   it("should execute countdown and call executeRound after 5 seconds", async () => {
     vi.useFakeTimers();
 
@@ -237,6 +330,33 @@ describe("MatchRoundRunner", () => {
     // Check that question tracking was initialized
     const usedQuestions = (runner as any).timers.getUsedQuestions("match-1");
     expect(usedQuestions).toContain("q1");
+
+    vi.useRealTimers();
+  });
+
+  it("should pass activeTopics as allowedCategories to getRandom when activeTopics exist", async () => {
+    vi.useFakeTimers();
+
+    const emitSpy = vi.fn();
+    (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+    stateMachine.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"]);
+    stateMachine.voteBanTopic("p1", "HISTORY");
+    stateMachine.resolveTopicVoting(1);
+    stateMachine.transition(MatchStatus.COUNTDOWN);
+
+    (runner as any).timers.initUsedQuestions("match-1");
+
+    await (runner as any).executeRound("match-1", "room-1", mockServer);
+
+    const getRandomCalls = vi.mocked(questionService.getRandom).mock.calls;
+    const lastCall = getRandomCalls.at(-1);
+    expect(lastCall).toBeDefined();
+    const allowedCategories = lastCall?.[3];
+    expect(Array.isArray(allowedCategories)).toBe(true);
+    expect(new Set(allowedCategories)).toEqual(new Set(["SCIENCE", "LOGIC"]));
+    expect(allowedCategories).toHaveLength(2);
+    expect(allowedCategories).not.toContain("HISTORY");
 
     vi.useRealTimers();
   });
