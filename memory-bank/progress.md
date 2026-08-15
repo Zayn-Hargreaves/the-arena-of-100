@@ -451,7 +451,9 @@ not the language:
    the gameplay hot path.
    - Levers: readiness barrier before host start; tune/replace the Socket.IO
      transport; isolate or distribute the load generator; profile event-loop
-     work during auth/join before adding DB caching.
+     work during auth/join before considering additional DB caching (distinguished
+     from the completed Redis match-state cache; additional caching should only
+     be considered after profiling confirms a database read-path bottleneck).
    - Do not add answer batching: `saveRoundAndAnswers()` already uses
      `tx.answer.createMany(...)` in one transaction.
 

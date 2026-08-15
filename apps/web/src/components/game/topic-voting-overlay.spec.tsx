@@ -61,7 +61,31 @@ describe("TopicVotingOverlay", () => {
     expect(screen.getByText("active")).toBeInTheDocument();
   });
 
-  it("does not call voteBanTopic when isFinished is true (button disabled and handleVote early return)", () => {
+  it("disables topic buttons when isFinished is true", () => {
+    useSocketStore.setState({
+      topicVoting: {
+        matchId: "m1",
+        candidateTopics: ["SCIENCE", "HISTORY", "TECH"],
+        endsAt: Date.now() - 1000,
+        durationMs: 10000,
+        myVotedTopic: null,
+        voteCounts: { SCIENCE: 5, HISTORY: 3, TECH: 1 },
+        totalVotes: 9,
+        bannedTopics: ["SCIENCE", "HISTORY"],
+        activeTopics: ["TECH"],
+        isFinished: true,
+      },
+    });
+
+    render(<TopicVotingOverlay />);
+    const buttons = screen.getAllByRole("button");
+    expect(buttons.length).toBeGreaterThan(0);
+    buttons.forEach((button) => {
+      expect(button).toBeDisabled();
+    });
+  });
+
+  it("does not call voteBanTopic when handleVote is invoked while isFinished is true", () => {
     useSocketStore.setState({
       topicVoting: {
         matchId: "m1",
@@ -79,7 +103,10 @@ describe("TopicVotingOverlay", () => {
 
     render(<TopicVotingOverlay />);
     const scienceCard = screen.getByText("Khoa Học & Tự Nhiên");
-    fireEvent.click(scienceCard);
+    const button = scienceCard.closest("button") as HTMLButtonElement;
+    expect(button).toBeInTheDocument();
+    button.disabled = false;
+    fireEvent.click(button);
     expect(voteBanTopicMock).not.toHaveBeenCalled();
   });
 

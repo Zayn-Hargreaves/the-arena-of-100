@@ -1618,12 +1618,11 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         roundNo: 1,
         question: {
           id: "q1",
-          category: "SCIENCE",
-          text: "What is H2O?",
+          content: "What is H2O?",
           options: ["Water", "Air", "Fire", "Earth"],
         },
+        startedAt: 15000,
         endsAt: 30000,
-        durationMs: 15000,
       });
 
       expect(result.topicVoting).toBeNull();

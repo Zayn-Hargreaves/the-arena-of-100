@@ -39,7 +39,7 @@ import {
   applyCardPlayCommand,
 } from "./match-card-command-authoritative";
 import { appliedSetKey } from "./match-command.keys";
-import { MatchStatus } from "@arena/shared";
+import { MatchStatus, type MatchState } from "@arena/shared";
 import { MatchStateMachine, tallyTopicVotes } from "@arena/game-core";
 import { emitTopicVotingSummary } from "./game-loop.events";
 
@@ -633,10 +633,7 @@ export class MatchCommandService implements OnModuleDestroy {
     if (!stateMachine) return "RETRY";
 
     const state = stateMachine.getState();
-    if (
-      state.status !== MatchStatus.TOPIC_VOTING ||
-      (typeof state.phaseEndsAt === "number" && state.phaseEndsAt <= Date.now())
-    ) {
+    if (this.isTopicVotingClosed(state)) {
       this.logger.warn(
         `applyVoteBanTopicAuthoritative: voteBanTopic rejected for ${env.matchId}/${env.body.userId} (TOPIC_VOTING_CLOSED)`,
       );
@@ -698,17 +695,20 @@ export class MatchCommandService implements OnModuleDestroy {
     return "APPLIED";
   }
 
+  private isTopicVotingClosed(state: MatchState): boolean {
+    return (
+      state.status !== MatchStatus.TOPIC_VOTING ||
+      (typeof state.phaseEndsAt === "number" && state.phaseEndsAt <= Date.now())
+    );
+  }
+
   private async emitTopicVotingSummaryFromSM(
     matchId: string,
     stateMachine: MatchStateMachine,
     server: Server,
   ): Promise<void> {
     const updatedState = stateMachine.getState();
-    if (
-      updatedState.status !== MatchStatus.TOPIC_VOTING ||
-      (typeof updatedState.phaseEndsAt === "number" &&
-        updatedState.phaseEndsAt <= Date.now())
-    ) {
+    if (this.isTopicVotingClosed(updatedState)) {
       return;
     }
 
@@ -726,11 +726,7 @@ export class MatchCommandService implements OnModuleDestroy {
     }
 
     const latestState = stateMachine.getState();
-    if (
-      latestState.status !== MatchStatus.TOPIC_VOTING ||
-      (typeof latestState.phaseEndsAt === "number" &&
-        latestState.phaseEndsAt <= Date.now())
-    ) {
+    if (this.isTopicVotingClosed(latestState)) {
       return;
     }
 
@@ -745,10 +741,7 @@ export class MatchCommandService implements OnModuleDestroy {
     if (!stateMachine) return "DUPLICATE_EVENT";
 
     const state = stateMachine.getState();
-    if (
-      state.status !== MatchStatus.TOPIC_VOTING ||
-      (typeof state.phaseEndsAt === "number" && state.phaseEndsAt <= Date.now())
-    ) {
+    if (this.isTopicVotingClosed(state)) {
       return "DUPLICATE_EVENT";
     }
 

@@ -240,6 +240,27 @@ describe("MatchRoundRunner", () => {
     }
   });
 
+  it("evicts state machine and restores pre-mutation state if persistStateMachine fails in topicVoting callback", async () => {
+    stateMachine.initTopicVoting(["SCIENCE", "HISTORY", "TECH"]);
+    const expectedSnapshot = stateMachine.serialize();
+    vi.mocked(matchService.persistStateMachine).mockResolvedValueOnce("RETRY");
+    const emitSpy = vi.fn();
+    (mockServer.to as any).mockReturnValue({ emit: emitSpy });
+
+    const callback = (runner as any).topicVotingTimerCallback(
+      "match-1",
+      "room-1",
+      mockServer as unknown as Server,
+    );
+
+    await callback();
+
+    expect(matchService.evictStateMachine).toHaveBeenCalledWith("match-1");
+    expect(stateMachine.getState().status).toBe(MatchStatus.TOPIC_VOTING);
+    expect(stateMachine.serialize()).toBe(expectedSnapshot);
+    expect(emitSpy).not.toHaveBeenCalled();
+  });
+
   it("should execute countdown and call executeRound after 5 seconds", async () => {
     vi.useFakeTimers();
 

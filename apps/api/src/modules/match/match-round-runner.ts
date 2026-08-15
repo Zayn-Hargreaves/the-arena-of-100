@@ -234,12 +234,16 @@ export class MatchRoundRunner {
           return;
         }
         this.logger.log(`Topic voting ended for match ${matchId}`);
+        const serialized = sm.serialize();
         const result = sm.resolveTopicVoting();
         sm.transition(MatchStatus.COUNTDOWN);
 
         const persistOutcome =
           await this.matchService.persistStateMachine(matchId);
         if (persistOutcome !== "APPLIED") {
+          this.matchService.evictStateMachine(matchId);
+          const canonical = MatchStateMachine.deserialize(serialized);
+          Object.assign(sm, canonical);
           this.logger.warn(
             `topicVoting callback: persistStateMachine returned ${persistOutcome} for ${matchId}, returning without publishing state`,
           );
