@@ -3,6 +3,9 @@ import {
   ServerEvent,
   getPlayerChannel,
   getRoomChannel,
+  type TopicVotingStartedPayload,
+  type TopicVotingSummaryPayload,
+  type TopicVotingFinishedPayload,
 } from "@arena/shared";
 import type { Server } from "socket.io";
 
@@ -209,12 +212,13 @@ export function emitTopicVotingStarted(
   durationMs: number = GAME_CONFIG.TOPIC_VOTING_DURATION_MS,
 ) {
   const channel = getRoomChannel(roomId);
-  server.to(channel).emit(ServerEvent.TOPIC_VOTING_STARTED, {
+  const payload: TopicVotingStartedPayload = {
     matchId,
     candidateTopics,
     endsAt,
     durationMs,
-  });
+  };
+  server.to(channel).emit(ServerEvent.TOPIC_VOTING_STARTED, payload);
 }
 
 export function emitTopicVotingSummary(
@@ -225,11 +229,12 @@ export function emitTopicVotingSummary(
   totalVotes: number,
 ) {
   const channel = getRoomChannel(roomId);
-  server.to(channel).emit(ServerEvent.TOPIC_VOTING_SUMMARY, {
+  const payload: TopicVotingSummaryPayload = {
     matchId,
     voteCounts,
     totalVotes,
-  });
+  };
+  server.to(channel).emit(ServerEvent.TOPIC_VOTING_SUMMARY, payload);
 }
 
 export function emitTopicVotingFinished(
@@ -241,10 +246,11 @@ export function emitTopicVotingFinished(
   voteCounts: Record<string, number>,
 ) {
   const channel = getRoomChannel(roomId);
-  server.to(channel).emit(ServerEvent.TOPIC_VOTING_FINISHED, {
+  const payload: TopicVotingFinishedPayload = {
     matchId,
     bannedTopics,
     activeTopics,
     voteCounts,
-  });
+  };
+  server.to(channel).emit(ServerEvent.TOPIC_VOTING_FINISHED, payload);
 }

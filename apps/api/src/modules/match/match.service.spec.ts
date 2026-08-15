@@ -48,6 +48,9 @@ describe("MatchService", () => {
     redis = {
       set: vi.fn(),
       get: vi.fn(),
+      mget: vi.fn().mockImplementation(async (...keys: string[]) => {
+        return Promise.all(keys.map((k) => (redis.get as any)(k)));
+      }),
       del: vi.fn(),
       incr: vi.fn().mockResolvedValue(1),
       fencedStateSet: vi.fn().mockResolvedValue("APPLIED"),
@@ -1349,6 +1352,7 @@ describe("MatchService", () => {
 
       // Fast-forward timer to trigger retry (attempt 2 delay: 100ms)
       vi.mocked(redis.incr).mockResolvedValue(2 as any);
+      vi.mocked(redis.del).mockClear();
       await vi.advanceTimersByTimeAsync(100);
 
       // Verify retry succeeded, flag is cleared, cache was cleared

@@ -41,7 +41,7 @@ export function tallyTopicVotes(
   votes: Record<string, string>,
   candidateTopics: readonly string[],
 ): Record<string, number> {
-  const counts: Record<string, number> = {};
+  const counts: Record<string, number> = Object.create(null);
   for (const topic of candidateTopics) {
     counts[topic] = 0;
   }
@@ -62,8 +62,8 @@ export function tallyTopicVotes(
 export function resolveBannedTopics(
   candidateTopics: readonly string[],
   votes: Record<string, string>,
-  bannedCount: number = GAME_CONFIG.TOPIC_VOTING_BANNED_COUNT,
   seed: string,
+  bannedCount: number = GAME_CONFIG.TOPIC_VOTING_BANNED_COUNT,
 ): TopicVotingResult {
   const voteCounts = tallyTopicVotes(votes, candidateTopics);
 

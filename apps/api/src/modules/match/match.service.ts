@@ -106,6 +106,7 @@ export class MatchService implements OnModuleDestroy {
   private readonly pendingGenerationInvalidations = new Set<string>();
   private readonly invalidationTimers = new Map<string, NodeJS.Timeout>();
   private readonly invalidationEpochs = new Map<string, number>();
+  private nextInvalidationEpoch = 0;
   private isDestroyed = false;
 
   constructor(
@@ -459,7 +460,7 @@ export class MatchService implements OnModuleDestroy {
   }
 
   async invalidateMatchGeneration(matchId: string): Promise<void> {
-    const epoch = (this.invalidationEpochs.get(matchId) ?? 0) + 1;
+    const epoch = ++this.nextInvalidationEpoch;
     this.invalidationEpochs.set(matchId, epoch);
     this.pendingGenerationInvalidations.add(matchId);
     const existingTimer = this.invalidationTimers.get(matchId);
@@ -498,6 +499,7 @@ export class MatchService implements OnModuleDestroy {
         }
       }
       if (this.invalidationEpochs.get(matchId) === epoch) {
+        this.invalidationEpochs.delete(matchId);
         this.pendingGenerationInvalidations.delete(matchId);
         const timer = this.invalidationTimers.get(matchId);
         if (timer) {
@@ -515,6 +517,7 @@ export class MatchService implements OnModuleDestroy {
           err,
         );
         if (this.invalidationEpochs.get(matchId) === epoch) {
+          this.invalidationEpochs.delete(matchId);
           this.pendingGenerationInvalidations.delete(matchId);
           const timer = this.invalidationTimers.get(matchId);
           if (timer) {
@@ -559,23 +562,18 @@ export class MatchService implements OnModuleDestroy {
     const cacheKey = matchCacheKey(matchId);
     const genKey = matchGenerationKey(matchId);
 
+    let capturedGen: string | null = null;
+
     if (!this.pendingGenerationInvalidations.has(matchId)) {
       try {
-        const cached = await this.redis.get(cacheKey);
+        const [cached, gen] = await this.redis.mget(cacheKey, genKey);
+        const currentGen = gen ?? "0";
+        capturedGen = currentGen;
         if (cached) {
           const parsed = JSON.parse(cached) as {
             gen?: string;
             data?: MatchWithDetails;
           };
-          let currentGen: string | null = null;
-          try {
-            currentGen = (await this.redis.get(genKey)) ?? "0";
-          } catch (err) {
-            this.logger.warn(
-              `Failed to read match generation for ${matchId}`,
-              err,
-            );
-          }
           if (
             parsed &&
             typeof parsed === "object" &&
@@ -591,11 +589,12 @@ export class MatchService implements OnModuleDestroy {
       }
     }
 
-    let capturedGen: string | null = null;
-    try {
-      capturedGen = (await this.redis.get(genKey)) ?? "0";
-    } catch (err) {
-      this.logger.warn(`Failed to read match generation for ${matchId}`, err);
+    if (capturedGen === null) {
+      try {
+        capturedGen = (await this.redis.get(genKey)) ?? "0";
+      } catch (err) {
+        this.logger.warn(`Failed to read match generation for ${matchId}`, err);
+      }
     }
 
     const match = await this.prisma.match.findUnique({

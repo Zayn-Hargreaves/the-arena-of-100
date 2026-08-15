@@ -1846,7 +1846,7 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         code: "ABC",
         roomStatus: RoomStatus.WAITING,
         hostId: "u1",
-        roomType: "CUSTOM" satisfies RoomType,
+        roomType: "PUBLIC" satisfies RoomType,
         maxPlayers: 10,
         currentMatchId: null,
         joinedAs: "PLAYER" satisfies JoinMode,
@@ -1866,7 +1866,7 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         code: "XYZ",
         roomStatus: RoomStatus.WAITING,
         hostId: "u1",
-        roomType: "CUSTOM" satisfies RoomType,
+        roomType: "PUBLIC" satisfies RoomType,
         maxPlayers: 10,
         currentMatchId: null,
         countdownEndsAt: 12345,
@@ -1929,6 +1929,7 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
       const res = applyPlayerLeftState(state, {
         roomId: "r1",
         playerId: "p1",
+        reason: "LEFT",
       });
       expect(res.room?.players).toHaveLength(1);
       expect(res.room?.players[0].id).toBe("p2");
@@ -1939,6 +1940,7 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
       const res = applyPlayerLeftState(state, {
         roomId: "r-other",
         playerId: "p1",
+        reason: "LEFT",
       });
       expect(res).toBe(state);
     });
@@ -1951,6 +1953,7 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         roomId: "r1",
         roomStatus: RoomStatus.COUNTDOWN,
         currentMatchId: "m1",
+        updatedAt: 1000,
       });
       expect(res.room?.status).toBe(RoomStatus.COUNTDOWN);
       expect(res.room?.countdownEndsAt).toBeNull();
@@ -1961,6 +1964,8 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
       const res = applyRoomStatusUpdatedState(state, {
         roomId: "r-diff",
         roomStatus: RoomStatus.COUNTDOWN,
+        currentMatchId: null,
+        updatedAt: 1000,
       });
       expect(res).toBe(state);
     });
@@ -1971,6 +1976,8 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         roomId: "r1",
         roomStatus: RoomStatus.COUNTDOWN,
         countdownEndsAt: 99999,
+        countdownMs: 10000,
+        startedAt: 1000,
       });
       expect(res.room?.countdownEndsAt).toBe(99999);
     });
@@ -1981,6 +1988,8 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         roomId: "r-diff",
         roomStatus: RoomStatus.COUNTDOWN,
         countdownEndsAt: 99999,
+        countdownMs: 10000,
+        startedAt: 1000,
       });
       expect(res).toBe(state);
     });
@@ -1992,6 +2001,8 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
       const res = applyRoomCountdownCancelledState(state, {
         roomId: "r1",
         roomStatus: RoomStatus.WAITING,
+        reason: "HOST_CANCELLED",
+        cancelledAt: 1000,
       });
       expect(res.room?.countdownEndsAt).toBeNull();
       expect(res.room?.status).toBe(RoomStatus.WAITING);
@@ -2002,6 +2013,8 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
       const res = applyRoomCountdownCancelledState(state, {
         roomId: "r-diff",
         roomStatus: RoomStatus.WAITING,
+        reason: "HOST_CANCELLED",
+        cancelledAt: 1000,
       });
       expect(res).toBe(state);
     });
@@ -2012,6 +2025,7 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         roomId: "r1",
         playerId: "p1",
         isOnline: false,
+        updatedAt: 1000,
       });
       expect(res.room?.players.find((p) => p.id === "p1")?.isOnline).toBe(
         false,
@@ -2025,6 +2039,7 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         roomId: "r-diff",
         playerId: "p1",
         isOnline: false,
+        updatedAt: 1000,
       });
       expect(res).toBe(state);
     });
@@ -2032,7 +2047,10 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
     it("applyRoomTerminatedState cleans up room and match state", () => {
       const res = applyRoomTerminatedState({
         roomId: "r1",
+        reason: "ADMIN_TERMINATED",
+        matchId: null,
         message: "Room closed by administrator",
+        terminatedAt: 1000,
       });
       expect(res.room).toBeNull();
       expect(res.match).toBeNull();
@@ -2044,14 +2062,20 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
   describe("Match starting and elimination updaters", () => {
     it("applyMatchStartingState sets room status to STARTING", () => {
       const state = makeState({ room: makeRoom() });
-      const res = applyMatchStartingState(state, { matchId: "m1" });
+      const res = applyMatchStartingState(state, {
+        matchId: "m1",
+        countdown: 5,
+      });
       expect(res.room?.status).toBe(RoomStatus.STARTING);
       expect(res.room?.currentMatchId).toBe("m1");
     });
 
     it("applyMatchStartingState handles null room safely", () => {
       const state = makeState({ room: null });
-      const res = applyMatchStartingState(state, { matchId: "m1" });
+      const res = applyMatchStartingState(state, {
+        matchId: "m1",
+        countdown: 5,
+      });
       expect(res.room).toBeNull();
     });
 
@@ -2059,7 +2083,9 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
       const state = makeState({ room: null });
       const res = applyMatchStartedState(state, {
         matchId: "m1",
+        roomId: "r1",
         status: MatchStatus.COUNTDOWN,
+        countdownMs: 5000,
       });
       expect(res.room).toBeNull();
       expect(res.match?.id).toBe("m1");
@@ -2069,9 +2095,9 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
       const state = makeState({ match: makeMatch({ players: basePlayers }) });
       const res = applyPlayerEliminatedState(state, {
         matchId: "m1",
+        roundNo: 1,
         playerId: "p1",
-        eliminatedCount: 1,
-        remainingCount: 1,
+        reason: "WRONG_ANSWER",
       });
       expect(res.match?.players.find((p) => p.id === "p1")?.status).toBe(
         PlayerStatus.ELIMINATED,
@@ -2082,16 +2108,16 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
       const state = makeState({ match: null });
       const res = applyPlayerEliminatedState(state, {
         matchId: "m1",
+        roundNo: 1,
         playerId: "p1",
-        eliminatedCount: 1,
-        remainingCount: 0,
+        reason: "WRONG_ANSWER",
       });
       expect(res).toBe(state);
     });
   });
 
   describe("Topic Voting additional branch coverage", () => {
-    it("applyTopicVotingStartedState updates existing match status and fields", () => {
+    it("applyTopicVotingStartedState updates existing match status and fields when matchId matches", () => {
       const state = makeState({
         match: makeMatch({ id: "m1", status: MatchStatus.COUNTDOWN }),
       });
@@ -2102,7 +2128,28 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         durationMs: 10000,
       });
       expect(res.match?.status).toBe(MatchStatus.TOPIC_VOTING);
+      expect(res.match?.id).toBe("m1");
       expect(res.topicVoting?.candidateTopics).toEqual(["SCIENCE", "HISTORY"]);
+    });
+
+    it("applyTopicVotingStartedState creates new match when state.match.id differs or is null", () => {
+      const state = makeState({
+        room: makeRoom({ id: "r1", currentMatchId: "m2", players: [] }),
+        match: makeMatch({
+          id: "m1",
+          status: MatchStatus.FINISHED,
+          currentRoundNo: 5,
+        }),
+      });
+      const res = applyTopicVotingStartedState(state, {
+        matchId: "m2",
+        candidateTopics: ["SCIENCE", "HISTORY"],
+        endsAt: 10000,
+        durationMs: 10000,
+      });
+      expect(res.match?.id).toBe("m2");
+      expect(res.match?.currentRoundNo).toBe(0);
+      expect(res.match?.status).toBe(MatchStatus.TOPIC_VOTING);
     });
 
     it("applyTopicVotingSummaryState returns empty object when topicVoting is null or matchId mismatch", () => {

@@ -15,6 +15,8 @@
 // the validation schemas (SubmitAnswerPayloadSchema, etc.) and
 // the runtime guards (game-loop checkMatchEnd) stay in sync.
 
+import type { QuestionCategory } from "./index";
+
 export const GAME_CONFIG = {
   MAX_PLAYERS: 100,
   MIN_PLAYERS_TO_START: 2,
@@ -41,5 +43,5 @@ export const GAME_CONFIG = {
     "SPORTS",
     "CULTURE",
     "LOGIC",
-  ] as const,
+  ] as const satisfies readonly QuestionCategory[],
 } as const;

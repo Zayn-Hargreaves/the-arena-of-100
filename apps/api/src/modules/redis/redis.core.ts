@@ -56,6 +56,14 @@ export async function get(client: Redis, key: string): Promise<string | null> {
   return client.get(key);
 }
 
+export async function mget(
+  client: Redis,
+  ...keys: string[]
+): Promise<(string | null)[]> {
+  if (keys.length === 0) return [];
+  return client.mget(...keys);
+}
+
 export async function set(
   client: Redis,
   key: string,

@@ -52,7 +52,7 @@ describe("topic-voting engine", () => {
       };
       // HISTORY: 2 votes, LOGIC: 1 vote, SCIENCE: 1 vote, GEOGRAPHY: 0 votes
       // top 2 banned -> HISTORY and (LOGIC or SCIENCE determined by tie-break)
-      const result = resolveBannedTopics(candidates, votes, 2, seed);
+      const result = resolveBannedTopics(candidates, votes, seed, 2);
       expect(result.bannedTopics).toHaveLength(2);
       expect(result.bannedTopics[0]).toBe("HISTORY");
       expect(result.activeTopics).toHaveLength(2);
@@ -66,8 +66,8 @@ describe("topic-voting engine", () => {
         p1: "SCIENCE",
         p2: "HISTORY",
       };
-      const result1 = resolveBannedTopics(candidates, votes, 2, seed);
-      const result2 = resolveBannedTopics(candidates, votes, 2, seed);
+      const result1 = resolveBannedTopics(candidates, votes, seed, 2);
+      const result2 = resolveBannedTopics(candidates, votes, seed, 2);
       expect(result1).toEqual(result2);
     });
 
@@ -78,8 +78,8 @@ describe("topic-voting engine", () => {
       const resultEqual = resolveBannedTopics(
         candidatesEqual,
         votesEqual,
-        2,
         seed,
+        2,
       );
       expect(resultEqual.bannedTopics).toEqual(["SCIENCE", "HISTORY"]);
       expect(resultEqual.activeTopics).toEqual([]);
@@ -91,8 +91,8 @@ describe("topic-voting engine", () => {
       const resultSmaller = resolveBannedTopics(
         candidatesSmaller,
         votesSmaller,
-        3,
         seed,
+        3,
       );
       expect(resultSmaller.bannedTopics).toEqual(["SCIENCE"]);
       expect(resultSmaller.activeTopics).toEqual([]);

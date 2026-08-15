@@ -21,59 +21,49 @@ import { useSocketStore } from "@/stores/socket-store";
 const TOPIC_METADATA: Record<
   string,
   {
-    labelVi: string;
-    labelEn: string;
     icon: React.ComponentType<{ className?: string }>;
     color: string;
   }
 > = {
   GENERAL: {
-    labelVi: "Kiến Thức Chung",
-    labelEn: "General Knowledge",
     icon: Globe,
     color: "from-sky-500/20 to-blue-500/20 border-sky-500/30",
   },
   SCIENCE: {
-    labelVi: "Khoa Học & Tự Nhiên",
-    labelEn: "Science & Nature",
     icon: Flame,
     color: "from-emerald-500/20 to-teal-500/20 border-emerald-500/30",
   },
   HISTORY: {
-    labelVi: "Lịch Sử & Thế Giới",
-    labelEn: "History & World",
     icon: Landmark,
     color: "from-amber-500/20 to-orange-500/20 border-amber-500/30",
   },
   TECH: {
-    labelVi: "Công Nghệ & IT",
-    labelEn: "Technology & IT",
+    icon: Code,
+    color: "from-indigo-500/20 to-violet-500/20 border-indigo-500/30",
+  },
+  TECHNOLOGY: {
     icon: Code,
     color: "from-indigo-500/20 to-violet-500/20 border-indigo-500/30",
   },
   ENTERTAINMENT: {
-    labelVi: "Giải Trí & Pop Culture",
-    labelEn: "Entertainment & Pop",
     icon: Film,
     color: "from-purple-500/20 to-fuchsia-500/20 border-purple-500/30",
   },
   SPORTS: {
-    labelVi: "Thể Thao & Esports",
-    labelEn: "Sports & Esports",
     icon: Trophy,
     color: "from-yellow-500/20 to-amber-500/20 border-yellow-500/30",
   },
   GEOGRAPHY: {
-    labelVi: "Địa Lý & Quốc Gia",
-    labelEn: "Geography & Maps",
     icon: Compass,
     color: "from-teal-500/20 to-cyan-500/20 border-teal-500/30",
   },
   LOGIC: {
-    labelVi: "Tư Duy & Câu Đố",
-    labelEn: "Logic & Puzzles",
     icon: BookOpen,
     color: "from-rose-500/20 to-pink-500/20 border-rose-500/30",
+  },
+  CULTURE: {
+    icon: BookOpen,
+    color: "from-purple-500/20 to-pink-500/20 border-purple-500/30",
   },
 };
 
@@ -101,6 +91,8 @@ export function TopicVotingOverlay() {
       );
       if (focusable.length > 0) {
         focusable[0]?.focus();
+      } else {
+        dialogRef.current.focus();
       }
     }
 
@@ -112,18 +104,28 @@ export function TopicVotingOverlay() {
           'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
         ),
       );
-      if (focusable.length === 0) return;
+      if (focusable.length === 0) {
+        e.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
 
       const firstElement = focusable[0];
       const lastElement = focusable[focusable.length - 1];
 
       if (e.shiftKey) {
-        if (document.activeElement === firstElement) {
+        if (
+          document.activeElement === firstElement ||
+          document.activeElement === dialogRef.current
+        ) {
           e.preventDefault();
           lastElement?.focus();
         }
       } else {
-        if (document.activeElement === lastElement) {
+        if (
+          document.activeElement === lastElement ||
+          document.activeElement === dialogRef.current
+        ) {
           e.preventDefault();
           firstElement?.focus();
         }
@@ -181,6 +183,7 @@ export function TopicVotingOverlay() {
       <div
         ref={dialogRef}
         role="dialog"
+        tabIndex={-1}
         aria-modal="true"
         aria-labelledby="topic-voting-title"
         className="relative w-full max-w-4xl p-6 md:p-8 bg-slate-900/90 border border-slate-700/60 rounded-2xl shadow-2xl shadow-rose-950/20 overflow-hidden text-slate-100 flex flex-col items-center animate-scale-in"
@@ -220,8 +223,6 @@ export function TopicVotingOverlay() {
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 w-full mb-6">
           {candidateTopics.map((topic) => {
             const meta = TOPIC_METADATA[topic] || {
-              labelVi: topic,
-              labelEn: topic,
               icon: BookOpen,
               color: "from-slate-800 to-slate-900 border-slate-700",
             };
@@ -230,6 +231,7 @@ export function TopicVotingOverlay() {
             const isSelected = myVotedTopic === topic;
             const isBanned = bannedTopics.includes(topic);
             const isActive = activeTopics.includes(topic);
+            const topicLabel = t.has(topic) ? t(topic) : topic;
 
             return (
               <button
@@ -254,9 +256,8 @@ export function TopicVotingOverlay() {
                     </div>
                     <div>
                       <h3 className="font-bold text-base text-slate-100 leading-tight">
-                        {meta.labelVi}
+                        {topicLabel}
                       </h3>
-                      <p className="text-xs text-slate-400">{meta.labelEn}</p>
                     </div>
                   </div>
 

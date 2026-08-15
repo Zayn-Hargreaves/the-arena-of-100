@@ -1099,8 +1099,7 @@ describe("MatchCommandService (B4a)", () => {
           isOnline: true,
         },
       ]);
-      smExpired.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"], 1);
-      (smExpired as any).state.phaseEndsAt = Date.now() - 1000;
+      smExpired.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"], -1000);
       matchService.getStateMachine.mockResolvedValue(smExpired);
 
       const outcome2 = await service.applyVoteBanTopicAuthoritative(
@@ -1118,73 +1117,65 @@ describe("MatchCommandService (B4a)", () => {
     });
 
     it("DUPLICATE_EVENT: a redelivered canonical vote emits summary during active voting, and suppresses broadcast after deadline", async () => {
-      // 1. Redelivery during active TOPIC_VOTING
-      redis.sismember.mockResolvedValue(true);
-      const smActive = new MatchStateMachine("m1", "r1", [
-        {
-          id: "p1",
-          name: "Alice",
-          status: PlayerStatus.ACTIVE,
-          score: 0,
-          totalResponseTimeMs: 0,
-          correctAnswers: 0,
-          isOnline: true,
-        },
-      ]);
-      smActive.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"]);
-      smActive.voteBanTopic("p1", "SCIENCE", { eventId: "evt-vote-1" });
-      matchService.getStateMachine.mockResolvedValue(smActive);
-      matchService.getRoomIdByMatchId.mockResolvedValue("r1");
-      const recorder = makeMockServer();
+      vi.useFakeTimers();
+      try {
+        // 1. Redelivery during active TOPIC_VOTING
+        redis.sismember.mockResolvedValue(true);
+        const smActive = new MatchStateMachine("m1", "r1", [
+          {
+            id: "p1",
+            name: "Alice",
+            status: PlayerStatus.ACTIVE,
+            score: 0,
+            totalResponseTimeMs: 0,
+            correctAnswers: 0,
+            isOnline: true,
+          },
+        ]);
+        smActive.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"], 10_000);
+        smActive.voteBanTopic("p1", "SCIENCE", { eventId: "evt-vote-1" });
+        matchService.getStateMachine.mockResolvedValue(smActive);
+        matchService.getRoomIdByMatchId.mockResolvedValue("r1");
+        const recorder = makeMockServer();
 
-      const outcome1 = await service.applyVoteBanTopicAuthoritative(
-        voteEnv("evt-vote-1", "p1", "SCIENCE"),
-        OWNER,
-        recorder.server,
-      );
+        const outcome1 = await service.applyVoteBanTopicAuthoritative(
+          voteEnv("evt-vote-1", "p1", "SCIENCE"),
+          OWNER,
+          recorder.server,
+        );
 
-      expect(outcome1).toBe("DUPLICATE_EVENT");
-      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
-      expect(
-        recorder.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY).length,
-      ).toBe(1);
+        expect(outcome1).toBe("DUPLICATE_EVENT");
+        expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+        expect(
+          recorder.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY).length,
+        ).toBe(1);
 
-      // 2. Redelivery after phase deadline
-      const smExpired = new MatchStateMachine("m1", "r1", [
-        {
-          id: "p1",
-          name: "Alice",
-          status: PlayerStatus.ACTIVE,
-          score: 0,
-          totalResponseTimeMs: 0,
-          correctAnswers: 0,
-          isOnline: true,
-        },
-      ]);
-      smExpired.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"], 1);
-      smExpired.voteBanTopic("p1", "SCIENCE", { eventId: "evt-vote-1" });
-      (smExpired as any).state.phaseEndsAt = Date.now() - 1000;
-      matchService.getStateMachine.mockResolvedValue(smExpired);
-      const recorderExpired = makeMockServer();
+        // 2. Redelivery after phase deadline
+        vi.advanceTimersByTime(11_000);
+        const recorderExpired = makeMockServer();
 
-      const outcome2 = await service.applyVoteBanTopicAuthoritative(
-        voteEnv("evt-vote-1", "p1", "SCIENCE"),
-        OWNER,
-        recorderExpired.server,
-      );
+        const outcome2 = await service.applyVoteBanTopicAuthoritative(
+          voteEnv("evt-vote-1", "p1", "SCIENCE"),
+          OWNER,
+          recorderExpired.server,
+        );
 
-      expect(outcome2).toBe("DUPLICATE_EVENT");
-      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
-      expect(
-        recorderExpired.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY).length,
-      ).toBe(0);
+        expect(outcome2).toBe("DUPLICATE_EVENT");
+        expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+        expect(
+          recorderExpired.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY).length,
+        ).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
 
       // 3. Duplicate event where SM is undefined returns DUPLICATE_EVENT
       matchService.getStateMachine.mockResolvedValueOnce(undefined);
+      const recorderNullSm = makeMockServer();
       const outcomeNullSm = await service.applyVoteBanTopicAuthoritative(
         voteEnv("evt-vote-1", "p1", "SCIENCE"),
         OWNER,
-        recorder.server,
+        recorderNullSm.server,
       );
       expect(outcomeNullSm).toBe("DUPLICATE_EVENT");
 
@@ -1317,7 +1308,7 @@ describe("MatchCommandService (B4a)", () => {
         sm.initTopicVoting(["SCIENCE", "HISTORY", "LOGIC"], 10_000);
         matchService.getStateMachine.mockResolvedValue(sm);
         matchService.getRoomIdByMatchId.mockImplementation(async () => {
-          (sm as any).state.phaseEndsAt = Date.now() - 1000;
+          vi.advanceTimersByTime(11_000);
           return "r1";
         });
         const recorder = makeMockServer();

@@ -233,6 +233,12 @@ export class MatchRoundRunner {
           );
           return;
         }
+        if (sm.getState().status !== MatchStatus.TOPIC_VOTING) {
+          this.logger.warn(
+            `topicVoting callback: match ${matchId} is in status ${sm.getState().status}, expected TOPIC_VOTING — aborting`,
+          );
+          return;
+        }
         this.logger.log(`Topic voting ended for match ${matchId}`);
         const serialized = sm.serialize();
         const result = sm.resolveTopicVoting();

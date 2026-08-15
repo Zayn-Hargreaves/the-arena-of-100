@@ -65,6 +65,11 @@ import {
   applyTopicVotingFinishedState,
 } from "./socket-store.updaters";
 
+let lastTopicVoteRollback: {
+  matchId: string;
+  previousTopic: string | null;
+} | null = null;
+
 export const useSocketStore = create<SocketState>((set, get) => ({
   // Initial state
   socket: null,
@@ -419,7 +424,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
     newSocket.on(ServerEvent.ERROR, (data: ErrorPayload) => {
       if (get().socket !== newSocket) return;
-      const { pendingAnswer } = get();
+      const { pendingAnswer, topicVoting } = get();
       const { submissionId } = data;
       if (
         pendingAnswer &&
@@ -427,6 +432,20 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         submissionId === pendingAnswer.submissionId
       ) {
         set({ pendingAnswer: null });
+      }
+      if (
+        data.failedEvent === ClientEvent.VOTE_BAN_TOPIC &&
+        lastTopicVoteRollback &&
+        topicVoting &&
+        topicVoting.matchId === lastTopicVoteRollback.matchId
+      ) {
+        set({
+          topicVoting: {
+            ...topicVoting,
+            myVotedTopic: lastTopicVoteRollback.previousTopic,
+          },
+        });
+        lastTopicVoteRollback = null;
       }
       // If unauthorized or invalid token, clear local auth state and
       // null the socket so the next connect() can reinitialize
@@ -499,6 +518,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       clearInterval(heartbeatInterval);
     }
     if (socket) {
+      lastTopicVoteRollback = null;
       socket.disconnect();
       set({
         socket: null,
@@ -510,6 +530,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         userRole: null,
         room: null,
         match: null,
+        topicVoting: null,
         remainingCount: null,
         lastAnswerResult: null,
         pendingAnswer: null,
@@ -707,6 +728,10 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     if (!socket?.connected) return;
 
     if (topicVoting && topicVoting.matchId === matchId) {
+      lastTopicVoteRollback = {
+        matchId,
+        previousTopic: topicVoting.myVotedTopic,
+      };
       set({
         topicVoting: {
           ...topicVoting,

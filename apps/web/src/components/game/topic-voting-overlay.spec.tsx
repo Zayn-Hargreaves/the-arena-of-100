@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import React from "react";
@@ -27,16 +27,20 @@ describe("TopicVotingOverlay", () => {
     });
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("renders candidates and voting header", () => {
     render(<TopicVotingOverlay />);
-    expect(screen.getByText("Khoa Học & Tự Nhiên")).toBeInTheDocument();
-    expect(screen.getByText("Lịch Sử & Thế Giới")).toBeInTheDocument();
-    expect(screen.getByText("Công Nghệ & IT")).toBeInTheDocument();
+    expect(screen.getByText("SCIENCE")).toBeInTheDocument();
+    expect(screen.getByText("HISTORY")).toBeInTheDocument();
+    expect(screen.getByText("TECH")).toBeInTheDocument();
   });
 
   it("calls voteBanTopic when a topic card is clicked", () => {
     render(<TopicVotingOverlay />);
-    const scienceCard = screen.getByText("Khoa Học & Tự Nhiên");
+    const scienceCard = screen.getByText("SCIENCE");
     fireEvent.click(scienceCard);
     expect(voteBanTopicMock).toHaveBeenCalledWith("m1", "SCIENCE");
   });
@@ -102,7 +106,7 @@ describe("TopicVotingOverlay", () => {
     });
 
     render(<TopicVotingOverlay />);
-    const scienceCard = screen.getByText("Khoa Học & Tự Nhiên");
+    const scienceCard = screen.getByText("SCIENCE");
     const button = scienceCard.closest("button") as HTMLButtonElement;
     expect(button).toBeInTheDocument();
     button.disabled = false;
@@ -167,12 +171,12 @@ describe("TopicVotingOverlay", () => {
     });
 
     render(<TopicVotingOverlay />);
-    expect(screen.getByText("Kiến Thức Chung")).toBeInTheDocument();
-    expect(screen.getByText("Địa Lý & Quốc Gia")).toBeInTheDocument();
-    expect(screen.getByText("Giải Trí & Pop Culture")).toBeInTheDocument();
-    expect(screen.getByText("Thể Thao & Esports")).toBeInTheDocument();
-    expect(screen.getByText("Tư Duy & Câu Đố")).toBeInTheDocument();
-    expect(screen.getAllByText("CUSTOM_UNKNOWN_TOPIC").length).toBe(2);
+    expect(screen.getByText("GENERAL")).toBeInTheDocument();
+    expect(screen.getByText("GEOGRAPHY")).toBeInTheDocument();
+    expect(screen.getByText("ENTERTAINMENT")).toBeInTheDocument();
+    expect(screen.getByText("SPORTS")).toBeInTheDocument();
+    expect(screen.getByText("LOGIC")).toBeInTheDocument();
+    expect(screen.getByText("CUSTOM_UNKNOWN_TOPIC")).toBeInTheDocument();
   });
 
   it("handles timer tick, zero clamp, and keyboard escape", () => {
@@ -209,7 +213,6 @@ describe("TopicVotingOverlay", () => {
     // Mandatory voting overlay remains open and non-dismissible on Escape
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(useSocketStore.getState().topicVoting).not.toBeNull();
-    vi.useRealTimers();
   });
 
   it("handles tab navigation wrapping within focus trap", () => {

@@ -46,6 +46,8 @@
     "UNAUTHORIZED": "Bạn không có quyền thực hiện thao tác này!",
     "INVALID_PAYLOAD": "Dữ liệu yêu cầu không hợp lệ!",
     "INTERNAL_ERROR": "Đã xảy ra lỗi hệ thống. Vui lòng thử lại!",
+    "TOPIC_VOTING_CLOSED": "Bình chọn chủ đề đã kết thúc!",
+    "INVALID_TOPIC": "Chủ đề bình chọn không hợp lệ!",
     "UNKNOWN_ERROR": "Đã xảy ra lỗi không xác định. Vui lòng thử lại!"
   },
   "admin": {
@@ -241,7 +243,17 @@
       "voted": "ĐÃ CHỌN",
       "votesCount": "{count, plural, =0 {phiếu} one {phiếu} other {phiếu}}",
       "bannedTopicsHeader": "KẾT QUẢ CẤM CHỦ ĐỀ",
-      "startingMatch": "Đang chuẩn bị vào trận đấu..."
+      "startingMatch": "Đang chuẩn bị vào trận đấu...",
+      "GENERAL": "Kiến Thức Chung",
+      "SCIENCE": "Khoa Học & Tự Nhiên",
+      "HISTORY": "Lịch Sử & Thế Giới",
+      "TECH": "Công Nghệ & IT",
+      "TECHNOLOGY": "Công Nghệ & IT",
+      "ENTERTAINMENT": "Giải Trí & Pop Culture",
+      "SPORTS": "Thể Thao & Esports",
+      "GEOGRAPHY": "Địa Lý & Quốc Gia",
+      "LOGIC": "Tư Duy & Câu Đố",
+      "CULTURE": "Văn Hóa & Nghệ Thuật"
     }
   },
 
@@ -324,8 +336,11 @@
       "ALL": "Tất cả",
       "SCIENCE": "Khoa học",
       "HISTORY": "Lịch sử",
+      "GEOGRAPHY": "Địa lý",
       "TECHNOLOGY": "Công nghệ",
-      "CULTURE": "Văn hóa"
+      "SPORTS": "Thể thao",
+      "CULTURE": "Văn hóa",
+      "LOGIC": "Tư duy logic"
     },
     "classStats": {
       "title": "LỚP · CHUỖI · LÁ BÀI",

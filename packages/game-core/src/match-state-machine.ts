@@ -825,7 +825,12 @@ export class MatchStateMachine {
     topic: string,
     metadata?: { eventId?: string },
   ): boolean {
-    if (this.state.status !== MatchStatus.TOPIC_VOTING) {
+    if (
+      this.state.status !== MatchStatus.TOPIC_VOTING ||
+      (this.state.phaseEndsAt !== undefined &&
+        this.state.phaseEndsAt !== null &&
+        Date.now() >= this.state.phaseEndsAt)
+    ) {
       throw new RoomError(ErrorCode.TOPIC_VOTING_CLOSED);
     }
 
@@ -840,6 +845,11 @@ export class MatchStateMachine {
 
     if (!this.state.topicVotes) {
       this.state.topicVotes = {};
+    }
+
+    const previousVote = this.state.topicVotes[playerId];
+    if (previousVote === topic) {
+      return true;
     }
 
     this.state.topicVotes[playerId] = topic;
@@ -867,8 +877,8 @@ export class MatchStateMachine {
     const result = resolveBannedTopics(
       candidates,
       votes,
-      bannedCount,
       this.state.id,
+      bannedCount,
     );
 
     this.state.bannedTopics = [...result.bannedTopics];

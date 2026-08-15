@@ -231,6 +231,7 @@ export interface TopicVoteSubmittedEventPayload {
   matchId: string;
   playerId: string;
   topic: string;
+  eventId?: string;
 }
 
 export interface TopicVotingSummaryEventPayload {

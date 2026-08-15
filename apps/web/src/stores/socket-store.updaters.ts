@@ -833,20 +833,22 @@ export function applyTopicVotingStartedState(
   for (const t of data.candidateTopics) {
     initialCounts[t] = 0;
   }
+  const isSameMatch = state.match?.id === data.matchId;
   return {
-    match: state.match
-      ? {
-          ...state.match,
-          status: MatchStatus.TOPIC_VOTING,
-        }
-      : {
-          id: data.matchId,
-          status: MatchStatus.TOPIC_VOTING,
-          currentRoundNo: 0,
-          players: state.room?.players ?? [],
-          currentQuestion: null,
-          roundEndTime: null,
-        },
+    match:
+      isSameMatch && state.match
+        ? {
+            ...state.match,
+            status: MatchStatus.TOPIC_VOTING,
+          }
+        : {
+            id: data.matchId,
+            status: MatchStatus.TOPIC_VOTING,
+            currentRoundNo: 0,
+            players: state.room?.players ?? [],
+            currentQuestion: null,
+            roundEndTime: null,
+          },
     topicVoting: {
       matchId: data.matchId,
       candidateTopics: data.candidateTopics,

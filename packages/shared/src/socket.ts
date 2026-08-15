@@ -135,6 +135,7 @@ export interface SnapshotPayload {
     name: string;
     status: string;
     score: number;
+    isOnline?: boolean;
   }>;
   currentQuestion: {
     id: string;

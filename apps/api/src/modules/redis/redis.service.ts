@@ -128,6 +128,10 @@ export class RedisService implements OnModuleDestroy {
     return core.get(this.client, key);
   }
 
+  mget(...keys: string[]): Promise<(string | null)[]> {
+    return core.mget(this.client, ...keys);
+  }
+
   set(key: string, value: string, ttl?: number): Promise<void> {
     return core.set(this.client, key, value, ttl);
   }
