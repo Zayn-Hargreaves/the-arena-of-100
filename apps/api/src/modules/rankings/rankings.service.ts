@@ -6,6 +6,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { CACHE_TTL } from "../../common/config/cache-ttl";
+import { DEFAULT_ELO, getRankTier } from "@arena/shared";
 import {
   type LeaderboardItem,
   type LeaderboardQuery,
@@ -20,6 +21,7 @@ interface RawLeaderboardRow {
   user_id: string;
   username: string;
   avatar: string;
+  elo: NumericValue;
   wins: NumericValue;
   matches_played: NumericValue;
   total_score: NumericValue;
@@ -58,7 +60,7 @@ export class RankingsService {
   }
 
   private cacheKey(period: string, limit: number): string {
-    return `leaderboard:${period}:limit=${limit}`;
+    return `leaderboard:v2:${period}:limit=${limit}`;
   }
 
   private async safeGetCache(
@@ -134,6 +136,7 @@ export class RankingsService {
             SELECT u.id                                                  AS user_id,
                    u.username                                            AS username,
                    u.avatar                                              AS avatar,
+                   u.elo                                                 AS elo,
                    COALESCE(w.wins, 0)                                   AS wins,
                    COALESCE(p.matches_played, 0)                         AS matches_played,
                    COALESCE(p.total_score, 0)                            AS total_score,
@@ -179,6 +182,7 @@ export class RankingsService {
             SELECT u.id                                                  AS user_id,
                    u.username                                            AS username,
                    u.avatar                                              AS avatar,
+                   u.elo                                                 AS elo,
                    COALESCE(w.wins, 0)                                   AS wins,
                    COALESCE(p.matches_played, 0)                         AS matches_played,
                    COALESCE(p.total_score, 0)                            AS total_score,
@@ -192,16 +196,21 @@ export class RankingsService {
             LIMIT ${limit}::int
           `;
 
-    return rows.map((row, idx) => ({
-      rank: idx + 1,
-      userId: row.user_id,
-      username: row.username,
-      avatar: row.avatar,
-      wins: Number(row.wins),
-      matchesPlayed: Number(row.matches_played),
-      accuracy: Number(row.accuracy),
-      avgResponseMs: Number(row.avg_response_ms),
-      totalScore: Number(row.total_score),
-    }));
+    return rows.map((row, idx) => {
+      const elo = Number(row.elo ?? DEFAULT_ELO);
+      return {
+        rank: idx + 1,
+        userId: row.user_id,
+        username: row.username,
+        avatar: row.avatar,
+        elo,
+        rankTier: getRankTier(elo),
+        wins: Number(row.wins),
+        matchesPlayed: Number(row.matches_played),
+        accuracy: Number(row.accuracy),
+        avgResponseMs: Number(row.avg_response_ms),
+        totalScore: Number(row.total_score),
+      };
+    });
   }
 }

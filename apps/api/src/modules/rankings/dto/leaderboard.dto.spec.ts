@@ -14,6 +14,8 @@ describe("LeaderboardDto & Schema", () => {
       userId: "ckl5g2x1y0000abcd1234efgh",
       username: "Zero_Cool",
       avatar: "jellyfrog",
+      elo: 1350,
+      rankTier: "SILVER" as const,
       wins: 8,
       matchesPlayed: 42,
       accuracy: 0.74,
@@ -89,6 +91,8 @@ describe("LeaderboardDto & Schema", () => {
       userId: "u1",
       username: "Alice",
       avatar: "jellyfrog",
+      elo: 1200,
+      rankTier: "SILVER" as const,
       wins: 5,
       matchesPlayed: 10,
       accuracy: 0.8,
@@ -167,6 +171,8 @@ describe("LeaderboardDto & Schema", () => {
       dto.userId = "u1";
       dto.username = "Alice";
       dto.avatar = "jellyfrog";
+      dto.elo = 1350;
+      dto.rankTier = "SILVER";
       dto.wins = 8;
       dto.matchesPlayed = 42;
       dto.accuracy = 0.74;
@@ -176,6 +182,8 @@ describe("LeaderboardDto & Schema", () => {
       expect(dto.userId).toBe("u1");
       expect(dto.username).toBe("Alice");
       expect(dto.avatar).toBe("jellyfrog");
+      expect(dto.elo).toBe(1350);
+      expect(dto.rankTier).toBe("SILVER");
       expect(dto.wins).toBe(8);
       expect(dto.matchesPlayed).toBe(42);
       expect(dto.accuracy).toBe(0.74);

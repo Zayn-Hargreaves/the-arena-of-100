@@ -43,6 +43,15 @@ describe("MatchService", () => {
       matchRound: { create: vi.fn(), findUnique: vi.fn() },
       answer: { create: vi.fn(), createMany: vi.fn() },
       question: { findUnique: vi.fn() },
+      user: {
+        findUnique: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([
+          { id: "u1", elo: 1200 },
+          { id: "u2", elo: 1200 },
+        ]),
+        update: vi.fn().mockResolvedValue({}),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
       $transaction: vi.fn(async (ops) => {
         // Execute all operations sequentially for test fidelity
         if (Array.isArray(ops)) {
@@ -967,13 +976,12 @@ describe("MatchService", () => {
       // Redis state cleaned
       expect(redis.del).toHaveBeenCalledWith("match:state:m1");
       // H2 fix: the match+room update is wrapped in $transaction.
-      // The transaction array contains no score updateMany ops
-      // (isAdminTermination is true) but DOES contain match.update +
+      // The interactive transaction contains no score updateMany ops
+      // (isAdminTermination is true) but DOES contain match.updateMany +
       // room.update.
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       const txArg = vi.mocked(prisma.$transaction).mock.calls[0][0];
-      expect(Array.isArray(txArg)).toBe(true);
-      expect(txArg).toHaveLength(2);
+      expect(typeof txArg).toBe("function");
       expect(prisma.matchPlayer.updateMany).not.toHaveBeenCalled();
     });
 
@@ -1190,18 +1198,10 @@ describe("MatchService", () => {
         canonicalMatch as any,
       );
 
-      // Both updateMany calls are mocked up front. The order in which
-      // they fire depends on whichever promise reaches $transaction
-      // first — the test does not assume which one wins. The third
-      // mock covers the in-transaction re-claim inside the winner's
-      // transaction, which returns count: 0 because the pre-claim
-      // already set the row to FINISHED (the `status: { not:
-      // FINISHED }` filter rejects it). Sorted counts must be
-      // {0, 0, 1} — one winner pre-claim, one loser pre-claim, one
-      // safety-net re-claim all returning the expected count.
+      // Both updateMany calls are mocked up front. The winner claim returns count: 1
+      // and the loser claim returns count: 0 inside their respective transactions.
       vi.mocked(prisma.match.updateMany)
         .mockResolvedValueOnce({ count: 1 })
-        .mockResolvedValueOnce({ count: 0 })
         .mockResolvedValueOnce({ count: 0 });
 
       // Synchronization barrier — $transaction awaits it before
@@ -1253,27 +1253,17 @@ describe("MatchService", () => {
       expect(firstResult).toEqual(canonicalMatch);
       expect(secondResult).toEqual(canonicalMatch);
 
-      // Three match.updateMany calls total. The pre-check runs for
-      // BOTH finishMatch callers (each awaits its own `updateMany`
-      // before short-circuiting). The explicit mocks cover those two
-      // pre-checks (count: 1 for the winner, count: 0 for the loser);
-      // the third call is the in-transaction re-claim inside the
-      // winner's transaction, which is mocked to return count: 0 —
-      // the row is already FINISHED by the pre-claim, so the
-      // `status: { not: FINISHED }` filter rejects it and Prisma
-      // reports count: 0 (this is the EXPECTED outcome; no warning
-      // is emitted by `finishMatch`). The exact order depends on
-      // which promise resolved first; the SORTED counts are always
-      // {0, 0, 1}.
-      expect(prisma.match.updateMany).toHaveBeenCalledTimes(3);
+      // Two match.updateMany calls total (one in winner's transaction,
+      // one in loser's transaction).
+      expect(prisma.match.updateMany).toHaveBeenCalledTimes(2);
       const updateResults = vi
         .mocked(prisma.match.updateMany)
-        .mock.results.slice(0, 3)
+        .mock.results.slice(0, 2)
         .map((r) => r.value as Promise<{ count: number }>);
       const counts = await Promise.all(updateResults).then((rows) =>
         rows.map((r) => r.count).sort(),
       );
-      expect(counts).toEqual([0, 0, 1]);
+      expect(counts).toEqual([0, 1]);
 
       // The in-transaction re-claim returning count: 0 is the
       // expected successful outcome — it must NOT block the
@@ -1356,6 +1346,31 @@ describe("MatchService", () => {
   });
 
   describe("finishMatch generation invalidation & persistent retry", () => {
+    const setupMatchStateMachine = (matchId: string) => {
+      const sm = new MatchStateMachine(matchId, "r_test", [
+        {
+          id: "u1",
+          name: "User1",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+        {
+          id: "u2",
+          name: "User2",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+      ]);
+      (service as any).stateMachines.set(matchId, sm);
+      return sm;
+    };
+
     beforeEach(() => {
       vi.useFakeTimers();
     });
@@ -1366,6 +1381,7 @@ describe("MatchService", () => {
     });
 
     it("persists generation invalidation retry when redis.eval fails initially, recovering on timer tick", async () => {
+      setupMatchStateMachine("m_retry");
       vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m_retry",
         roomId: "r_retry",
@@ -1417,6 +1433,7 @@ describe("MatchService", () => {
     });
 
     it("retries with exponential backoff on multiple redis.eval failures until recovery", async () => {
+      setupMatchStateMachine("m_backoff");
       vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m_backoff",
         roomId: "r_backoff",
@@ -1446,6 +1463,7 @@ describe("MatchService", () => {
     });
 
     it("stops retrying and clears pending invalidation when retry attempts exceed maximum limit", async () => {
+      setupMatchStateMachine("m_max_retries");
       vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m_max_retries",
         roomId: "r_max_retries",
@@ -1532,6 +1550,7 @@ describe("MatchService", () => {
     });
 
     it("cleans up all pending invalidation timers onModuleDestroy", async () => {
+      setupMatchStateMachine("m_destroy");
       vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m_destroy",
         roomId: "r_destroy",
@@ -1863,14 +1882,10 @@ describe("MatchService", () => {
       // contains the two score updates we're verifying below.
       const finishResult = await service.finishMatch("m1", "u1", "r1");
 
-      // Verify $transaction was invoked with an array containing
-      // 2 score updateMany operations + match.update + room.update
-      // (4 total). The H2 fix unified score+match+room writes into
-      // a single atomic $transaction.
+      // Verify $transaction was invoked with an interactive transaction function
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       const txArg = vi.mocked(prisma.$transaction).mock.calls[0][0];
-      expect(Array.isArray(txArg)).toBe(true);
-      expect(txArg).toHaveLength(4);
+      expect(typeof txArg).toBe("function");
 
       // Regression for the H2 + scoreUpdateOps spread bug: the
       // returned match object must be the result of match.update
@@ -1884,7 +1899,7 @@ describe("MatchService", () => {
         expect.objectContaining({ id: "m1", roomId: "r1" }),
       );
 
-      // Inspect each updateMany call's args to verify scores
+      // Inspect each updateMany call's args to verify scores and ELO
       const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
         .calls as any[][];
       const u1Call = updateManyCalls.find((c) => c[0].where.userId === "u1");
@@ -1894,37 +1909,101 @@ describe("MatchService", () => {
       // u1: rt=200 → (10000-200)/200 = 49 → total=149
       expect(u1Call![0].where.matchId).toBe("m1");
       expect(u1Call![0].data.score).toBe(149);
+      expect(u1Call![0].data.eloBefore).toBe(1200);
+      expect(u1Call![0].data.eloAfter).toBe(1216);
+      expect(u1Call![0].data.eloDelta).toBe(16);
+
       // u2: rt=8000 → (10000-8000)/200 = 10 → total=110
       expect(u2Call![0].data.score).toBe(110);
+      expect(u2Call![0].data.eloBefore).toBe(1200);
+      expect(u2Call![0].data.eloAfter).toBe(1184);
+      expect(u2Call![0].data.eloDelta).toBe(-16);
+
+      // Inspect user.updateMany ELO delta updates
+      const userUpdateManyCalls = vi.mocked(prisma.user.updateMany).mock
+        .calls as any[][];
+      const u1UserCall = userUpdateManyCalls.find((c) =>
+        c[0].where.id.in.includes("u1"),
+      );
+      const u2UserCall = userUpdateManyCalls.find((c) =>
+        c[0].where.id.in.includes("u2"),
+      );
+      expect(u1UserCall).toBeDefined();
+      expect(u2UserCall).toBeDefined();
+      expect(u1UserCall![0].data.elo).toEqual({ increment: 16 });
+      expect(u2UserCall![0].data.elo).toEqual({ increment: -16 });
     });
 
-    it("skips score persistence when state machine is no longer in memory", async () => {
+    it("restores state machine from Redis and persists scores when evicted from memory", async () => {
       await setupMatch("m1", "r1", ["u1", "u2"]);
 
-      // Manually evict state machine (simulating failure scenario)
+      // Round 1: u1 correct fast (200ms → 149pts), u2 correct slow (8000ms → 110pts)
+      await playRound("m1", [
+        { playerId: "u1", answer: "A", isCorrect: true, responseTimeMs: 200 },
+        { playerId: "u2", answer: "A", isCorrect: true, responseTimeMs: 8000 },
+      ]);
+
+      const sm = await service.getStateMachine("m1");
+      const serialized = sm!.serialize();
+
+      // Manually evict state machine from memory, but Redis contains serialized state
       const internalMap = (service as any).stateMachines as Map<
         string,
         unknown
       >;
       expect(internalMap.has("m1")).toBe(true);
       internalMap.delete("m1");
+      vi.mocked(redis.get).mockResolvedValueOnce(serialized);
 
       await service.finishMatch("m1", "u1", "r1");
 
-      // Should still update match+room via the atomic transaction
-      // (H2 fix: the score update and the match/room updates all
-      // run in the SAME $transaction).
+      // Scores are persisted through the restored state machine
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-      const txArg = vi.mocked(prisma.$transaction).mock.calls[0][0];
-      expect(Array.isArray(txArg)).toBe(true);
-      // Only the match.updateMany + room.update (no score updateMany
-      // because the state machine was gone, so buildScoreUpdateOps
-      // returned an empty array — and logs a warning, 2d fix).
-      expect(txArg).toHaveLength(2);
-      // 1f/2a fix: the finish write is the idempotent updateMany now.
       expect(prisma.match.updateMany).toHaveBeenCalled();
       expect(prisma.room.update).toHaveBeenCalled();
-      // matchPlayer.updateMany should not have been called (no scores to update).
+      expect(prisma.matchPlayer.updateMany).toHaveBeenCalled();
+
+      const updateManyCalls = vi.mocked(prisma.matchPlayer.updateMany).mock
+        .calls as any[][];
+      const u1Call = updateManyCalls.find((c) => c[0].where.userId === "u1");
+      const u2Call = updateManyCalls.find((c) => c[0].where.userId === "u2");
+      expect(u1Call).toBeDefined();
+      expect(u2Call).toBeDefined();
+      expect(u1Call![0].where.matchId).toBe("m1");
+      expect(u1Call![0].data.score).toBe(149);
+      expect(u2Call![0].data.score).toBe(110);
+    });
+
+    it("aborts finish transaction with error when state machine is missing from memory and Redis", async () => {
+      await setupMatch("m1", "r1", ["u1", "u2"]);
+
+      // Manually evict state machine and ensure Redis returns null
+      const internalMap = (service as any).stateMachines as Map<
+        string,
+        unknown
+      >;
+      expect(internalMap.has("m1")).toBe(true);
+      internalMap.delete("m1");
+      vi.mocked(redis.get).mockResolvedValue(null);
+
+      await expect(service.finishMatch("m1", "u1", "r1")).rejects.toThrow(
+        "Failed to finalize match m1: state machine not found in memory or Redis",
+      );
+
+      // Score updates should NOT have been committed
+      expect(prisma.matchPlayer.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("aborts finish transaction with error when state machine has empty player scores", async () => {
+      const emptySm = {
+        getPlayerScores: vi.fn().mockReturnValue([]),
+      } as unknown as MatchStateMachine;
+      (service as any).stateMachines.set("m1", emptySm);
+
+      await expect(service.finishMatch("m1", "u1", "r1")).rejects.toThrow(
+        "Failed to finalize match m1: state machine has empty player scores",
+      );
+
       expect(prisma.matchPlayer.updateMany).not.toHaveBeenCalled();
     });
 

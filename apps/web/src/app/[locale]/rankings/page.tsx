@@ -13,6 +13,7 @@ import { avatars, findAvatarBySeed } from "@/lib/avatars";
 import { isValidAvatarSeed } from "@arena/shared";
 import { formatPercent, formatResponseMs } from "@/lib/formatters";
 import { reportError } from "@/lib/report-error";
+import { RankBadge } from "@/components/atoms/rank-badge";
 import {
   type LeaderboardEntry,
   type LeaderboardPeriod,
@@ -62,13 +63,21 @@ function PodiumCard({
           {badge}
         </div>
       </div>
-      <div className="space-y-1">
+      <div className="space-y-1.5">
         <h3 className="font-display font-black text-base text-candy-ink truncate tracking-wide">
           {entry.username}
         </h3>
-        <p className="font-mono text-xs font-black text-candy-ink/80 bg-white/70 border border-candy-ink/20 px-2 py-0.5 rounded-md inline-block">
-          {entry.totalScore.toLocaleString()} PTS
-        </p>
+        <div className="flex items-center justify-center gap-1.5 flex-wrap">
+          <p className="font-mono text-xs font-black text-candy-ink/80 bg-white/70 border border-candy-ink/20 px-2 py-0.5 rounded-md inline-block">
+            {entry.totalScore.toLocaleString()} PTS
+          </p>
+          <RankBadge
+            tier={entry.rankTier ?? "SILVER"}
+            elo={entry.elo ?? 1200}
+            size="sm"
+            showElo={true}
+          />
+        </div>
       </div>
       <div className="flex justify-center gap-4 text-xs font-mono text-candy-ink/90 border-t-[2px] border-dashed border-candy-ink/20 pt-3">
         <span className="font-black text-secondary inline-flex items-center gap-1 leading-5">
@@ -267,6 +276,9 @@ export default function RankingsPage() {
                         <div className="p-4 flex-1 min-w-0 border-r-[2px] border-candy-ink">
                           {t("columns.player")}
                         </div>
+                        <div className="p-4 w-44 text-center shrink-0 hidden md:block border-r-[2px] border-candy-ink">
+                          {t("columns.elo")}
+                        </div>
                         <div className="p-4 text-right shrink-0 border-r-[2px] border-candy-ink">
                           {t("columns.score")}
                         </div>
@@ -352,6 +364,14 @@ export default function RankingsPage() {
                                   </div>
                                 </div>
                               </div>
+                              <div className="p-4 w-44 hidden md:flex items-center justify-center shrink-0 border-r-[2px] border-candy-ink">
+                                <RankBadge
+                                  tier={item.rankTier ?? "SILVER"}
+                                  elo={item.elo ?? 1200}
+                                  size="sm"
+                                  showElo={true}
+                                />
+                              </div>
                               <div className="p-4 text-right font-mono font-black text-candy-pink border-r-[2px] border-candy-ink shrink-0">
                                 {item.totalScore.toLocaleString()}
                               </div>
@@ -387,6 +407,9 @@ export default function RankingsPage() {
                           </th>
                           <th className="p-4 border-r-[2px] border-candy-ink">
                             {t("columns.player")}
+                          </th>
+                          <th className="p-4 text-center hidden md:table-cell border-r-[2px] border-candy-ink">
+                            {t("columns.elo")}
                           </th>
                           <th className="p-4 text-right border-r-[2px] border-candy-ink">
                             {t("columns.score")}
@@ -433,6 +456,14 @@ export default function RankingsPage() {
                                     {formatPercent(item.accuracy)}
                                   </span>
                                 </div>
+                              </td>
+                              <td className="p-4 hidden md:table-cell text-center border-r-[2px] border-candy-ink">
+                                <RankBadge
+                                  tier={item.rankTier ?? "SILVER"}
+                                  elo={item.elo ?? 1200}
+                                  size="sm"
+                                  showElo={true}
+                                />
                               </td>
                               <td className="p-4 text-right font-mono font-black text-candy-pink border-r-[2px] border-candy-ink">
                                 {item.totalScore.toLocaleString()}

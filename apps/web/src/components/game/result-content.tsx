@@ -2,6 +2,7 @@ import {
   Home,
   Hourglass,
   RotateCcw,
+  Shield,
   Swords,
   Target,
   Trophy,
@@ -114,7 +115,7 @@ export function ResultContent({
             <Swords className="w-5 h-5 text-candy-pink stroke-[2.5]" />
             {t("performance.title")} · {performance.name}
           </h3>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             <PerformanceCard
               label={t("performance.rank")}
               value={performance.rank === null ? "--" : `#${performance.rank}`}
@@ -125,6 +126,23 @@ export function ResultContent({
               label={t("performance.score")}
               value={performance.score}
               color="cloud"
+            />
+            <PerformanceCard
+              label={t("performance.elo")}
+              value={
+                performance.eloDelta !== undefined &&
+                performance.eloDelta !== null
+                  ? `${performance.eloDelta > 0 ? "+" : ""}${performance.eloDelta} ELO`
+                  : "--"
+              }
+              color={
+                (performance.eloDelta ?? 0) > 0
+                  ? "mint"
+                  : (performance.eloDelta ?? 0) < 0
+                    ? "pink"
+                    : "cloud"
+              }
+              icon={<Shield className="w-4 h-4 text-candy-blue stroke-[2.5]" />}
             />
             <PerformanceCard
               label={t("performance.eliminatedRound")}

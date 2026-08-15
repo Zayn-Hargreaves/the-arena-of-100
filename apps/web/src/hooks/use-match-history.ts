@@ -13,6 +13,7 @@ export interface MatchHistoryItem {
   score: number;
   status: "WON" | "ELIMINATED" | "ABANDONED";
   durationSec: number;
+  eloDelta?: number | null;
 }
 
 interface MatchHistoryPage {

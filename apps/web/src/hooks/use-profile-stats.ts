@@ -3,13 +3,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiGetJson } from "@/lib/api-client";
 import { useSocketStore } from "@/stores/socket-store";
-import type { ClassStatsResponse } from "@arena/shared";
+import type { ClassStatsResponse, RankTier } from "@arena/shared";
 
 export interface UserSummary {
   id: string;
   username: string;
   avatar: string;
   role: "GUEST" | "ADMIN";
+  elo: number;
+  rankTier: RankTier;
 }
 
 export interface ProfileStats {

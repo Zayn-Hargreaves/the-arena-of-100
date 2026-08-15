@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo } from "react";
 import { useTranslations } from "next-intl";
 import {
   Ban,
@@ -144,21 +144,27 @@ export function TopicVotingOverlay() {
     };
   }, [isOpen]);
 
+  const endsAt = topicVoting?.endsAt;
   useEffect(() => {
-    if (!topicVoting) return;
+    if (!endsAt) {
+      setTimeLeft(0);
+      return;
+    }
 
     const calculateRemaining = () => {
-      const remaining = Math.max(
-        0,
-        Math.ceil((topicVoting.endsAt - Date.now()) / 1000),
-      );
+      const remaining = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
       setTimeLeft(remaining);
     };
 
     calculateRemaining();
     const interval = setInterval(calculateRemaining, 200);
     return () => clearInterval(interval);
-  }, [topicVoting?.endsAt]);
+  }, [endsAt]);
+
+  const bannedTopics = topicVoting?.bannedTopics;
+  const activeTopics = topicVoting?.activeTopics;
+  const bannedSet = useMemo(() => new Set(bannedTopics ?? []), [bannedTopics]);
+  const activeSet = useMemo(() => new Set(activeTopics ?? []), [activeTopics]);
 
   if (!isOpen || !topicVoting) return null;
 
@@ -166,8 +172,6 @@ export function TopicVotingOverlay() {
     candidateTopics,
     voteCounts,
     myVotedTopic,
-    bannedTopics,
-    activeTopics,
     isFinished,
     totalVotes,
     matchId,
@@ -205,7 +209,7 @@ export function TopicVotingOverlay() {
             {isFinished ? t("bannedTopicsHeader") : t("subtitle")}
           </h2>
 
-          {!isFinished && (
+          {!isFinished && endsAt && (
             <div className="flex items-center justify-center gap-2 text-slate-400 text-sm font-medium">
               <Clock className="w-4 h-4 text-amber-400 animate-pulse" />
               <span>{t("votingEndsIn")}</span>
@@ -229,8 +233,8 @@ export function TopicVotingOverlay() {
             const Icon = meta.icon;
             const votes = voteCounts[topic] || 0;
             const isSelected = myVotedTopic === topic;
-            const isBanned = bannedTopics.includes(topic);
-            const isActive = activeTopics.includes(topic);
+            const isBanned = bannedSet.has(topic);
+            const isActive = activeSet.has(topic);
             const topicLabel = t.has(topic) ? t(topic) : topic;
 
             return (

@@ -1019,7 +1019,8 @@ describe("DailyService", () => {
         const createdCalls = vi.mocked(prisma.pendingCardVariantUnlock.create)
           .mock.calls;
         const createdUserIds = createdCalls.map(
-          (entry) => (entry[0] as { data: { userId: string } }).data.userId,
+          (entry: unknown[]) =>
+            (entry[0] as { data: { userId: string } }).data.userId,
         );
         expect(createdUserIds.sort()).toEqual(["user-1", "user-2", "user-3"]);
 

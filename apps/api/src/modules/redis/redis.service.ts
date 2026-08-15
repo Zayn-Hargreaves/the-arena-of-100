@@ -5,7 +5,7 @@
 import { Injectable, OnModuleDestroy, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import Redis from "ioredis";
-import { OpMarker, MessageHandler } from "./redis.internal";
+import { OpMarker, MessageHandler, createRef } from "./redis.internal";
 import * as core from "./redis.core";
 import * as lease from "./redis.lease";
 import * as streams from "./redis.streams";
@@ -105,17 +105,15 @@ export class RedisService implements OnModuleDestroy {
   // Internal accessor for the streams module. Returns a refs object the
   // streams functions use to read/write the pool state without copying.
   getBlockingReaderPoolRefs(): streams.BlockingReaderPoolRefs {
-    // eslint-disable-next-line @typescript-eslint/no-this-alias
-    const self = this;
     return {
-      pool: self.blockingReaderPool,
-      inUse: self.blockingReadersInUse,
-      waiters: self.blockingReaderWaiters,
-      isShuttingDown: () => self.blockingReadersShuttingDown,
+      pool: this.blockingReaderPool,
+      inUse: this.blockingReadersInUse,
+      waiters: this.blockingReaderWaiters,
+      isShuttingDown: () => this.blockingReadersShuttingDown,
       setLastWaiterDepth: (n) => {
-        self.lastBlockingReaderWaiters = n;
+        this.lastBlockingReaderWaiters = n;
       },
-      getLastWaiterDepth: () => self.lastBlockingReaderWaiters,
+      getLastWaiterDepth: () => this.lastBlockingReaderWaiters,
     };
   }
 
@@ -540,40 +538,32 @@ export class RedisService implements OnModuleDestroy {
   // Returns the refs the pubsub module needs to read/write state. The facade
   // exposes its fields through these refs instead of via direct field access.
   private getPubSubContext(): pubsub.PubSubContext {
-    // eslint-disable-next-line @typescript-eslint/no-this-alias
-    const self = this;
     return {
-      subscriber: {
-        get current() {
-          return self.subscriber;
+      subscriber: createRef(
+        () => this.subscriber,
+        (v) => {
+          this.subscriber = v;
         },
-        set current(v: Redis | null) {
-          self.subscriber = v;
+      ),
+      handlers: this.handlers,
+      channelChains: this.channelChains,
+      resetInProgress: createRef(
+        () => this.resetInProgress,
+        (v) => {
+          this.resetInProgress = v;
         },
-      },
-      handlers: self.handlers,
-      channelChains: self.channelChains,
-      resetInProgress: {
-        get current() {
-          return self.resetInProgress;
+      ),
+      resetPending: createRef(
+        () => this.resetPending,
+        (v) => {
+          this.resetPending = v;
         },
-        set current(v: Promise<void> | null) {
-          self.resetInProgress = v;
-        },
-      },
-      resetPending: {
-        get current() {
-          return self.resetPending;
-        },
-        set current(v: boolean) {
-          self.resetPending = v;
-        },
-      },
-      inFlight: self.inFlight,
-      client: self.client,
-      logger: self.logger,
-      ensureSubscriber: () => self.ensureSubscriber(),
-      removeHandler: (ch, h) => self.removeHandler(ch, h),
+      ),
+      inFlight: this.inFlight,
+      client: this.client,
+      logger: this.logger,
+      ensureSubscriber: () => this.ensureSubscriber(),
+      removeHandler: (ch, h) => this.removeHandler(ch, h),
     };
   }
 

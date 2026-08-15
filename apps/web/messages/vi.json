@@ -276,7 +276,8 @@
       "eliminatedRound": "Vòng Bị Loại",
       "roundValue": "Vòng {round}",
       "accuracy": "Độ Chính Xác",
-      "reactionSpeed": "Tốc Độ Phản Xạ"
+      "reactionSpeed": "Tốc Độ Phản Xạ",
+      "elo": "Biến Động ELO"
     },
     "actions": {
       "rematch": "Tái Đấu Trận Mới",
@@ -303,10 +304,25 @@
       "guestPlayer": "Người Chơi Khách"
     }
   },
+  "rank": {
+    "title": "Bậc Xếp Hạng",
+    "elo": "Điểm ELO",
+    "tiers": {
+      "bronze": "Đồng",
+      "silver": "Bạc",
+      "gold": "Vàng",
+      "platinum": "Bạch Kim",
+      "diamond": "Kim Cương",
+      "master": "Cao Thủ",
+      "grandmaster": "Thách Đấu"
+    }
+  },
   "profile": {
     "registeredToday": "ĐĂNG KÝ: HÔM NAY",
     "stats": {
       "title": "CHỈ SỐ SINH TỒN",
+      "elo": "ĐIỂM ELO",
+      "rankTier": "BẬC HẠNG",
       "matches": "TỔNG SỐ TRẬN",
       "wins": "VÔ ĐỊCH (WINS)",
       "averageResponse": "PHẢN XẠ TRUNG BÌNH",
@@ -321,6 +337,7 @@
     "history": {
       "title": "LỊCH SỬ THI ĐẤU GẦN ĐÂY",
       "score": "ĐIỂM SỐ",
+      "elo": "ELO",
       "rank": "THỨ HẠNG",
       "players": "NGƯỜI CHƠI",
       "duration": "THỜI LƯỢNG",
@@ -374,6 +391,7 @@
     "columns": {
       "rank": "Hạng",
       "player": "Đấu Thủ",
+      "elo": "Điểm ELO",
       "score": "Điểm Số",
       "speed": "Phản Xạ",
       "accuracy": "Tỉ Lệ Đúng"

@@ -639,7 +639,7 @@ describe("socket-store connect heartbeat ownership", () => {
       expect(voteCall).toBeDefined();
       const commandId = (voteCall![1] as VoteBanTopicPayload).commandId;
       expect(typeof commandId).toBe("string");
-      return commandId;
+      return commandId!;
     }
 
     it("rolls back two consecutive votes correctly when both receive matching error payloads", async () => {

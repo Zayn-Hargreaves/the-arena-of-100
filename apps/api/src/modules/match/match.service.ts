@@ -13,13 +13,19 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { MatchOwnershipService } from "./match-ownership.service";
 import { ownerKey, fenceKey } from "./match-ownership.store";
-import { MatchStateMachine } from "@arena/game-core";
+import {
+  MatchStateMachine,
+  calculateMultiplayerElo,
+  assignPlacements,
+  type EloPlayerInput,
+} from "@arena/game-core";
 import {
   MatchStatus,
   MatchEventType,
   RoomStatus,
   PlayerStatus,
   ErrorCode,
+  DEFAULT_ELO,
   type CardEffectEvent,
   type ClassAssignedEvent,
   type PlayerInfo,
@@ -674,101 +680,66 @@ export class MatchService implements OnModuleDestroy {
     roomId: string,
     isAdminTermination = false,
   ) {
-    // 2d fix — two-phase claim. The match row is claimed as FINISHED
-    // BEFORE any score / room update ops are built or executed, so a
-    // concurrent or post-restart `finishMatch` call that races us
-    // cannot trigger score / cardsPlayed / classId writes on a match
-    // that is already FINISHED. The pre-check is a single
-    // `updateMany` with `status: { not: FINISHED }`; a `count === 0`
-    // result means another finisher won the race — we return
-    // immediately with the canonical row and never read the state
-    // machine for score computation.
-    //
-    // For the admin-termination path we still want the claim gate
-    // (skipping it would let a force-terminator overwrite a winner
-    // that a normal finish had already committed), so the pre-check
-    // runs unconditionally. The only thing the admin path skips is
-    // the SCORE UPDATE OPS — the match / room status updates still
-    // run in the main transaction below.
-    const claimResult = await this.prisma.match.updateMany({
-      where: { id: matchId, status: { not: MatchStatus.FINISHED } },
-      data: {
-        status: MatchStatus.FINISHED,
-        winnerId,
-        endedAt: new Date(),
-      },
-    });
-    if (claimResult.count === 0) {
-      this.logger.warn(
-        `finishMatch: match ${matchId} was already FINISHED; treating this call as a no-op (claim gate). winnerId/endedAt left untouched.`,
-      );
-      return this.prisma.match.findUnique({ where: { id: matchId } });
+    let stateMachine: MatchStateMachine | null = null;
+    let playerScores: ReturnType<MatchStateMachine["getPlayerScores"]> = [];
+    if (!isAdminTermination) {
+      stateMachine = this.stateMachines.get(matchId) ?? null;
+      if (!stateMachine) {
+        stateMachine = (await this.getStateMachine(matchId)) ?? null;
+      }
+      if (stateMachine) {
+        playerScores = stateMachine.getPlayerScores();
+      }
     }
 
-    // Claim succeeded — only the claimant computes score updates.
-    // Skipped for admin termination: the match was force-stopped and
-    // the state machine reference is dropped without computing final
-    // scores. Reading the in-memory state machine AFTER the claim
-    // means a loser of the claim race never paid the read cost.
-    const scoreUpdateOps = !isAdminTermination
-      ? await this.buildScoreUpdateOps(matchId)
-      : [];
-
-    // H2: ONE transaction for the remaining work. Either all of
-    // {scores, room} commit or none do. If Prisma throws, the database
-    // is left untouched.
-    //
-    // The `match.updateMany` claim has already committed in the
-    // pre-check above; the `match.updateMany` re-issued here is a
-    // safety-net no-op (status is now FINISHED so the
-    // `status: { not: FINISHED }` filter rejects every row, returning
-    // `count: 0`). Keeping it in the same array preserves the H2
-    // single-transaction contract from the original implementation
-    // and the `updateResult` slot is still read for diagnostics.
-    //
-    // Prisma's $transaction returns results in the same order as the
-    // input array. With the `...scoreUpdateOps` spread the
-    // match.updateMany operation lives at index `scoreUpdateOps.length`
-    // (which is 0 for the admin-termination path and N for the
-    // normal-finish path). We read that slot explicitly to get the
-    // `{ count }` result of the idempotent re-claim.
-    //
-    // 1f/2a fix: the match update is idempotent at the DB layer. The
-    // in-memory `finishingMatches` guard in GameLoopService only covers
-    // a single process; a cross-process finish or a post-restart
-    // re-call could otherwise overwrite winnerId/endedAt on an
-    // already-FINISHED match. `updateMany` with a
-    // `status: { not: FINISHED }` filter makes the second finish a
-    // no-op (count: 0) instead of a clobbering write.
-    const txResults = await this.prisma.$transaction([
-      ...scoreUpdateOps,
-      this.prisma.match.updateMany({
+    // H2 + 2d: Single interactive Prisma transaction for the entire match finish workflow.
+    // The conditional match claim, ELO reads in buildScoreUpdateOps, and all score/ELO/room
+    // updates execute within this single transaction. If any read or write fails, the entire
+    // transaction rolls back atomically without leaving the match in a partial FINISHED state.
+    const txResult = await this.prisma.$transaction(async (tx) => {
+      // 1. Conditional match claim: atomic check-and-set.
+      // If the match was already FINISHED by a concurrent caller, count === 0.
+      const claimResult = await tx.match.updateMany({
         where: { id: matchId, status: { not: MatchStatus.FINISHED } },
         data: {
           status: MatchStatus.FINISHED,
           winnerId,
           endedAt: new Date(),
         },
-      }),
-      this.prisma.room.update({
+      });
+      if (claimResult.count === 0) {
+        this.logger.warn(
+          `finishMatch: match ${matchId} was already FINISHED; treating this call as a no-op (claim gate). winnerId/endedAt left untouched.`,
+        );
+        const existingMatch = await tx.match.findUnique({
+          where: { id: matchId },
+        });
+        return { match: existingMatch, claimed: false };
+      }
+
+      // 2. Claim succeeded — execute score / ELO updates within the interactive transaction.
+      if (!isAdminTermination) {
+        await this.buildScoreUpdateOps(matchId, stateMachine, playerScores, tx);
+      }
+
+      // 3. Update room status to FINISHED
+      await tx.room.update({
         where: { id: roomId },
         data: { status: RoomStatus.FINISHED },
-      }),
-    ]);
-    // `txResults[scoreUpdateOps.length].count` is the in-transaction
-    // re-claim's `{ count }`. The re-claim returning count: 0 is the
-    // EXPECTED outcome (the row was already set to FINISHED by the
-    // pre-claim above, so the `status: { not: FINISHED }` filter
-    // rejects it). No assertion / no warning — we read past the
-    // slot and continue to Redis cleanup so the winner's match
-    // reaches a consistent FINISHED state. The expression below is
-    // bound here only to document the slot's semantics; it is
-    // intentionally not used otherwise.
-    void txResults[scoreUpdateOps.length];
+      });
 
-    const match = await this.prisma.match.findUnique({
-      where: { id: matchId },
+      // 4. Fetch the canonical match row before committing
+      const match = await tx.match.findUnique({
+        where: { id: matchId },
+      });
+
+      return { match, claimed: true };
     });
+
+    const { match, claimed } = txResult;
+    if (!claimed) {
+      return match;
+    }
 
     // Increment cache generation immediately after the DB transaction
     // completes, before and independently of Redis state cleanup,
@@ -839,27 +810,30 @@ export class MatchService implements OnModuleDestroy {
     return match;
   }
 
-  // Build the score-update Prisma operations for the transaction.
-  // Returns an empty array if the state machine is gone or has no
-  // players. Extracted to keep finishMatch's transaction list
-  // readable.
-  private async buildScoreUpdateOps(matchId: string) {
-    const stateMachine = this.stateMachines.get(matchId);
+  // Build and execute the score-update Prisma operations inside the transaction.
+  // Throws if the state machine is missing or has no player scores to prevent committing FINISHED status with lost scores.
+  private async buildScoreUpdateOps(
+    matchId: string,
+    stateMachine: MatchStateMachine | null,
+    playerScores: ReturnType<MatchStateMachine["getPlayerScores"]>,
+    tx: Prisma.TransactionClient,
+  ) {
     if (!stateMachine) {
-      // 2d fix: surface silent score loss. This is the normal-finish
-      // path (isAdminTermination === false), so the state machine
-      // SHOULD be present. If it's gone (Redis expired, prior partial
-      // cleanup, or a getStateMachine that never repopulated the
-      // in-memory map), the match finishes with NO score persistence.
-      // Previously this returned [] silently — players' final scores
-      // were lost with no trace. Log a warning so operators notice.
-      this.logger.warn(
-        `buildScoreUpdateOps: no state machine for match ${matchId} on a normal finish; final scores will NOT be persisted. This indicates the state machine was lost (Redis expiry or partial cleanup) before finishMatch ran.`,
+      this.logger.error(
+        `buildScoreUpdateOps: no state machine found for match ${matchId} in memory or Redis on a normal finish; aborting finish transaction.`,
       );
-      return [];
+      throw new Error(
+        `Failed to finalize match ${matchId}: state machine not found in memory or Redis`,
+      );
     }
-    const playerScores = stateMachine.getPlayerScores();
-    if (playerScores.length === 0) return [];
+    if (playerScores.length === 0) {
+      this.logger.error(
+        `buildScoreUpdateOps: state machine for match ${matchId} has no player scores on a normal finish; aborting finish transaction.`,
+      );
+      throw new Error(
+        `Failed to finalize match ${matchId}: state machine has empty player scores`,
+      );
+    }
 
     // Phase 3 — count CARD_RESOLVED events per player from the event
     // log so the daily leaderboard can aggregate "most cards played
@@ -899,15 +873,68 @@ export class MatchService implements OnModuleDestroy {
       }
     }
 
-    return playerScores.map((p) =>
-      this.prisma.matchPlayer.updateMany({
-        where: { matchId, userId: p.userId },
-        data: {
-          score: p.score,
-          cardsPlayed: cardsPlayedByUser.get(p.userId) ?? 0,
-          classId: classByUser.get(p.userId) ?? null,
-        },
+    // Phase 4 — ELO Rating calculation (Multiplayer Battle Royale ELO).
+    // Fetch starting ELO for all participating users, assign placements
+    // based on scores, calculate new ELO ratings, and persist both
+    // MatchPlayer history and User.elo.
+    const userIds = Array.from(new Set(playerScores.map((p) => p.userId)));
+    const userRows = await tx.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, elo: true },
+    });
+    const eloByUser = new Map<string, number>(
+      userRows.map((u) => [u.id, u.elo]),
+    );
+
+    const placedPlayers = assignPlacements(
+      playerScores.map((p) => ({
+        userId: p.userId,
+        score: p.score,
+        avgResponseMs: p.avgResponseMs,
+      })),
+    );
+
+    const eloInputs: EloPlayerInput[] = placedPlayers.map((p) => ({
+      userId: p.userId,
+      currentElo: eloByUser.get(p.userId) ?? DEFAULT_ELO,
+      placement: p.placement,
+      score: p.score,
+    }));
+
+    const eloResults = calculateMultiplayerElo(eloInputs);
+    const eloResultByUser = new Map(eloResults.map((r) => [r.userId, r]));
+
+    await Promise.all(
+      playerScores.map((p) => {
+        const eloRes = eloResultByUser.get(p.userId);
+        return tx.matchPlayer.updateMany({
+          where: { matchId, userId: p.userId },
+          data: {
+            score: p.score,
+            cardsPlayed: cardsPlayedByUser.get(p.userId) ?? 0,
+            classId: classByUser.get(p.userId) ?? null,
+            eloBefore: eloRes?.currentElo ?? null,
+            eloAfter: eloRes?.newElo ?? null,
+            eloDelta: eloRes?.delta ?? null,
+          },
+        });
       }),
+    );
+
+    const deltaToUserIds = new Map<number, string[]>();
+    for (const r of eloResults) {
+      const group = deltaToUserIds.get(r.delta) ?? [];
+      group.push(r.userId);
+      deltaToUserIds.set(r.delta, group);
+    }
+
+    await Promise.all(
+      Array.from(deltaToUserIds.entries()).map(([delta, ids]) =>
+        tx.user.updateMany({
+          where: { id: { in: ids } },
+          data: { elo: { increment: delta } },
+        }),
+      ),
     );
   }
 

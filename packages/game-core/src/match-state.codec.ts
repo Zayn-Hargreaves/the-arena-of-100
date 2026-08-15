@@ -32,6 +32,12 @@ type RoundWithAnswer = RoundState & {
 // format. Both 1 and 2 are readable; v1 blobs are backfilled on deserialize.
 const SERIALIZED_STATE_VERSION = 2;
 const SUPPORTED_STATE_VERSIONS = new Set([1, 2]);
+const VALID_ROUND_STATUSES = new Set([
+  "PENDING",
+  "ACTIVE",
+  "EVALUATING",
+  "COMPLETED",
+]);
 const UNAVAILABLE_SENTINEL = "__UNAVAILABLE__";
 
 /**
@@ -268,8 +274,8 @@ function validateCurrentRoundShape(
     typeof question.content === "string" &&
     Array.isArray(question.options);
   const validStatus =
-    typeof round.status === "string" &&
-    ["PENDING", "ACTIVE", "EVALUATING", "COMPLETED"].includes(round.status);
+    typeof round.status === "string" && VALID_ROUND_STATUSES.has(round.status);
+
   const validCorrectAnswer =
     round.correctAnswer === undefined ||
     typeof round.correctAnswer === "string";

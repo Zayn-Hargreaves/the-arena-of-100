@@ -3,6 +3,8 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { apiGetJson } from "@/lib/api-client";
 
+import type { RankTier } from "@arena/shared";
+
 export type LeaderboardPeriod = "weekly" | "all";
 
 export interface LeaderboardEntry {
@@ -10,6 +12,8 @@ export interface LeaderboardEntry {
   userId: string;
   username: string;
   avatar: string;
+  elo: number;
+  rankTier: RankTier;
   wins: number;
   matchesPlayed: number;
   accuracy: number;

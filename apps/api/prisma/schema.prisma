@@ -46,6 +46,7 @@ model User {
   guestId   String?  @unique
   role      Role     @default(GUEST)
   avatar    String   @default("jellyfrog")
+  elo       Int      @default(1200)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -63,6 +64,7 @@ model User {
   // does not cascade-delete their own audit trail.
   eventLogsAdmin            EventLog[]                 @relation("EventLogAdmin")
 
+  @@index([elo(sort: Desc)], map: "users_elo_idx")
   @@map("users")
 }
 
@@ -142,6 +144,10 @@ model MatchPlayer {
   // admin-terminated match that bypassed assignment). Read-only on
   // the API surface: derived from the event log at finishMatch.
   classId     String?
+  // ELO Rating System
+  eloBefore   Int?
+  eloAfter    Int?
+  eloDelta    Int?
 
   // Relations
   match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)

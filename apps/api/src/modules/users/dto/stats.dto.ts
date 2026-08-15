@@ -4,9 +4,11 @@ import {
   classWinrateSchema,
   classStatsSchema,
   classStatsResponseSchema,
+  rankTierSchema,
   type ClassWinrate,
   type ClassStats,
   type ClassStatsResponse,
+  type RankTier,
 } from "@arena/shared";
 
 export const userSummarySchema = z.object({
@@ -14,6 +16,8 @@ export const userSummarySchema = z.object({
   username: z.string(),
   avatar: z.string(),
   role: z.enum(["GUEST", "ADMIN"]),
+  elo: z.number().int().nonnegative().default(1200),
+  rankTier: rankTierSchema.default("SILVER"),
 });
 
 export const statsSchema = z.object({
@@ -48,6 +52,23 @@ export class UserSummaryDto implements UserSummary {
 
   @ApiProperty({ enum: ["GUEST", "ADMIN"], example: "GUEST" })
   role!: "GUEST" | "ADMIN";
+
+  @ApiProperty({ example: 1250, description: "Current ELO rating" })
+  elo!: number;
+
+  @ApiProperty({
+    enum: [
+      "BRONZE",
+      "SILVER",
+      "GOLD",
+      "PLATINUM",
+      "DIAMOND",
+      "MASTER",
+      "GRANDMASTER",
+    ],
+    example: "SILVER",
+  })
+  rankTier!: RankTier;
 }
 
 export class StatsDto implements Stats {

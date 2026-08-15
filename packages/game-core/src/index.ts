@@ -37,6 +37,10 @@ export {
 } from "./topic-voting";
 export type { TopicVotingResult } from "./topic-voting";
 
+// ELO Rating Engine (Multiplayer Battle Royale ELO)
+export { calculateMultiplayerElo, assignPlacements } from "./elo-engine";
+export type { EloPlayerInput, EloCalculationResult } from "./elo-engine";
+
 // PRNG primitives
 export {
   mulberry32,
