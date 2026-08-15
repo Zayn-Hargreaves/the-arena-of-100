@@ -199,6 +199,40 @@ export const VoteBanTopicPayloadSchema = z.object({
 });
 export type VoteBanTopicPayload = z.infer<typeof VoteBanTopicPayloadSchema>;
 
+// MATCHMAKING ----------------------------------------------------------------
+
+export const JoinMatchmakingPayloadSchema = z.object({
+  category: z.string().min(1).max(64).optional(),
+});
+export type JoinMatchmakingPayload = z.infer<
+  typeof JoinMatchmakingPayloadSchema
+>;
+
+export const LeaveMatchmakingPayloadSchema = z.object({}).optional();
+export type LeaveMatchmakingPayload = z.infer<
+  typeof LeaveMatchmakingPayloadSchema
+>;
+
+export const MatchmakingStatusPayloadSchema = z.object({
+  isQueued: z.boolean(),
+  queuedAt: z.number().int().nonnegative().nullable(),
+  elapsedSeconds: z.number().int().nonnegative(),
+  estimatedWaitSeconds: z.number().int().nonnegative(),
+  playersInQueue: z.number().int().nonnegative(),
+});
+export type MatchmakingStatusPayload = z.infer<
+  typeof MatchmakingStatusPayloadSchema
+>;
+
+export const MatchmakingMatchedPayloadSchema = z.object({
+  roomId: idSchema,
+  roomCode: z.string().min(1).max(32),
+  matchId: idSchema.optional().nullable(),
+});
+export type MatchmakingMatchedPayload = z.infer<
+  typeof MatchmakingMatchedPayloadSchema
+>;
+
 // HEARTBEAT ------------------------------------------------------------------
 
 export const HeartbeatPayloadSchema = z.object({
@@ -223,6 +257,8 @@ export const CLIENT_EVENT_SCHEMAS = {
   card_pick: CardPickPayloadSchema,
   card_play: CardPlayPayloadSchema,
   vote_ban_topic: VoteBanTopicPayloadSchema,
+  join_matchmaking: JoinMatchmakingPayloadSchema,
+  leave_matchmaking: LeaveMatchmakingPayloadSchema,
   heartbeat: HeartbeatPayloadSchema,
 } as const;
 

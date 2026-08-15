@@ -24,6 +24,8 @@ import {
   type TopicVotingStartedPayload,
   type TopicVotingSummaryPayload,
   type TopicVotingFinishedPayload,
+  type MatchmakingStatusPayload,
+  type MatchmakingMatchedPayload,
   ReplayEventSchema,
 } from "@arena/shared";
 
@@ -894,6 +896,40 @@ export function applyTopicVotingFinishedState(
       activeTopics: data.activeTopics,
       voteCounts: data.voteCounts,
       isFinished: true,
+    },
+  };
+}
+
+export function applyMatchmakingStatusState(
+  state: SocketState,
+  data: MatchmakingStatusPayload,
+): Partial<SocketState> {
+  return {
+    matchmaking: {
+      isQueued: data.isQueued,
+      queuedAt: data.queuedAt,
+      elapsedSeconds: data.elapsedSeconds,
+      estimatedWaitSeconds: data.estimatedWaitSeconds,
+      playersInQueue: data.playersInQueue,
+      matchedRoomCode: state.matchmaking?.matchedRoomCode ?? null,
+      matchedRoomId: state.matchmaking?.matchedRoomId ?? null,
+    },
+  };
+}
+
+export function applyMatchmakingMatchedState(
+  state: SocketState,
+  data: MatchmakingMatchedPayload,
+): Partial<SocketState> {
+  return {
+    matchmaking: {
+      isQueued: false,
+      queuedAt: null,
+      elapsedSeconds: 0,
+      estimatedWaitSeconds: 0,
+      playersInQueue: state.matchmaking?.playersInQueue ?? 0,
+      matchedRoomCode: data.roomCode,
+      matchedRoomId: data.roomId,
     },
   };
 }

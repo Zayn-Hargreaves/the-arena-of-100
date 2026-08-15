@@ -19,6 +19,7 @@ import { AdminModule } from "./modules/admin/admin.module";
 import { UsersModule } from "./modules/users/users.module";
 import { RankingsModule } from "./modules/rankings/rankings.module";
 import { DailyModule } from "./modules/daily/daily.module";
+import { MatchmakingModule } from "./modules/matchmaking/matchmaking.module";
 import { GameGateway } from "./gateways/game.gateway";
 import { AuthHandler, RoomHandler, MatchHandler } from "./gateways/handlers";
 import { TransformInterceptor } from "./common/interceptors/transform.interceptor";
@@ -61,12 +62,14 @@ import { positiveIntEnv } from "./common/config/env";
     AuthModule,
     RoomModule,
     MatchModule,
+    MatchmakingModule,
     QuestionModule,
     AdminModule,
     UsersModule,
     RankingsModule,
     DailyModule,
   ],
+
   providers: [
     GameGateway,
     AuthHandler,

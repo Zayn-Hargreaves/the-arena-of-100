@@ -27,6 +27,8 @@ import {
   type TopicVotingStartedPayload,
   type TopicVotingSummaryPayload,
   type TopicVotingFinishedPayload,
+  type MatchmakingStatusPayload,
+  type MatchmakingMatchedPayload,
   ErrorCode,
 } from "@arena/shared";
 import { API_URL } from "@/lib/api";
@@ -63,6 +65,8 @@ import {
   applyTopicVotingStartedState,
   applyTopicVotingSummaryState,
   applyTopicVotingFinishedState,
+  applyMatchmakingStatusState,
+  applyMatchmakingMatchedState,
 } from "./socket-store.updaters";
 
 interface PendingTopicVoteCommand {
@@ -107,6 +111,15 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   room: null,
   match: null,
   topicVoting: null,
+  matchmaking: {
+    isQueued: false,
+    queuedAt: null,
+    elapsedSeconds: 0,
+    estimatedWaitSeconds: 0,
+    playersInQueue: 0,
+    matchedRoomCode: null,
+    matchedRoomId: null,
+  },
   lastAnswerResult: null,
   pendingAnswer: null,
 
@@ -317,6 +330,24 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         clearTopicVoteState(data.matchId);
         set((state) => applyTopicVotingFinishedState(state, data));
         console.log("🗳️ Topic voting finished:", data);
+      },
+    );
+
+    newSocket.on(
+      ServerEvent.MATCHMAKING_STATUS,
+      (data: MatchmakingStatusPayload) => {
+        if (get().socket !== newSocket) return;
+        set((state) => applyMatchmakingStatusState(state, data));
+        console.log("🎯 Matchmaking status:", data);
+      },
+    );
+
+    newSocket.on(
+      ServerEvent.MATCHMAKING_MATCHED,
+      (data: MatchmakingMatchedPayload) => {
+        if (get().socket !== newSocket) return;
+        set((state) => applyMatchmakingMatchedState(state, data));
+        console.log("🎉 Matchmaking matched:", data);
       },
     );
 
@@ -774,7 +805,56 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     emitIfConnected(socket, ClientEvent.START_MATCH, { roomId });
   },
 
+  // Matchmaking
+  joinMatchmaking: (category?: string) => {
+    const socket = get().socket;
+    if (!socket?.connected) return;
+    emitIfConnected(socket, ClientEvent.JOIN_MATCHMAKING, {
+      category: category && category !== "ALL" ? category : undefined,
+    });
+    set((state) => ({
+      matchmaking: {
+        ...state.matchmaking,
+        isQueued: true,
+        queuedAt: Date.now(),
+        elapsedSeconds: 0,
+        estimatedWaitSeconds: 15,
+        matchedRoomCode: null,
+        matchedRoomId: null,
+      },
+    }));
+  },
+
+  leaveMatchmaking: () => {
+    const socket = get().socket;
+    if (socket?.connected) {
+      emitIfConnected(socket, ClientEvent.LEAVE_MATCHMAKING, {});
+    }
+    set((state) => ({
+      matchmaking: {
+        ...state.matchmaking,
+        isQueued: false,
+        queuedAt: null,
+        elapsedSeconds: 0,
+        estimatedWaitSeconds: 0,
+        matchedRoomCode: null,
+        matchedRoomId: null,
+      },
+    }));
+  },
+
+  clearMatchmakingMatched: () => {
+    set((state) => ({
+      matchmaking: {
+        ...state.matchmaking,
+        matchedRoomCode: null,
+        matchedRoomId: null,
+      },
+    }));
+  },
+
   // Vote Ban Topic
+
   voteBanTopic: (matchId: string, topic: string) => {
     const { socket, topicVoting } = get();
     if (!socket?.connected) return;

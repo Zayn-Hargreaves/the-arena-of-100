@@ -22,6 +22,7 @@ import {
   type RequestSnapshotPayload,
   type SubmitAnswerPayload,
   type VoteBanTopicPayload,
+  type JoinMatchmakingPayload,
   // Zod schemas (used by per-event validation pipes below)
   AuthenticatePayloadSchema,
   CreateRoomPayloadSchema,
@@ -32,12 +33,19 @@ import {
   StartMatchPayloadSchema,
   SubmitAnswerPayloadSchema,
   VoteBanTopicPayloadSchema,
+  JoinMatchmakingPayloadSchema,
 } from "@arena/shared";
-import { AuthHandler, RoomHandler, MatchHandler } from "./handlers";
+import {
+  AuthHandler,
+  RoomHandler,
+  MatchHandler,
+  MatchmakingHandler,
+} from "./handlers";
 import { AuthService } from "../modules/auth/auth.service";
 import { PresenceService } from "../modules/match/presence.service";
 import { GameLoopService } from "../modules/match/game-loop.service";
 import { ClusterService } from "../modules/cluster/cluster.service";
+import { MatchmakingWorkerService } from "../modules/matchmaking/matchmaking-worker.service";
 import { WsValidationPipe } from "../common/pipes/ws-validation.pipe";
 import { WsExceptionFilter } from "../common/filters/ws-exception.filter";
 
@@ -75,6 +83,9 @@ const RequestSnapshotPayloadPipe = new WsValidationPipe<RequestSnapshotPayload>(
 const VoteBanTopicPayloadPipe = new WsValidationPipe<VoteBanTopicPayload>(
   VoteBanTopicPayloadSchema,
 );
+const JoinMatchmakingPayloadPipe = new WsValidationPipe<JoinMatchmakingPayload>(
+  JoinMatchmakingPayloadSchema,
+);
 const HeartbeatPayloadPipe = new WsValidationPipe<HeartbeatPayload>(
   HeartbeatPayloadSchema,
 );
@@ -106,16 +117,20 @@ export class GameGateway
     private readonly authHandler: AuthHandler,
     private readonly roomHandler: RoomHandler,
     private readonly matchHandler: MatchHandler,
+    private readonly matchmakingHandler: MatchmakingHandler,
     private readonly authService: AuthService,
     private readonly presenceService: PresenceService,
     private readonly gameLoopService: GameLoopService,
     private readonly clusterService: ClusterService,
+    private readonly matchmakingWorkerService: MatchmakingWorkerService,
   ) {}
 
   afterInit(server: Server) {
     this.presenceService.setServer(server);
     this.gameLoopService.setServer(server);
     this.clusterService.setServer(server);
+    this.matchmakingWorkerService.setServer(server);
+
     server.use((socket: Socket, next: (err?: Error) => void) => {
       let token = socket.handshake.auth?.token;
 
@@ -161,6 +176,20 @@ export class GameGateway
     // around the room/match lookup, so a rejection here would only come
     // from a programming bug — and we want those to surface, not hide.
     await this.authHandler.handleDisconnect(client);
+    await this.matchmakingHandler.handleDisconnect(client);
+  }
+
+  @SubscribeMessage(ClientEvent.JOIN_MATCHMAKING)
+  handleJoinMatchmaking(
+    @ConnectedSocket() client: Socket,
+    @MessageBody(JoinMatchmakingPayloadPipe) payload: JoinMatchmakingPayload,
+  ) {
+    return this.matchmakingHandler.handleJoinMatchmaking(client, payload);
+  }
+
+  @SubscribeMessage(ClientEvent.LEAVE_MATCHMAKING)
+  handleLeaveMatchmaking(@ConnectedSocket() client: Socket) {
+    return this.matchmakingHandler.handleLeaveMatchmaking(client);
   }
 
   @SubscribeMessage(ClientEvent.AUTHENTICATE)

@@ -7,6 +7,9 @@
 import { describe, it, expect } from "vitest";
 import {
   ReplayEventSchema,
+  JoinMatchmakingPayloadSchema,
+  MatchmakingStatusPayloadSchema,
+  MatchmakingMatchedPayloadSchema,
   type ReplayEvent,
   type ReplayPlayerPresencePayload,
   type ReplayRoundStartedPayload,
@@ -94,5 +97,38 @@ describe("ReplayEvent schema <-> type derivation", () => {
       },
     };
     expect(ReplayEventSchema.parse(sample).type).toBe("ROUND_STARTED");
+  });
+
+  describe("Matchmaking schemas", () => {
+    it("parses valid JoinMatchmaking payload", () => {
+      const valid = JoinMatchmakingPayloadSchema.parse({ category: "SCIENCE" });
+      expect(valid.category).toBe("SCIENCE");
+
+      const empty = JoinMatchmakingPayloadSchema.parse({});
+      expect(empty.category).toBeUndefined();
+    });
+
+    it("parses valid MatchmakingStatus payload", () => {
+      const status = MatchmakingStatusPayloadSchema.parse({
+        isQueued: true,
+        queuedAt: 123456,
+        elapsedSeconds: 5,
+        estimatedWaitSeconds: 15,
+        playersInQueue: 10,
+      });
+      expect(status.isQueued).toBe(true);
+      expect(status.playersInQueue).toBe(10);
+    });
+
+    it("parses valid MatchmakingMatched payload", () => {
+      const matched = MatchmakingMatchedPayloadSchema.parse({
+        roomId: "room-123",
+        roomCode: "ABCDEF",
+        matchId: "match-456",
+      });
+      expect(matched.roomId).toBe("room-123");
+      expect(matched.roomCode).toBe("ABCDEF");
+      expect(matched.matchId).toBe("match-456");
+    });
   });
 });

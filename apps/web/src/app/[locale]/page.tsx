@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { AvatarSelector } from "@/components/home/avatar-selector";
+import { MatchmakingModal } from "@/components/matchmaking/matchmaking-modal";
 import { Link, useRouter } from "@/i18n/routing";
 import { MiniGlyph } from "@/components/ui/mini-glyph";
 import { useTranslations } from "next-intl";
@@ -17,7 +18,7 @@ export default function HomePage() {
   const router = useRouter();
   const t = useTranslations("HomePage");
   const { toast } = useToast();
-  const { username, connect, authenticate } = useSocketStore();
+  const { username, connect, authenticate, joinMatchmaking } = useSocketStore();
 
   const [nickname, setNickname] = useState("");
   const [roomCode, setRoomCode] = useState("");
@@ -145,7 +146,7 @@ export default function HomePage() {
 
   const handleQuickMatchSubmit = (e: React.SubmitEvent) => {
     triggerSubmitTransition(e, () => {
-      router.push("/room/create");
+      joinMatchmaking();
     });
   };
 
@@ -426,6 +427,9 @@ export default function HomePage() {
           </div>
         </div>
       </footer>
+
+      {/* Matchmaking Queue Modal */}
+      <MatchmakingModal />
     </main>
   );
 }

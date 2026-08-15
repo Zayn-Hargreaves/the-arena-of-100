@@ -32,6 +32,8 @@ import {
   applyTopicVotingStartedState,
   applyTopicVotingSummaryState,
   applyTopicVotingFinishedState,
+  applyMatchmakingStatusState,
+  applyMatchmakingMatchedState,
 } from "./socket-store.updaters";
 
 import type { Match, Room, SocketState } from "./socket-store.types";
@@ -106,6 +108,15 @@ function makeState(overrides: Partial<SocketState> = {}): SocketState {
     room: null,
     match: null,
     topicVoting: null,
+    matchmaking: {
+      isQueued: false,
+      queuedAt: null,
+      elapsedSeconds: 0,
+      estimatedWaitSeconds: 0,
+      playersInQueue: 0,
+      matchedRoomCode: null,
+      matchedRoomId: null,
+    },
     lastAnswerResult: null,
     pendingAnswer: null,
     remainingCount: null,
@@ -124,6 +135,9 @@ function makeState(overrides: Partial<SocketState> = {}): SocketState {
     joinRoom: () => Promise.resolve(),
     leaveRoom: () => {},
     startMatch: () => {},
+    joinMatchmaking: () => {},
+    leaveMatchmaking: () => {},
+    clearMatchmakingMatched: () => {},
     voteBanTopic: () => {},
     submitAnswer: () => null,
     requestSnapshot: () => {},
@@ -2230,6 +2244,41 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         responseTimeMs: 200,
       });
       expect(res).toEqual({});
+    });
+
+    it("applyMatchmakingStatusState updates matchmaking state correctly", () => {
+      const state = makeState();
+      const res = applyMatchmakingStatusState(state, {
+        isQueued: true,
+        queuedAt: 1000,
+        elapsedSeconds: 10,
+        estimatedWaitSeconds: 20,
+        playersInQueue: 5,
+      });
+      expect(res.matchmaking?.isQueued).toBe(true);
+      expect(res.matchmaking?.playersInQueue).toBe(5);
+    });
+
+    it("applyMatchmakingMatchedState updates matchmaking state with roomCode", () => {
+      const state = makeState({
+        matchmaking: {
+          isQueued: true,
+          queuedAt: 1000,
+          elapsedSeconds: 15,
+          estimatedWaitSeconds: 15,
+          playersInQueue: 10,
+          matchedRoomCode: null,
+          matchedRoomId: null,
+        },
+      });
+      const res = applyMatchmakingMatchedState(state, {
+        roomId: "r-123",
+        roomCode: "MATCH1",
+        matchId: "m-123",
+      });
+      expect(res.matchmaking?.isQueued).toBe(false);
+      expect(res.matchmaking?.matchedRoomCode).toBe("MATCH1");
+      expect(res.matchmaking?.matchedRoomId).toBe("r-123");
     });
   });
 });

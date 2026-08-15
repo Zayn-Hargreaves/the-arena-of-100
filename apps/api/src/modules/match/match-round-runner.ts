@@ -3,6 +3,7 @@ import { Server } from "socket.io";
 import { MatchStateMachine } from "@arena/game-core";
 import {
   GAME_CONFIG,
+  MATCHMAKING_CONFIG,
   MatchStatus,
   RoomStatus,
   RoomError,
@@ -15,6 +16,7 @@ import { RoomService } from "./../room/room.service";
 import { MatchTimerRegistry } from "./match-timer.registry";
 import { emitMatchStarted, emitRoomStatusUpdated } from "./game-loop.helpers";
 import {
+  emitAnswerResult,
   emitMatchFinished,
   emitPlayerEliminated,
   emitRoundEnded,
@@ -22,11 +24,13 @@ import {
   emitTopicVotingStarted,
   emitTopicVotingFinished,
 } from "./game-loop.events";
+
 import { recoverRoundEnd, type RoundEndContext } from "./match-round-recovery";
 import {
   disconnectMatchPlayer,
   leaveMatchPlayer,
 } from "./match-player-lifecycle";
+import { isBotName } from "../matchmaking/bot.service";
 
 // ============================================================
 // MatchRoundRunner — the timer-driven match loop
@@ -654,12 +658,103 @@ export class MatchRoundRunner {
       round.endsAt,
     );
 
-    // 6. Set 15s timer → endRound (shared registration path with resume).
+    // 6. Schedule simulated bot answers if any bot players are active
+    this.scheduleBotAnswers(matchId, roomId, server, stateMachine, {
+      id: question.id,
+      correctAnswer: question.correctAnswer,
+      options: question.options,
+      difficulty: question.difficulty,
+    });
+
+    // 7. Set 15s timer → endRound (shared registration path with resume).
     this.armPhaseTimer(
       matchId,
       this.roundEndTimerCallback(matchId, roomId, server),
       GAME_CONFIG.ROUND_DURATION_MS,
     );
+  }
+
+  /**
+   * Schedule simulated answers for bot players during ROUND_ACTIVE.
+   */
+  private scheduleBotAnswers(
+    matchId: string,
+    roomId: string,
+    server: Server,
+    stateMachine: MatchStateMachine,
+    question: {
+      id: string;
+      correctAnswer: string;
+      options: string[];
+      difficulty?: string;
+    },
+  ): void {
+    const state = stateMachine.getState();
+    const botPlayerIds = state.survivingPlayerIds.filter((pid) => {
+      const p = state.players.get(pid);
+      return p ? isBotName(p.name) : false;
+    });
+
+    if (botPlayerIds.length === 0) return;
+
+    let correctProb = 0.65;
+    const diff = question.difficulty?.toUpperCase();
+    if (diff === "EASY") correctProb = 0.85;
+    else if (diff === "HARD") correctProb = 0.45;
+
+    const wrongOptions = question.options.filter(
+      (opt) => opt !== question.correctAnswer,
+    );
+
+    const minDelay = MATCHMAKING_CONFIG.MIN_BOT_ANSWER_DELAY_MS;
+    const maxDelay = MATCHMAKING_CONFIG.MAX_BOT_ANSWER_DELAY_MS;
+
+    for (const botId of botPlayerIds) {
+      const isCorrect = Math.random() < correctProb;
+      const chosenAnswer =
+        isCorrect || wrongOptions.length === 0
+          ? question.correctAnswer
+          : wrongOptions[Math.floor(Math.random() * wrongOptions.length)] ||
+            question.correctAnswer;
+
+      const responseTimeMs = Math.floor(
+        minDelay + Math.random() * (maxDelay - minDelay),
+      );
+
+      this.armPhaseTimer(
+        matchId,
+        async () => {
+          try {
+            if (!(await this.ownership.assertOwnership(matchId))) return;
+            const sm = await this.matchService.getStateMachine(matchId);
+            if (!sm || sm.getState().status !== MatchStatus.ROUND_ACTIVE)
+              return;
+
+            const round = sm.getCurrentRound();
+            if (!round) return;
+
+            const result = sm.submitAnswer(botId, chosenAnswer, responseTimeMs);
+            const outcome =
+              await this.matchService.persistStateMachine(matchId);
+            if (outcome !== "APPLIED") return;
+
+            emitAnswerResult(
+              server,
+              roomId,
+              matchId,
+              botId,
+              result,
+              round.roundNo,
+            );
+
+            await this.checkEarlyTermination(matchId, roomId, server);
+          } catch {
+            // best-effort bot submission
+          }
+        },
+        responseTimeMs,
+      );
+    }
   }
 
   // ============================================================
