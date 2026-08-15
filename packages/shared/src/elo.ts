@@ -60,7 +60,7 @@ export const RANK_TIERS = [
   {
     tier: "GRANDMASTER",
     minElo: 2200,
-    maxElo: 9999,
+    maxElo: Number.POSITIVE_INFINITY,
     i18nKey: "rank.tiers.grandmaster",
     badgeGlyph: "🌟",
     accentColor: "#FFD54F",
@@ -93,7 +93,7 @@ export interface RankTierInfo {
  * Determine the RankTier corresponding to a given numeric ELO rating.
  */
 export function getRankTier(elo: number): RankTier {
-  const safeElo = Math.max(0, Math.floor(elo));
+  const safeElo = Math.max(0, Number.isFinite(elo) ? Math.floor(elo) : 0);
   for (let i = RANK_TIERS.length - 1; i >= 0; i--) {
     if (safeElo >= RANK_TIERS[i].minElo) {
       return RANK_TIERS[i].tier;
