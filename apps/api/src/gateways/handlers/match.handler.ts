@@ -477,6 +477,7 @@ export class MatchHandler extends BaseHandler {
               type: "vote_ban_topic",
               userId,
               topic: payload.topic,
+              ...(payload.commandId ? { commandId: payload.commandId } : {}),
             },
           }),
         );
@@ -497,6 +498,7 @@ export class MatchHandler extends BaseHandler {
           code,
           message: msg,
           failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+          commandId: payload.commandId,
         });
       },
     );

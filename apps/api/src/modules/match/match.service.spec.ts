@@ -2,6 +2,8 @@ import {
   MatchService,
   matchCacheKey,
   matchGenerationKey,
+  INCR_MATCH_GENERATION_SCRIPT,
+  MATCH_CACHE_TTL_SEC,
 } from "./match.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
@@ -61,6 +63,7 @@ describe("MatchService", () => {
         ),
       del: vi.fn(),
       incr: vi.fn().mockResolvedValue(1),
+      eval: vi.fn().mockResolvedValue(1),
       fencedStateSet: vi.fn().mockResolvedValue("APPLIED"),
       fencedStateDelete: vi.fn().mockResolvedValue(true),
       setIfGenMatches: vi.fn().mockResolvedValue(true),
@@ -1362,18 +1365,24 @@ describe("MatchService", () => {
       vi.useRealTimers();
     });
 
-    it("persists generation invalidation retry when redis.incr fails initially, recovering on timer tick", async () => {
+    it("persists generation invalidation retry when redis.eval fails initially, recovering on timer tick", async () => {
       vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m_retry",
         roomId: "r_retry",
       } as any);
 
-      // Fail initial redis.incr
-      vi.mocked(redis.incr).mockRejectedValueOnce(
+      // Fail initial redis.eval
+      vi.mocked(redis.eval).mockRejectedValueOnce(
         new Error("Redis transient error"),
       );
 
       await service.finishMatch("m_retry", "u1", "r_retry");
+
+      expect(redis.eval).toHaveBeenCalledWith(
+        INCR_MATCH_GENERATION_SCRIPT,
+        [matchGenerationKey("m_retry")],
+        [String(MATCH_CACHE_TTL_SEC)],
+      );
 
       // Verify pending invalidation flag is set
       expect(service.hasPendingGenerationInvalidation("m_retry")).toBe(true);
@@ -1386,7 +1395,7 @@ describe("MatchService", () => {
       expect(redis.setIfGenMatches).not.toHaveBeenCalled();
 
       // Fast-forward timer to trigger retry (attempt 2 delay: 100ms)
-      vi.mocked(redis.incr).mockResolvedValue(2 as any);
+      vi.mocked(redis.eval).mockResolvedValue(2 as any);
       vi.mocked(redis.del).mockClear();
       await vi.advanceTimersByTimeAsync(100);
 
@@ -1407,14 +1416,14 @@ describe("MatchService", () => {
       expect(redis.setIfGenMatches).toHaveBeenCalled();
     });
 
-    it("retries with exponential backoff on multiple redis.incr failures until recovery", async () => {
+    it("retries with exponential backoff on multiple redis.eval failures until recovery", async () => {
       vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m_backoff",
         roomId: "r_backoff",
       } as any);
 
       // Fail attempts 1, 2, 3
-      vi.mocked(redis.incr)
+      vi.mocked(redis.eval)
         .mockRejectedValueOnce(new Error("Redis error 1"))
         .mockRejectedValueOnce(new Error("Redis error 2"))
         .mockRejectedValueOnce(new Error("Redis error 3"))
@@ -1442,8 +1451,8 @@ describe("MatchService", () => {
         roomId: "r_max_retries",
       } as any);
 
-      // Always fail redis.incr
-      vi.mocked(redis.incr).mockRejectedValue(
+      // Always fail redis.eval
+      vi.mocked(redis.eval).mockRejectedValue(
         new Error("Redis persistent failure"),
       );
 
@@ -1479,7 +1488,7 @@ describe("MatchService", () => {
 
       // Advance time further to confirm no further retries occur
       await vi.advanceTimersByTimeAsync(2000);
-      expect(redis.incr).toHaveBeenCalledTimes(5);
+      expect(redis.eval).toHaveBeenCalledTimes(5);
     });
 
     it("handles two overlapping invalidations on the same matchId without orphan timers or premature state clearing", async () => {
@@ -1488,19 +1497,19 @@ describe("MatchService", () => {
         resolveFirstIncr = resolve;
       });
 
-      // First invalidation starts but remains pending on redis.incr
-      vi.mocked(redis.incr).mockImplementationOnce(() => firstIncrPromise);
+      // First invalidation starts but remains pending on redis.eval
+      vi.mocked(redis.eval).mockImplementationOnce(() => firstIncrPromise);
       void service.invalidateMatchGeneration("m_overlap");
       await vi.advanceTimersByTimeAsync(0);
       expect(service.hasPendingGenerationInvalidation("m_overlap")).toBe(true);
 
       // Second invalidation is triggered while first is still pending, but fails attempt 1
-      vi.mocked(redis.incr).mockRejectedValueOnce(new Error("Redis error 2"));
+      vi.mocked(redis.eval).mockRejectedValueOnce(new Error("Redis error 2"));
       void service.invalidateMatchGeneration("m_overlap");
       await vi.advanceTimersByTimeAsync(0);
       expect(service.hasPendingGenerationInvalidation("m_overlap")).toBe(true);
 
-      // Resolve the first invalidation's redis.incr call
+      // Resolve the first invalidation's redis.eval call
       resolveFirstIncr(1);
       await vi.advanceTimersByTimeAsync(0);
 
@@ -1508,7 +1517,7 @@ describe("MatchService", () => {
       expect(service.hasPendingGenerationInvalidation("m_overlap")).toBe(true);
 
       // Second invalidation's retry attempt 2 succeeds at +100ms
-      vi.mocked(redis.incr).mockResolvedValueOnce(2);
+      vi.mocked(redis.eval).mockResolvedValueOnce(2);
       await vi.advanceTimersByTimeAsync(100);
 
       expect(service.hasPendingGenerationInvalidation("m_overlap")).toBe(false);
@@ -1517,7 +1526,7 @@ describe("MatchService", () => {
 
       // Advance time further to confirm no further retries occur
       await vi.advanceTimersByTimeAsync(2000);
-      expect(redis.incr).toHaveBeenCalledTimes(3);
+      expect(redis.eval).toHaveBeenCalledTimes(3);
       expect(service.hasPendingGenerationInvalidation("m_overlap")).toBe(false);
       expect(vi.getTimerCount()).toBe(0);
     });
@@ -1527,7 +1536,7 @@ describe("MatchService", () => {
         id: "m_destroy",
         roomId: "r_destroy",
       } as any);
-      vi.mocked(redis.incr).mockRejectedValueOnce(new Error("Redis error"));
+      vi.mocked(redis.eval).mockRejectedValueOnce(new Error("Redis error"));
 
       await service.finishMatch("m_destroy", "u1", "r_destroy");
       expect(service.hasPendingGenerationInvalidation("m_destroy")).toBe(true);
@@ -1536,8 +1545,8 @@ describe("MatchService", () => {
 
       // Advance timers — no further retry should run
       await vi.advanceTimersByTimeAsync(5000);
-      // Redis.incr only called once for the initial attempt
-      expect(redis.incr).toHaveBeenCalledTimes(1);
+      // Redis.eval only called once for the initial attempt
+      expect(redis.eval).toHaveBeenCalledTimes(1);
     });
   });
 

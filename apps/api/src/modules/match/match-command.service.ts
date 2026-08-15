@@ -38,8 +38,15 @@ import {
   applyCardPickCommand,
   applyCardPlayCommand,
 } from "./match-card-command-authoritative";
+import { emitPlayerCommandError } from "./match-card-command.helpers";
 import { appliedSetKey } from "./match-command.keys";
-import { MatchStatus, type MatchState } from "@arena/shared";
+import {
+  ClientEvent,
+  ErrorCode,
+  MatchStatus,
+  RoomError,
+  type MatchState,
+} from "@arena/shared";
 import { MatchStateMachine, tallyTopicVotes } from "@arena/game-core";
 import { emitTopicVotingSummary } from "./game-loop.events";
 
@@ -637,6 +644,16 @@ export class MatchCommandService implements OnModuleDestroy {
       this.logger.warn(
         `applyVoteBanTopicAuthoritative: voteBanTopic rejected for ${env.matchId}/${env.body.userId} (TOPIC_VOTING_CLOSED)`,
       );
+      if (env.body.commandId) {
+        emitPlayerCommandError(
+          this.logger,
+          server,
+          env.body.userId,
+          ClientEvent.VOTE_BAN_TOPIC,
+          env.body.commandId,
+          new RoomError(ErrorCode.TOPIC_VOTING_CLOSED),
+        );
+      }
       return "DUPLICATE_SUBMISSION";
     }
 
@@ -666,6 +683,16 @@ export class MatchCommandService implements OnModuleDestroy {
       this.logger.warn(
         `applyVoteBanTopicAuthoritative: voteBanTopic rejected for ${env.matchId}/${env.body.userId} (acking as no-op): ${error instanceof Error ? error.message : String(error)}`,
       );
+      if (env.body.commandId) {
+        emitPlayerCommandError(
+          this.logger,
+          server,
+          env.body.userId,
+          ClientEvent.VOTE_BAN_TOPIC,
+          env.body.commandId,
+          error,
+        );
+      }
       return "DUPLICATE_SUBMISSION";
     }
 

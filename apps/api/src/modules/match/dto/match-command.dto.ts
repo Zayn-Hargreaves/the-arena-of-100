@@ -43,6 +43,7 @@ export const voteBanTopicBodySchema = z.object({
   type: z.literal("vote_ban_topic"),
   userId: z.string().min(1),
   topic: z.string().min(1),
+  commandId: z.string().min(1).optional(),
 });
 
 export const commandBodySchema = z.discriminatedUnion("type", [

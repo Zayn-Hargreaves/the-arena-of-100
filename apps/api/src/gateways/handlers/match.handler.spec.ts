@@ -1381,6 +1381,37 @@ describe("MatchHandler", () => {
       expect(matchService.persistStateMachine).not.toHaveBeenCalled();
     });
 
+    it("forwards vote_ban_topic envelope preserving commandId", async () => {
+      const machine = {
+        getState: vi.fn().mockReturnValue({
+          players: new Map([["u1", { id: "u1", status: PlayerStatus.ACTIVE }]]),
+        }),
+      } as any;
+      vi.mocked(matchService.getStateMachine).mockResolvedValue(machine);
+      vi.mocked(matchCommand.forward).mockClear();
+
+      await handler.handleVoteBanTopic(client, server, {
+        matchId: "m1",
+        topic: "SCIENCE",
+        commandId: "cmd-vote-1",
+      });
+
+      expect(matchCommand.forward).toHaveBeenCalledTimes(1);
+      const env = matchCommand.forward.mock.calls[0][0];
+      expect(env).toMatchObject({
+        schemaVersion: 1,
+        matchId: "m1",
+        emittedByNodeId: "node-a",
+        body: {
+          type: "vote_ban_topic",
+          userId: "u1",
+          topic: "SCIENCE",
+          commandId: "cmd-vote-1",
+        },
+      });
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+    });
+
     it("emits MATCH_NOT_FOUND and does not forward when matchId is nonexistent", async () => {
       vi.mocked(matchService.getRoomIdByMatchId).mockResolvedValueOnce(
         undefined,

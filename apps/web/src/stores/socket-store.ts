@@ -65,10 +65,27 @@ import {
   applyTopicVotingFinishedState,
 } from "./socket-store.updaters";
 
-let lastTopicVoteRollback: {
+interface PendingTopicVoteCommand {
+  commandId: string;
   matchId: string;
-  previousTopic: string | null;
-} | null = null;
+  topic: string;
+}
+
+const pendingTopicVoteCommandsByMatch = new Map<
+  string,
+  PendingTopicVoteCommand[]
+>();
+const confirmedTopicVoteBaselineByMatch = new Map<string, string | null>();
+
+function clearTopicVoteState(matchId?: string) {
+  if (matchId) {
+    pendingTopicVoteCommandsByMatch.delete(matchId);
+    confirmedTopicVoteBaselineByMatch.delete(matchId);
+  } else {
+    pendingTopicVoteCommandsByMatch.clear();
+    confirmedTopicVoteBaselineByMatch.clear();
+  }
+}
 
 export const useSocketStore = create<SocketState>((set, get) => ({
   // Initial state
@@ -270,6 +287,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       ServerEvent.TOPIC_VOTING_STARTED,
       (data: TopicVotingStartedPayload) => {
         if (get().socket !== newSocket) return;
+        clearTopicVoteState(data.matchId);
         set((state) => applyTopicVotingStartedState(state, data));
         console.log("🗳️ Topic voting started:", data);
       },
@@ -288,6 +306,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       ServerEvent.TOPIC_VOTING_FINISHED,
       (data: TopicVotingFinishedPayload) => {
         if (get().socket !== newSocket) return;
+        clearTopicVoteState(data.matchId);
         set((state) => applyTopicVotingFinishedState(state, data));
         console.log("🗳️ Topic voting finished:", data);
       },
@@ -433,19 +452,53 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       ) {
         set({ pendingAnswer: null });
       }
-      if (
-        data.failedEvent === ClientEvent.VOTE_BAN_TOPIC &&
-        lastTopicVoteRollback &&
-        topicVoting &&
-        topicVoting.matchId === lastTopicVoteRollback.matchId
-      ) {
-        set({
-          topicVoting: {
-            ...topicVoting,
-            myVotedTopic: lastTopicVoteRollback.previousTopic,
-          },
-        });
-        lastTopicVoteRollback = null;
+      if (data.failedEvent === ClientEvent.VOTE_BAN_TOPIC && data.commandId) {
+        let failedCmd: PendingTopicVoteCommand | null = null;
+
+        for (const [
+          matchId,
+          cmds,
+        ] of pendingTopicVoteCommandsByMatch.entries()) {
+          const cmdIndex = cmds.findIndex(
+            (c) => c.commandId === data.commandId,
+          );
+          if (cmdIndex !== -1) {
+            [failedCmd] = cmds.splice(cmdIndex, 1);
+            if (cmds.length === 0) {
+              pendingTopicVoteCommandsByMatch.delete(matchId);
+            }
+            break;
+          }
+        }
+
+        if (failedCmd) {
+          const matchPending =
+            pendingTopicVoteCommandsByMatch.get(failedCmd.matchId) ?? [];
+          const hasRemainingMatchCmds = matchPending.length > 0;
+          const baselineTopic = confirmedTopicVoteBaselineByMatch.has(
+            failedCmd.matchId,
+          )
+            ? confirmedTopicVoteBaselineByMatch.get(failedCmd.matchId)!
+            : null;
+
+          let recomputedTopic = baselineTopic;
+          for (const cmd of matchPending) {
+            recomputedTopic = cmd.topic;
+          }
+
+          if (!hasRemainingMatchCmds) {
+            confirmedTopicVoteBaselineByMatch.delete(failedCmd.matchId);
+          }
+
+          if (topicVoting && topicVoting.matchId === failedCmd.matchId) {
+            set({
+              topicVoting: {
+                ...topicVoting,
+                myVotedTopic: recomputedTopic,
+              },
+            });
+          }
+        }
       }
       // If unauthorized or invalid token, clear local auth state and
       // null the socket so the next connect() can reinitialize
@@ -518,7 +571,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       clearInterval(heartbeatInterval);
     }
     if (socket) {
-      lastTopicVoteRollback = null;
+      clearTopicVoteState();
       socket.disconnect();
       set({
         socket: null,
@@ -727,15 +780,39 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     const { socket, topicVoting } = get();
     if (!socket?.connected) return;
 
+    const commandId = generateId();
+
     if (topicVoting && topicVoting.matchId === matchId) {
-      lastTopicVoteRollback = {
+      const matchCmds = pendingTopicVoteCommandsByMatch.get(matchId) ?? [];
+
+      if (
+        !confirmedTopicVoteBaselineByMatch.has(matchId) ||
+        matchCmds.length === 0
+      ) {
+        confirmedTopicVoteBaselineByMatch.set(
+          matchId,
+          topicVoting.myVotedTopic,
+        );
+      }
+
+      const newCmd: PendingTopicVoteCommand = {
+        commandId,
         matchId,
-        previousTopic: topicVoting.myVotedTopic,
+        topic,
       };
+      matchCmds.push(newCmd);
+      pendingTopicVoteCommandsByMatch.set(matchId, matchCmds);
+
+      const baseline = confirmedTopicVoteBaselineByMatch.get(matchId) ?? null;
+      let effectiveTopic = baseline;
+      for (const cmd of matchCmds) {
+        effectiveTopic = cmd.topic;
+      }
+
       set({
         topicVoting: {
           ...topicVoting,
-          myVotedTopic: topic,
+          myVotedTopic: effectiveTopic,
         },
       });
     }
@@ -743,6 +820,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     emitIfConnected(socket, ClientEvent.VOTE_BAN_TOPIC, {
       matchId,
       topic,
+      commandId,
     });
   },
 

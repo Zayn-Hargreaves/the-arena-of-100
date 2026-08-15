@@ -119,6 +119,7 @@ export interface ErrorPayload {
   code: string;
   message: string;
   submissionId?: string;
+  commandId?: string;
   failedEvent?: ClientEvent;
   // Optional per-field validation details, populated for
   // `INVALID_PAYLOAD` from `WsValidationError` so the client can

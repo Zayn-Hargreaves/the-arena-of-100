@@ -195,6 +195,7 @@ export type CardPlayPayload = z.infer<typeof CardPlayPayloadSchema>;
 export const VoteBanTopicPayloadSchema = z.object({
   matchId: idSchema,
   topic: z.string().min(1).max(64),
+  commandId: z.string().min(1).max(COMMAND_ID_MAX_LENGTH).optional(),
 });
 export type VoteBanTopicPayload = z.infer<typeof VoteBanTopicPayloadSchema>;
 

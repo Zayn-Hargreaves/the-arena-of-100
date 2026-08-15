@@ -29,7 +29,18 @@ import {
 /** Bootstrap revision for the fenced match:state CAS (B2c). */
 const INITIAL_STATE_REVISION = 0;
 const STATE_TTL_SEC = 86400; // 24h
-const MATCH_CACHE_TTL_SEC = 5; // 5s short-lived read cache to absorb DB spikes
+export const MATCH_CACHE_TTL_SEC = 5; // 5s short-lived read cache to absorb DB spikes
+
+/**
+ * Atomic Lua script to increment match generation counter and set expiration TTL.
+ * ARGV[1] carries the TTL in seconds (must be at least MATCH_CACHE_TTL_SEC).
+ * Returns the incremented generation counter.
+ */
+export const INCR_MATCH_GENERATION_SCRIPT = `
+local v = redis.call('incr', KEYS[1])
+redis.call('expire', KEYS[1], tonumber(ARGV[1]))
+return v
+`;
 
 const MAX_GENERATION_INVALIDATION_ATTEMPTS = 5;
 
@@ -482,7 +493,11 @@ export class MatchService implements OnModuleDestroy {
     }
 
     try {
-      await this.redis.incr(matchGenerationKey(matchId));
+      await this.redis.eval(
+        INCR_MATCH_GENERATION_SCRIPT,
+        [matchGenerationKey(matchId)],
+        [String(MATCH_CACHE_TTL_SEC)],
+      );
       if (this.isDestroyed || this.invalidationEpochs.get(matchId) !== epoch) {
         return;
       }

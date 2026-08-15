@@ -954,13 +954,19 @@ describe("MatchCommandService (B4a)", () => {
       eventId = "evt-vote-1",
       userId = "p1",
       topic = "SCIENCE",
+      commandId?: string,
     ): CommandEnvelope<VoteBanTopicBody> => ({
       eventId,
       schemaVersion: 1,
       matchId: "m1",
       emittedByNodeId: "node-b",
       emittedAt: 1000,
-      body: { type: "vote_ban_topic", userId, topic },
+      body: {
+        type: "vote_ban_topic",
+        userId,
+        topic,
+        ...(commandId ? { commandId } : {}),
+      },
     });
 
     beforeEach(() => {
@@ -1114,6 +1120,71 @@ describe("MatchCommandService (B4a)", () => {
       expect(
         recorder.callsByEvent(ServerEvent.TOPIC_VOTING_SUMMARY).length,
       ).toBe(0);
+    });
+
+    it("emits ERROR with commandId to player when vote is rejected due to voting closed or invalid topic", async () => {
+      // 1. Rejection due to voting closed
+      const smClosed = new MatchStateMachine("m1", "r1", [
+        {
+          id: "p1",
+          name: "Alice",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+      ]);
+      smClosed.initTopicVoting(["SCIENCE", "HISTORY"]);
+      smClosed.transition(MatchStatus.COUNTDOWN);
+      matchService.getStateMachine.mockResolvedValue(smClosed);
+      const recorderClosed = makeMockServer();
+
+      const outcomeClosed = await service.applyVoteBanTopicAuthoritative(
+        voteEnv("evt-vote-closed", "p1", "SCIENCE", "cmd-vote-closed"),
+        OWNER,
+        recorderClosed.server,
+      );
+
+      expect(outcomeClosed).toBe("DUPLICATE_SUBMISSION");
+      const errorCallsClosed = recorderClosed.callsByEvent(ServerEvent.ERROR);
+      expect(errorCallsClosed.length).toBe(1);
+      expect(errorCallsClosed[0]?.[1]).toMatchObject({
+        code: ErrorCode.TOPIC_VOTING_CLOSED,
+        failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+        commandId: "cmd-vote-closed",
+      });
+
+      // 2. Rejection due to stateMachine error (e.g. invalid topic)
+      const smActive = new MatchStateMachine("m1", "r1", [
+        {
+          id: "p1",
+          name: "Alice",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+      ]);
+      smActive.initTopicVoting(["SCIENCE", "HISTORY"]);
+      matchService.getStateMachine.mockResolvedValue(smActive);
+      const recorderInvalid = makeMockServer();
+
+      const outcomeInvalid = await service.applyVoteBanTopicAuthoritative(
+        voteEnv("evt-vote-invalid", "p1", "INVALID_TOPIC", "cmd-vote-invalid"),
+        OWNER,
+        recorderInvalid.server,
+      );
+
+      expect(outcomeInvalid).toBe("DUPLICATE_SUBMISSION");
+      const errorCallsInvalid = recorderInvalid.callsByEvent(ServerEvent.ERROR);
+      expect(errorCallsInvalid.length).toBe(1);
+      expect(errorCallsInvalid[0]?.[1]).toMatchObject({
+        code: ErrorCode.INVALID_TOPIC,
+        failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+        commandId: "cmd-vote-invalid",
+      });
     });
 
     it("DUPLICATE_EVENT: a redelivered canonical vote emits summary during active voting, and suppresses broadcast after deadline", async () => {
