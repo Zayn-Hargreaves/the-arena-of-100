@@ -48,9 +48,13 @@ describe("MatchService", () => {
     redis = {
       set: vi.fn(),
       get: vi.fn(),
-      mget: vi.fn().mockImplementation(async (...keys: string[]) => {
-        return Promise.all(keys.map((k) => (redis.get as any)(k)));
-      }),
+      mget: vi
+        .fn()
+        .mockImplementation(
+          async (...keys: string[]): Promise<(string | null)[]> => {
+            return keys.map(() => null);
+          },
+        ),
       del: vi.fn(),
       incr: vi.fn().mockResolvedValue(1),
       fencedStateSet: vi.fn().mockResolvedValue("APPLIED"),
@@ -595,7 +599,7 @@ describe("MatchService", () => {
 
   describe("getMatch", () => {
     it("returns match when found from DB and caches it in Redis", async () => {
-      vi.mocked(redis.get).mockResolvedValue(null);
+      vi.mocked(redis.mget).mockResolvedValue([null, null]);
       vi.mocked(prisma.match.findUnique).mockResolvedValue({ id: "m1" } as any);
       const result = await service.getMatch("m1");
       expect(result.id).toBe("m1");
@@ -639,15 +643,10 @@ describe("MatchService", () => {
           },
         ],
       };
-      vi.mocked(redis.get).mockImplementation(async (key: string) => {
-        if (key === matchCacheKey("m1")) {
-          return JSON.stringify({ gen: "0", data: cachedMatch });
-        }
-        if (key === "match:gen:m1") {
-          return "0";
-        }
-        return null;
-      });
+      vi.mocked(redis.mget).mockResolvedValue([
+        JSON.stringify({ gen: "0", data: cachedMatch }),
+        "0",
+      ]);
       const result = await service.getMatch("m1");
       expect(result.id).toBe("m1");
       expect(result.status).toBe("FINISHED");
@@ -659,18 +658,13 @@ describe("MatchService", () => {
     });
 
     it("treats cached payload with generation mismatch as cache miss", async () => {
-      vi.mocked(redis.get).mockImplementation(async (key: string) => {
-        if (key === matchCacheKey("m1")) {
-          return JSON.stringify({
-            gen: "0",
-            data: { id: "m1", status: "STALE" },
-          });
-        }
-        if (key === "match:gen:m1") {
-          return "1";
-        }
-        return null;
-      });
+      vi.mocked(redis.mget).mockResolvedValue([
+        JSON.stringify({
+          gen: "0",
+          data: { id: "m1", status: "STALE" },
+        }),
+        "1",
+      ]);
       vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m1",
         status: "FINISHED",
@@ -688,11 +682,10 @@ describe("MatchService", () => {
       let currentGen = "0";
       let cacheValue: string | null = null;
 
-      vi.mocked(redis.get).mockImplementation(async (key: string) => {
-        if (key === matchCacheKey("m1")) return cacheValue;
-        if (key === "match:gen:m1") return currentGen;
-        return null;
-      });
+      vi.mocked(redis.mget).mockImplementation(async () => [
+        cacheValue,
+        currentGen,
+      ]);
 
       (prisma.match.findUnique as any).mockImplementation(async () => {
         // Generation changes before setIfGenMatches is invoked
@@ -733,18 +726,18 @@ describe("MatchService", () => {
     });
 
     it("throws NotFoundException when not found", async () => {
-      vi.mocked(redis.get).mockResolvedValue(null);
+      vi.mocked(redis.mget).mockResolvedValue([null, null]);
       vi.mocked(prisma.match.findUnique).mockResolvedValue(null);
       await expect(service.getMatch("m1")).rejects.toThrow(NotFoundException);
     });
 
     it("skips writing to Redis cache if reading match generation from Redis threw an error", async () => {
-      vi.mocked(redis.get).mockImplementation(async (key: string) => {
-        if (key === "match:gen:m1") {
-          throw new Error("Redis connection dropped");
-        }
-        return null;
-      });
+      vi.mocked(redis.mget).mockRejectedValue(
+        new Error("Redis connection dropped"),
+      );
+      vi.mocked(redis.get).mockRejectedValue(
+        new Error("Redis connection dropped"),
+      );
       vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m1",
         status: "FINISHED",
@@ -759,12 +752,13 @@ describe("MatchService", () => {
 
     it("bypasses reading cache and skips writing to cache when pending generation invalidation exists for match", async () => {
       (service as any).pendingGenerationInvalidations.add("m1");
-      vi.mocked(redis.get).mockResolvedValue(
+      vi.mocked(redis.mget).mockResolvedValue([
         JSON.stringify({
           gen: "0",
           data: { id: "m1", status: "STALE_IN_PROGRESS" },
         }),
-      );
+        "0",
+      ]);
       vi.mocked(prisma.match.findUnique).mockResolvedValue({
         id: "m1",
         status: "FINISHED",
@@ -775,7 +769,7 @@ describe("MatchService", () => {
       const result = await service.getMatch("m1");
       expect(result.id).toBe("m1");
       expect(result.status).toBe("FINISHED");
-      expect(redis.get).not.toHaveBeenCalledWith(matchCacheKey("m1"));
+      expect(redis.mget).not.toHaveBeenCalled();
       expect(prisma.match.findUnique).toHaveBeenCalled();
       expect(redis.setIfGenMatches).not.toHaveBeenCalled();
     });
@@ -1346,7 +1340,7 @@ describe("MatchService", () => {
       expect(service.hasPendingGenerationInvalidation("m_retry")).toBe(true);
 
       // While invalidation is pending, getMatch should not write to cache
-      vi.mocked(redis.get).mockResolvedValue(null);
+      vi.mocked(redis.mget).mockResolvedValue([null, null]);
       await service.getMatch("m_retry");
       expect(redis.setIfGenMatches).not.toHaveBeenCalled();
 
