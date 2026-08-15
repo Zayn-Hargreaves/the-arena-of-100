@@ -54,7 +54,7 @@ export class MatchmakingService {
 
     await this.queueStore.addTicket(ticket);
     this.logger.log(
-      `Player ${user.username} (${user.id}) joined matchmaking queue [ELO: ${playerElo}]`,
+      `Player ${user.id} joined matchmaking queue [ELO: ${playerElo}]`,
     );
 
     return this.getQueueStatus(user.id);
@@ -63,8 +63,8 @@ export class MatchmakingService {
   /**
    * Remove a player from the matchmaking queue.
    */
-  async leaveQueue(userId: string): Promise<boolean> {
-    const removed = await this.queueStore.removeTicket(userId);
+  async leaveQueue(userId: string, socketId?: string): Promise<boolean> {
+    const removed = await this.queueStore.removeTicket(userId, socketId);
     if (removed) {
       this.logger.log(`Player ${userId} left matchmaking queue`);
     }
@@ -83,7 +83,9 @@ export class MatchmakingService {
         isQueued: false,
         queuedAt: null,
         elapsedSeconds: 0,
-        estimatedWaitSeconds: 15,
+        estimatedWaitSeconds: Math.floor(
+          MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS / 1000,
+        ),
         playersInQueue: count,
       };
     }

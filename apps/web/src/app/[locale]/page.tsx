@@ -23,6 +23,7 @@ export default function HomePage() {
   const [nickname, setNickname] = useState("");
   const [roomCode, setRoomCode] = useState("");
   const [isJoining, setIsJoining] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [avatarIndex, setAvatarIndex] = useState(0);
   const [squash, setSquash] = useState(false);
 
@@ -122,6 +123,8 @@ export default function HomePage() {
     callback: () => void,
   ) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
     if (!nickname.trim()) {
       toast({ description: t("alerts.enterNickname") });
       return;
@@ -140,16 +143,19 @@ export default function HomePage() {
       createConfetti(clickX, clickY);
     }
 
+    setIsSubmitting(true);
     try {
       await authenticate(nickname.trim());
       callback();
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : t("alerts.enterNickname");
+        err instanceof Error ? err.message : t("alerts.authFailed");
       toast({
         variant: "error",
         description: message,
       });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -326,6 +332,7 @@ export default function HomePage() {
                 {/* Primary Giant 3D Play button */}
                 <Button
                   type="submit"
+                  disabled={isSubmitting}
                   className="w-full min-h-14 jelly-btn bg-candy-mint text-white font-display text-xl py-4 uppercase tracking-wide flex items-center justify-center gap-3"
                 >
                   <MiniGlyph variant="trend" className="w-5 h-5" />

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useRef } from "react";
+import { useTranslations } from "next-intl";
 import { useSocketStore } from "@/stores/socket-store";
 import { useRouter } from "@/i18n/routing";
 import { Zap, Swords, X } from "lucide-react";
@@ -20,6 +21,7 @@ function isFocusableElement(element: unknown): element is FocusableElement {
 }
 
 export function MatchmakingModal() {
+  const t = useTranslations("MatchmakingModal");
   const router = useRouter();
   const { matchmaking, leaveMatchmaking, clearMatchmakingMatched } =
     useSocketStore();
@@ -160,6 +162,15 @@ export function MatchmakingModal() {
     .padStart(2, "0");
   const seconds = (displaySeconds % 60).toString().padStart(2, "0");
 
+  const estSeconds =
+    matchmaking.estimatedWaitSeconds && matchmaking.estimatedWaitSeconds > 0
+      ? matchmaking.estimatedWaitSeconds
+      : 30;
+  const estMinutes = Math.floor(estSeconds / 60)
+    .toString()
+    .padStart(2, "0");
+  const estSecs = (estSeconds % 60).toString().padStart(2, "0");
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
       <div
@@ -178,16 +189,16 @@ export function MatchmakingModal() {
           >
             <Zap className="w-4 h-4 text-candy-yellow fill-candy-yellow" />
             <span className="font-black uppercase tracking-wider">
-              {isMatched ? "TRẬN ĐẤU ĐÃ TÌM THẤY!" : "ĐANG TÌM TRẬN ĐẤU..."}
+              {isMatched ? t("matchFoundTitle") : t("searchingTitle")}
             </span>
           </div>
 
           {!isMatched && (
             <button
               onClick={leaveMatchmaking}
-              aria-label="Hủy tìm trận"
+              aria-label={t("cancelButton")}
               className="p-1.5 rounded-xl border-2 border-candy-ink bg-candy-cloud hover:bg-candy-red hover:text-white transition-colors cursor-pointer"
-              title="Hủy tìm trận"
+              title={t("cancelButton")}
             >
               <X className="w-5 h-5" />
             </button>
@@ -202,10 +213,12 @@ export function MatchmakingModal() {
                 <Swords className="w-10 h-10" />
               </div>
               <h3 className="font-display font-black text-2xl text-candy-ink">
-                SẴN SÀNG VÀO TRẬN!
+                {t("readyToBattle")}
               </h3>
               <p className="font-display text-xs text-candy-slate font-bold">
-                Phòng: {matchmaking.matchedRoomCode} • Đang chuyển hướng...
+                {t("redirecting", {
+                  roomCode: matchmaking.matchedRoomCode ?? "",
+                })}
               </p>
             </div>
           ) : (
@@ -225,12 +238,7 @@ export function MatchmakingModal() {
                   {minutes}:{seconds}
                 </div>
                 <div className="font-display text-xs text-candy-slate font-bold mt-1">
-                  Ước tính: ~00:
-                  {matchmaking.estimatedWaitSeconds
-                    ? matchmaking.estimatedWaitSeconds
-                        .toString()
-                        .padStart(2, "0")
-                    : "30"}
+                  {t("estimatedWait", { time: `${estMinutes}:${estSecs}` })}
                 </div>
               </div>
 
@@ -238,10 +246,12 @@ export function MatchmakingModal() {
               <div className="w-full bg-[#FFF8E7] border-3 border-candy-ink rounded-2xl p-3 shadow-[2px_2px_0_0_#2B2D42] flex items-center justify-between text-xs font-display">
                 <span className="text-candy-slate font-bold flex items-center gap-1.5">
                   <span className="w-2.5 h-2.5 rounded-full bg-candy-mint animate-pulse inline-block" />
-                  Người đang tìm trận:
+                  {t("playersInQueue")}
                 </span>
                 <span className="font-black text-candy-ink bg-white px-2.5 py-0.5 border-2 border-candy-ink rounded-lg">
-                  {Math.max(1, matchmaking.playersInQueue)} người
+                  {t("playerCount", {
+                    count: Math.max(1, matchmaking.playersInQueue),
+                  })}
                 </span>
               </div>
             </>
@@ -253,10 +263,10 @@ export function MatchmakingModal() {
           <div className="mt-2">
             <button
               onClick={leaveMatchmaking}
-              aria-label="Hủy tìm trận"
+              aria-label={t("cancelButton")}
               className="w-full py-3 bg-white hover:bg-candy-red hover:text-white text-candy-ink border-3 border-candy-ink rounded-2xl font-display font-black text-sm uppercase shadow-[3px_3px_0_0_#2B2D42] hover:translate-y-[-1px] active:translate-y-[1px] transition-all cursor-pointer"
             >
-              HỦY TÌM TRẬN
+              {t("cancelSearch")}
             </button>
           </div>
         )}

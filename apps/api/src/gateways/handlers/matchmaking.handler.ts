@@ -78,7 +78,7 @@ export class MatchmakingHandler extends BaseHandler {
     const userId = client.data?.userId as string | undefined;
     if (userId) {
       try {
-        await this.matchmakingService.leaveQueue(userId);
+        await this.matchmakingService.leaveQueue(userId, client.id);
       } catch (error) {
         this.logger.warn(
           `Failed to leave queue on socket disconnect: ${

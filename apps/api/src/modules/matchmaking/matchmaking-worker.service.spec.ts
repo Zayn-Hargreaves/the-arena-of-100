@@ -275,6 +275,7 @@ describe("MatchmakingWorkerService", () => {
     mockRoomService.createRoom.mockRejectedValueOnce(new Error("DB error"));
 
     await expect(worker.tick()).resolves.toBeUndefined();
+    expect(mockQueueStore.addTicket).toHaveBeenCalledTimes(2);
   });
 
   it("halts queue processing if leadership lease is lost before forming match", async () => {

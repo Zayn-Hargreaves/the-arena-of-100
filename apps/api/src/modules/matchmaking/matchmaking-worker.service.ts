@@ -304,6 +304,16 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
       await this.gameLoopService.forceStartRoomMatch(room.id, this.server);
     } catch (error) {
       this.logger.error("Failed to launch matched game", error);
+      for (const player of players) {
+        try {
+          await this.queueStore.addTicket(player);
+        } catch (reErr) {
+          this.logger.warn(
+            `Failed to re-enqueue ticket for user ${player.userId}`,
+            reErr,
+          );
+        }
+      }
     }
   }
 }

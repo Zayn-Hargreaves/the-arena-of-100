@@ -469,7 +469,7 @@ describe("applyAnswerResultState", () => {
 
 describe("applyUnauthorizedErrorState", () => {
   it("clears prior room termination state along with auth state", () => {
-    const result = applyUnauthorizedErrorState("nope");
+    const result = applyUnauthorizedErrorState("nope", makeState());
 
     expect(result).toMatchObject({
       socket: null,
@@ -498,7 +498,7 @@ describe("applyUnauthorizedErrorState", () => {
       eliminationReason: "TIMEOUT",
     });
 
-    const result = applyUnauthorizedErrorState("nope");
+    const result = applyUnauthorizedErrorState("nope", state);
 
     expect(result.isEliminated).toBe(false);
     expect(result.eliminationReason).toBeNull();
@@ -2247,7 +2247,17 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
     });
 
     it("applyMatchmakingStatusState updates matchmaking state correctly", () => {
-      const state = makeState();
+      const state = makeState({
+        matchmaking: {
+          isQueued: false,
+          queuedAt: null,
+          elapsedSeconds: 0,
+          estimatedWaitSeconds: 0,
+          playersInQueue: 0,
+          matchedRoomCode: "PREV_CODE",
+          matchedRoomId: "prev-id",
+        },
+      });
       const res = applyMatchmakingStatusState(state, {
         isQueued: true,
         queuedAt: 1000,
@@ -2255,8 +2265,15 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         estimatedWaitSeconds: 20,
         playersInQueue: 5,
       });
-      expect(res.matchmaking?.isQueued).toBe(true);
-      expect(res.matchmaking?.playersInQueue).toBe(5);
+      expect(res.matchmaking).toEqual({
+        isQueued: true,
+        queuedAt: 1000,
+        elapsedSeconds: 10,
+        estimatedWaitSeconds: 20,
+        playersInQueue: 5,
+        matchedRoomCode: "PREV_CODE",
+        matchedRoomId: "prev-id",
+      });
     });
 
     it("applyMatchmakingMatchedState updates matchmaking state with roomCode", () => {
@@ -2276,9 +2293,15 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         roomCode: "MATCH1",
         matchId: "m-123",
       });
-      expect(res.matchmaking?.isQueued).toBe(false);
-      expect(res.matchmaking?.matchedRoomCode).toBe("MATCH1");
-      expect(res.matchmaking?.matchedRoomId).toBe("r-123");
+      expect(res.matchmaking).toEqual({
+        isQueued: false,
+        queuedAt: null,
+        elapsedSeconds: 0,
+        estimatedWaitSeconds: 0,
+        playersInQueue: 10,
+        matchedRoomCode: "MATCH1",
+        matchedRoomId: "r-123",
+      });
     });
   });
 });

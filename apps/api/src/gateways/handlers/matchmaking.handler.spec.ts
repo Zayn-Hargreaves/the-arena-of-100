@@ -101,9 +101,25 @@ describe("MatchmakingHandler", () => {
     );
   });
 
-  it("cleans up on socket disconnect", async () => {
+  it("cleans up on socket disconnect with socketId", async () => {
     await handler.handleDisconnect(mockSocket);
-    expect(mockMatchmakingService.leaveQueue).toHaveBeenCalledWith("user-123");
+    expect(mockMatchmakingService.leaveQueue).toHaveBeenCalledWith(
+      "user-123",
+      "socket-123",
+    );
+  });
+
+  it("passes specific socketId on disconnect so stale sockets do not remove active tickets", async () => {
+    const staleSocket: any = {
+      id: "socket-old",
+      data: { userId: "user-123" },
+      emit: vi.fn(),
+    };
+    await handler.handleDisconnect(staleSocket);
+    expect(mockMatchmakingService.leaveQueue).toHaveBeenCalledWith(
+      "user-123",
+      "socket-old",
+    );
   });
 
   it("skips leaveQueue on disconnect when userId is absent", async () => {

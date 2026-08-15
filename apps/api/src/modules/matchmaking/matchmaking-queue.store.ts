@@ -40,10 +40,40 @@ export class MatchmakingQueueStore {
 
   /**
    * Remove a player's ticket from the queue.
+   * If socketId is provided, only removes if the stored ticket belongs to that socket.
    */
-  async removeTicket(userId: string): Promise<boolean> {
+  async removeTicket(userId: string, socketId?: string): Promise<boolean> {
     const client = this.redis.getClient();
     const ticketKey = `${MATCHMAKING_TICKET_PREFIX}${userId}`;
+
+    if (socketId) {
+      const luaScript = `
+        local raw = redis.call('GET', KEYS[1])
+        if not raw then
+          return 0
+        end
+        local ticket = cjson.decode(raw)
+        if ticket.socketId ~= ARGV[2] then
+          return 0
+        end
+        redis.call('DEL', KEYS[1])
+        return redis.call('ZREM', KEYS[2], ARGV[1])
+      `;
+      try {
+        const result = (await client.eval(
+          luaScript,
+          2,
+          ticketKey,
+          MATCHMAKING_QUEUE_ZSET,
+          userId,
+          socketId,
+        )) as number;
+        return Number(result) > 0;
+      } catch (err) {
+        this.logger.error("Failed to execute removeTicket Lua script", err);
+        return false;
+      }
+    }
 
     const pipeline = client.pipeline();
     pipeline.del(ticketKey);

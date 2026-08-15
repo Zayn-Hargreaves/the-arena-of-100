@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { BotService } from "./bot.service";
 import type { PrismaService } from "../prisma/prisma.service";
+import { MATCHMAKING_CONFIG } from "@arena/shared";
 
 describe("BotService", () => {
   let service: BotService;
@@ -14,6 +15,10 @@ describe("BotService", () => {
           .mockResolvedValue([
             { id: "b1", username: "Bot_1", guestId: "bot_1", elo: 1200 },
           ]),
+        create: vi.fn().mockImplementation(({ data }) => ({
+          id: `bot_${Math.random()}`,
+          ...data,
+        })),
         upsert: vi.fn().mockImplementation(({ create }) => ({
           id: `bot_${Math.random()}`,
           ...create,
@@ -28,10 +33,10 @@ describe("BotService", () => {
     const bots = await service.ensureBotUsers(3, 1300);
     expect(bots.length).toBe(3);
     expect(mockPrisma.user.findMany).toHaveBeenCalled();
-    expect(mockPrisma.user.upsert).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.user.create).toHaveBeenCalledTimes(2);
   });
 
-  it("uses guestId as upsert key and excludes non-bot users", async () => {
+  it("uses guestId as create key and excludes non-bot users", async () => {
     mockPrisma.user.findMany.mockResolvedValueOnce([
       { id: "b1", username: "Bot_1", guestId: "bot_123", elo: 1200 },
     ]);
@@ -41,9 +46,9 @@ describe("BotService", () => {
       where: { guestId: { startsWith: "bot_" } },
       take: 2,
     });
-    expect(mockPrisma.user.upsert).toHaveBeenCalledWith(
+    expect(mockPrisma.user.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({
+        data: expect.objectContaining({
           guestId: expect.stringMatching(/^bot_/),
         }),
       }),
@@ -53,9 +58,9 @@ describe("BotService", () => {
 
   it("handles username collision by retrying with a different username", async () => {
     mockPrisma.user.findMany.mockResolvedValueOnce([]);
-    mockPrisma.user.upsert
+    mockPrisma.user.create
       .mockRejectedValueOnce(new Error("Unique constraint failed on username"))
-      .mockReturnValueOnce({
+      .mockResolvedValueOnce({
         id: "bot_new",
         username: "Bot_Retry_999",
         guestId: "bot_unique_123",
@@ -64,12 +69,12 @@ describe("BotService", () => {
 
     const bots = await service.ensureBotUsers(1);
     expect(bots).toHaveLength(1);
-    expect(mockPrisma.user.upsert).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.user.create).toHaveBeenCalledTimes(2);
 
     const firstCallUsername =
-      mockPrisma.user.upsert.mock.calls[0][0].create.username;
+      mockPrisma.user.create.mock.calls[0][0].data.username;
     const secondCallUsername =
-      mockPrisma.user.upsert.mock.calls[1][0].create.username;
+      mockPrisma.user.create.mock.calls[1][0].data.username;
     expect(firstCallUsername).not.toBe(secondCallUsername);
   });
 
@@ -93,8 +98,12 @@ describe("BotService", () => {
     expect(answers).toHaveLength(5);
     for (const ans of answers) {
       expect(question.options).toContain(ans.answer);
-      expect(ans.responseTimeMs).toBeGreaterThanOrEqual(2000);
-      expect(ans.responseTimeMs).toBeLessThanOrEqual(12000);
+      expect(ans.responseTimeMs).toBeGreaterThanOrEqual(
+        MATCHMAKING_CONFIG.MIN_BOT_ANSWER_DELAY_MS,
+      );
+      expect(ans.responseTimeMs).toBeLessThanOrEqual(
+        MATCHMAKING_CONFIG.MAX_BOT_ANSWER_DELAY_MS,
+      );
       expect(ans.submissionId).toMatch(/^bot_sub_/);
     }
   });

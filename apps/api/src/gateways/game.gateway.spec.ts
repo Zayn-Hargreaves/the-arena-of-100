@@ -354,14 +354,14 @@ describe("GameGateway", () => {
 
     it("handleVoteBanTopic delegates to matchHandler with server", () => {
       gateway.handleVoteBanTopic(client, {
-        roomId: "r1",
+        matchId: "m1",
         topic: "SCIENCE",
       });
       expect(matchHandler.handleVoteBanTopic).toHaveBeenCalledWith(
         client,
         (gateway as any)._server,
         {
-          roomId: "r1",
+          matchId: "m1",
           topic: "SCIENCE",
         },
       );

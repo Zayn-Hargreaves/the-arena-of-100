@@ -14,6 +14,7 @@ import {
   RoomStatus,
   ServerEvent,
   GAME_CONFIG,
+  MATCHMAKING_CONFIG,
   RoomError,
 } from "@arena/shared";
 import { Server } from "socket.io";
@@ -2902,6 +2903,83 @@ describe("MatchRoundRunner", () => {
         "match-1",
       );
       expect(result).toBeNull();
+    });
+  });
+
+  describe("scheduleBotAnswers", () => {
+    it("executes bot answers simulation with fake timers and records nonzero response time", async () => {
+      vi.useFakeTimers();
+      const testPlayers = [
+        {
+          id: "p1",
+          name: "Player 1",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+        {
+          id: "bot_1",
+          name: "Bot_1",
+          status: PlayerStatus.ACTIVE,
+          score: 0,
+          totalResponseTimeMs: 0,
+          correctAnswers: 0,
+          isOnline: true,
+        },
+      ];
+      const smWithBot = new MatchStateMachine("match-1", "room-1", testPlayers);
+      smWithBot.transition(MatchStatus.COUNTDOWN);
+      smWithBot.transition(MatchStatus.ROUND_ACTIVE);
+      smWithBot.startRound({
+        id: "q1",
+        content: "Test question",
+        options: ["A", "B", "C", "D"],
+        correctAnswer: "A",
+        difficulty: "EASY",
+      });
+
+      (matchService.getStateMachine as any).mockResolvedValue(smWithBot);
+      (matchService.getBotPlayerIds as any).mockResolvedValue(
+        new Set(["bot_1"]),
+      );
+
+      const submitAnswerSpy = vi.spyOn(smWithBot, "submitAnswer");
+
+      await (runner as any).scheduleBotAnswers(
+        "match-1",
+        "room-1",
+        mockServer,
+        smWithBot,
+        {
+          id: "q1",
+          correctAnswer: "A",
+          options: ["A", "B", "C", "D"],
+          difficulty: "EASY",
+        },
+      );
+
+      // Advance timers by max bot answer delay
+      await vi.advanceTimersByTimeAsync(
+        MATCHMAKING_CONFIG.MAX_BOT_ANSWER_DELAY_MS + 100,
+      );
+
+      expect(submitAnswerSpy).toHaveBeenCalledTimes(1);
+      const [botId, answer, serverTimestamp, submissionId] =
+        submitAnswerSpy.mock.calls[0];
+      expect(botId).toBe("bot_1");
+      expect(["A", "B", "C", "D"]).toContain(answer);
+      expect(typeof serverTimestamp).toBe("number");
+      expect(serverTimestamp).toBeGreaterThan(0);
+      expect(submissionId).toMatch(/^bot_sub_/);
+
+      const round = smWithBot.getCurrentRound();
+      const botAnswer = round?.answers.get("bot_1");
+      expect(botAnswer).toBeDefined();
+      expect(botAnswer?.responseTimeMs).toBeGreaterThan(0);
+
+      vi.useRealTimers();
     });
   });
 });

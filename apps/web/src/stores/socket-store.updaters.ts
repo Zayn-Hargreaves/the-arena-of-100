@@ -794,7 +794,7 @@ export function applyRoomTerminatedState(
 
 export function applyUnauthorizedErrorState(
   errorMessage: string | null,
-  state?: SocketState,
+  state: SocketState,
 ): Partial<SocketState> {
   return {
     socket: null,
@@ -821,8 +821,8 @@ export function applyUnauthorizedErrorState(
       elapsedSeconds: 0,
       estimatedWaitSeconds: 0,
       playersInQueue: 0,
-      matchedRoomCode: state?.matchmaking?.matchedRoomCode ?? null,
-      matchedRoomId: state?.matchmaking?.matchedRoomId ?? null,
+      matchedRoomCode: state.matchmaking.matchedRoomCode,
+      matchedRoomId: state.matchmaking.matchedRoomId,
     },
     // Include the error message in the SAME set call that resets the
     // socket/heartbeat state. A separate follow-up `set({ error })`
@@ -921,8 +921,8 @@ export function applyMatchmakingStatusState(
       elapsedSeconds: data.elapsedSeconds,
       estimatedWaitSeconds: data.estimatedWaitSeconds,
       playersInQueue: data.playersInQueue,
-      matchedRoomCode: state.matchmaking?.matchedRoomCode ?? null,
-      matchedRoomId: state.matchmaking?.matchedRoomId ?? null,
+      matchedRoomCode: state.matchmaking.matchedRoomCode,
+      matchedRoomId: state.matchmaking.matchedRoomId,
     },
   };
 }

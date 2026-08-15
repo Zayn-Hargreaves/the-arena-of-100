@@ -3,7 +3,6 @@ import { Server } from "socket.io";
 import { MatchStateMachine } from "@arena/game-core";
 import {
   GAME_CONFIG,
-  MATCHMAKING_CONFIG,
   MatchStatus,
   RoomStatus,
   RoomError,
@@ -30,6 +29,7 @@ import {
   disconnectMatchPlayer,
   leaveMatchPlayer,
 } from "./match-player-lifecycle";
+import { simulateBotAnswers } from "../matchmaking/bot.service";
 
 // ============================================================
 // MatchRoundRunner — the timer-driven match loop
@@ -689,39 +689,16 @@ export class MatchRoundRunner {
     },
   ): Promise<void> {
     const state = stateMachine.getState();
-    const botIds =
-      typeof this.matchService.getBotPlayerIds === "function"
-        ? await this.matchService.getBotPlayerIds(matchId)
-        : new Set<string>();
+    const botIds = await this.matchService.getBotPlayerIds(matchId);
     const botPlayerIds = state.survivingPlayerIds.filter((pid) =>
       botIds.has(pid),
     );
 
     if (botPlayerIds.length === 0) return;
 
-    let correctProb = 0.65;
-    const diff = question.difficulty?.toUpperCase();
-    if (diff === "EASY") correctProb = 0.85;
-    else if (diff === "HARD") correctProb = 0.45;
+    const simulations = simulateBotAnswers(question, botPlayerIds);
 
-    const wrongOptions = question.options.filter(
-      (opt) => opt !== question.correctAnswer,
-    );
-
-    const minDelay = MATCHMAKING_CONFIG.MIN_BOT_ANSWER_DELAY_MS;
-    const maxDelay = MATCHMAKING_CONFIG.MAX_BOT_ANSWER_DELAY_MS;
-
-    for (const botId of botPlayerIds) {
-      const isCorrect = Math.random() < correctProb;
-      const chosenAnswer =
-        isCorrect || wrongOptions.length === 0
-          ? question.correctAnswer
-          : wrongOptions[Math.floor(Math.random() * wrongOptions.length)];
-
-      const responseTimeMs = Math.floor(
-        minDelay + Math.random() * (maxDelay - minDelay),
-      );
-
+    for (const sim of simulations) {
       this.armPhaseTimer(
         matchId,
         async () => {
@@ -735,7 +712,14 @@ export class MatchRoundRunner {
             if (!round) return;
 
             const serialized = sm.serialize();
-            const result = sm.submitAnswer(botId, chosenAnswer, responseTimeMs);
+            const serverTimestamp =
+              (round.startedAt || Date.now()) + sim.responseTimeMs;
+            const result = sm.submitAnswer(
+              sim.userId,
+              sim.answer,
+              serverTimestamp,
+              sim.submissionId,
+            );
             const outcome =
               await this.matchService.persistStateMachine(matchId);
             if (outcome !== "APPLIED") {
@@ -743,7 +727,7 @@ export class MatchRoundRunner {
               const canonical = MatchStateMachine.deserialize(serialized);
               Object.assign(sm, canonical);
               this.logger.warn(
-                `bot submission callback: persistStateMachine returned ${outcome} for match ${matchId} bot ${botId}`,
+                `bot submission callback: persistStateMachine returned ${outcome} for match ${matchId} bot ${sim.userId}`,
               );
               return;
             }
@@ -752,7 +736,7 @@ export class MatchRoundRunner {
               server,
               roomId,
               matchId,
-              botId,
+              sim.userId,
               result,
               round.roundNo,
             );
@@ -761,13 +745,13 @@ export class MatchRoundRunner {
           } catch (error) {
             // best-effort bot submission
             this.logger.warn(
-              `Bot submission failed for match ${matchId}, bot ${botId}: ${
+              `Bot submission failed for match ${matchId}, bot ${sim.userId}: ${
                 error instanceof Error ? error.message : String(error)
               }`,
             );
           }
         },
-        responseTimeMs,
+        sim.responseTimeMs,
       );
     }
   }

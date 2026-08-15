@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MatchmakingService } from "./matchmaking.service";
 import type { MatchmakingQueueStore } from "./matchmaking-queue.store";
 import type { PrismaService } from "../prisma/prisma.service";
+import { MATCHMAKING_CONFIG } from "@arena/shared";
 
 describe("MatchmakingService", () => {
   let service: MatchmakingService;
@@ -79,7 +80,13 @@ describe("MatchmakingService", () => {
 
   it("leaves queue successfully", async () => {
     const result = await service.leaveQueue("u1");
-    expect(mockQueueStore.removeTicket).toHaveBeenCalledWith("u1");
+    expect(mockQueueStore.removeTicket).toHaveBeenCalledWith("u1", undefined);
+    expect(result).toBe(true);
+  });
+
+  it("leaves queue with socketId verification", async () => {
+    const result = await service.leaveQueue("u1", "s1");
+    expect(mockQueueStore.removeTicket).toHaveBeenCalledWith("u1", "s1");
     expect(result).toBe(true);
   });
 
@@ -91,5 +98,8 @@ describe("MatchmakingService", () => {
     expect(status.isQueued).toBe(false);
     expect(status.queuedAt).toBeNull();
     expect(status.playersInQueue).toBe(5);
+    expect(status.estimatedWaitSeconds).toBe(
+      Math.floor(MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS / 1000),
+    );
   });
 });

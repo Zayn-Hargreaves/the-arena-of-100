@@ -36,6 +36,35 @@ vi.mock("@/components/ui/mini-glyph", () => ({
   MiniGlyph: () => <div data-testid="mini-glyph" />,
 }));
 
+vi.mock("next-intl", async () => {
+  const actual = await vi.importActual<typeof import("next-intl")>("next-intl");
+  const viMessages: Record<string, string> = {
+    matchFoundTitle: "TRẬN ĐẤU ĐÃ TÌM THẤY!",
+    searchingTitle: "ĐANG TÌM TRẬN ĐẤU...",
+    cancelButton: "Hủy tìm trận",
+    readyToBattle: "SẴN SÀNG VÀO TRẬN!",
+    redirecting: "Phòng: {roomCode} • Đang chuyển hướng...",
+    estimatedWait: "Ước tính: ~{time}",
+    playersInQueue: "Người đang tìm trận:",
+    playerCount: "{count} người",
+    cancelSearch: "HỦY TÌM TRẬN",
+  };
+  return {
+    ...actual,
+    useTranslations: vi.fn((_ns?: string) =>
+      vi.fn((key: string, params?: Record<string, string | number>): string => {
+        let msg = viMessages[key] ?? key;
+        if (params) {
+          for (const [k, v] of Object.entries(params)) {
+            msg = msg.replace(`{${k}}`, String(v));
+          }
+        }
+        return msg;
+      }),
+    ),
+  };
+});
+
 const activeElementDescriptor = Object.getOwnPropertyDescriptor(
   document,
   "activeElement",
@@ -283,12 +312,20 @@ describe("MatchmakingModal", () => {
     queryAllSpy.mockRestore();
   });
 
-  it("renders default estimated wait seconds when undefined", () => {
+  it("renders fallback estimated wait seconds when 0", () => {
     mockSocketStore.matchmaking.isQueued = true;
     mockSocketStore.matchmaking.estimatedWaitSeconds = 0;
 
     render(<MatchmakingModal />);
     expect(screen.getByText(/Ước tính: ~00:30/)).toBeInTheDocument();
+  });
+
+  it("formats estimated wait seconds exceeding 60 properly as mm:ss", () => {
+    mockSocketStore.matchmaking.isQueued = true;
+    mockSocketStore.matchmaking.estimatedWaitSeconds = 75;
+
+    render(<MatchmakingModal />);
+    expect(screen.getByText(/Ước tính: ~01:15/)).toBeInTheDocument();
   });
 
   it("handles null activeElement when opening", () => {

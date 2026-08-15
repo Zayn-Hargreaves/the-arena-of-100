@@ -228,8 +228,6 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           elapsedSeconds: 0,
           estimatedWaitSeconds: 0,
           playersInQueue: 0,
-          matchedRoomCode: state.matchmaking.matchedRoomCode,
-          matchedRoomId: state.matchmaking.matchedRoomId,
         },
       }));
       console.log("🔌 Disconnected from game server");
@@ -827,7 +825,10 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   // Matchmaking
   joinMatchmaking: (category?: string) => {
     const socket = get().socket;
-    if (!socket?.connected) return;
+    if (!socket?.connected) {
+      set({ error: "Socket is not connected" });
+      return;
+    }
     emitIfConnected(socket, ClientEvent.JOIN_MATCHMAKING, {
       category: category && category !== "ALL" ? category : undefined,
     });

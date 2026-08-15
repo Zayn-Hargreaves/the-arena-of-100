@@ -102,10 +102,8 @@ export class BotService {
       while (!created && attempts < 3) {
         attempts++;
         try {
-          const bot = await this.prisma.user.upsert({
-            where: { guestId },
-            update: { elo: botElo, avatar },
-            create: {
+          const bot = await this.prisma.user.create({
+            data: {
               username,
               guestId,
               avatar,
@@ -115,9 +113,13 @@ export class BotService {
           createdBots.push(bot);
           created = true;
         } catch (err) {
+          const failedUsername = username;
           username = `${prefix}_${suffix}_${Math.floor(Math.random() * 9000) + 1000}`;
           if (attempts >= 3) {
-            this.logger.warn(`Failed to create bot user ${username}`, err);
+            this.logger.warn(
+              `Failed to create bot user ${failedUsername}`,
+              err,
+            );
           }
         }
       }
@@ -132,53 +134,68 @@ export class BotService {
   simulateBotAnswers(
     question: {
       id: string;
-      answer: string;
+      answer?: string;
+      correctAnswer?: string;
       options: string[];
       difficulty?: string;
     },
     botUserIds: string[],
   ): BotAnswerSimulation[] {
-    const now = Date.now();
-    const simulations: BotAnswerSimulation[] = [];
+    return simulateBotAnswers(question, botUserIds);
+  }
 
-    // Probability of choosing the correct answer based on difficulty
-    let correctProbability = 0.65;
-    const diff = question.difficulty?.toUpperCase();
-    if (diff === "EASY") correctProbability = 0.85;
-    else if (diff === "HARD") correctProbability = 0.45;
+  static simulateBotAnswers = simulateBotAnswers;
+}
 
-    const wrongOptions = question.options.filter(
-      (opt) => opt !== question.answer,
-    );
+export function simulateBotAnswers(
+  question: {
+    id: string;
+    answer?: string;
+    correctAnswer?: string;
+    options: string[];
+    difficulty?: string;
+  },
+  botUserIds: string[],
+): BotAnswerSimulation[] {
+  const now = Date.now();
+  const simulations: BotAnswerSimulation[] = [];
 
-    for (const userId of botUserIds) {
-      const isCorrect = Math.random() < correctProbability;
-      let chosenAnswer: string;
+  // Probability of choosing the correct answer based on difficulty
+  let correctProbability = 0.65;
+  const diff = question.difficulty?.toUpperCase();
+  if (diff === "EASY") correctProbability = 0.85;
+  else if (diff === "HARD") correctProbability = 0.45;
 
-      if (isCorrect || wrongOptions.length === 0) {
-        chosenAnswer = question.answer;
-      } else {
-        chosenAnswer =
-          wrongOptions[Math.floor(Math.random() * wrongOptions.length)] ||
-          question.answer;
-      }
+  const correctAnswer = question.correctAnswer ?? question.answer ?? "";
+  const wrongOptions = question.options.filter((opt) => opt !== correctAnswer);
 
-      // Random delay between MIN and MAX
-      const minDelay = MATCHMAKING_CONFIG.MIN_BOT_ANSWER_DELAY_MS;
-      const maxDelay = MATCHMAKING_CONFIG.MAX_BOT_ANSWER_DELAY_MS;
-      const responseTimeMs = Math.floor(
-        minDelay + Math.random() * (maxDelay - minDelay),
-      );
+  for (const userId of botUserIds) {
+    const isCorrect = Math.random() < correctProbability;
+    let chosenAnswer: string;
 
-      simulations.push({
-        userId,
-        answer: chosenAnswer,
-        responseTimeMs,
-        submissionId: `bot_sub_${nanoid(10)}`,
-        clientTimestamp: now - (maxDelay - responseTimeMs),
-      });
+    if (isCorrect || wrongOptions.length === 0) {
+      chosenAnswer = correctAnswer;
+    } else {
+      chosenAnswer =
+        wrongOptions[Math.floor(Math.random() * wrongOptions.length)] ||
+        correctAnswer;
     }
 
-    return simulations;
+    // Random delay between MIN and MAX
+    const minDelay = MATCHMAKING_CONFIG.MIN_BOT_ANSWER_DELAY_MS;
+    const maxDelay = MATCHMAKING_CONFIG.MAX_BOT_ANSWER_DELAY_MS;
+    const responseTimeMs = Math.floor(
+      minDelay + Math.random() * (maxDelay - minDelay),
+    );
+
+    simulations.push({
+      userId,
+      answer: chosenAnswer,
+      responseTimeMs,
+      submissionId: `bot_sub_${nanoid(10)}`,
+      clientTimestamp: now - (maxDelay - responseTimeMs),
+    });
   }
+
+  return simulations;
 }
