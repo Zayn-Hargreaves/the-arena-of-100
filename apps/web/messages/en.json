@@ -277,7 +277,7 @@
       "roundValue": "Round {round}",
       "accuracy": "Accuracy",
       "reactionSpeed": "Reaction Speed",
-      "elo": "ELO Rating"
+      "elo": "ELO Change"
     },
     "actions": {
       "rematch": "Start a New Match",

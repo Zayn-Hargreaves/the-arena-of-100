@@ -41,6 +41,14 @@ export function calculateMultiplayerElo(
   players: EloPlayerInput[],
   kFactor: number = DEFAULT_K_FACTOR,
 ): EloCalculationResult[] {
+  for (const p of players) {
+    if (!Number.isFinite(p.currentElo)) {
+      throw new Error(
+        `Invalid currentElo for player ${p.userId}: ${p.currentElo}`,
+      );
+    }
+  }
+
   const n = players.length;
   if (n === 0) return [];
   if (n === 1) {
@@ -59,11 +67,9 @@ export function calculateMultiplayerElo(
 
   const kNorm = kFactor / (n - 1);
   const results: EloCalculationResult[] = [];
-  const powers = players.map((p) => Math.pow(10, p.currentElo / 400));
 
   for (let i = 0; i < n; i++) {
     const playerI = players[i]!;
-    const powerI = powers[i]!;
     let expectedSum = 0;
     let actualSum = 0;
 
@@ -71,8 +77,9 @@ export function calculateMultiplayerElo(
       if (i === j) continue;
       const playerJ = players[j]!;
 
-      // Expected outcome of i vs j using precomputed powers
-      const expectedAgainstJ = powerI / (powerI + powers[j]!);
+      // Expected outcome of i vs j: 1 / (1 + 10^((R_j - R_i) / 400))
+      const expectedAgainstJ =
+        1 / (1 + Math.pow(10, (playerJ.currentElo - playerI.currentElo) / 400));
       expectedSum += expectedAgainstJ;
 
       // Actual outcome of i vs j based on placement

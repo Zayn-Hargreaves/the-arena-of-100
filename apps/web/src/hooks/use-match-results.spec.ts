@@ -364,3 +364,49 @@ describe("fetchResult", () => {
     expect(result.response).toBeNull();
   });
 });
+
+describe("useMatchResults — server rank and placement", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("uses server-provided placement or rank even when scores are tied and payload order is arbitrary", async () => {
+    const payload = {
+      winnerId: "p1",
+      players: [
+        // p2 has same score as p1, but server assigned placement 2 due to tie-break (e.g. response time)
+        { userId: "p2", score: 100, placement: 2, eloDelta: -16 },
+        { userId: "p1", score: 100, placement: 1, eloDelta: 16 },
+      ],
+    };
+
+    const response = {
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValueOnce(payload),
+    } as unknown as Response;
+
+    makeAbortableFetch(() => Promise.resolve(response));
+
+    const { result } = renderHook(() => useMatchResults("m1", "p2"));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.loadState).toBe("ready");
+    expect(result.current.yourPerformance.rank).toBe(2);
+    expect(result.current.yourPerformance.score).toBe(100);
+    expect(result.current.yourPerformance.eloDelta).toBe(-16);
+  });
+});

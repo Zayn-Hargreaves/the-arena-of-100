@@ -166,6 +166,65 @@ describe("elo-engine", () => {
       expect(results[0]?.delta).toBe(16);
       expect(results[1]?.delta).toBe(-16);
     });
+
+    it("rejects non-finite currentElo values", () => {
+      expect(() =>
+        calculateMultiplayerElo([
+          { userId: "u1", currentElo: Number.NaN, placement: 1, score: 100 },
+          { userId: "u2", currentElo: 1200, placement: 2, score: 50 },
+        ]),
+      ).toThrow("Invalid currentElo for player u1: NaN");
+
+      expect(() =>
+        calculateMultiplayerElo([
+          {
+            userId: "u1",
+            currentElo: Number.POSITIVE_INFINITY,
+            placement: 1,
+            score: 100,
+          },
+          { userId: "u2", currentElo: 1200, placement: 2, score: 50 },
+        ]),
+      ).toThrow("Invalid currentElo for player u1: Infinity");
+
+      expect(() =>
+        calculateMultiplayerElo([
+          {
+            userId: "u1",
+            currentElo: Number.NEGATIVE_INFINITY,
+            placement: 1,
+            score: 100,
+          },
+        ]),
+      ).toThrow("Invalid currentElo for player u1: -Infinity");
+    });
+
+    it("handles large finite ELO values and equal ratings without NaN or overflow", () => {
+      const players: EloPlayerInput[] = [
+        { userId: "p1", currentElo: 1_000_000, placement: 1, score: 200 },
+        { userId: "p2", currentElo: 1_000_000, placement: 2, score: 100 },
+      ];
+      const results = calculateMultiplayerElo(players, 32);
+
+      expect(results).toHaveLength(2);
+      expect(Number.isFinite(results[0]!.newElo)).toBe(true);
+      expect(Number.isFinite(results[0]!.delta)).toBe(true);
+      expect(results[0]!.delta).toBe(16);
+      expect(results[0]!.newElo).toBe(1_000_016);
+      expect(results[1]!.delta).toBe(-16);
+      expect(results[1]!.newElo).toBe(999_984);
+
+      // Tie with huge rating
+      const tiePlayers: EloPlayerInput[] = [
+        { userId: "p1", currentElo: 1e12, placement: 1, score: 100 },
+        { userId: "p2", currentElo: 1e12, placement: 1, score: 100 },
+      ];
+      const tieResults = calculateMultiplayerElo(tiePlayers, 32);
+      expect(tieResults[0]!.delta).toBe(0);
+      expect(tieResults[0]!.newElo).toBe(1e12);
+      expect(tieResults[1]!.delta).toBe(0);
+      expect(tieResults[1]!.newElo).toBe(1e12);
+    });
   });
 
   describe("assignPlacements", () => {

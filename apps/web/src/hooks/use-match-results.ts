@@ -7,6 +7,8 @@ export interface MatchResultApiResponse {
   players?: Array<{
     userId?: string;
     score?: number;
+    rank?: number | null;
+    placement?: number | null;
     eloBefore?: number | null;
     eloAfter?: number | null;
     eloDelta?: number | null;
@@ -190,19 +192,20 @@ export function useMatchResults(matchId: string, userId: string | null) {
       })),
     [payload?.players],
   );
-  const sortedPlayers = useMemo(
-    () => [...players].sort((a, b) => b.score - a.score),
-    [players],
-  );
-
   const playerById = useMemo(
     () => new Map(players.map((p) => [p.id, p])),
     [players],
   );
 
   const playerRankById = useMemo(
-    () => new Map(sortedPlayers.map((p, idx) => [p.id, idx + 1])),
-    [sortedPlayers],
+    () =>
+      new Map(
+        (payload?.players ?? []).map((p) => [
+          p.userId ?? p.user?.id ?? "",
+          p.rank ?? p.placement ?? null,
+        ]),
+      ),
+    [payload?.players],
   );
 
   const rawPlayerById = useMemo(
@@ -220,7 +223,7 @@ export function useMatchResults(matchId: string, userId: string | null) {
     // player. A missing `payload.winnerId` (incomplete payload, race
     // with the finalization broadcast) or an unmatched id leaves the
     // view-model in the "updating" placeholder state — never infer a
-    // champion from `sortedPlayers[0]`, which would fabricate a winner
+    // champion from the first player in payload.players, which would fabricate a winner
     // the server has not declared.
     if (!winnerFromServer) {
       return {

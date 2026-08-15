@@ -680,6 +680,18 @@ export class MatchService implements OnModuleDestroy {
     roomId: string,
     isAdminTermination = false,
   ) {
+    let stateMachine: MatchStateMachine | null = null;
+    let playerScores: ReturnType<MatchStateMachine["getPlayerScores"]> = [];
+    if (!isAdminTermination) {
+      stateMachine = this.stateMachines.get(matchId) ?? null;
+      if (!stateMachine) {
+        stateMachine = (await this.getStateMachine(matchId)) ?? null;
+      }
+      if (stateMachine) {
+        playerScores = stateMachine.getPlayerScores();
+      }
+    }
+
     // H2 + 2d: Single interactive Prisma transaction for the entire match finish workflow.
     // The conditional match claim, ELO reads in buildScoreUpdateOps, and all score/ELO/room
     // updates execute within this single transaction. If any read or write fails, the entire
@@ -707,7 +719,7 @@ export class MatchService implements OnModuleDestroy {
 
       // 2. Claim succeeded — execute score / ELO updates within the interactive transaction.
       if (!isAdminTermination) {
-        await this.buildScoreUpdateOps(matchId, tx);
+        await this.buildScoreUpdateOps(matchId, stateMachine, playerScores, tx);
       }
 
       // 3. Update room status to FINISHED
@@ -799,16 +811,13 @@ export class MatchService implements OnModuleDestroy {
   }
 
   // Build and execute the score-update Prisma operations inside the transaction.
-  // Restores state machine from Redis if not in memory. Throws if the state machine
-  // is missing or has no player scores to prevent committing FINISHED status with lost scores.
+  // Throws if the state machine is missing or has no player scores to prevent committing FINISHED status with lost scores.
   private async buildScoreUpdateOps(
     matchId: string,
+    stateMachine: MatchStateMachine | null,
+    playerScores: ReturnType<MatchStateMachine["getPlayerScores"]>,
     tx: Prisma.TransactionClient,
   ) {
-    let stateMachine = this.stateMachines.get(matchId);
-    if (!stateMachine) {
-      stateMachine = await this.getStateMachine(matchId);
-    }
     if (!stateMachine) {
       this.logger.error(
         `buildScoreUpdateOps: no state machine found for match ${matchId} in memory or Redis on a normal finish; aborting finish transaction.`,
@@ -817,7 +826,6 @@ export class MatchService implements OnModuleDestroy {
         `Failed to finalize match ${matchId}: state machine not found in memory or Redis`,
       );
     }
-    const playerScores = stateMachine.getPlayerScores();
     if (playerScores.length === 0) {
       this.logger.error(
         `buildScoreUpdateOps: state machine for match ${matchId} has no player scores on a normal finish; aborting finish transaction.`,
