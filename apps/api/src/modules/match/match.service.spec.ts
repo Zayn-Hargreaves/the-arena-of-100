@@ -1,4 +1,8 @@
-import { MatchService, matchCacheKey } from "./match.service";
+import {
+  MatchService,
+  matchCacheKey,
+  matchGenerationKey,
+} from "./match.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { MatchOwnershipService } from "./match-ownership.service";
@@ -603,6 +607,12 @@ describe("MatchService", () => {
       vi.mocked(prisma.match.findUnique).mockResolvedValue({ id: "m1" } as any);
       const result = await service.getMatch("m1");
       expect(result.id).toBe("m1");
+      expect(redis.mget).toHaveBeenCalledTimes(1);
+      expect(redis.mget).toHaveBeenCalledWith(
+        matchCacheKey("m1"),
+        matchGenerationKey("m1"),
+      );
+      expect(redis.get).not.toHaveBeenCalled();
       expect(prisma.match.findUnique).toHaveBeenCalledWith({
         where: { id: "m1" },
         include: {
@@ -654,6 +664,12 @@ describe("MatchService", () => {
       expect(result.endedAt).toEqual(endedAt);
       expect(result.rounds[0]?.startedAt).toEqual(startedAt);
       expect(result.rounds[0]?.endedAt).toEqual(endedAt);
+      expect(redis.mget).toHaveBeenCalledTimes(1);
+      expect(redis.mget).toHaveBeenCalledWith(
+        matchCacheKey("m1"),
+        matchGenerationKey("m1"),
+      );
+      expect(redis.get).not.toHaveBeenCalled();
       expect(prisma.match.findUnique).not.toHaveBeenCalled();
     });
 
@@ -675,6 +691,12 @@ describe("MatchService", () => {
       const result = await service.getMatch("m1");
       expect(result.id).toBe("m1");
       expect(result.status).toBe("FINISHED");
+      expect(redis.mget).toHaveBeenCalledTimes(1);
+      expect(redis.mget).toHaveBeenCalledWith(
+        matchCacheKey("m1"),
+        matchGenerationKey("m1"),
+      );
+      expect(redis.get).not.toHaveBeenCalled();
       expect(prisma.match.findUnique).toHaveBeenCalled();
     });
 
@@ -710,6 +732,12 @@ describe("MatchService", () => {
 
       const result = await service.getMatch("m1");
       expect(result.id).toBe("m1");
+      expect(redis.mget).toHaveBeenCalledTimes(1);
+      expect(redis.mget).toHaveBeenCalledWith(
+        matchCacheKey("m1"),
+        matchGenerationKey("m1"),
+      );
+      expect(redis.get).not.toHaveBeenCalled();
       expect(redis.setIfGenMatches).toHaveBeenCalledWith(
         "match:gen:m1",
         matchCacheKey("m1"),
@@ -729,13 +757,16 @@ describe("MatchService", () => {
       vi.mocked(redis.mget).mockResolvedValue([null, null]);
       vi.mocked(prisma.match.findUnique).mockResolvedValue(null);
       await expect(service.getMatch("m1")).rejects.toThrow(NotFoundException);
+      expect(redis.mget).toHaveBeenCalledTimes(1);
+      expect(redis.mget).toHaveBeenCalledWith(
+        matchCacheKey("m1"),
+        matchGenerationKey("m1"),
+      );
+      expect(redis.get).not.toHaveBeenCalled();
     });
 
     it("skips writing to Redis cache if reading match generation from Redis threw an error", async () => {
       vi.mocked(redis.mget).mockRejectedValue(
-        new Error("Redis connection dropped"),
-      );
-      vi.mocked(redis.get).mockRejectedValue(
         new Error("Redis connection dropped"),
       );
       vi.mocked(prisma.match.findUnique).mockResolvedValue({
@@ -747,6 +778,13 @@ describe("MatchService", () => {
 
       const result = await service.getMatch("m1");
       expect(result.id).toBe("m1");
+      expect(redis.mget).toHaveBeenCalledTimes(1);
+      expect(redis.mget).toHaveBeenCalledWith(
+        matchCacheKey("m1"),
+        matchGenerationKey("m1"),
+      );
+      expect(redis.get).not.toHaveBeenCalled();
+      expect(prisma.match.findUnique).toHaveBeenCalled();
       expect(redis.setIfGenMatches).not.toHaveBeenCalled();
     });
 
@@ -770,6 +808,7 @@ describe("MatchService", () => {
       expect(result.id).toBe("m1");
       expect(result.status).toBe("FINISHED");
       expect(redis.mget).not.toHaveBeenCalled();
+      expect(redis.get).not.toHaveBeenCalled();
       expect(prisma.match.findUnique).toHaveBeenCalled();
       expect(redis.setIfGenMatches).not.toHaveBeenCalled();
     });
@@ -1342,6 +1381,8 @@ describe("MatchService", () => {
       // While invalidation is pending, getMatch should not write to cache
       vi.mocked(redis.mget).mockResolvedValue([null, null]);
       await service.getMatch("m_retry");
+      expect(redis.mget).not.toHaveBeenCalled();
+      expect(redis.get).not.toHaveBeenCalled();
       expect(redis.setIfGenMatches).not.toHaveBeenCalled();
 
       // Fast-forward timer to trigger retry (attempt 2 delay: 100ms)
@@ -1356,6 +1397,13 @@ describe("MatchService", () => {
 
       // Now subsequent getMatch is free to cache
       await service.getMatch("m_retry");
+      expect(redis.mget).toHaveBeenCalledTimes(1);
+      expect(redis.mget).toHaveBeenNthCalledWith(
+        1,
+        matchCacheKey("m_retry"),
+        matchGenerationKey("m_retry"),
+      );
+      expect(redis.get).not.toHaveBeenCalled();
       expect(redis.setIfGenMatches).toHaveBeenCalled();
     });
 

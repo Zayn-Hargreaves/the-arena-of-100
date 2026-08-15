@@ -589,14 +589,6 @@ export class MatchService implements OnModuleDestroy {
       }
     }
 
-    if (capturedGen === null) {
-      try {
-        capturedGen = (await this.redis.get(genKey)) ?? "0";
-      } catch (err) {
-        this.logger.warn(`Failed to read match generation for ${matchId}`, err);
-      }
-    }
-
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
       include: {
