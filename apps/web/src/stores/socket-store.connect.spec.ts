@@ -858,7 +858,7 @@ describe("socket-store connect heartbeat ownership", () => {
     });
 
     it("clears pending vote state on TOPIC_VOTING_STARTED and TOPIC_VOTING_FINISHED", async () => {
-      waitForSocketAckMock.mockResolvedValueOnce(undefined);
+      waitForSocketAckMock.mockResolvedValue(undefined);
       let socket: ReturnType<typeof useSocketStore.getState>["socket"] = null;
 
       try {
@@ -877,6 +877,7 @@ describe("socket-store connect heartbeat ownership", () => {
           "emit",
         );
 
+        // 1. TOPIC_VOTING_STARTED scenario: new phase resets pending vote state
         useSocketStore.setState({
           topicVoting: {
             matchId: "m1",
@@ -917,6 +918,63 @@ describe("socket-store connect heartbeat ownership", () => {
           commandId,
         });
         expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBeNull();
+
+        // 2. TOPIC_VOTING_FINISHED scenario: phase is marked finished, final myVotedTopic is retained, and only stale errors are ignored
+        emitSpy.mockClear();
+        useSocketStore.setState({
+          topicVoting: {
+            matchId: "m2",
+            candidateTopics: ["SCIENCE", "HISTORY"],
+            endsAt: Date.now() + 10_000,
+            durationMs: 10_000,
+            voteCounts: { SCIENCE: 0, HISTORY: 0 },
+            myVotedTopic: null,
+            totalVotes: 0,
+            bannedTopics: [],
+            activeTopics: [],
+            isFinished: false,
+          },
+        });
+
+        // Cast vote
+        useSocketStore.getState().voteBanTopic("m2", "HISTORY");
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
+          "HISTORY",
+        );
+        const voteCallFinished = emitSpy.mock.calls.find(
+          (c) =>
+            c[0] === ClientEvent.VOTE_BAN_TOPIC &&
+            (c[1] as VoteBanTopicPayload | undefined)?.topic === "HISTORY",
+        );
+        const commandIdFinished = (voteCallFinished![1] as VoteBanTopicPayload)
+          .commandId;
+
+        // TOPIC_VOTING_FINISHED marks the phase as finished and retains voted topic
+        triggerSocketEvent(socket, ServerEvent.TOPIC_VOTING_FINISHED, {
+          matchId: "m2",
+          bannedTopics: ["HISTORY"],
+          activeTopics: ["SCIENCE"],
+          voteCounts: { SCIENCE: 0, HISTORY: 1 },
+        });
+        expect(useSocketStore.getState().topicVoting?.isFinished).toBe(true);
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
+          "HISTORY",
+        );
+
+        // Stale ERROR with commandId from finished phase must not roll back topicVoting
+        triggerSocketEvent(socket, ServerEvent.ERROR, {
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "stale error after voting finished",
+          failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+          commandId: commandIdFinished,
+        });
+        expect(useSocketStore.getState().topicVoting?.myVotedTopic).toBe(
+          "HISTORY",
+        );
+        expect(useSocketStore.getState().topicVoting?.isFinished).toBe(true);
+        expect(useSocketStore.getState().topicVoting?.bannedTopics).toEqual([
+          "HISTORY",
+        ]);
       } finally {
         socket?.removeAllListeners();
         socket?.disconnect();

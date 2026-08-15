@@ -53,17 +53,18 @@ export function emitPlayerCommandError(
   server: Server,
   userId: string,
   failedEvent: ClientEvent,
-  commandId: string,
+  commandId: string | undefined,
   error: unknown,
   extra?: { submissionId?: string },
 ): void {
   const extraPayload = extra ?? {};
+  const commandPayload = commandId ? { commandId } : {};
   if (error instanceof RoomError) {
     server.to(`player:${userId}`).emit(ServerEvent.ERROR, {
       code: error.code,
       message: ERROR_MESSAGE_KEYS[error.code],
       failedEvent,
-      commandId,
+      ...commandPayload,
       ...extraPayload,
     });
     return;
@@ -81,7 +82,7 @@ export function emitPlayerCommandError(
     code: ErrorCode.INVALID_PAYLOAD,
     message: ERROR_MESSAGE_KEYS[ErrorCode.INVALID_PAYLOAD],
     failedEvent,
-    commandId,
+    ...commandPayload,
     ...extraPayload,
   });
 }

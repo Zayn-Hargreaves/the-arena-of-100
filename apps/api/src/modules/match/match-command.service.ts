@@ -644,16 +644,14 @@ export class MatchCommandService implements OnModuleDestroy {
       this.logger.warn(
         `applyVoteBanTopicAuthoritative: voteBanTopic rejected for ${env.matchId}/${env.body.userId} (TOPIC_VOTING_CLOSED)`,
       );
-      if (env.body.commandId) {
-        emitPlayerCommandError(
-          this.logger,
-          server,
-          env.body.userId,
-          ClientEvent.VOTE_BAN_TOPIC,
-          env.body.commandId,
-          new RoomError(ErrorCode.TOPIC_VOTING_CLOSED),
-        );
-      }
+      emitPlayerCommandError(
+        this.logger,
+        server,
+        env.body.userId,
+        ClientEvent.VOTE_BAN_TOPIC,
+        env.body.commandId,
+        new RoomError(ErrorCode.TOPIC_VOTING_CLOSED),
+      );
       return "DUPLICATE_SUBMISSION";
     }
 
@@ -683,16 +681,14 @@ export class MatchCommandService implements OnModuleDestroy {
       this.logger.warn(
         `applyVoteBanTopicAuthoritative: voteBanTopic rejected for ${env.matchId}/${env.body.userId} (acking as no-op): ${error instanceof Error ? error.message : String(error)}`,
       );
-      if (env.body.commandId) {
-        emitPlayerCommandError(
-          this.logger,
-          server,
-          env.body.userId,
-          ClientEvent.VOTE_BAN_TOPIC,
-          env.body.commandId,
-          error,
-        );
-      }
+      emitPlayerCommandError(
+        this.logger,
+        server,
+        env.body.userId,
+        ClientEvent.VOTE_BAN_TOPIC,
+        env.body.commandId,
+        error,
+      );
       return "DUPLICATE_SUBMISSION";
     }
 

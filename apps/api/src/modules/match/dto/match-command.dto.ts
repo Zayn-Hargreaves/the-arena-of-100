@@ -1,3 +1,4 @@
+import { COMMAND_ID_MAX_LENGTH } from "@arena/shared";
 import { z } from "zod";
 
 // ---- Zod Validation Schemas ---------------------------------
@@ -43,7 +44,7 @@ export const voteBanTopicBodySchema = z.object({
   type: z.literal("vote_ban_topic"),
   userId: z.string().min(1),
   topic: z.string().min(1),
-  commandId: z.string().min(1).optional(),
+  commandId: z.string().min(1).max(COMMAND_ID_MAX_LENGTH).optional(),
 });
 
 export const commandBodySchema = z.discriminatedUnion("type", [

@@ -1155,6 +1155,29 @@ describe("MatchCommandService (B4a)", () => {
         commandId: "cmd-vote-closed",
       });
 
+      // 1b. Rejection due to voting closed (without commandId)
+      const recorderClosedNoCmd = makeMockServer();
+      const outcomeClosedNoCmd = await service.applyVoteBanTopicAuthoritative(
+        voteEnv("evt-vote-closed-nocmd", "p1", "SCIENCE"),
+        OWNER,
+        recorderClosedNoCmd.server,
+      );
+      expect(outcomeClosedNoCmd).toBe("DUPLICATE_SUBMISSION");
+      const errorCallsClosedNoCmd = recorderClosedNoCmd.callsByEvent(
+        ServerEvent.ERROR,
+      );
+      expect(errorCallsClosedNoCmd.length).toBe(1);
+      const closedNoCmdPayload = errorCallsClosedNoCmd[0]?.[1] as Record<
+        string,
+        unknown
+      >;
+      expect(closedNoCmdPayload).toMatchObject({
+        code: ErrorCode.TOPIC_VOTING_CLOSED,
+        failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+      });
+      expect(closedNoCmdPayload.commandId).toBeUndefined();
+      expect("commandId" in closedNoCmdPayload).toBe(false);
+
       // 2. Rejection due to stateMachine error (e.g. invalid topic)
       const smActive = new MatchStateMachine("m1", "r1", [
         {
@@ -1185,6 +1208,29 @@ describe("MatchCommandService (B4a)", () => {
         failedEvent: ClientEvent.VOTE_BAN_TOPIC,
         commandId: "cmd-vote-invalid",
       });
+
+      // 2b. Rejection due to stateMachine error (without commandId)
+      const recorderInvalidNoCmd = makeMockServer();
+      const outcomeInvalidNoCmd = await service.applyVoteBanTopicAuthoritative(
+        voteEnv("evt-vote-invalid-nocmd", "p1", "INVALID_TOPIC"),
+        OWNER,
+        recorderInvalidNoCmd.server,
+      );
+      expect(outcomeInvalidNoCmd).toBe("DUPLICATE_SUBMISSION");
+      const errorCallsInvalidNoCmd = recorderInvalidNoCmd.callsByEvent(
+        ServerEvent.ERROR,
+      );
+      expect(errorCallsInvalidNoCmd.length).toBe(1);
+      const invalidNoCmdPayload = errorCallsInvalidNoCmd[0]?.[1] as Record<
+        string,
+        unknown
+      >;
+      expect(invalidNoCmdPayload).toMatchObject({
+        code: ErrorCode.INVALID_TOPIC,
+        failedEvent: ClientEvent.VOTE_BAN_TOPIC,
+      });
+      expect(invalidNoCmdPayload.commandId).toBeUndefined();
+      expect("commandId" in invalidNoCmdPayload).toBe(false);
     });
 
     it("DUPLICATE_EVENT: a redelivered canonical vote emits summary during active voting, and suppresses broadcast after deadline", async () => {
