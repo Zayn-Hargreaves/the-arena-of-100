@@ -1,12 +1,82 @@
 # ============================================================
 # Arena of 100 - Docker Compose (Redis Sentinel HA Stack)
 # ============================================================
-# Topology:
-# - 1 Redis Master (port 6379)
-# - 2 Redis Replicas (ports 6380, 6381)
-# - 3 Redis Sentinels (ports 26379, 26380, 26381, quorum = 2)
-# - 1 PostgreSQL Database (port 5432)
+# Topology (in-network service names; host ports are offset):
+# - 1 Redis bootstrap node  redis-master     host 6390 → 6379
+# - 2 Redis replicas        redis-replica-*  host 6391/6392 → 6379
+# - 3 Redis Sentinels       redis-sentinel-* host 26479–26481 → 26379
+# - 1 PostgreSQL            postgres         host 5443 → 5432
+#
+# Coexistence: host ports avoid the dev stack (5432/6379) and the
+# multi-instance stack (5442/6389). Do not run this file together with
+# another compose that binds the same host ports.
+#
+# Start:
+#   docker compose -f infrastructure/docker-compose.sentinel.yml up -d
+#
+# --- API / client connection (supported paths) ---
+#
+# 1) RECOMMENDED — API on the Compose network (same docker network or
+#    an attached service). Sentinel returns Docker DNS names that resolve
+#    only inside the network:
+#
+#    REDIS_SENTINELS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+#    REDIS_SENTINEL_MASTER_NAME=mymaster
+#    # leave REDIS_URL unset (Sentinel mode takes precedence)
+#
+# 2) Host-run API (pnpm dev on the laptop): localhost Sentinel ports are
+#    published, but get-master-addr-by-name returns container DNS names
+#    (redis-master / redis-replica-*) which the host cannot resolve.
+#    announce-ip/port mapping is fragile on Linux Docker, so host+Sentinel
+#    is NOT supported for this stack. Use path (1), or point standalone
+#    REDIS_URL at a single mapped port for non-HA smoke tests only:
+#      REDIS_URL=redis://localhost:6390
+#    (no automatic failover when using standalone URL)
+#
+# Smoke checks (in-network):
+#   docker compose -f infrastructure/docker-compose.sentinel.yml exec redis-sentinel-1 \
+#     redis-cli -p 26379 SENTINEL get-master-addr-by-name mymaster
+#   docker compose -f infrastructure/docker-compose.sentinel.yml exec redis-replica-1 \
+#     redis-cli INFO replication
 # ============================================================
+
+x-redis-ha-common: &redis-ha-common
+  # Pin 7.4.x: redis-ha-entrypoint.sh uses `redis-cli -t` (needs Redis ≥7.4).
+  image: redis:7.4.2-alpine
+  restart: unless-stopped
+  volumes:
+    - ./sentinel/redis-ha-entrypoint.sh:/redis-ha-entrypoint.sh:ro
+  entrypoint: ["/bin/sh", "/redis-ha-entrypoint.sh"]
+  environment: &redis-ha-env
+    MASTER_NAME: mymaster
+    SENTINEL_HOSTS: redis-sentinel-1 redis-sentinel-2 redis-sentinel-3
+    SENTINEL_PORT: "26379"
+    DISCOVERY_ATTEMPTS: "30"
+    DISCOVERY_SLEEP_SECS: "2"
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 5s
+    timeout: 5s
+    retries: 5
+    start_period: 15s
+
+x-sentinel-common: &sentinel-common
+  image: redis:7.4.2-alpine
+  restart: unless-stopped
+  entrypoint: ["/bin/sh", "/sentinel-entrypoint.sh"]
+  volumes:
+    - ./sentinel/sentinel.conf:/etc/redis/sentinel.conf:ro
+    - ./sentinel/sentinel-entrypoint.sh:/sentinel-entrypoint.sh:ro
+  healthcheck:
+    test:
+      [
+        "CMD-SHELL",
+        "redis-cli -p 26379 ping | grep -q PONG && redis-cli -p 26379 SENTINEL masters | grep -q mymaster",
+      ]
+    interval: 5s
+    timeout: 5s
+    retries: 5
+    start_period: 10s
 
 services:
   postgres:
@@ -18,7 +88,7 @@ services:
       POSTGRES_PASSWORD: arena123
       POSTGRES_DB: arena_of_100
     ports:
-      - "5432:5432"
+      - "5443:5432"
     volumes:
       - postgres_ha_data:/var/lib/postgresql/data
     healthcheck:
@@ -27,162 +97,103 @@ services:
       timeout: 5s
       retries: 5
 
-  # Redis Master
+  # Bootstrap / primary candidate. On cold start becomes primary when
+  # Sentinels are not up yet. After failover + restart, discovers the
+  # current master from Sentinel and starts as replica if demoted.
   redis-master:
-    image: redis:7-alpine
+    <<: *redis-ha-common
     container_name: arena-redis-master
-    restart: unless-stopped
-    command: redis-server --appendonly yes
+    environment:
+      <<: *redis-ha-env
+      REDIS_NODE_NAME: redis-master
+      REDIS_CONTAINER_NAME: arena-redis-master
+      REDIS_BOOTSTRAP_PRIMARY: "1"
     ports:
-      - "6379:6379"
+      - "6390:6379"
     volumes:
+      - ./sentinel/redis-ha-entrypoint.sh:/redis-ha-entrypoint.sh:ro
       - redis_master_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
 
-  # Redis Replica 1
   redis-replica-1:
-    image: redis:7-alpine
+    <<: *redis-ha-common
     container_name: arena-redis-replica-1
-    restart: unless-stopped
-    entrypoint:
-      - sh
-      - -c
-      - |
-        MASTER_HOST=""
-        MASTER_PORT=""
-        for i in 1 2 3 4 5; do
-          for sentinel in redis-sentinel-1 redis-sentinel-2 redis-sentinel-3; do
-            RESP=$$(redis-cli -h "$$sentinel" -p 26379 sentinel get-master-addr-by-name mymaster 2>/dev/null)
-            set -- $$RESP
-            if [ "$$#" -eq 2 ] && [ "$$1" != "(nil)" ] && [ "$$1" != "nil" ] && [ -n "$$1" ] && [ -n "$$2" ] && [ "$$2" -ge 1 ] 2>/dev/null && [ "$$2" -le 65535 ] 2>/dev/null; then
-              MASTER_HOST="$$1"
-              MASTER_PORT="$$2"
-              break 2
-            fi
-          done
-          sleep 1
-        done
-        if [ -z "$$MASTER_HOST" ] || [ -z "$$MASTER_PORT" ]; then
-          echo "No master discovered from Sentinel, falling back to default redis-master:6379" >&2
-          MASTER_HOST="redis-master"
-          MASTER_PORT="6379"
-        fi
-        MY_IP=$$(hostname -i 2>/dev/null | awk '{print $$1}')
-        MY_HOST=$$(hostname 2>/dev/null)
-        if [ "$$MASTER_HOST" = "$$MY_HOST" ] || [ "$$MASTER_HOST" = "$$MY_IP" ] || [ "$$MASTER_HOST" = "arena-redis-replica-1" ] || [ "$$MASTER_HOST" = "redis-replica-1" ]; then
-          exec redis-server --appendonly yes
-        else
-          exec redis-server --appendonly yes --replicaof "$$MASTER_HOST" "$$MASTER_PORT"
-        fi
+    environment:
+      <<: *redis-ha-env
+      REDIS_NODE_NAME: redis-replica-1
+      REDIS_CONTAINER_NAME: arena-redis-replica-1
+      REDIS_BOOTSTRAP_PRIMARY: "0"
     ports:
-      - "6380:6379"
+      - "6391:6379"
     volumes:
+      - ./sentinel/redis-ha-entrypoint.sh:/redis-ha-entrypoint.sh:ro
       - redis_replica1_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+    depends_on:
+      redis-sentinel-1:
+        condition: service_healthy
+      redis-sentinel-2:
+        condition: service_healthy
+      redis-sentinel-3:
+        condition: service_healthy
 
-  # Redis Replica 2
   redis-replica-2:
-    image: redis:7-alpine
+    <<: *redis-ha-common
     container_name: arena-redis-replica-2
-    restart: unless-stopped
-    entrypoint:
-      - sh
-      - -c
-      - |
-        MASTER_HOST=""
-        MASTER_PORT=""
-        for i in 1 2 3 4 5; do
-          for sentinel in redis-sentinel-1 redis-sentinel-2 redis-sentinel-3; do
-            RESP=$$(redis-cli -h "$$sentinel" -p 26379 sentinel get-master-addr-by-name mymaster 2>/dev/null)
-            set -- $$RESP
-            if [ "$$#" -eq 2 ] && [ "$$1" != "(nil)" ] && [ "$$1" != "nil" ] && [ -n "$$1" ] && [ -n "$$2" ] && [ "$$2" -ge 1 ] 2>/dev/null && [ "$$2" -le 65535 ] 2>/dev/null; then
-              MASTER_HOST="$$1"
-              MASTER_PORT="$$2"
-              break 2
-            fi
-          done
-          sleep 1
-        done
-        if [ -z "$$MASTER_HOST" ] || [ -z "$$MASTER_PORT" ]; then
-          echo "No master discovered from Sentinel, falling back to default redis-master:6379" >&2
-          MASTER_HOST="redis-master"
-          MASTER_PORT="6379"
-        fi
-        MY_IP=$$(hostname -i 2>/dev/null | awk '{print $$1}')
-        MY_HOST=$$(hostname 2>/dev/null)
-        if [ "$$MASTER_HOST" = "$$MY_HOST" ] || [ "$$MASTER_HOST" = "$$MY_IP" ] || [ "$$MASTER_HOST" = "arena-redis-replica-2" ] || [ "$$MASTER_HOST" = "redis-replica-2" ]; then
-          exec redis-server --appendonly yes
-        else
-          exec redis-server --appendonly yes --replicaof "$$MASTER_HOST" "$$MASTER_PORT"
-        fi
+    environment:
+      <<: *redis-ha-env
+      REDIS_NODE_NAME: redis-replica-2
+      REDIS_CONTAINER_NAME: arena-redis-replica-2
+      REDIS_BOOTSTRAP_PRIMARY: "0"
     ports:
-      - "6381:6379"
+      - "6392:6379"
     volumes:
+      - ./sentinel/redis-ha-entrypoint.sh:/redis-ha-entrypoint.sh:ro
       - redis_replica2_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+    depends_on:
+      redis-sentinel-1:
+        condition: service_healthy
+      redis-sentinel-2:
+        condition: service_healthy
+      redis-sentinel-3:
+        condition: service_healthy
 
-  # Redis Sentinel 1
   redis-sentinel-1:
-    image: redis:7-alpine
+    <<: *sentinel-common
     container_name: arena-redis-sentinel-1
-    restart: unless-stopped
-    entrypoint: ["sh", "-c", "if [ ! -f /data/sentinel.conf ]; then cp /etc/redis/sentinel.conf /data/sentinel.conf; fi && redis-sentinel /data/sentinel.conf"]
     ports:
-      - "26379:26379"
+      - "26479:26379"
     volumes:
       - ./sentinel/sentinel.conf:/etc/redis/sentinel.conf:ro
+      - ./sentinel/sentinel-entrypoint.sh:/sentinel-entrypoint.sh:ro
       - redis_sentinel1_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+    depends_on:
+      redis-master:
+        condition: service_healthy
 
-  # Redis Sentinel 2
   redis-sentinel-2:
-    image: redis:7-alpine
+    <<: *sentinel-common
     container_name: arena-redis-sentinel-2
-    restart: unless-stopped
-    entrypoint: ["sh", "-c", "if [ ! -f /data/sentinel.conf ]; then cp /etc/redis/sentinel.conf /data/sentinel.conf; fi && redis-sentinel /data/sentinel.conf"]
     ports:
-      - "26380:26379"
+      - "26480:26379"
     volumes:
       - ./sentinel/sentinel.conf:/etc/redis/sentinel.conf:ro
+      - ./sentinel/sentinel-entrypoint.sh:/sentinel-entrypoint.sh:ro
       - redis_sentinel2_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+    depends_on:
+      redis-master:
+        condition: service_healthy
 
-  # Redis Sentinel 3
   redis-sentinel-3:
-    image: redis:7-alpine
+    <<: *sentinel-common
     container_name: arena-redis-sentinel-3
-    restart: unless-stopped
-    entrypoint: ["sh", "-c", "if [ ! -f /data/sentinel.conf ]; then cp /etc/redis/sentinel.conf /data/sentinel.conf; fi && redis-sentinel /data/sentinel.conf"]
     ports:
-      - "26381:26379"
+      - "26481:26379"
     volumes:
       - ./sentinel/sentinel.conf:/etc/redis/sentinel.conf:ro
+      - ./sentinel/sentinel-entrypoint.sh:/sentinel-entrypoint.sh:ro
       - redis_sentinel3_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+    depends_on:
+      redis-master:
+        condition: service_healthy
 
 volumes:
   postgres_ha_data:
