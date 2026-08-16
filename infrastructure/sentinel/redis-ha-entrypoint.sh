@@ -14,7 +14,7 @@
 #   DISCOVERY_ATTEMPTS      Default 30 (~60s with sleep 2)
 #   DISCOVERY_SLEEP_SECS    Default 2
 #   BOOTSTRAP_NO_SENTINEL_AFTER  Attempts with zero reachable Sentinels
-#                           before bootstrap primary (default 3)
+#                           before bootstrap primary (default 1)
 # ============================================================
 set -eu
 
