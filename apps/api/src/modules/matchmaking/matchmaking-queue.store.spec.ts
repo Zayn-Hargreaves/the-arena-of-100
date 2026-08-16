@@ -95,6 +95,23 @@ describe("MatchmakingQueueStore", () => {
     expect(mockPipeline.exec).toHaveBeenCalled();
   });
 
+  it("throws when pipeline.exec returns a command error", async () => {
+    mockPipeline.exec.mockResolvedValueOnce([
+      [new Error("Command failed"), null],
+      [null, 1],
+    ]);
+
+    const ticket: MatchmakingTicket = {
+      userId: "u1",
+      username: "Alice",
+      elo: 1200,
+      socketId: "s1",
+      joinedAt: 1000,
+    };
+
+    await expect(store.addTicket(ticket)).rejects.toThrow("Command failed");
+  });
+
   it("removes a ticket from Redis", async () => {
     const result = await store.removeTicket("u1");
     expect(mockPipeline.del).toHaveBeenCalledWith(

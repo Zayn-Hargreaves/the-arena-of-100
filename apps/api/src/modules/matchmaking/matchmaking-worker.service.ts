@@ -10,6 +10,7 @@ import {
 } from "@nestjs/common";
 import { Server } from "socket.io";
 import {
+  ErrorCode,
   GAME_CONFIG,
   MATCHMAKING_CONFIG,
   ServerEvent,
@@ -260,6 +261,39 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
             `Failed to add human player ${player.userId} to matched room ${room.id}`,
             err,
           );
+          try {
+            const existing = await this.prisma.roomPlayer.findUnique({
+              where: {
+                roomId_userId: {
+                  roomId: room.id,
+                  userId: player.userId,
+                },
+              },
+            });
+
+            if (existing) {
+              await this.redis.sadd(roomPlayersKey(room.id), player.userId);
+              successfulPlayers.push(player);
+            } else {
+              try {
+                await this.queueStore.addTicket(player);
+              } catch (reErr) {
+                this.logger.warn(
+                  `Failed to re-enqueue ticket for user ${player.userId}`,
+                  reErr,
+                );
+              }
+              this.server?.to(player.socketId).emit(ServerEvent.ERROR, {
+                code: ErrorCode.INTERNAL_ERROR,
+                message: "Failed to join matched room",
+              });
+            }
+          } catch (recoveryErr) {
+            this.logger.error(
+              `Error during player-add recovery for user ${player.userId}`,
+              recoveryErr,
+            );
+          }
         }
       }
 

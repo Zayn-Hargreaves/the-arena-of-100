@@ -35,7 +35,14 @@ export class MatchmakingQueueStore {
     const pipeline = client.pipeline();
     pipeline.set(ticketKey, payload, "EX", MATCHMAKING_TICKET_TTL_SEC);
     pipeline.zadd(MATCHMAKING_QUEUE_ZSET, ticket.elo, ticket.userId);
-    await pipeline.exec();
+    const results = await pipeline.exec();
+    if (results) {
+      for (const [err] of results) {
+        if (err) {
+          throw err;
+        }
+      }
+    }
   }
 
   /**

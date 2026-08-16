@@ -32,7 +32,12 @@ describe("MatchmakingWorkerService", () => {
   let mockBotService: Mocked<Pick<BotService, "ensureBotUsers">>;
   let mockRoomService: Mocked<Pick<RoomService, "createRoom">>;
   let mockGameLoopService: Mocked<Pick<GameLoopService, "forceStartRoomMatch">>;
-  let mockPrisma: { roomPlayer: { create: ReturnType<typeof vi.fn> } };
+  let mockPrisma: {
+    roomPlayer: {
+      create: ReturnType<typeof vi.fn>;
+      findUnique: ReturnType<typeof vi.fn>;
+    };
+  };
   let mockRedis: Mocked<
     Pick<
       RedisService,
@@ -81,6 +86,7 @@ describe("MatchmakingWorkerService", () => {
     mockPrisma = {
       roomPlayer: {
         create: vi.fn().mockResolvedValue({}),
+        findUnique: vi.fn().mockResolvedValue(null),
       },
     };
 
@@ -247,7 +253,14 @@ describe("MatchmakingWorkerService", () => {
     await worker.tick();
 
     expect(mockServer.to).toHaveBeenCalledWith("s1");
-    expect(mockServer.to).not.toHaveBeenCalledWith("s2");
+    expect(mockServer.to).toHaveBeenCalledWith("s2");
+    expect(mockEmit).toHaveBeenCalledWith(
+      ServerEvent.ERROR,
+      expect.objectContaining({
+        code: "INTERNAL_ERROR",
+        message: "Failed to join matched room",
+      }),
+    );
     expect(mockGameLoopService.forceStartRoomMatch).toHaveBeenCalledWith(
       "room_123",
       mockServer,
@@ -405,5 +418,95 @@ describe("MatchmakingWorkerService", () => {
     await worker.tick();
 
     expect(mockRoomService.createRoom).not.toHaveBeenCalled();
+  });
+
+  it("recovers player state and sends matched notification if RoomPlayer already exists", async () => {
+    const tickets: MatchmakingTicket[] = [
+      {
+        userId: "u1",
+        username: "Alice",
+        elo: 1200,
+        socketId: "s1",
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 5000),
+      },
+      {
+        userId: "u2",
+        username: "Bob",
+        elo: 1250,
+        socketId: "s2",
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 2000),
+      },
+    ];
+
+    mockQueueStore.getAllTickets.mockResolvedValueOnce(tickets);
+    // Simulate roomPlayer.create failing (e.g. duplicate)
+    mockPrisma.roomPlayer.create.mockRejectedValueOnce(
+      new Error("Unique constraint"),
+    );
+    // But findUnique finds existing membership
+    mockPrisma.roomPlayer.findUnique.mockResolvedValueOnce({
+      id: "rp_2",
+      roomId: "room_123",
+      userId: "u2",
+      joinedAt: new Date(),
+    });
+
+    await worker.tick();
+
+    // Redis synchronized
+    expect(mockRedis.sadd).toHaveBeenCalledWith(
+      expect.stringContaining("room_123"),
+      "u2",
+    );
+    // Matched notification sent to both players
+    expect(mockServer.to).toHaveBeenCalledWith("s1");
+    expect(mockServer.to).toHaveBeenCalledWith("s2");
+    expect(mockEmit).toHaveBeenCalledWith(
+      ServerEvent.MATCHMAKING_MATCHED,
+      expect.objectContaining({ roomId: "room_123" }),
+    );
+    expect(mockQueueStore.addTicket).not.toHaveBeenCalled();
+  });
+
+  it("re-enqueues ticket and emits ERROR event when RoomPlayer creation fails and membership does not exist", async () => {
+    const tickets: MatchmakingTicket[] = [
+      {
+        userId: "u1",
+        username: "Alice",
+        elo: 1200,
+        socketId: "s1",
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 5000),
+      },
+      {
+        userId: "u2",
+        username: "Bob",
+        elo: 1250,
+        socketId: "s2",
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 2000),
+      },
+    ];
+
+    mockQueueStore.getAllTickets.mockResolvedValueOnce(tickets);
+    mockQueueStore.atomicPopTickets.mockResolvedValueOnce(tickets);
+    // Simulate roomPlayer.create failing
+    mockPrisma.roomPlayer.create.mockRejectedValueOnce(new Error("DB error"));
+    // And membership does not exist
+    mockPrisma.roomPlayer.findUnique.mockResolvedValueOnce(null);
+
+    await worker.tick();
+
+    // Ticket re-enqueued for failed player
+    expect(mockQueueStore.addTicket).toHaveBeenCalledWith(tickets[1]);
+    // Error emitted to failed player's socket
+    expect(mockServer.to).toHaveBeenCalledWith("s2");
+    expect(mockEmit).toHaveBeenCalledWith(
+      ServerEvent.ERROR,
+      expect.objectContaining({
+        code: "INTERNAL_ERROR",
+        message: "Failed to join matched room",
+      }),
+    );
+    // Successful host still receives matched
+    expect(mockServer.to).toHaveBeenCalledWith("s1");
   });
 });
