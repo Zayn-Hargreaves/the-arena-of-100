@@ -1,3 +1,12 @@
+# Public ALB defaults to HTTPS; refuse empty cert when enable_https is true.
+# (Variable validation cannot reference other variables in Terraform 1.5.)
+check "https_requires_certificate" {
+  assert {
+    condition     = !var.enable_https || length(trimspace(var.certificate_arn)) > 0
+    error_message = "certificate_arn must be a non-empty ACM ARN when enable_https is true. HTTP-only is not the default for public ALBs."
+  }
+}
+
 resource "aws_lb" "this" {
   name               = "${var.name_prefix}-alb"
   internal           = false

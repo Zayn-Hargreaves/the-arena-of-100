@@ -1,11 +1,11 @@
 output "alb_dns_name" {
-  description = "Point Vercel NEXT_PUBLIC_API_URL to http://<this> (or https if enable_https)"
+  description = "ALB DNS — use only behind HTTPS custom domain for Vercel clients"
   value       = module.alb.alb_dns_name
 }
 
 output "api_base_url" {
-  description = "Suggested API base URL for the web app"
-  value       = var.enable_https && var.domain_name != "" ? "https://${var.domain_name}" : "http://${module.alb.alb_dns_name}"
+  description = "Suggested API base URL for the web app (HTTPS + domain required for Vercel)"
+  value       = var.enable_https && var.domain_name != "" ? "https://${var.domain_name}" : (var.enable_https ? "https://${module.alb.alb_dns_name}" : "http://${module.alb.alb_dns_name}")
 }
 
 output "ecr_repository_url" {
@@ -43,8 +43,13 @@ output "migrate_task_definition_family" {
 }
 
 output "gha_role_arn" {
-  description = "Set as GitHub Actions secret AWS_ROLE_ARN"
+  description = "Deploy role — GitHub secret AWS_ROLE_ARN; protect Environment staging (main + approval)"
   value       = module.gha_oidc.role_arn
+}
+
+output "gha_plan_role_arn" {
+  description = "Read-only plan role — GitHub secret AWS_ROLE_ARN_PLAN"
+  value       = module.gha_oidc.plan_role_arn
 }
 
 output "vpc_id" {
@@ -53,6 +58,10 @@ output "vpc_id" {
 
 output "public_subnet_ids" {
   value = module.networking.public_subnet_ids
+}
+
+output "private_data_subnet_ids" {
+  value = module.networking.private_data_subnet_ids
 }
 
 output "ecs_security_group_id" {
@@ -64,6 +73,31 @@ output "log_group_name" {
 }
 
 output "secret_arns" {
-  value     = module.secrets.secret_arns
-  sensitive = true
+  description = "Secret shell ARNs — seed versions outside Terraform"
+  value       = module.secrets.secret_arns
+  sensitive   = true
+}
+
+output "secret_names" {
+  description = "Secret names for aws secretsmanager put-secret-value"
+  value       = module.secrets.secret_names
+}
+
+# Sensitive helpers for operators seeding SM (do not commit output files)
+output "seed_database_url" {
+  description = "Suggested DATABASE_URL to put-secret-value (sensitive)"
+  value       = local.database_url
+  sensitive   = true
+}
+
+output "seed_redis_url" {
+  description = "Suggested REDIS_URL (rediss:// + AUTH) to put-secret-value (sensitive)"
+  value       = module.redis.redis_url
+  sensitive   = true
+}
+
+output "seed_jwt_secret" {
+  description = "JWT secret from tfvars — put-secret-value into JWT_SECRET shell (sensitive)"
+  value       = var.jwt_secret
+  sensitive   = true
 }

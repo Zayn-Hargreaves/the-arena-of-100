@@ -10,8 +10,15 @@ output "alb_zone_id" {
   value = aws_lb.this.zone_id
 }
 
+# Depend on listener(s) so consumers (ECS service) only see the TG after it
+# is attached to the ALB — avoids races on first apply.
 output "target_group_arn" {
   value = aws_lb_target_group.api.arn
+
+  depends_on = [
+    aws_lb_listener.http,
+    aws_lb_listener.https,
+  ]
 }
 
 output "http_listener_arn" {

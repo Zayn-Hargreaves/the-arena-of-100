@@ -5,11 +5,19 @@ locals {
   # Thumbprint historically required; AWS now validates GitHub's cert chain.
   # Keep a well-known GitHub Actions thumbprint for older provider versions.
   github_oidc_thumbprint = "6938fd4d98bab03faadb97b34396831e3780aea1"
-  role_name              = "${var.name_prefix}-gha"
-  subjects = [
+  deploy_role_name       = "${var.name_prefix}-gha-deploy"
+  plan_role_name         = "${var.name_prefix}-gha-plan"
+
+  # Deploy / apply / ECS push: GitHub Environment "staging" only (protect with
+  # required reviewers + deployment branch = main). No pull_request subject.
+  deploy_subjects = [
+    "repo:${var.github_org}/${var.github_repo}:environment:staging",
+  ]
+
+  # Read-only plan: PRs + main (no environment gate required for plan job).
+  plan_subjects = [
     "repo:${var.github_org}/${var.github_repo}:ref:refs/heads/main",
     "repo:${var.github_org}/${var.github_repo}:pull_request",
-    "repo:${var.github_org}/${var.github_repo}:environment:staging",
   ]
 }
 
@@ -31,8 +39,10 @@ locals {
   oidc_provider_arn = var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : data.aws_iam_openid_connect_provider.github[0].arn
 }
 
+# --- Deploy role (apply + ECS deploy) — environment:staging only ---
+
 resource "aws_iam_role" "gha" {
-  name = local.role_name
+  name = local.deploy_role_name
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -47,13 +57,13 @@ resource "aws_iam_role" "gha" {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
         "ForAnyValue:StringLike" = {
-          "token.actions.githubusercontent.com:sub" = local.subjects
+          "token.actions.githubusercontent.com:sub" = local.deploy_subjects
         }
       }
     }]
   })
 
-  tags = merge(var.tags, { Name = local.role_name })
+  tags = merge(var.tags, { Name = local.deploy_role_name })
 }
 
 # Broad-enough demo deploy permissions: ECR push, ECS update, pass roles, run-task, TF apply scope.
@@ -123,6 +133,16 @@ resource "aws_iam_role_policy" "gha_deploy" {
         Resource = "*"
       },
       {
+        Sid    = "SecretsSeed"
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:PutSecretValue",
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret"
+        ]
+        Resource = "*"
+      },
+      {
         Sid    = "TerraformStateAndRead"
         Effect = "Allow"
         Action = [
@@ -143,7 +163,14 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "cloudwatch:Describe*",
           "logs:DescribeLogGroups",
           "ecs:Describe*",
-          "ecs:List*"
+          "ecs:List*",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket",
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:DescribeTable"
         ]
         Resource = "*"
       },
@@ -173,6 +200,80 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "iam:TagOpenIDConnectProvider",
           "iam:UpdateOpenIDConnectProviderThumbprint",
           "iam:PassRole"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# --- Plan role (read-only) — PR + main; no pull_request on deploy role ---
+
+resource "aws_iam_role" "gha_plan" {
+  name = local.plan_role_name
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = local.oidc_provider_arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+        }
+        "ForAnyValue:StringLike" = {
+          "token.actions.githubusercontent.com:sub" = local.plan_subjects
+        }
+      }
+    }]
+  })
+
+  tags = merge(var.tags, { Name = local.plan_role_name })
+}
+
+resource "aws_iam_role_policy" "gha_plan" {
+  name = "${var.name_prefix}-gha-plan"
+  role = aws_iam_role.gha_plan.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "TerraformPlanRead"
+        Effect = "Allow"
+        Action = [
+          "ec2:Describe*",
+          "elasticloadbalancing:Describe*",
+          "rds:Describe*",
+          "elasticache:Describe*",
+          "secretsmanager:Describe*",
+          "secretsmanager:ListSecrets",
+          "secretsmanager:GetSecretValue",
+          "iam:GetRole",
+          "iam:GetRolePolicy",
+          "iam:GetOpenIDConnectProvider",
+          "iam:ListRolePolicies",
+          "iam:ListAttachedRolePolicies",
+          "iam:GetPolicy",
+          "iam:GetPolicyVersion",
+          "iam:ListOpenIDConnectProviders",
+          "cloudwatch:Describe*",
+          "logs:DescribeLogGroups",
+          "ecs:Describe*",
+          "ecs:List*",
+          "ecr:DescribeRepositories",
+          "ecr:DescribeImages",
+          "ecr:ListImages",
+          "ecr:GetAuthorizationToken",
+          "s3:GetObject",
+          "s3:ListBucket",
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:DescribeTable"
         ]
         Resource = "*"
       }

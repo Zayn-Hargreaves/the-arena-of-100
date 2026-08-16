@@ -66,6 +66,7 @@ opencode.json
 *.tfstate
 *.tfstate.*
 *.tfvars
+*.tfvars.json
 !*.tfvars.example
 crash.log
 crash.*.log

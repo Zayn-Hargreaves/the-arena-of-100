@@ -1,21 +1,25 @@
-# Default: local state — fastest path for a 3–5 day demo.
-# State file lives at envs/staging/terraform.tfstate (gitignored).
+# Encrypted S3 remote backend with DynamoDB locking (mandatory).
 #
-# To switch to S3 + DynamoDB locking later:
-#   1. Apply infrastructure/terraform/backend/ (optional bootstrap)
-#   2. Uncomment the backend "s3" block below
-#   3. terraform init -migrate-state
+# Bootstrap first (creates bucket + lock table):
+#   cd infrastructure/terraform/backend
+#   terraform init && terraform apply -var="state_bucket_name=YOUR_UNIQUE_BUCKET"
+#   terraform output backend_config_snippet
+#
+# Then replace the TODO placeholders below and run:
+#   cd infrastructure/terraform/envs/staging
+#   terraform init -migrate-state
+#
+# Do not use a local backend — local state/plans may contain plaintext
+# DB passwords, JWT material, and other secrets.
 
 terraform {
-  backend "local" {
-    path = "terraform.tfstate"
+  backend "s3" {
+    # TODO: set from backend module output `state_bucket`
+    bucket = "TODO_TF_STATE_BUCKET"
+    key    = "arena-of-100/staging/terraform.tfstate"
+    region = "ap-southeast-1"
+    # TODO: set from backend module output `lock_table`
+    dynamodb_table = "TODO_TF_LOCK_TABLE"
+    encrypt        = true
   }
-
-  # backend "s3" {
-  #   bucket         = "YOUR_TF_STATE_BUCKET"
-  #   key            = "arena-of-100/staging/terraform.tfstate"
-  #   region         = "ap-southeast-1"
-  #   dynamodb_table = "YOUR_TF_LOCK_TABLE"
-  #   encrypt        = true
-  # }
 }

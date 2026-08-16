@@ -128,10 +128,9 @@ resource "aws_ecs_task_definition" "api" {
   tags = merge(var.tags, { Name = "${var.name_prefix}-api-td" })
 }
 
-# One-shot migrate task: same image/env/secrets, override command at run-time.
-# Runtime image has no prisma CLI — document using a migrate image tag or
-# override with a build-stage image. We still ship a sibling task def family
-# so `aws ecs run-task` can target it with command override when image includes prisma.
+# One-shot migrate task: dedicated migrate_image_uri (build-stage / Prisma CLI).
+# Deploy workflow registers a new revision with the SHA-tagged migrate image
+# and the same command — do not swap container image via run-task overrides.
 resource "aws_ecs_task_definition" "migrate" {
   family                   = "${var.name_prefix}-api-migrate"
   requires_compatibilities = ["FARGATE"]
@@ -143,15 +142,13 @@ resource "aws_ecs_task_definition" "migrate" {
 
   container_definitions = jsonencode([{
     name      = "migrate"
-    image     = "${var.ecr_repository_url}:${var.image_tag}"
+    image     = var.migrate_image_uri
     essential = true
 
     environment = local.container_environment
     secrets     = local.container_secrets
 
-    # Default command is a no-op placeholder; deploy workflow overrides with
-    # the build-stage image + prisma migrate deploy. See README.
-    command = ["node", "-e", "console.log('override command for prisma migrate deploy'); process.exit(1)"]
+    command = ["sh", "-c", "pnpm --filter @arena/api exec prisma migrate deploy"]
 
     logConfiguration = {
       logDriver = "awslogs"

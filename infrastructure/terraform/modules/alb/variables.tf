@@ -15,12 +15,13 @@ variable "security_group_ids" {
 }
 
 variable "enable_https" {
-  type    = bool
-  default = false
+  description = "When true (default), HTTP redirects to HTTPS and certificate_arn is required."
+  type        = bool
+  default     = true
 }
 
 variable "certificate_arn" {
-  description = "ACM cert ARN when enable_https=true"
+  description = "ACM cert ARN in this region (required when enable_https=true — enforced by module precondition)"
   type        = string
   default     = ""
 }

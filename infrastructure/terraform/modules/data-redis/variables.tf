@@ -3,7 +3,7 @@ variable "name_prefix" {
 }
 
 variable "subnet_ids" {
-  description = "Subnets for cache subnet group"
+  description = "Subnets for cache subnet group (private data subnets)"
   type        = list(string)
 }
 
@@ -17,10 +17,14 @@ variable "node_type" {
 }
 
 variable "auth_token" {
-  description = "Redis AUTH token (16–128 chars). Empty = no auth (demo only)."
+  description = "Redis AUTH token (16–128 chars). Required; pair with transit encryption (rediss://)."
   type        = string
-  default     = ""
   sensitive   = true
+
+  validation {
+    condition     = length(var.auth_token) >= 16 && length(var.auth_token) <= 128
+    error_message = "auth_token must be 16–128 characters (ElastiCache AUTH requirement)."
+  }
 }
 
 variable "tags" {

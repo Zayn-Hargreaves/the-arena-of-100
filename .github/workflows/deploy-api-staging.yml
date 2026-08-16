@@ -60,7 +60,7 @@ jobs:
         if: steps.gate.outputs.skip != 'true'
         id: ecr
 
-      - name: Set image tags
+      - name: Set image tags (immutable SHA only — ECR IMMUTABLE)
         if: steps.gate.outputs.skip != 'true'
         id: meta
         run: |
@@ -68,9 +68,7 @@ jobs:
           REPO="${{ env.ECR_REPOSITORY }}"
           SHA_TAG="${{ github.sha }}"
           echo "runtime=${REGISTRY}/${REPO}:${SHA_TAG}" >> "$GITHUB_OUTPUT"
-          echo "runtime_latest=${REGISTRY}/${REPO}:latest" >> "$GITHUB_OUTPUT"
-          echo "migrate=${REGISTRY}/${REPO}:migrate" >> "$GITHUB_OUTPUT"
-          echo "migrate_sha=${REGISTRY}/${REPO}:migrate-${SHA_TAG}" >> "$GITHUB_OUTPUT"
+          echo "migrate=${REGISTRY}/${REPO}:migrate-${SHA_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         if: steps.gate.outputs.skip != 'true'
@@ -86,7 +84,6 @@ jobs:
           push: true
           tags: |
             ${{ steps.meta.outputs.runtime }}
-            ${{ steps.meta.outputs.runtime_latest }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -100,14 +97,13 @@ jobs:
           push: true
           tags: |
             ${{ steps.meta.outputs.migrate }}
-            ${{ steps.meta.outputs.migrate_sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Run prisma migrate (Fargate one-shot)
         if: steps.gate.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || inputs.skip_migrate != true)
         env:
-          MIGRATE_IMAGE: ${{ steps.meta.outputs.migrate_sha }}
+          MIGRATE_IMAGE: ${{ steps.meta.outputs.migrate }}
         run: |
           set -euo pipefail
           TASK_FAMILY="${{ vars.ECS_MIGRATE_FAMILY || 'arena-staging-api-migrate' }}"
@@ -120,7 +116,8 @@ jobs:
             exit 0
           fi
 
-          # Use current migrate task definition as template
+          # Register new migrate TD revision with SHA-tagged migrate image + prisma command.
+          # Do not replace container image via run-task overrides.
           TD_JSON=$(aws ecs describe-task-definition --task-definition "$TASK_FAMILY" --query taskDefinition)
           NEW_TD=$(echo "$TD_JSON" | jq --arg IMAGE "$MIGRATE_IMAGE" '
             .containerDefinitions[0].image = $IMAGE
@@ -169,3 +166,22 @@ jobs:
             --task-definition "$NEW_ARN" \
             --force-new-deployment
           echo "Updated service to $NEW_ARN"
+
+          echo "Waiting for service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --services "${{ env.ECS_SERVICE }}"
+
+          DEPLOYED_TD=$(aws ecs describe-services \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --services "${{ env.ECS_SERVICE }}" \
+            --query 'services[0].taskDefinition' \
+            --output text)
+
+          if [ "$DEPLOYED_TD" != "$NEW_ARN" ]; then
+            echo "ERROR: service taskDefinition mismatch"
+            echo "  expected: $NEW_ARN"
+            echo "  actual:   $DEPLOYED_TD"
+            exit 1
+          fi
+          echo "Service stable on $DEPLOYED_TD"

@@ -1,11 +1,12 @@
-# Optional remote-state bootstrap (S3 + DynamoDB).
-# Not required for the short demo — local backend is default.
+# Mandatory remote-state bootstrap (S3 + DynamoDB lock + encryption).
+# Apply this BEFORE envs/staging so state never lives only on a laptop.
 #
 # Usage:
 #   cd infrastructure/terraform/backend
 #   terraform init
 #   terraform apply -var="state_bucket_name=YOUR_UNIQUE_BUCKET"
-# Then uncomment the s3 backend block in envs/staging/backend.tf
+# Fill envs/staging/backend.tf placeholders from outputs, then:
+#   cd ../envs/staging && terraform init -migrate-state
 
 terraform {
   required_version = ">= 1.5.0"
@@ -38,13 +39,17 @@ provider "aws" {
 
 resource "aws_s3_bucket" "state" {
   bucket        = var.state_bucket_name
-  force_destroy = true # demo-friendly
+  force_destroy = false
 
   tags = {
     Name      = var.state_bucket_name
     Purpose   = "terraform-state"
     Project   = "arena-of-100"
     ManagedBy = "terraform"
+  }
+
+  lifecycle {
+    prevent_destroy = true
   }
 }
 

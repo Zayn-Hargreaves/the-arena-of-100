@@ -1,36 +1,41 @@
 # Copy to terraform.tfvars (gitignored) and fill in.
 #   cp terraform.tfvars.example terraform.tfvars
+#
+# WARNING: tfvars / local plans may contain plaintext secrets. Prefer remote
+# encrypted state (see README backend bootstrap) and never commit this file.
 
 aws_region  = "ap-southeast-1"
 name_prefix = "arena-staging"
 
-# GitHub repo that may assume the OIDC deploy role
+# GitHub repo that may assume OIDC roles
 github_org  = "YOUR_GITHUB_ORG_OR_USER"
 github_repo = "the-arena-of-100"
 
 # Set false if AWS account already has token.actions.githubusercontent.com
 create_github_oidc_provider = true
 
-# JWT — generate something long and random
+# JWT — generate something long and random; seed into Secrets Manager after apply
 jwt_secret = "CHANGE_ME_long_random_string_at_least_32_chars"
 
-# Vercel production/preview origin (no trailing slash)
+# HTTPS Vercel origin (no trailing slash) — required for cross-site cookies
 cors_origin = "https://your-app.vercel.app"
 
-# Optional: leave empty to auto-generate RDS password
+# Optional: leave empty to auto-generate RDS password (still in TF state for RDS)
 # db_password = ""
 
-# Optional Redis AUTH (16–128 chars). Empty = no AUTH (SG still blocks public)
+# Optional: leave empty to auto-generate Redis AUTH (16–128 chars, TLS always on)
 # redis_auth_token = ""
 
-# Optional HTTPS (requires ACM cert in ap-southeast-1)
-enable_https    = false
-certificate_arn = ""
-# domain_name     = "api.example.com"
+# HTTPS is the default for public ALB. Provide ACM cert + domain before Vercel.
+enable_https    = true
+certificate_arn = "arn:aws:acm:ap-southeast-1:ACCOUNT:certificate/UUID"
+domain_name     = "api.example.com"
 # route53_zone_id = "Zxxxxxxxxxxxx"
 
-# Image tag used by the first task definition (CI will register newer revs)
-image_tag = "latest"
+# Immutable ECR: unique tags only (CI uses commit SHA). First push must create these tags.
+image_tag         = "bootstrap"
+migrate_image_tag = "migrate-bootstrap"
+# migrate_image_uri = ""  # optional full URI override
 
 api_cpu           = 256
 api_memory        = 512

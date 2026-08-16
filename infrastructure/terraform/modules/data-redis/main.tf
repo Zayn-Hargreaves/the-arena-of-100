@@ -6,7 +6,7 @@ resource "aws_elasticache_subnet_group" "this" {
 
 resource "aws_elasticache_replication_group" "this" {
   replication_group_id = "${var.name_prefix}-redis"
-  description          = "Arena staging Redis 7 (single node, non-cluster)"
+  description          = "Arena staging Redis 7 (single node, TLS + AUTH)"
 
   engine               = "redis"
   engine_version       = "7.1"
@@ -21,8 +21,8 @@ resource "aws_elasticache_replication_group" "this" {
   automatic_failover_enabled = false
   multi_az_enabled           = false
   at_rest_encryption_enabled = true
-  transit_encryption_enabled = var.auth_token != ""
-  auth_token                 = var.auth_token != "" ? var.auth_token : null
+  transit_encryption_enabled = true
+  auth_token                 = var.auth_token
 
   apply_immediately          = true
   auto_minor_version_upgrade = true

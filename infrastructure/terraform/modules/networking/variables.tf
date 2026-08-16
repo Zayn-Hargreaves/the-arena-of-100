@@ -10,7 +10,7 @@ variable "vpc_cidr" {
 }
 
 variable "azs" {
-  description = "Availability zones (single-AZ demo uses first only for data plane; second used for ALB multi-subnet requirement)"
+  description = "Availability zones (≥2). Public + private data subnets are created in each."
   type        = list(string)
 }
 

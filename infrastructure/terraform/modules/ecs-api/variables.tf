@@ -28,8 +28,14 @@ variable "ecr_repository_url" {
 }
 
 variable "image_tag" {
-  type    = string
-  default = "latest"
+  description = "Runtime image tag (prefer immutable commit SHA; avoid reusing mutable tags with IMMUTABLE ECR)"
+  type        = string
+  default     = "bootstrap"
+}
+
+variable "migrate_image_uri" {
+  description = "Full image URI for the migrate task definition (build-stage image with Prisma CLI). Must not reuse the runtime image tag."
+  type        = string
 }
 
 variable "cpu" {

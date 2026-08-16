@@ -6,9 +6,12 @@ locals {
   azs  = slice(data.aws_availability_zones.available.names, 0, 2)
   tags = {}
 
-  # Auto password if not provided
+  # Auto password if not provided (used only to create RDS; seed Secrets Manager outside TF)
   db_password = var.db_password != "" ? var.db_password : random_password.db[0].result
 
+  redis_auth_token = var.redis_auth_token != "" ? var.redis_auth_token : random_password.redis[0].result
+
+  # Suggested values for post-apply secret seeding (not written to SM by Terraform)
   database_url = format(
     "postgresql://%s:%s@%s:%s/%s?sslmode=require",
     var.db_username,
@@ -17,12 +20,20 @@ locals {
     tostring(module.postgres.port),
     var.db_name
   )
+
+  migrate_image_uri = var.migrate_image_uri != "" ? var.migrate_image_uri : "${module.ecr.repository_url}:${var.migrate_image_tag}"
 }
 
 resource "random_password" "db" {
   count   = var.db_password == "" ? 1 : 0
   length  = 24
   special = false # avoid URL-encoding pain in DATABASE_URL
+}
+
+resource "random_password" "redis" {
+  count   = var.redis_auth_token == "" ? 1 : 0
+  length  = 32
+  special = false
 }
 
 module "networking" {
@@ -38,7 +49,7 @@ module "postgres" {
   source = "../../modules/data-postgres"
 
   name_prefix             = var.name_prefix
-  subnet_ids              = module.networking.public_subnet_ids
+  subnet_ids              = module.networking.private_data_subnet_ids
   security_group_ids      = [module.networking.rds_security_group_id]
   db_name                 = var.db_name
   db_username             = var.db_username
@@ -55,10 +66,10 @@ module "redis" {
   source = "../../modules/data-redis"
 
   name_prefix        = var.name_prefix
-  subnet_ids         = module.networking.public_subnet_ids
+  subnet_ids         = module.networking.private_data_subnet_ids
   security_group_ids = [module.networking.redis_security_group_id]
   node_type          = "cache.t4g.micro"
-  auth_token         = var.redis_auth_token
+  auth_token         = local.redis_auth_token
   tags               = local.tags
 }
 
@@ -69,6 +80,8 @@ module "ecr" {
   tags            = local.tags
 }
 
+# Secret shells only — seed DATABASE_URL / REDIS_URL / JWT_SECRET after apply
+# (see README). Values must not live in Terraform state via secret_version.
 module "secrets" {
   source = "../../modules/secrets"
 
@@ -76,11 +89,6 @@ module "secrets" {
   tags        = local.tags
 
   secret_keys = toset(["DATABASE_URL", "REDIS_URL", "JWT_SECRET"])
-  secret_values = {
-    DATABASE_URL = local.database_url
-    REDIS_URL    = module.redis.redis_url
-    JWT_SECRET   = var.jwt_secret
-  }
 }
 
 module "alb" {
@@ -109,10 +117,11 @@ module "ecs_api" {
   target_group_arn   = module.alb.target_group_arn
   ecr_repository_url = module.ecr.repository_url
   image_tag          = var.image_tag
+  migrate_image_uri  = local.migrate_image_uri
   cpu                = var.api_cpu
   memory             = var.api_memory
   desired_count      = var.api_desired_count
-  assign_public_ip   = true # demo: no NAT (~$32/mo saved)
+  assign_public_ip   = true # demo: no NAT (~$32/mo saved); reaches private data via VPC
   log_retention_days = 7
   tags               = local.tags
 

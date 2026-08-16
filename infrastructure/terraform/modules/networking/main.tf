@@ -1,6 +1,6 @@
-# Demo networking: public subnets only — no NAT gateway (~$32/mo saved).
-# Fargate tasks get public IPs; security groups still lock RDS/Redis private
-# and only allow ALB → ECS :3001. Acceptable for a 3–5 day evaluation demo.
+# Demo networking: public subnets for ALB + ECS (no NAT, ~$32/mo saved).
+# Private data subnets (no IGW route) for RDS/Redis. Same-VPC routing lets
+# public ECS reach private data without NAT. SGs still lock data plane to ECS.
 
 resource "aws_vpc" "this" {
   cidr_block           = var.vpc_cidr
@@ -16,7 +16,7 @@ resource "aws_internet_gateway" "this" {
 }
 
 # Two public subnets in different AZs — ALB requires ≥2 subnets.
-# Data plane (RDS/Redis/ECS) prefers azs[0]; second subnet is for ALB only.
+# ECS tasks (demo) also use public subnets with assign_public_ip for ECR/SM.
 resource "aws_subnet" "public" {
   count = 2
 
@@ -47,6 +47,34 @@ resource "aws_route_table_association" "public" {
 
   subnet_id      = aws_subnet.public[count.index].id
   route_table_id = aws_route_table.public.id
+}
+
+# Private data subnets — no default route to IGW. RDS + Redis only.
+# Local VPC routing still allows ECS (public) → data (private).
+resource "aws_subnet" "private_data" {
+  count = 2
+
+  vpc_id                  = aws_vpc.this.id
+  cidr_block              = cidrsubnet(var.vpc_cidr, 4, count.index + 2)
+  availability_zone       = var.azs[count.index]
+  map_public_ip_on_launch = false
+
+  tags = merge(var.tags, {
+    Name = "${var.name_prefix}-private-data-${count.index + 1}"
+    Tier = "private-data"
+  })
+}
+
+resource "aws_route_table" "private_data" {
+  vpc_id = aws_vpc.this.id
+  tags   = merge(var.tags, { Name = "${var.name_prefix}-private-data-rt" })
+}
+
+resource "aws_route_table_association" "private_data" {
+  count = 2
+
+  subnet_id      = aws_subnet.private_data[count.index].id
+  route_table_id = aws_route_table.private_data.id
 }
 
 # --- Security groups ---

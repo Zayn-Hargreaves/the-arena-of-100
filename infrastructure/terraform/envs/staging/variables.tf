@@ -34,13 +34,13 @@ variable "create_github_oidc_provider" {
 
 # --- API config ---
 variable "cors_origin" {
-  description = "Browser origin for CORS (Vercel URL or localhost)"
+  description = "Browser origin for CORS (HTTPS Vercel URL)"
   type        = string
-  default     = "http://localhost:3000"
+  default     = "https://localhost:3000"
 }
 
 variable "jwt_secret" {
-  description = "JWT signing secret — set via TF_VAR_jwt_secret or tfvars (never commit)"
+  description = "JWT signing secret — seed into Secrets Manager after apply (not stored as SM version by TF). Still required as a sensitive input for operators to seed."
   type        = string
   sensitive   = true
 }
@@ -67,14 +67,14 @@ variable "db_name" {
 }
 
 variable "db_password" {
-  description = "RDS master password. Leave empty to auto-generate."
+  description = "RDS master password. Leave empty to auto-generate. Seed DATABASE_URL into SM after apply."
   type        = string
   default     = ""
   sensitive   = true
 }
 
 variable "redis_auth_token" {
-  description = "Optional Redis AUTH (16–128 chars). Empty = no AUTH + no TLS (demo SG-locked)."
+  description = "Redis AUTH (16–128 chars). Leave empty to auto-generate. Required for TLS+AUTH; seed rediss:// REDIS_URL into SM after apply."
   type        = string
   default     = ""
   sensitive   = true
@@ -86,9 +86,21 @@ variable "ecr_repository_name" {
 }
 
 variable "image_tag" {
-  description = "Initial ECS image tag (CI overwrites via new task defs)"
+  description = "Initial runtime ECS image tag (immutable ECR — use unique tags / commit SHA; CI registers newer revs)"
   type        = string
-  default     = "latest"
+  default     = "bootstrap"
+}
+
+variable "migrate_image_tag" {
+  description = "Tag for the migrate/build-stage image when migrate_image_uri is empty"
+  type        = string
+  default     = "migrate-bootstrap"
+}
+
+variable "migrate_image_uri" {
+  description = "Full migrate image URI override (optional). Default: ecr_url:migrate_image_tag"
+  type        = string
+  default     = ""
 }
 
 variable "api_cpu" {
@@ -106,27 +118,27 @@ variable "api_desired_count" {
   default = 1
 }
 
-# --- Optional HTTPS ---
+# --- HTTPS (default on for public ALB + Vercel clients) ---
 variable "enable_https" {
-  description = "Require ACM cert; HTTP redirects to HTTPS"
+  description = "Require ACM cert; HTTP redirects to HTTPS. Default true for public staging."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "certificate_arn" {
-  description = "ACM certificate ARN in this region (only if enable_https)"
+  description = "ACM certificate ARN in this region (required when enable_https=true)"
   type        = string
   default     = ""
 }
 
 variable "domain_name" {
-  description = "Optional custom domain (documentation / future Route53)"
+  description = "API hostname for HTTPS clients (e.g. api.example.com). Required for Vercel HTTPS web."
   type        = string
   default     = ""
 }
 
 variable "route53_zone_id" {
-  description = "Optional hosted zone — not required for demo (ALB DNS is enough)"
+  description = "Optional hosted zone for domain_name alias to ALB"
   type        = string
   default     = ""
 }
