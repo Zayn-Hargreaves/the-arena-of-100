@@ -30,6 +30,10 @@ export enum ClientEvent {
   // Topic Ban Voting
   VOTE_BAN_TOPIC = "vote_ban_topic",
 
+  // Matchmaking
+  JOIN_MATCHMAKING = "join_matchmaking",
+  LEAVE_MATCHMAKING = "leave_matchmaking",
+
   // Connection Events
   AUTHENTICATE = "authenticate",
   HEARTBEAT = "heartbeat",
@@ -82,6 +86,10 @@ export enum ServerEvent {
   TOPIC_VOTING_SUMMARY = "topic_voting_summary",
   TOPIC_VOTING_FINISHED = "topic_voting_finished",
 
+  // Matchmaking
+  MATCHMAKING_STATUS = "matchmaking_status",
+  MATCHMAKING_MATCHED = "matchmaking_matched",
+
   // Operator Events
   ROOM_TERMINATED = "room_terminated",
 
@@ -110,6 +118,10 @@ export type {
   CardPickPayload,
   CardPlayPayload,
   VoteBanTopicPayload,
+  JoinMatchmakingPayload,
+  LeaveMatchmakingPayload,
+  MatchmakingStatusPayload,
+  MatchmakingMatchedPayload,
   AuthenticatePayload,
   HeartbeatPayload,
 } from "./schemas";

@@ -17,7 +17,8 @@
       "enterNickname": "Vui lòng nhập Biệt danh trước khi tham chiến!",
       "enterNicknameCreate": "Vui lòng nhập Biệt danh trước khi tạo phòng!",
       "enterNicknameJoin": "Vui lòng nhập Biệt danh trước khi vào phòng!",
-      "enterRoomCode": "Vui lòng nhập Mã phòng!"
+      "enterRoomCode": "Vui lòng nhập Mã phòng!",
+      "authFailed": "Xác thực thất bại. Vui lòng thử lại."
     },
     "features": {
       "warriorTitle": "100 Chiến Binh",
@@ -737,5 +738,16 @@
         "description": "Vô hiệu hoá 1 đáp án sai ngẫu nhiên trong round."
       }
     }
+  },
+  "MatchmakingModal": {
+    "matchFoundTitle": "TRẬN ĐẤU ĐÃ TÌM THẤY!",
+    "searchingTitle": "ĐANG TÌM TRẬN ĐẤU...",
+    "cancelButton": "Hủy tìm trận",
+    "readyToBattle": "SẴN SÀNG VÀO TRẬN!",
+    "redirecting": "Phòng: {roomCode} • Đang chuyển hướng...",
+    "estimatedWait": "Ước tính: ~{time}",
+    "playersInQueue": "Người đang tìm trận:",
+    "playerCount": "{count} người",
+    "cancelSearch": "HỦY TÌM TRẬN"
   }
 }

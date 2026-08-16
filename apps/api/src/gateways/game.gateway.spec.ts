@@ -15,11 +15,17 @@ import {
   StartMatchPayloadSchema,
 } from "@arena/shared";
 import { GameGateway } from "./game.gateway";
-import { AuthHandler, RoomHandler, MatchHandler } from "./handlers";
+import {
+  AuthHandler,
+  RoomHandler,
+  MatchHandler,
+  MatchmakingHandler,
+} from "./handlers";
 import { AuthService } from "../modules/auth/auth.service";
 import { PresenceService } from "../modules/match/presence.service";
 import { GameLoopService } from "../modules/match/game-loop.service";
 import { ClusterService } from "../modules/cluster/cluster.service";
+import { MatchmakingWorkerService } from "../modules/matchmaking/matchmaking-worker.service";
 import { io as ioClient, Socket as ClientSocket } from "socket.io-client";
 import { Test, TestingModule } from "@nestjs/testing";
 import { INestApplication } from "@nestjs/common";
@@ -33,10 +39,12 @@ describe("GameGateway", () => {
   let authHandler: AuthHandler;
   let roomHandler: RoomHandler;
   let matchHandler: MatchHandler;
+  let matchmakingHandler: MatchmakingHandler;
   let authService: AuthService;
   let presenceService: PresenceService;
   let gameLoopService: GameLoopService;
   let clusterService: ClusterService;
+  let matchmakingWorkerService: MatchmakingWorkerService;
   let client: Socket;
 
   beforeEach(() => {
@@ -53,7 +61,13 @@ describe("GameGateway", () => {
       handleStartMatch: vi.fn(),
       handleSubmitAnswer: vi.fn(),
       handleRequestSnapshot: vi.fn(),
+      handleVoteBanTopic: vi.fn(),
     } as unknown as MatchHandler;
+    matchmakingHandler = {
+      handleJoinMatchmaking: vi.fn(),
+      handleLeaveMatchmaking: vi.fn(),
+      handleDisconnect: vi.fn(),
+    } as unknown as MatchmakingHandler;
     authService = {
       verifyToken: vi.fn(),
     } as unknown as AuthService;
@@ -67,15 +81,20 @@ describe("GameGateway", () => {
     clusterService = {
       setServer: vi.fn(),
     } as unknown as ClusterService;
+    matchmakingWorkerService = {
+      setServer: vi.fn(),
+    } as unknown as MatchmakingWorkerService;
 
     gateway = new GameGateway(
       authHandler,
       roomHandler,
       matchHandler,
+      matchmakingHandler,
       authService,
       presenceService,
       gameLoopService,
       clusterService,
+      matchmakingWorkerService,
     );
     // Set the private _server field
     (gateway as any)._server = {
@@ -116,6 +135,10 @@ describe("GameGateway", () => {
       expect(middleware).toBeTypeOf("function");
       expect(presenceService.setServer).toHaveBeenCalledWith(mockServer);
       expect(gameLoopService.setServer).toHaveBeenCalledWith(mockServer);
+      expect(clusterService.setServer).toHaveBeenCalledWith(mockServer);
+      expect(matchmakingWorkerService.setServer).toHaveBeenCalledWith(
+        mockServer,
+      );
     });
 
     it("successfully authenticates with auth.token", () => {
@@ -225,9 +248,10 @@ describe("GameGateway", () => {
   });
 
   describe("handleDisconnect", () => {
-    it("delegates to authHandler", async () => {
+    it("delegates to authHandler and matchmakingHandler", async () => {
       await gateway.handleDisconnect(client);
       expect(authHandler.handleDisconnect).toHaveBeenCalledWith(client);
+      expect(matchmakingHandler.handleDisconnect).toHaveBeenCalledWith(client);
     });
 
     // L2 fix: handleDisconnect is async on authHandler (queries active
@@ -244,9 +268,33 @@ describe("GameGateway", () => {
         "simulated disconnect failure",
       );
     });
+
+    it("propagates errors from matchmakingHandler.handleDisconnect instead of swallowing them", async () => {
+      vi.mocked(matchmakingHandler.handleDisconnect).mockRejectedValueOnce(
+        new Error("simulated matchmaking disconnect failure"),
+      );
+      await expect(gateway.handleDisconnect(client)).rejects.toThrow(
+        "simulated matchmaking disconnect failure",
+      );
+    });
   });
 
   describe("event handlers", () => {
+    it("handleJoinMatchmaking delegates to matchmakingHandler", () => {
+      gateway.handleJoinMatchmaking(client, { category: "ALL" });
+      expect(matchmakingHandler.handleJoinMatchmaking).toHaveBeenCalledWith(
+        client,
+        { category: "ALL" },
+      );
+    });
+
+    it("handleLeaveMatchmaking delegates to matchmakingHandler", () => {
+      gateway.handleLeaveMatchmaking(client);
+      expect(matchmakingHandler.handleLeaveMatchmaking).toHaveBeenCalledWith(
+        client,
+      );
+    });
+
     it("handleAuthenticate delegates to authHandler", () => {
       gateway.handleAuthenticate(client, { token: "t" });
       expect(authHandler.handleAuthenticate).toHaveBeenCalledWith(client, {
@@ -302,6 +350,21 @@ describe("GameGateway", () => {
         submissionId: "s1",
         clientTimestamp: 1234567890,
       });
+    });
+
+    it("handleVoteBanTopic delegates to matchHandler with server", () => {
+      gateway.handleVoteBanTopic(client, {
+        matchId: "m1",
+        topic: "SCIENCE",
+      });
+      expect(matchHandler.handleVoteBanTopic).toHaveBeenCalledWith(
+        client,
+        (gateway as any)._server,
+        {
+          matchId: "m1",
+          topic: "SCIENCE",
+        },
+      );
     });
 
     it("handleRequestSnapshot delegates to matchHandler", () => {
@@ -637,6 +700,14 @@ describe("GameGateway", () => {
     const mockClusterService = {
       setServer: vi.fn(),
     };
+    const mockMatchmakingHandler = {
+      handleJoinMatchmaking: vi.fn(),
+      handleLeaveMatchmaking: vi.fn(),
+      handleDisconnect: vi.fn(),
+    };
+    const mockMatchmakingWorkerService = {
+      setServer: vi.fn(),
+    };
 
     beforeAll(async () => {
       const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -645,10 +716,15 @@ describe("GameGateway", () => {
           { provide: AuthHandler, useValue: mockAuthHandler },
           { provide: RoomHandler, useValue: mockRoomHandler },
           { provide: MatchHandler, useValue: mockMatchHandler },
+          { provide: MatchmakingHandler, useValue: mockMatchmakingHandler },
           { provide: AuthService, useValue: mockAuthService },
           { provide: PresenceService, useValue: mockPresenceService },
           { provide: GameLoopService, useValue: mockGameLoopService },
           { provide: ClusterService, useValue: mockClusterService },
+          {
+            provide: MatchmakingWorkerService,
+            useValue: mockMatchmakingWorkerService,
+          },
         ],
       }).compile();
 
@@ -901,6 +977,47 @@ describe("GameGateway", () => {
         "sentAt",
       );
       expect(mockPresenceService.updatePresence).not.toHaveBeenCalled();
+    });
+
+    it("triggers WsValidationPipe and returns WsValidationError for invalid JoinMatchmaking payload", async () => {
+      const malformedPayload = {
+        category: "",
+      };
+
+      await emitAndExpectError(
+        ClientEvent.JOIN_MATCHMAKING,
+        malformedPayload,
+        "category",
+      );
+      expect(
+        mockMatchmakingHandler.handleJoinMatchmaking,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("does not trigger WsValidationPipe for valid JoinMatchmaking and reaches handler", async () => {
+      const validPayload = {
+        category: "ALL",
+      };
+
+      const handlerCalled = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(
+          () =>
+            reject(new Error("Timeout waiting for handleJoinMatchmaking call")),
+          1000,
+        );
+        mockMatchmakingHandler.handleJoinMatchmaking.mockImplementationOnce(
+          async () => {
+            clearTimeout(timeout);
+            resolve();
+          },
+        );
+      });
+
+      clientSocket.emit(ClientEvent.JOIN_MATCHMAKING, validPayload);
+
+      await handlerCalled;
+
+      expect(mockMatchmakingHandler.handleJoinMatchmaking).toHaveBeenCalled();
     });
   });
 });

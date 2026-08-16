@@ -15,6 +15,7 @@ import { RoomService } from "./../room/room.service";
 import { MatchTimerRegistry } from "./match-timer.registry";
 import { emitMatchStarted, emitRoomStatusUpdated } from "./game-loop.helpers";
 import {
+  emitAnswerResult,
   emitMatchFinished,
   emitPlayerEliminated,
   emitRoundEnded,
@@ -22,11 +23,13 @@ import {
   emitTopicVotingStarted,
   emitTopicVotingFinished,
 } from "./game-loop.events";
+
 import { recoverRoundEnd, type RoundEndContext } from "./match-round-recovery";
 import {
   disconnectMatchPlayer,
   leaveMatchPlayer,
 } from "./match-player-lifecycle";
+import { simulateBotAnswers } from "../matchmaking/bot.service";
 
 // ============================================================
 // MatchRoundRunner — the timer-driven match loop
@@ -660,6 +663,108 @@ export class MatchRoundRunner {
       this.roundEndTimerCallback(matchId, roomId, server),
       GAME_CONFIG.ROUND_DURATION_MS,
     );
+
+    // 7. Schedule simulated bot answers if any bot players are active
+    await this.scheduleBotAnswers(matchId, roomId, server, stateMachine, {
+      id: question.id,
+      correctAnswer: question.correctAnswer,
+      options: question.options,
+      difficulty: question.difficulty,
+    });
+  }
+
+  /**
+   * Schedule simulated answers for bot players during ROUND_ACTIVE.
+   */
+  private async scheduleBotAnswers(
+    matchId: string,
+    roomId: string,
+    server: Server,
+    stateMachine: MatchStateMachine,
+    question: {
+      id: string;
+      correctAnswer: string;
+      options: string[];
+      difficulty?: string;
+    },
+  ): Promise<void> {
+    const state = stateMachine.getState();
+    let botIds: Set<string>;
+    try {
+      botIds = await this.matchService.getBotPlayerIds(matchId);
+    } catch (err) {
+      this.logger.warn(
+        `scheduleBotAnswers: failed to get bot player IDs for match ${matchId}`,
+        err,
+      );
+      return;
+    }
+    const botPlayerIds = state.survivingPlayerIds.filter((pid) =>
+      botIds.has(pid),
+    );
+
+    if (botPlayerIds.length === 0) return;
+
+    const simulations = simulateBotAnswers(question, botPlayerIds);
+
+    for (const sim of simulations) {
+      this.armPhaseTimer(
+        matchId,
+        async () => {
+          try {
+            if (!(await this.ownership.assertOwnership(matchId))) return;
+            const sm = await this.matchService.getStateMachine(matchId);
+            if (!sm || sm.getState().status !== MatchStatus.ROUND_ACTIVE)
+              return;
+
+            const round = sm.getCurrentRound();
+            if (!round) return;
+
+            const now = Date.now();
+            if (now >= round.endsAt) return;
+
+            const serialized = sm.serialize();
+            const serverTimestamp = Math.min(now, round.endsAt);
+            const result = sm.submitAnswer(
+              sim.userId,
+              sim.answer,
+              serverTimestamp,
+              sim.submissionId,
+            );
+            const outcome =
+              await this.matchService.persistStateMachine(matchId);
+            if (outcome !== "APPLIED") {
+              this.matchService.evictStateMachine(matchId);
+              const canonical = MatchStateMachine.deserialize(serialized);
+              Object.assign(sm, canonical);
+              this.logger.warn(
+                `bot submission callback: persistStateMachine returned ${outcome} for match ${matchId} bot ${sim.userId}`,
+              );
+              return;
+            }
+
+            emitAnswerResult(
+              server,
+              roomId,
+              matchId,
+              sim.userId,
+              result,
+              round.roundNo,
+            );
+
+            await this.checkEarlyTermination(matchId, roomId, server);
+          } catch (error) {
+            // best-effort bot submission
+            this.logger.warn(
+              `Bot submission failed for match ${matchId}, bot ${sim.userId}: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+        },
+        sim.responseTimeMs,
+      );
+    }
   }
 
   // ============================================================

@@ -17,7 +17,8 @@
       "enterNickname": "Please enter a Nickname before joining the battle!",
       "enterNicknameCreate": "Please enter a Nickname before creating a room!",
       "enterNicknameJoin": "Please enter a Nickname before joining a room!",
-      "enterRoomCode": "Please enter the Room Code!"
+      "enterRoomCode": "Please enter the Room Code!",
+      "authFailed": "Authentication failed. Please try again."
     },
     "features": {
       "warriorTitle": "100 Warriors",
@@ -737,5 +738,16 @@
         "description": "Disable 1 random wrong option for the round."
       }
     }
+  },
+  "MatchmakingModal": {
+    "matchFoundTitle": "MATCH FOUND!",
+    "searchingTitle": "SEARCHING FOR MATCH...",
+    "cancelButton": "Cancel matchmaking",
+    "readyToBattle": "READY FOR BATTLE!",
+    "redirecting": "Room: {roomCode} • Redirecting...",
+    "estimatedWait": "Estimated: ~{time}",
+    "playersInQueue": "Players searching:",
+    "playerCount": "{count} players",
+    "cancelSearch": "CANCEL SEARCH"
   }
 }

@@ -27,6 +27,8 @@ import {
   type TopicVotingStartedPayload,
   type TopicVotingSummaryPayload,
   type TopicVotingFinishedPayload,
+  type MatchmakingStatusPayload,
+  type MatchmakingMatchedPayload,
   ErrorCode,
 } from "@arena/shared";
 import { API_URL } from "@/lib/api";
@@ -63,6 +65,8 @@ import {
   applyTopicVotingStartedState,
   applyTopicVotingSummaryState,
   applyTopicVotingFinishedState,
+  applyMatchmakingStatusState,
+  applyMatchmakingMatchedState,
 } from "./socket-store.updaters";
 
 interface PendingTopicVoteCommand {
@@ -107,6 +111,15 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   room: null,
   match: null,
   topicVoting: null,
+  matchmaking: {
+    isQueued: false,
+    queuedAt: null,
+    elapsedSeconds: 0,
+    estimatedWaitSeconds: 0,
+    playersInQueue: 0,
+    matchedRoomCode: null,
+    matchedRoomId: null,
+  },
   lastAnswerResult: null,
   pendingAnswer: null,
 
@@ -203,12 +216,20 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       if (hb) {
         clearInterval(hb);
       }
-      set({
+      set((state) => ({
         isConnected: false,
         isAuthenticated: false,
         pendingAnswer: null,
         heartbeatInterval: null,
-      });
+        matchmaking: {
+          ...state.matchmaking,
+          isQueued: false,
+          queuedAt: null,
+          elapsedSeconds: 0,
+          estimatedWaitSeconds: 0,
+          playersInQueue: 0,
+        },
+      }));
       console.log("🔌 Disconnected from game server");
     });
 
@@ -317,6 +338,24 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         clearTopicVoteState(data.matchId);
         set((state) => applyTopicVotingFinishedState(state, data));
         console.log("🗳️ Topic voting finished:", data);
+      },
+    );
+
+    newSocket.on(
+      ServerEvent.MATCHMAKING_STATUS,
+      (data: MatchmakingStatusPayload) => {
+        if (get().socket !== newSocket) return;
+        set((state) => applyMatchmakingStatusState(state, data));
+        console.log("🎯 Matchmaking status:", data);
+      },
+    );
+
+    newSocket.on(
+      ServerEvent.MATCHMAKING_MATCHED,
+      (data: MatchmakingMatchedPayload) => {
+        if (get().socket !== newSocket) return;
+        set((state) => applyMatchmakingMatchedState(state, data));
+        console.log("🎉 Matchmaking matched:", data);
       },
     );
 
@@ -516,7 +555,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         if (get().socket === newSocket) {
           const { heartbeatInterval: hb } = get();
           if (hb) clearInterval(hb);
-          set(applyUnauthorizedErrorState(data.message));
+          set((state) => applyUnauthorizedErrorState(data.message, state));
         }
         newSocket.disconnect();
       }
@@ -572,7 +611,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     if (socket) {
       clearTopicVoteState();
       socket.disconnect();
-      set({
+      set((state) => ({
         socket: null,
         isConnected: false,
         isAuthenticated: false,
@@ -589,13 +628,22 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         heartbeatInterval: null,
         roomTerminated: false,
         roomTerminationMessage: null,
+        matchmaking: {
+          isQueued: false,
+          queuedAt: null,
+          elapsedSeconds: 0,
+          estimatedWaitSeconds: 0,
+          playersInQueue: 0,
+          matchedRoomCode: state.matchmaking.matchedRoomCode,
+          matchedRoomId: state.matchmaking.matchedRoomId,
+        },
         // Plan D — reset the delta cursor alongside match/room so a
         // stale seqNo from the previous session cannot qualify for
         // delta delivery on the next reconnect. The next
         // REQUEST_SNAPSHOT will be a full SNAPSHOT, then delta kicks
         // in from there.
         lastSeenSeqNo: 0,
-      });
+      }));
     }
   },
 
@@ -774,7 +822,49 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     emitIfConnected(socket, ClientEvent.START_MATCH, { roomId });
   },
 
+  // Matchmaking
+  joinMatchmaking: (category?: string) => {
+    const socket = get().socket;
+    if (!socket?.connected) {
+      set({ error: "Socket is not connected" });
+      return;
+    }
+    emitIfConnected(socket, ClientEvent.JOIN_MATCHMAKING, {
+      category: category && category !== "ALL" ? category : undefined,
+    });
+  },
+
+  leaveMatchmaking: () => {
+    const socket = get().socket;
+    if (socket?.connected) {
+      emitIfConnected(socket, ClientEvent.LEAVE_MATCHMAKING, {});
+    }
+    set((state) => ({
+      matchmaking: {
+        ...state.matchmaking,
+        isQueued: false,
+        queuedAt: null,
+        elapsedSeconds: 0,
+        estimatedWaitSeconds: 0,
+        playersInQueue: 0,
+        matchedRoomCode: null,
+        matchedRoomId: null,
+      },
+    }));
+  },
+
+  clearMatchmakingMatched: () => {
+    set((state) => ({
+      matchmaking: {
+        ...state.matchmaking,
+        matchedRoomCode: null,
+        matchedRoomId: null,
+      },
+    }));
+  },
+
   // Vote Ban Topic
+
   voteBanTopic: (matchId: string, topic: string) => {
     const { socket, topicVoting } = get();
     if (!socket?.connected) return;

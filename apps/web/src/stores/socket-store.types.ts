@@ -90,11 +90,22 @@ export interface TopicVotingState {
   isFinished: boolean;
 }
 
+export interface MatchmakingState {
+  isQueued: boolean;
+  queuedAt: number | null;
+  elapsedSeconds: number;
+  estimatedWaitSeconds: number;
+  playersInQueue: number;
+  matchedRoomCode: string | null;
+  matchedRoomId: string | null;
+}
+
 export interface SocketState extends ConnectionState {
   socket: Socket | null;
   room: Room | null;
   match: Match | null;
   topicVoting: TopicVotingState | null;
+  matchmaking: MatchmakingState;
   lastAnswerResult: LastAnswerResult | null;
   pendingAnswer: PendingAnswer | null;
   remainingCount: number | null;
@@ -128,6 +139,9 @@ export interface SocketState extends ConnectionState {
   joinRoom: (roomCode: string) => Promise<void>;
   leaveRoom: (roomId: string) => void;
   startMatch: (roomId: string) => void;
+  joinMatchmaking: (category?: string) => void;
+  leaveMatchmaking: () => void;
+  clearMatchmakingMatched: () => void;
   voteBanTopic: (matchId: string, topic: string) => void;
   submitAnswer: (
     matchId: string,

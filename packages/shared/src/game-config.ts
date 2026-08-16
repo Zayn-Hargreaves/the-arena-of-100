@@ -45,3 +45,16 @@ export const GAME_CONFIG = {
     "LOGIC",
   ] as const satisfies readonly QuestionCategory[],
 } as const;
+
+export const MATCHMAKING_CONFIG = {
+  TICK_INTERVAL_MS: 2_000,
+  MAX_WAIT_TIME_MS: 60_000,
+  MIN_PLAYERS_TO_MATCH: 1,
+  TARGET_PLAYERS_PER_MATCH: 100,
+  INITIAL_ELO_WINDOW: 150,
+  ELO_EXPANSION_STEP: 50,
+  ELO_EXPANSION_INTERVAL_MS: 5_000,
+  AUTO_FILL_BOTS: true,
+  MIN_BOT_ANSWER_DELAY_MS: 2_000,
+  MAX_BOT_ANSWER_DELAY_MS: 12_000,
+} as const;

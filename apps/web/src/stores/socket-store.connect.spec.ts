@@ -934,4 +934,37 @@ describe("socket-store connect heartbeat ownership", () => {
       }
     });
   });
+
+  describe("matchmaking actions", () => {
+    it("joinMatchmaking emits JOIN_MATCHMAKING and does not set queue state optimistically", () => {
+      const mockSocket = createMockSocket();
+      useSocketStore.setState({
+        socket: mockSocket as unknown as ReturnType<
+          typeof useSocketStore.getState
+        >["socket"],
+        matchmaking: {
+          isQueued: false,
+          queuedAt: null,
+          elapsedSeconds: 0,
+          estimatedWaitSeconds: 0,
+          playersInQueue: 0,
+          matchedRoomCode: null,
+          matchedRoomId: null,
+        },
+      });
+
+      useSocketStore.getState().joinMatchmaking("SCIENCE");
+
+      expect(mockSocket.emit).toHaveBeenCalledWith(
+        ClientEvent.JOIN_MATCHMAKING,
+        { category: "SCIENCE" },
+      );
+
+      // Verify state was NOT updated optimistically
+      const state = useSocketStore.getState();
+      expect(state.matchmaking.isQueued).toBe(false);
+      expect(state.matchmaking.queuedAt).toBeNull();
+      expect(state.matchmaking.playersInQueue).toBe(0);
+    });
+  });
 });

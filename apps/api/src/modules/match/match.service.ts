@@ -120,6 +120,7 @@ export class MatchService implements OnModuleDestroy {
   // otherwise both read the same expected revision and the loser's CAS would
   // spuriously RETRY, dropping a legitimate owner's canonical write.
   private readonly persistChains = new Map<string, Promise<void>>();
+  private readonly botPlayerIdsCache = new Map<string, Set<string>>();
   private readonly pendingGenerationInvalidations = new Set<string>();
   private readonly invalidationTimers = new Map<string, NodeJS.Timeout>();
   private readonly invalidationEpochs = new Map<string, number>();
@@ -243,6 +244,27 @@ export class MatchService implements OnModuleDestroy {
   }
 
   /**
+   * Get bot user IDs participating in the match.
+   */
+  async getBotPlayerIds(matchId: string): Promise<Set<string>> {
+    const cached = this.botPlayerIdsCache.get(matchId);
+    if (cached) return cached;
+
+    const botPlayers = await this.prisma.matchPlayer.findMany({
+      where: {
+        matchId,
+        user: {
+          guestId: { startsWith: "bot_" },
+        },
+      },
+      select: { userId: true },
+    });
+    const botSet = new Set(botPlayers.map((p) => p.userId));
+    this.botPlayerIdsCache.set(matchId, botSet);
+    return botSet;
+  }
+
+  /**
    * B4b snapshot-restore safety: drop the cached in-memory state machine so the
    * next `getStateMachine` reloads the canonical `match:state` from Redis. The
    * authoritative answer apply calls this after a fenced-persist RETRY (lease
@@ -251,6 +273,7 @@ export class MatchService implements OnModuleDestroy {
    */
   evictStateMachine(matchId: string): void {
     this.stateMachines.delete(matchId);
+    this.botPlayerIdsCache.delete(matchId);
   }
 
   // Get state machine for match (restores from Redis if not in memory)
@@ -800,6 +823,7 @@ export class MatchService implements OnModuleDestroy {
 
     // Only after Redis is clean do we drop the in-memory entry.
     this.stateMachines.delete(matchId);
+    this.botPlayerIdsCache.delete(matchId);
     this.revisions.delete(matchId);
     this.persistChains.delete(matchId);
 

@@ -24,6 +24,8 @@ import {
   type TopicVotingStartedPayload,
   type TopicVotingSummaryPayload,
   type TopicVotingFinishedPayload,
+  type MatchmakingStatusPayload,
+  type MatchmakingMatchedPayload,
   ReplayEventSchema,
 } from "@arena/shared";
 
@@ -792,6 +794,7 @@ export function applyRoomTerminatedState(
 
 export function applyUnauthorizedErrorState(
   errorMessage: string | null,
+  state: SocketState,
 ): Partial<SocketState> {
   return {
     socket: null,
@@ -812,6 +815,15 @@ export function applyUnauthorizedErrorState(
     heartbeatInterval: null,
     roomTerminated: false,
     roomTerminationMessage: null,
+    matchmaking: {
+      isQueued: false,
+      queuedAt: null,
+      elapsedSeconds: 0,
+      estimatedWaitSeconds: 0,
+      playersInQueue: 0,
+      matchedRoomCode: state.matchmaking.matchedRoomCode,
+      matchedRoomId: state.matchmaking.matchedRoomId,
+    },
     // Include the error message in the SAME set call that resets the
     // socket/heartbeat state. A separate follow-up `set({ error })`
     // would be a no-op because this function sets `socket: null`,
@@ -894,6 +906,41 @@ export function applyTopicVotingFinishedState(
       activeTopics: data.activeTopics,
       voteCounts: data.voteCounts,
       isFinished: true,
+    },
+  };
+}
+
+export function applyMatchmakingStatusState(
+  state: SocketState,
+  data: MatchmakingStatusPayload,
+): Partial<SocketState> {
+  return {
+    ...(data.isQueued ? { error: null } : {}),
+    matchmaking: {
+      isQueued: data.isQueued,
+      queuedAt: data.queuedAt,
+      elapsedSeconds: data.elapsedSeconds,
+      estimatedWaitSeconds: data.estimatedWaitSeconds,
+      playersInQueue: data.playersInQueue,
+      matchedRoomCode: state.matchmaking.matchedRoomCode,
+      matchedRoomId: state.matchmaking.matchedRoomId,
+    },
+  };
+}
+
+export function applyMatchmakingMatchedState(
+  state: SocketState,
+  data: MatchmakingMatchedPayload,
+): Partial<SocketState> {
+  return {
+    matchmaking: {
+      isQueued: false,
+      queuedAt: null,
+      elapsedSeconds: 0,
+      estimatedWaitSeconds: 0,
+      playersInQueue: state.matchmaking?.playersInQueue ?? 0,
+      matchedRoomCode: data.roomCode,
+      matchedRoomId: data.roomId,
     },
   };
 }

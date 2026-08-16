@@ -32,6 +32,8 @@ import {
   applyTopicVotingStartedState,
   applyTopicVotingSummaryState,
   applyTopicVotingFinishedState,
+  applyMatchmakingStatusState,
+  applyMatchmakingMatchedState,
 } from "./socket-store.updaters";
 
 import type { Match, Room, SocketState } from "./socket-store.types";
@@ -106,6 +108,15 @@ function makeState(overrides: Partial<SocketState> = {}): SocketState {
     room: null,
     match: null,
     topicVoting: null,
+    matchmaking: {
+      isQueued: false,
+      queuedAt: null,
+      elapsedSeconds: 0,
+      estimatedWaitSeconds: 0,
+      playersInQueue: 0,
+      matchedRoomCode: null,
+      matchedRoomId: null,
+    },
     lastAnswerResult: null,
     pendingAnswer: null,
     remainingCount: null,
@@ -124,6 +135,9 @@ function makeState(overrides: Partial<SocketState> = {}): SocketState {
     joinRoom: () => Promise.resolve(),
     leaveRoom: () => {},
     startMatch: () => {},
+    joinMatchmaking: () => {},
+    leaveMatchmaking: () => {},
+    clearMatchmakingMatched: () => {},
     voteBanTopic: () => {},
     submitAnswer: () => null,
     requestSnapshot: () => {},
@@ -455,7 +469,7 @@ describe("applyAnswerResultState", () => {
 
 describe("applyUnauthorizedErrorState", () => {
   it("clears prior room termination state along with auth state", () => {
-    const result = applyUnauthorizedErrorState("nope");
+    const result = applyUnauthorizedErrorState("nope", makeState());
 
     expect(result).toMatchObject({
       socket: null,
@@ -484,7 +498,7 @@ describe("applyUnauthorizedErrorState", () => {
       eliminationReason: "TIMEOUT",
     });
 
-    const result = applyUnauthorizedErrorState("nope");
+    const result = applyUnauthorizedErrorState("nope", state);
 
     expect(result.isEliminated).toBe(false);
     expect(result.eliminationReason).toBeNull();
@@ -2230,6 +2244,66 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         responseTimeMs: 200,
       });
       expect(res).toEqual({});
+    });
+
+    it("applyMatchmakingStatusState updates matchmaking state correctly and clears stale error", () => {
+      const state = makeState({
+        error: "Previous socket error",
+        matchmaking: {
+          isQueued: false,
+          queuedAt: null,
+          elapsedSeconds: 0,
+          estimatedWaitSeconds: 0,
+          playersInQueue: 0,
+          matchedRoomCode: "PREV_CODE",
+          matchedRoomId: "prev-id",
+        },
+      });
+      const res = applyMatchmakingStatusState(state, {
+        isQueued: true,
+        queuedAt: 1000,
+        elapsedSeconds: 10,
+        estimatedWaitSeconds: 20,
+        playersInQueue: 5,
+      });
+      expect(res.error).toBeNull();
+      expect(res.matchmaking).toEqual({
+        isQueued: true,
+        queuedAt: 1000,
+        elapsedSeconds: 10,
+        estimatedWaitSeconds: 20,
+        playersInQueue: 5,
+        matchedRoomCode: "PREV_CODE",
+        matchedRoomId: "prev-id",
+      });
+    });
+
+    it("applyMatchmakingMatchedState updates matchmaking state with roomCode", () => {
+      const state = makeState({
+        matchmaking: {
+          isQueued: true,
+          queuedAt: 1000,
+          elapsedSeconds: 15,
+          estimatedWaitSeconds: 15,
+          playersInQueue: 10,
+          matchedRoomCode: null,
+          matchedRoomId: null,
+        },
+      });
+      const res = applyMatchmakingMatchedState(state, {
+        roomId: "r-123",
+        roomCode: "MATCH1",
+        matchId: "m-123",
+      });
+      expect(res.matchmaking).toEqual({
+        isQueued: false,
+        queuedAt: null,
+        elapsedSeconds: 0,
+        estimatedWaitSeconds: 0,
+        playersInQueue: 10,
+        matchedRoomCode: "MATCH1",
+        matchedRoomId: "r-123",
+      });
     });
   });
 });

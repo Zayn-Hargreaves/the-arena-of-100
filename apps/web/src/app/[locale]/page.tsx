@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { AvatarSelector } from "@/components/home/avatar-selector";
+import { MatchmakingModal } from "@/components/matchmaking/matchmaking-modal";
 import { Link, useRouter } from "@/i18n/routing";
 import { MiniGlyph } from "@/components/ui/mini-glyph";
 import { useTranslations } from "next-intl";
@@ -16,12 +17,14 @@ import type { CreateTypes } from "canvas-confetti";
 export default function HomePage() {
   const router = useRouter();
   const t = useTranslations("HomePage");
+  const tErrors = useTranslations("Errors");
   const { toast } = useToast();
-  const { username, connect, authenticate } = useSocketStore();
+  const { username, connect, authenticate, joinMatchmaking } = useSocketStore();
 
   const [nickname, setNickname] = useState("");
   const [roomCode, setRoomCode] = useState("");
   const [isJoining, setIsJoining] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [avatarIndex, setAvatarIndex] = useState(0);
   const [squash, setSquash] = useState(false);
 
@@ -71,9 +74,70 @@ export default function HomePage() {
     }
   }, []);
 
-  const handleSaveNickname = () => {
-    if (!nickname.trim()) return;
-    authenticate(nickname.trim());
+  const getAuthErrorMessage = (err: unknown): string => {
+    const KNOWN_ERROR_CODES = new Set([
+      "ROOM_FULL",
+      "INVALID_ROOM_CODE",
+      "MATCH_ALREADY_STARTED",
+      "USER_ALREADY_EXISTS",
+      "ROOM_NOT_FOUND",
+      "CARD_NOT_IN_HAND",
+      "INVALID_CARD_TARGET",
+      "AOE_CAP_REACHED",
+      "COMMAND_ID_CONFLICT",
+      "CARD_NOT_FOUND",
+      "INVALID_COMMAND_ID",
+      "SPECTATOR_CANNOT_ANSWER",
+      "PLAYER_DISCONNECTED",
+      "MATCH_NOT_FOUND",
+      "UNAUTHORIZED",
+      "INVALID_PAYLOAD",
+      "INTERNAL_ERROR",
+      "TOPIC_VOTING_CLOSED",
+      "INVALID_TOPIC",
+      "UNKNOWN_ERROR",
+    ]);
+
+    if (err instanceof Error) {
+      const code = err.message;
+      if (KNOWN_ERROR_CODES.has(code)) {
+        try {
+          return tErrors(code as Parameters<typeof tErrors>[0]);
+        } catch {
+          return t("alerts.authFailed");
+        }
+      }
+    }
+    return t("alerts.authFailed");
+  };
+
+  const runAuthFlow = async (action: () => void | Promise<void>) => {
+    if (isSubmitting) return;
+
+    setIsSubmitting(true);
+    try {
+      let authenticated = false;
+      try {
+        await connect();
+        await authenticate(nickname.trim());
+        authenticated = true;
+      } catch (err) {
+        toast({
+          variant: "error",
+          description: getAuthErrorMessage(err),
+        });
+      }
+
+      if (authenticated) {
+        try {
+          await action();
+        } catch (err) {
+          console.error("Action error:", err);
+        }
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const saveAvatarToLocalStorage = (name: string, opt: AvatarOption) => {
@@ -116,11 +180,10 @@ export default function HomePage() {
     });
   };
 
-  const triggerSubmitTransition = (
-    e: React.SubmitEvent,
-    callback: () => void,
-  ) => {
+  const handleQuickMatchSubmit = (e: React.SubmitEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
     if (!nickname.trim()) {
       toast({ description: t("alerts.enterNickname") });
       return;
@@ -128,7 +191,6 @@ export default function HomePage() {
 
     const activeAvatar = avatars[avatarIndex];
     saveAvatarToLocalStorage(nickname.trim(), activeAvatar);
-    handleSaveNickname();
 
     // Trigger confetti from screen coordinates of submit button
     const target = e.currentTarget as HTMLFormElement;
@@ -140,27 +202,26 @@ export default function HomePage() {
       createConfetti(clickX, clickY);
     }
 
-    setTimeout(callback, 650);
-  };
-
-  const handleQuickMatchSubmit = (e: React.SubmitEvent) => {
-    triggerSubmitTransition(e, () => {
-      router.push("/room/create");
+    void runAuthFlow(() => {
+      joinMatchmaking();
     });
   };
 
   const handleCreateRoom = () => {
+    if (isSubmitting) return;
     if (!nickname.trim()) {
       toast({ description: t("alerts.enterNicknameCreate") });
       return;
     }
     const activeAvatar = avatars[avatarIndex];
     saveAvatarToLocalStorage(nickname.trim(), activeAvatar);
-    handleSaveNickname();
-    router.push("/room/create");
+    void runAuthFlow(() => {
+      router.push("/room/create");
+    });
   };
 
   const handleJoinRoom = () => {
+    if (isSubmitting) return;
     if (!nickname.trim()) {
       toast({ description: t("alerts.enterNicknameJoin") });
       return;
@@ -171,8 +232,9 @@ export default function HomePage() {
     }
     const activeAvatar = avatars[avatarIndex];
     saveAvatarToLocalStorage(nickname.trim(), activeAvatar);
-    handleSaveNickname();
-    router.push(`/lobby/${roomCode.trim().toUpperCase()}`);
+    void runAuthFlow(() => {
+      router.push(`/lobby/${roomCode.trim().toUpperCase()}`);
+    });
   };
 
   const cycleAvatar = (direction: number) => {
@@ -182,10 +244,10 @@ export default function HomePage() {
         (prev) => (prev + direction + avatars.length) % avatars.length,
       );
       setSquash(false);
-    }, 100);
+    }, 150);
   };
 
-  const currentAvatar = avatars[avatarIndex];
+  const currentAvatar = avatars[avatarIndex] || avatars[0];
 
   return (
     <main
@@ -292,8 +354,9 @@ export default function HomePage() {
                 <div className="relative">
                   <input
                     required
+                    disabled={isSubmitting}
                     maxLength={16}
-                    className="w-full bg-candy-cloud border-4 border-candy-ink text-candy-ink font-display text-xl rounded-2xl py-4 px-5 focus:ring-4 focus:ring-candy-pink/30 focus:border-candy-ink transition-all placeholder:text-candy-ink/45 outline-none"
+                    className="w-full bg-candy-cloud border-4 border-candy-ink text-candy-ink font-display text-xl rounded-2xl py-4 px-5 focus:ring-4 focus:ring-candy-pink/30 focus:border-candy-ink transition-all placeholder:text-candy-ink/45 outline-none disabled:opacity-50"
                     id="nickname"
                     placeholder="Gõ tên vô tri vào đây..."
                     type="text"
@@ -316,7 +379,8 @@ export default function HomePage() {
                 {/* Primary Giant 3D Play button */}
                 <Button
                   type="submit"
-                  className="w-full min-h-14 jelly-btn bg-candy-mint text-white font-display text-xl py-4 uppercase tracking-wide flex items-center justify-center gap-3"
+                  disabled={isSubmitting}
+                  className="w-full min-h-14 jelly-btn bg-candy-mint text-white font-display text-xl py-4 uppercase tracking-wide flex items-center justify-center gap-3 disabled:opacity-50"
                 >
                   <MiniGlyph variant="trend" className="w-5 h-5" />
                   VÀO ĐẤU TRƯỜNG
@@ -326,16 +390,18 @@ export default function HomePage() {
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
+                    disabled={isSubmitting}
                     onClick={handleCreateRoom}
-                    className="w-full min-h-12 bg-white hover:bg-candy-cloud text-candy-ink font-display text-[11px] border-4 border-candy-ink rounded-[1.5rem] shadow-[0_5px_0_0_#2B2D42] active:translate-y-[4px] active:shadow-[0_1px_0_0_#2B2D42] transition-all flex items-center justify-center gap-2 uppercase font-bold leading-4"
+                    className="w-full min-h-12 bg-white hover:bg-candy-cloud text-candy-ink font-display text-[11px] border-4 border-candy-ink rounded-[1.5rem] shadow-[0_5px_0_0_#2B2D42] active:translate-y-[4px] active:shadow-[0_1px_0_0_#2B2D42] transition-all flex items-center justify-center gap-2 uppercase font-bold leading-4 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     TẠO PHÒNG RIÊNG
                   </button>
 
                   <button
                     type="button"
+                    disabled={isSubmitting}
                     onClick={() => setIsJoining(!isJoining)}
-                    className="w-full min-h-12 bg-candy-cloud/40 hover:bg-candy-cloud text-candy-ink font-display text-[11px] border-4 border-candy-ink rounded-[1.5rem] shadow-[0_5px_0_0_#2B2D42] active:translate-y-[4px] active:shadow-[0_1px_0_0_#2B2D42] transition-all flex items-center justify-center gap-2 uppercase font-bold leading-4"
+                    className="w-full min-h-12 bg-candy-cloud/40 hover:bg-candy-cloud text-candy-ink font-display text-[11px] border-4 border-candy-ink rounded-[1.5rem] shadow-[0_5px_0_0_#2B2D42] active:translate-y-[4px] active:shadow-[0_1px_0_0_#2B2D42] transition-all flex items-center justify-center gap-2 uppercase font-bold leading-4 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {t("joinRoom")}
                   </button>
@@ -356,17 +422,19 @@ export default function HomePage() {
                   <input
                     id="room-code"
                     type="text"
+                    disabled={isSubmitting}
                     placeholder={t("roomCodePlaceholder")}
                     maxLength={6}
                     value={roomCode}
                     onChange={(e) => setRoomCode(e.target.value)}
                     aria-label={t("roomCode")}
-                    className="flex-1 h-12 px-4 rounded-xl bg-white border-3 border-candy-ink text-candy-ink placeholder:text-candy-ink/30 font-mono font-bold text-center tracking-widest text-sm uppercase focus:outline-none focus:border-candy-blue"
+                    className="flex-1 h-12 px-4 rounded-xl bg-white border-3 border-candy-ink text-candy-ink placeholder:text-candy-ink/30 font-mono font-bold text-center tracking-widest text-sm uppercase focus:outline-none focus:border-candy-blue disabled:opacity-50"
                   />
                   <button
                     type="button"
+                    disabled={isSubmitting}
                     onClick={handleJoinRoom}
-                    className="min-h-12 px-5 rounded-xl bg-candy-blue border-3 border-candy-ink text-white hover:bg-candy-blue/90 shadow-[2px_2px_0_0_#2B2D42] active:translate-y-[2px] active:shadow-[0px_0px_0_0_#2B2D42] font-mono font-bold text-xs flex items-center justify-center transition-all"
+                    className="min-h-12 px-5 rounded-xl bg-candy-blue border-3 border-candy-ink text-white hover:bg-candy-blue/90 shadow-[2px_2px_0_0_#2B2D42] active:translate-y-[2px] active:shadow-[0px_0px_0_0_#2B2D42] font-mono font-bold text-xs flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     aria-label={t("joinRoom")}
                   >
                     <ArrowRight className="w-5 h-5" />
@@ -426,6 +494,9 @@ export default function HomePage() {
           </div>
         </div>
       </footer>
+
+      {/* Matchmaking Queue Modal */}
+      <MatchmakingModal />
     </main>
   );
 }

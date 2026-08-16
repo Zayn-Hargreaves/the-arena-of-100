@@ -1,0 +1,242 @@
+// ============================================================
+// Matchmaking Queue Store - Redis Store for Matchmaking Tickets
+// ============================================================
+
+import { Injectable, Logger } from "@nestjs/common";
+import { RedisService } from "../redis/redis.service";
+
+export interface MatchmakingTicket {
+  userId: string;
+  username: string;
+  elo: number;
+  socketId: string;
+  category?: string;
+  joinedAt: number; // Unix timestamp in ms
+}
+
+export const MATCHMAKING_QUEUE_ZSET = "matchmaking:queue:zset";
+export const MATCHMAKING_TICKET_PREFIX = "matchmaking:ticket:";
+export const MATCHMAKING_TICKET_TTL_SEC = 300; // 5 minutes
+
+@Injectable()
+export class MatchmakingQueueStore {
+  private readonly logger = new Logger(MatchmakingQueueStore.name);
+
+  constructor(private readonly redis: RedisService) {}
+
+  /**
+   * Add or update a player's matchmaking ticket in Redis.
+   */
+  async addTicket(ticket: MatchmakingTicket): Promise<void> {
+    const client = this.redis.getClient();
+    const ticketKey = `${MATCHMAKING_TICKET_PREFIX}${ticket.userId}`;
+    const payload = JSON.stringify(ticket);
+
+    const pipeline = client.pipeline();
+    pipeline.set(ticketKey, payload, "EX", MATCHMAKING_TICKET_TTL_SEC);
+    pipeline.zadd(MATCHMAKING_QUEUE_ZSET, ticket.elo, ticket.userId);
+    const results = await pipeline.exec();
+    if (results) {
+      const [setResult, zaddResult] = results;
+      const setErr = setResult?.[0];
+      const zaddErr = zaddResult?.[0];
+
+      if (setErr || zaddErr) {
+        const cleanupPipeline = client.pipeline();
+        if (!setErr) {
+          cleanupPipeline.del(ticketKey);
+        }
+        if (!zaddErr) {
+          cleanupPipeline.zrem(MATCHMAKING_QUEUE_ZSET, ticket.userId);
+        }
+        try {
+          await cleanupPipeline.exec();
+        } catch (cleanupErr) {
+          this.logger.warn(
+            `Failed compensating cleanup in addTicket for user ${ticket.userId}`,
+            cleanupErr,
+          );
+        }
+        throw setErr ?? zaddErr;
+      }
+    }
+  }
+
+  /**
+   * Remove a player's ticket from the queue.
+   * If socketId is provided, only removes if the stored ticket belongs to that socket.
+   */
+  async removeTicket(userId: string, socketId?: string): Promise<boolean> {
+    const client = this.redis.getClient();
+    const ticketKey = `${MATCHMAKING_TICKET_PREFIX}${userId}`;
+
+    if (socketId) {
+      const luaScript = `
+        local raw = redis.call('GET', KEYS[1])
+        if not raw then
+          return 0
+        end
+        local ticket = cjson.decode(raw)
+        if ticket.socketId ~= ARGV[2] then
+          return 0
+        end
+        redis.call('DEL', KEYS[1])
+        return redis.call('ZREM', KEYS[2], ARGV[1])
+      `;
+      try {
+        const result = (await client.eval(
+          luaScript,
+          2,
+          ticketKey,
+          MATCHMAKING_QUEUE_ZSET,
+          userId,
+          socketId,
+        )) as number;
+        return Number(result) > 0;
+      } catch (err) {
+        this.logger.error("Failed to execute removeTicket Lua script", err);
+        return false;
+      }
+    }
+
+    const pipeline = client.pipeline();
+    pipeline.del(ticketKey);
+    pipeline.zrem(MATCHMAKING_QUEUE_ZSET, userId);
+    const results = await pipeline.exec();
+
+    // Check if the key was in the sorted set
+    const zremResult = results?.[1]?.[1];
+    return Number(zremResult) > 0;
+  }
+
+  /**
+   * Retrieve a player's ticket if it exists.
+   */
+  async getTicket(userId: string): Promise<MatchmakingTicket | null> {
+    const ticketKey = `${MATCHMAKING_TICKET_PREFIX}${userId}`;
+    return this.redis.getJSON<MatchmakingTicket>(ticketKey);
+  }
+
+  /**
+   * Get total number of players waiting in the queue.
+   */
+  async getQueueCount(): Promise<number> {
+    const client = this.redis.getClient();
+    return client.zcard(MATCHMAKING_QUEUE_ZSET);
+  }
+
+  /**
+   * Get all active tickets in the queue sorted by ELO.
+   * Auto-prunes stale entries whose ticket JSON expired.
+   */
+  async getAllTickets(): Promise<MatchmakingTicket[]> {
+    const client = this.redis.getClient();
+    const userIds = await client.zrange(MATCHMAKING_QUEUE_ZSET, 0, -1);
+    if (!userIds || userIds.length === 0) {
+      return [];
+    }
+
+    const ticketKeys = userIds.map((id) => `${MATCHMAKING_TICKET_PREFIX}${id}`);
+    const payloads = await client.mget(...ticketKeys);
+
+    const activeTickets: MatchmakingTicket[] = [];
+    const staleUserIds: string[] = [];
+
+    for (let i = 0; i < userIds.length; i++) {
+      const raw = payloads[i];
+      const userId = userIds[i];
+      if (!raw) {
+        staleUserIds.push(userId);
+      } else {
+        try {
+          activeTickets.push(JSON.parse(raw) as MatchmakingTicket);
+        } catch {
+          staleUserIds.push(userId);
+        }
+      }
+    }
+
+    if (staleUserIds.length > 0) {
+      await client.zrem(MATCHMAKING_QUEUE_ZSET, ...staleUserIds);
+      this.logger.debug(
+        `Pruned ${staleUserIds.length} stale tickets from matchmaking queue`,
+      );
+    }
+
+    return activeTickets;
+  }
+
+  /**
+   * Atomically pop a group of matched tickets from the queue.
+   * Ensures that no concurrent worker or race condition can pop the same tickets twice.
+   */
+  async atomicPopTickets(userIds: string[]): Promise<MatchmakingTicket[]> {
+    if (userIds.length === 0) return [];
+
+    const client = this.redis.getClient();
+    const ticketKeys = userIds.map((id) => `${MATCHMAKING_TICKET_PREFIX}${id}`);
+    const keys = [MATCHMAKING_QUEUE_ZSET, ...ticketKeys];
+
+    // Lua script: Checks existence of all tickets, fetches them, and atomically deletes them.
+    const luaScript = `
+      local zsetKey = KEYS[1]
+      local popped = {}
+      local foundAll = true
+      for i = 1, #ARGV do
+        local ticketKey = KEYS[i + 1]
+        local val = redis.call('GET', ticketKey)
+        if val then
+          table.insert(popped, val)
+        else
+          foundAll = false
+        end
+      end
+      
+      if not foundAll then
+        for i = 1, #ARGV do
+          local ticketKey = KEYS[i + 1]
+          local val = redis.call('GET', ticketKey)
+          if not val then
+            redis.call('ZREM', zsetKey, ARGV[i])
+          end
+        end
+        return {}
+      end
+      
+      -- Remove from zset and delete keys
+      for i = 1, #ARGV do
+        local ticketKey = KEYS[i + 1]
+        redis.call('ZREM', zsetKey, ARGV[i])
+        redis.call('DEL', ticketKey)
+      end
+      
+      return popped
+    `;
+
+    try {
+      const results = (await client.eval(
+        luaScript,
+        keys.length,
+        ...keys,
+        ...userIds,
+      )) as string[];
+
+      if (!results || !Array.isArray(results)) {
+        return [];
+      }
+
+      const tickets: MatchmakingTicket[] = [];
+      for (const r of results) {
+        try {
+          tickets.push(JSON.parse(r) as MatchmakingTicket);
+        } catch {
+          // Skip malformed JSON entry
+        }
+      }
+      return tickets;
+    } catch (err) {
+      this.logger.error("Failed to execute atomicPopTickets Lua script", err);
+      return [];
+    }
+  }
+}
