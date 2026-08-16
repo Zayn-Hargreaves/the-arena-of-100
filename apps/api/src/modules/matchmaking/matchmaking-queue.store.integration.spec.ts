@@ -114,7 +114,7 @@ describe("MatchmakingQueueStore (Redis Integration)", () => {
     }
   });
 
-  it("removes sorted-set member when SET command fails, leaving neither ticket key nor sorted-set member", async () => {
+  it("removes sorted-set member when SET command result reports failure", async () => {
     if (!envReady) return;
 
     const client = realRedis.getClient();

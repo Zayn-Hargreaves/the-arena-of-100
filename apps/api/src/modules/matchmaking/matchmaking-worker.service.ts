@@ -15,6 +15,7 @@ import {
   MATCHMAKING_CONFIG,
   ServerEvent,
   type MatchmakingMatchedPayload,
+  type MatchmakingStatusPayload,
 } from "@arena/shared";
 import {
   MatchmakingQueueStore,
@@ -362,6 +363,7 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
     roomId: string,
     player: MatchmakingTicket,
   ): Promise<void> {
+    let requeued = false;
     try {
       await this.prisma.roomPlayer.deleteMany({
         where: {
@@ -373,6 +375,7 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
 
       try {
         await this.queueStore.addTicket(player);
+        requeued = true;
       } catch (reErr) {
         this.logger.warn(
           `Failed to re-enqueue ticket for user ${player.userId}`,
@@ -386,9 +389,33 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    this.server?.to(player.socketId).emit(ServerEvent.ERROR, {
-      code: ErrorCode.INTERNAL_ERROR,
-      message: "Failed to join matched room",
-    });
+    if (requeued) {
+      const elapsedMs = Math.max(0, Date.now() - player.joinedAt);
+      const elapsedSeconds = Math.floor(elapsedMs / 1000);
+      let count = 1;
+      try {
+        count = await this.queueStore.getQueueCount();
+      } catch {
+        // fallback to default count
+      }
+      const status: MatchmakingStatusPayload = {
+        isQueued: true,
+        queuedAt: player.joinedAt,
+        elapsedSeconds,
+        estimatedWaitSeconds: Math.max(
+          0,
+          Math.floor((MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS - elapsedMs) / 1000),
+        ),
+        playersInQueue: count,
+      };
+      this.server
+        ?.to(player.socketId)
+        .emit(ServerEvent.MATCHMAKING_STATUS, status);
+    } else {
+      this.server?.to(player.socketId).emit(ServerEvent.ERROR, {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: "Failed to join matched room",
+      });
+    }
   }
 }
