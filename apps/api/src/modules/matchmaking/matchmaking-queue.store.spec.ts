@@ -95,9 +95,18 @@ describe("MatchmakingQueueStore", () => {
     expect(mockPipeline.exec).toHaveBeenCalled();
   });
 
-  it("throws when pipeline.exec returns a command error", async () => {
+  it("throws and removes sorted-set member when SET command fails and ZADD succeeds", async () => {
+    const cleanupPipeline = {
+      del: vi.fn().mockReturnThis(),
+      zrem: vi.fn().mockReturnThis(),
+      exec: vi.fn().mockResolvedValue([[null, 1]]),
+    };
+    mockClient.pipeline
+      .mockReturnValueOnce(mockPipeline)
+      .mockReturnValueOnce(cleanupPipeline);
+
     mockPipeline.exec.mockResolvedValueOnce([
-      [new Error("Command failed"), null],
+      [new Error("SET failed"), null],
       [null, 1],
     ]);
 
@@ -109,7 +118,98 @@ describe("MatchmakingQueueStore", () => {
       joinedAt: 1000,
     };
 
-    await expect(store.addTicket(ticket)).rejects.toThrow("Command failed");
+    await expect(store.addTicket(ticket)).rejects.toThrow("SET failed");
+    expect(cleanupPipeline.zrem).toHaveBeenCalledWith(
+      MATCHMAKING_QUEUE_ZSET,
+      "u1",
+    );
+    expect(cleanupPipeline.del).not.toHaveBeenCalled();
+    expect(cleanupPipeline.exec).toHaveBeenCalled();
+  });
+
+  it("throws and deletes ticket key when SET command succeeds and ZADD fails", async () => {
+    const cleanupPipeline = {
+      del: vi.fn().mockReturnThis(),
+      zrem: vi.fn().mockReturnThis(),
+      exec: vi.fn().mockResolvedValue([[null, 1]]),
+    };
+    mockClient.pipeline
+      .mockReturnValueOnce(mockPipeline)
+      .mockReturnValueOnce(cleanupPipeline);
+
+    mockPipeline.exec.mockResolvedValueOnce([
+      [null, "OK"],
+      [new Error("ZADD failed"), null],
+    ]);
+
+    const ticket: MatchmakingTicket = {
+      userId: "u1",
+      username: "Alice",
+      elo: 1200,
+      socketId: "s1",
+      joinedAt: 1000,
+    };
+
+    await expect(store.addTicket(ticket)).rejects.toThrow("ZADD failed");
+    expect(cleanupPipeline.del).toHaveBeenCalledWith(
+      `${MATCHMAKING_TICKET_PREFIX}u1`,
+    );
+    expect(cleanupPipeline.zrem).not.toHaveBeenCalled();
+    expect(cleanupPipeline.exec).toHaveBeenCalled();
+  });
+
+  it("throws without compensating cleanup when both SET and ZADD fail", async () => {
+    const cleanupPipeline = {
+      del: vi.fn().mockReturnThis(),
+      zrem: vi.fn().mockReturnThis(),
+      exec: vi.fn().mockResolvedValue([]),
+    };
+    mockClient.pipeline
+      .mockReturnValueOnce(mockPipeline)
+      .mockReturnValueOnce(cleanupPipeline);
+
+    mockPipeline.exec.mockResolvedValueOnce([
+      [new Error("SET failed"), null],
+      [new Error("ZADD failed"), null],
+    ]);
+
+    const ticket: MatchmakingTicket = {
+      userId: "u1",
+      username: "Alice",
+      elo: 1200,
+      socketId: "s1",
+      joinedAt: 1000,
+    };
+
+    await expect(store.addTicket(ticket)).rejects.toThrow("SET failed");
+    expect(cleanupPipeline.del).not.toHaveBeenCalled();
+    expect(cleanupPipeline.zrem).not.toHaveBeenCalled();
+  });
+
+  it("handles cleanup execution errors gracefully and rethrows original error", async () => {
+    const cleanupPipeline = {
+      del: vi.fn().mockReturnThis(),
+      zrem: vi.fn().mockReturnThis(),
+      exec: vi.fn().mockRejectedValue(new Error("Cleanup pipeline failed")),
+    };
+    mockClient.pipeline
+      .mockReturnValueOnce(mockPipeline)
+      .mockReturnValueOnce(cleanupPipeline);
+
+    mockPipeline.exec.mockResolvedValueOnce([
+      [null, "OK"],
+      [new Error("ZADD failed"), null],
+    ]);
+
+    const ticket: MatchmakingTicket = {
+      userId: "u1",
+      username: "Alice",
+      elo: 1200,
+      socketId: "s1",
+      joinedAt: 1000,
+    };
+
+    await expect(store.addTicket(ticket)).rejects.toThrow("ZADD failed");
   });
 
   it("removes a ticket from Redis", async () => {

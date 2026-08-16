@@ -37,10 +37,27 @@ export class MatchmakingQueueStore {
     pipeline.zadd(MATCHMAKING_QUEUE_ZSET, ticket.elo, ticket.userId);
     const results = await pipeline.exec();
     if (results) {
-      for (const [err] of results) {
-        if (err) {
-          throw err;
+      const [setResult, zaddResult] = results;
+      const setErr = setResult?.[0];
+      const zaddErr = zaddResult?.[0];
+
+      if (setErr || zaddErr) {
+        const cleanupPipeline = client.pipeline();
+        if (!setErr) {
+          cleanupPipeline.del(ticketKey);
         }
+        if (!zaddErr) {
+          cleanupPipeline.zrem(MATCHMAKING_QUEUE_ZSET, ticket.userId);
+        }
+        try {
+          await cleanupPipeline.exec();
+        } catch (cleanupErr) {
+          this.logger.warn(
+            `Failed compensating cleanup in addTicket for user ${ticket.userId}`,
+            cleanupErr,
+          );
+        }
+        throw setErr ?? zaddErr;
       }
     }
   }

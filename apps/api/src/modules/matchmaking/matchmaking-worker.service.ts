@@ -240,7 +240,7 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // Post-room creation phase: room is created in DB; never re-enqueue tickets to queueStore
+    // Post-room creation phase: room is created in DB; failed player tickets are cleaned up and re-enqueued to queueStore
     try {
       const successfulPlayers: MatchmakingTicket[] = [host];
 
@@ -275,24 +275,14 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
               await this.redis.sadd(roomPlayersKey(room.id), player.userId);
               successfulPlayers.push(player);
             } else {
-              try {
-                await this.queueStore.addTicket(player);
-              } catch (reErr) {
-                this.logger.warn(
-                  `Failed to re-enqueue ticket for user ${player.userId}`,
-                  reErr,
-                );
-              }
-              this.server?.to(player.socketId).emit(ServerEvent.ERROR, {
-                code: ErrorCode.INTERNAL_ERROR,
-                message: "Failed to join matched room",
-              });
+              await this.failPlayerAndRequeue(room.id, player);
             }
           } catch (recoveryErr) {
             this.logger.error(
               `Error during player-add recovery for user ${player.userId}`,
               recoveryErr,
             );
+            await this.failPlayerAndRequeue(room.id, player);
           }
         }
       }
@@ -366,5 +356,39 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
         error,
       );
     }
+  }
+
+  private async failPlayerAndRequeue(
+    roomId: string,
+    player: MatchmakingTicket,
+  ): Promise<void> {
+    try {
+      await this.prisma.roomPlayer.deleteMany({
+        where: {
+          roomId,
+          userId: player.userId,
+        },
+      });
+      await this.redis.srem(roomPlayersKey(roomId), player.userId);
+
+      try {
+        await this.queueStore.addTicket(player);
+      } catch (reErr) {
+        this.logger.warn(
+          `Failed to re-enqueue ticket for user ${player.userId}`,
+          reErr,
+        );
+      }
+    } catch (cleanupErr) {
+      this.logger.warn(
+        `Failed to clean up room player state for user ${player.userId} before requeue`,
+        cleanupErr,
+      );
+    }
+
+    this.server?.to(player.socketId).emit(ServerEvent.ERROR, {
+      code: ErrorCode.INTERNAL_ERROR,
+      message: "Failed to join matched room",
+    });
   }
 }
