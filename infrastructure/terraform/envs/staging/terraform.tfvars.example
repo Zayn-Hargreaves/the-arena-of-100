@@ -1,0 +1,37 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+#   cp terraform.tfvars.example terraform.tfvars
+
+aws_region  = "ap-southeast-1"
+name_prefix = "arena-staging"
+
+# GitHub repo that may assume the OIDC deploy role
+github_org  = "YOUR_GITHUB_ORG_OR_USER"
+github_repo = "the-arena-of-100"
+
+# Set false if AWS account already has token.actions.githubusercontent.com
+create_github_oidc_provider = true
+
+# JWT — generate something long and random
+jwt_secret = "CHANGE_ME_long_random_string_at_least_32_chars"
+
+# Vercel production/preview origin (no trailing slash)
+cors_origin = "https://your-app.vercel.app"
+
+# Optional: leave empty to auto-generate RDS password
+# db_password = ""
+
+# Optional Redis AUTH (16–128 chars). Empty = no AUTH (SG still blocks public)
+# redis_auth_token = ""
+
+# Optional HTTPS (requires ACM cert in ap-southeast-1)
+enable_https    = false
+certificate_arn = ""
+# domain_name     = "api.example.com"
+# route53_zone_id = "Zxxxxxxxxxxxx"
+
+# Image tag used by the first task definition (CI will register newer revs)
+image_tag = "latest"
+
+api_cpu           = 256
+api_memory        = 512
+api_desired_count = 1
