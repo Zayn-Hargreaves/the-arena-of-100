@@ -23,11 +23,20 @@
 import { IoAdapter } from "@nestjs/platform-socket.io";
 import { createAdapter } from "@socket.io/redis-adapter";
 import type { ServerOptions, Server } from "socket.io";
-import Redis from "ioredis";
+import Redis, { type RedisOptions } from "ioredis";
 import { INestApplicationContext, Logger } from "@nestjs/common";
+import { parseRedisConnectionOptions } from "../modules/redis/redis.core";
 
 export const REDIS_QUIT_TIMEOUT_MS = 5000;
 export const REDIS_READY_TIMEOUT_MS = 15000;
+
+function isEnvRecord(
+  config: unknown,
+): config is Record<string, string | undefined> {
+  if (!config || typeof config !== "object") return false;
+  if (config === process.env) return true;
+  return Object.keys(config).some((k) => k.startsWith("REDIS_"));
+}
 
 export class RedisIoAdapter extends IoAdapter {
   private readonly logger = new Logger(RedisIoAdapter.name);
@@ -47,7 +56,13 @@ export class RedisIoAdapter extends IoAdapter {
    * `maxRetriesPerRequest: null` is required by the adapter's blocking
    * subscribe — the default (3) would make it throw under a transient blip.
    */
-  async connectToRedis(redisUrl: string, keyPrefix?: string): Promise<void> {
+  async connectToRedis(
+    redisConfigOrUrl?:
+      | string
+      | RedisOptions
+      | Record<string, string | undefined>,
+    keyPrefix?: string,
+  ): Promise<void> {
     // Re-entry would silently overwrite the refs below and leak the live
     // (or still-connecting) pair. A reconnect must go through disconnect(),
     // which quits the clients and clears all three refs.
@@ -65,7 +80,55 @@ export class RedisIoAdapter extends IoAdapter {
         "RedisIoAdapter cannot reconnect after createIOServer(): existing Socket.IO servers keep adapters bound to the closed Redis clients",
       );
     }
-    const pubClient = new Redis(redisUrl, { maxRetriesPerRequest: null });
+
+    let pubClient: Redis;
+    let effectiveKeyPrefix = keyPrefix;
+
+    const defaultReconnectOnError = (err: Error): boolean | 1 | 2 => {
+      if (err?.message && err.message.includes("READONLY")) {
+        return 2;
+      }
+      return false;
+    };
+
+    if (typeof redisConfigOrUrl === "string") {
+      pubClient = new Redis(redisConfigOrUrl, {
+        maxRetriesPerRequest: null,
+        reconnectOnError: defaultReconnectOnError,
+      });
+    } else if (
+      redisConfigOrUrl &&
+      typeof redisConfigOrUrl === "object" &&
+      !isEnvRecord(redisConfigOrUrl)
+    ) {
+      const userOpts = redisConfigOrUrl as RedisOptions;
+      const opts: RedisOptions = {
+        ...userOpts,
+        reconnectOnError: userOpts.reconnectOnError ?? defaultReconnectOnError,
+        maxRetriesPerRequest: null,
+      };
+      if (!effectiveKeyPrefix && opts.keyPrefix) {
+        effectiveKeyPrefix = opts.keyPrefix;
+      }
+      pubClient = new Redis(opts);
+    } else {
+      const parsed = parseRedisConnectionOptions(
+        (redisConfigOrUrl as Record<string, string | undefined>) ?? process.env,
+      );
+      if (!effectiveKeyPrefix && parsed.options.keyPrefix) {
+        effectiveKeyPrefix = parsed.options.keyPrefix;
+      }
+      const adapterOpts: RedisOptions = {
+        ...parsed.options,
+        maxRetriesPerRequest: null,
+      };
+      if (parsed.mode === "sentinel") {
+        pubClient = new Redis(adapterOpts);
+      } else {
+        pubClient = new Redis(parsed.url!, adapterOpts);
+      }
+    }
+
     const subClient = pubClient.duplicate();
     this.pubClient = pubClient;
     this.subClient = subClient;
@@ -105,7 +168,7 @@ export class RedisIoAdapter extends IoAdapter {
     // Assigned only after both clients are ready, so createIOServer() can
     // never wire a constructor over clients that failed startup.
     this.adapterConstructor = createAdapter(pubClient, subClient, {
-      key: keyPrefix ? `${keyPrefix}:socket.io` : "socket.io",
+      key: effectiveKeyPrefix ? `${effectiveKeyPrefix}:socket.io` : "socket.io",
     });
 
     this.logger.log("Socket.IO Redis adapter connected");

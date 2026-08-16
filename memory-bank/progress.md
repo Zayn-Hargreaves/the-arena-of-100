@@ -32,6 +32,18 @@ Run the relevant package tests before using these numbers in PR text.
 
 ## Completed Milestones
 
+### 2026-08-16 — Redis HA (Sentinel & Automatic Failover)
+
+- **Redis Sentinel support**: `parseRedisConnectionOptions` in `redis.core.ts` supports both standalone (`REDIS_URL`) and Sentinel mode (`REDIS_SENTINELS`, `REDIS_SENTINEL_MASTER_NAME`, `REDIS_SENTINEL_PASSWORD`, `REDIS_PASSWORD`, `REDIS_SENTINEL_ROLE`).
+- **Failover reconnection**: Configured `reconnectOnError` to automatically detect `READONLY` exceptions during master promotions and reconnect immediately.
+- **Socket.IO Cross-Node Adapter**: `RedisIoAdapter` accepts Sentinel configuration objects and environment maps; `pubClient` and `subClient` inherit Sentinel options.
+- **Docker Compose Sentinel Stack**: Added `infrastructure/docker-compose.sentinel.yml` + `infrastructure/sentinel/sentinel.conf` (1 Master, 2 Replicas, 3 Sentinels with quorum 2) and updated `.env.example`.
+- **Targeted Unit Tests**: 110 tests in `redis.service.spec.ts` + 15 tests in `redis-io.adapter.spec.ts` all green.
+
+### 2026-08-16 — Elo & Matchmaking Queue (PR #92)
+
+- Merged PR #92 (`c628f24`): ELO calculation engine, dynamic K-factor, DB migration (`elo_ranking`), Redis ZSET matchmaking queue (`MatchmakingQueueStore`), background ticket worker with bot backfill (`BotService`), socket events (`MATCHMAKING_QUEUE_JOIN`, `MATCHMAKING_QUEUE_LEAVE`, `MATCHMAKING_MATCH_FOUND`), frontend matchmaking modal and rank badges.
+
 ### 2026-06-06
 
 - Profile + rankings real APIs.

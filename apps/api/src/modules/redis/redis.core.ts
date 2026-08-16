@@ -6,8 +6,143 @@
 // `client` field visible so existing tests can drive it directly.
 
 import { Logger } from "@nestjs/common";
-import Redis from "ioredis";
+import Redis, { type RedisOptions } from "ioredis";
 import type { ConfigService } from "@nestjs/config";
+
+export interface ParsedRedisConfig {
+  mode: "sentinel" | "standalone";
+  url?: string;
+  options: RedisOptions;
+}
+
+export function parseRedisConnectionOptions(
+  configSource: ConfigService | Record<string, string | undefined>,
+): ParsedRedisConfig {
+  const getVal = (key: string, def?: string): string | undefined => {
+    if (
+      configSource &&
+      typeof (configSource as ConfigService).get === "function"
+    ) {
+      const val = (configSource as ConfigService).get<string>(key);
+      return val ?? def;
+    }
+    return (configSource as Record<string, string | undefined>)?.[key] ?? def;
+  };
+
+  const rawSentinels = getVal("REDIS_SENTINELS");
+  const keyPrefix = getVal("REDIS_KEY_PREFIX");
+  const password = getVal("REDIS_PASSWORD");
+  const db = getVal("REDIS_DB");
+
+  let dbNum: number | undefined;
+  if (db !== undefined) {
+    const trimmedDb = db.trim();
+    const parsedNumber = Number(trimmedDb);
+    if (
+      !/^\d+$/.test(trimmedDb) ||
+      !Number.isSafeInteger(parsedNumber) ||
+      parsedNumber < 0
+    ) {
+      throw new Error(
+        `Invalid REDIS_DB: "${db}". REDIS_DB must be a non-negative integer.`,
+      );
+    }
+    dbNum = parsedNumber;
+  }
+
+  const commonOptions: RedisOptions = {
+    ...(keyPrefix ? { keyPrefix } : {}),
+    ...(password ? { password } : {}),
+    ...(dbNum !== undefined ? { db: dbNum } : {}),
+    maxRetriesPerRequest: 3,
+    retryStrategy(times: number) {
+      return Math.min(times * 50, 2000);
+    },
+    reconnectOnError(err: Error) {
+      const targetError = "READONLY";
+      if (err?.message && err.message.includes(targetError)) {
+        return 2;
+      }
+      return false;
+    },
+  };
+
+  if (rawSentinels !== undefined && rawSentinels.trim().length > 0) {
+    const items = rawSentinels
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+
+    if (items.length === 0) {
+      throw new Error("Invalid REDIS_SENTINELS: sentinel list cannot be empty");
+    }
+
+    const sentinels = items.map((item) => {
+      const parts = item.split(":");
+      if (parts.length > 2) {
+        throw new Error(
+          `Invalid sentinel configuration "${item}": too many components`,
+        );
+      }
+      const host = parts[0]?.trim();
+      const portStr = parts[1]?.trim();
+
+      if (!host) {
+        throw new Error(
+          `Invalid sentinel configuration "${item}": host is required`,
+        );
+      }
+
+      let port = 26379;
+      if (portStr !== undefined) {
+        if (!/^\d+$/.test(portStr)) {
+          throw new Error(
+            `Invalid sentinel port in "${item}": port must be a valid numeric value`,
+          );
+        }
+        port = parseInt(portStr, 10);
+        if (port < 1 || port > 65535) {
+          throw new Error(
+            `Invalid sentinel port in "${item}": port must be between 1 and 65535`,
+          );
+        }
+      }
+
+      return {
+        host,
+        port,
+      };
+    });
+
+    const name = getVal("REDIS_SENTINEL_MASTER_NAME", "mymaster") || "mymaster";
+    const sentinelPassword = getVal("REDIS_SENTINEL_PASSWORD");
+    const rawRole = getVal("REDIS_SENTINEL_ROLE", "master") || "master";
+    if (rawRole !== "master" && rawRole !== "slave") {
+      throw new Error(
+        `Invalid REDIS_SENTINEL_ROLE: "${rawRole}". Expected "master" or "slave"`,
+      );
+    }
+    const role: "master" | "slave" = rawRole;
+
+    return {
+      mode: "sentinel",
+      options: {
+        ...commonOptions,
+        sentinels,
+        name,
+        role,
+        ...(sentinelPassword ? { sentinelPassword } : {}),
+      },
+    };
+  }
+
+  const redisUrl = getVal("REDIS_URL", "redis://localhost:6379")!;
+  return {
+    mode: "standalone",
+    url: redisUrl,
+    options: commonOptions,
+  };
+}
 
 export interface RedisCoreRefs {
   client: { current: Redis | null };
@@ -24,22 +159,14 @@ export function createCoreRefs(initial: Redis): RedisCoreRefs {
   return ref;
 }
 
-export function createRedisClient(configService: ConfigService): Redis {
-  const redisUrl = configService.get<string>(
-    "REDIS_URL",
-    "redis://localhost:6379",
-  );
-  const keyPrefix = configService.get<string>("REDIS_KEY_PREFIX");
-
-  const client = new Redis(redisUrl, {
-    ...(keyPrefix ? { keyPrefix } : {}),
-    maxRetriesPerRequest: 3,
-    retryStrategy(times: number) {
-      return Math.min(times * 50, 2000);
-    },
-  });
-
-  return client;
+export function createRedisClient(
+  configSource: ConfigService | Record<string, string | undefined>,
+): Redis {
+  const parsed = parseRedisConnectionOptions(configSource);
+  if (parsed.mode === "sentinel") {
+    return new Redis(parsed.options);
+  }
+  return new Redis(parsed.url!, parsed.options);
 }
 
 export async function quitRedisClient(

@@ -121,10 +121,7 @@ async function bootstrap() {
   // The IIFE runs synchronously up to its first await (connectToRedis), so the
   // signal handlers below are registered before control yields.
   const startupSettled: Promise<void> = (async () => {
-    await redisIoAdapter.connectToRedis(
-      process.env.REDIS_URL || "redis://localhost:6379",
-      process.env.REDIS_KEY_PREFIX,
-    );
+    await redisIoAdapter.connectToRedis(process.env);
     if (shuttingDown) return; // shutdown started during connect — don't listen
     app.useWebSocketAdapter(redisIoAdapter);
 
