@@ -10,8 +10,13 @@ variable "vpc_cidr" {
 }
 
 variable "azs" {
-  description = "Availability zones (≥2). Public + private data subnets are created in each."
+  description = "Availability zones (≥2 distinct). Public + private data subnets are created in each."
   type        = list(string)
+
+  validation {
+    condition     = length(distinct(var.azs)) >= 2
+    error_message = "azs must contain at least 2 distinct availability zones."
+  }
 }
 
 variable "tags" {

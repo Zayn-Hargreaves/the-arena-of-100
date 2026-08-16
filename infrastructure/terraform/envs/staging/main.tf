@@ -2,38 +2,18 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
+data "aws_caller_identity" "current" {}
+
 locals {
   azs  = slice(data.aws_availability_zones.available.names, 0, 2)
   tags = {}
 
-  # Auto password if not provided (used only to create RDS; seed Secrets Manager outside TF)
-  db_password = var.db_password != "" ? var.db_password : random_password.db[0].result
-
-  redis_auth_token = var.redis_auth_token != "" ? var.redis_auth_token : random_password.redis[0].result
-
-  # Suggested values for post-apply secret seeding (not written to SM by Terraform)
-  database_url = format(
-    "postgresql://%s:%s@%s:%s/%s?sslmode=require",
-    var.db_username,
-    urlencode(local.db_password),
-    module.postgres.address,
-    tostring(module.postgres.port),
-    var.db_name
-  )
-
   migrate_image_uri = var.migrate_image_uri != "" ? var.migrate_image_uri : "${module.ecr.repository_url}:${var.migrate_image_tag}"
-}
 
-resource "random_password" "db" {
-  count   = var.db_password == "" ? 1 : 0
-  length  = 24
-  special = false # avoid URL-encoding pain in DATABASE_URL
-}
-
-resource "random_password" "redis" {
-  count   = var.redis_auth_token == "" ? 1 : 0
-  length  = 32
-  special = false
+  # ARNs for gha-oidc remote-state IAM scoping (match backend bootstrap names)
+  tf_state_bucket_arn  = "arn:aws:s3:::${var.tf_state_bucket}"
+  tf_state_objects_arn = "arn:aws:s3:::${var.tf_state_bucket}/*"
+  tf_lock_table_arn    = "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.tf_lock_table}"
 }
 
 module "networking" {
@@ -53,7 +33,7 @@ module "postgres" {
   security_group_ids      = [module.networking.rds_security_group_id]
   db_name                 = var.db_name
   db_username             = var.db_username
-  db_password             = local.db_password
+  db_password             = var.db_password
   instance_class          = "db.t4g.micro"
   allocated_storage       = 20
   backup_retention_period = 1
@@ -69,7 +49,7 @@ module "redis" {
   subnet_ids         = module.networking.private_data_subnet_ids
   security_group_ids = [module.networking.redis_security_group_id]
   node_type          = "cache.t4g.micro"
-  auth_token         = local.redis_auth_token
+  auth_token         = var.redis_auth_token
   tags               = local.tags
 }
 
@@ -158,6 +138,9 @@ module "gha_oidc" {
   ecs_service_arn         = module.ecs_api.service_id
   task_execution_role_arn = module.ecs_api.execution_role_arn
   task_role_arn           = module.ecs_api.task_role_arn
+  tf_state_bucket_arn     = local.tf_state_bucket_arn
+  tf_state_objects_arn    = local.tf_state_objects_arn
+  tf_lock_table_arn       = local.tf_lock_table_arn
   tags                    = local.tags
 }
 

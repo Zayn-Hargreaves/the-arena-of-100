@@ -5,7 +5,11 @@ output "alb_dns_name" {
 
 output "api_base_url" {
   description = "Suggested API base URL for the web app (HTTPS + domain required for Vercel)"
-  value       = var.enable_https && var.domain_name != "" ? "https://${var.domain_name}" : (var.enable_https ? "https://${module.alb.alb_dns_name}" : "http://${module.alb.alb_dns_name}")
+  value = (
+    var.enable_https
+    ? (var.domain_name != "" ? "https://${var.domain_name}" : null)
+    : "http://${module.alb.alb_dns_name}"
+  )
 }
 
 output "ecr_repository_url" {
@@ -21,9 +25,23 @@ output "rds_endpoint" {
   sensitive = true
 }
 
+output "rds_address" {
+  description = "RDS hostname (no credentials) — build DATABASE_URL in shell when seeding SM"
+  value       = module.postgres.address
+}
+
+output "rds_port" {
+  value = module.postgres.port
+}
+
 output "redis_endpoint" {
-  value     = module.redis.primary_endpoint_address
-  sensitive = true
+  description = "Redis primary endpoint hostname (no AUTH) — build REDIS_URL in shell when seeding SM"
+  value       = module.redis.primary_endpoint_address
+  sensitive   = true
+}
+
+output "redis_port" {
+  value = module.redis.port
 }
 
 output "ecs_cluster_name" {
@@ -81,23 +99,4 @@ output "secret_arns" {
 output "secret_names" {
   description = "Secret names for aws secretsmanager put-secret-value"
   value       = module.secrets.secret_names
-}
-
-# Sensitive helpers for operators seeding SM (do not commit output files)
-output "seed_database_url" {
-  description = "Suggested DATABASE_URL to put-secret-value (sensitive)"
-  value       = local.database_url
-  sensitive   = true
-}
-
-output "seed_redis_url" {
-  description = "Suggested REDIS_URL (rediss:// + AUTH) to put-secret-value (sensitive)"
-  value       = module.redis.redis_url
-  sensitive   = true
-}
-
-output "seed_jwt_secret" {
-  description = "JWT secret from tfvars — put-secret-value into JWT_SECRET shell (sensitive)"
-  value       = var.jwt_secret
-  sensitive   = true
 }

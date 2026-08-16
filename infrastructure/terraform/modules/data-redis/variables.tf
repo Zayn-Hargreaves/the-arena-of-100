@@ -22,8 +22,12 @@ variable "auth_token" {
   sensitive   = true
 
   validation {
-    condition     = length(var.auth_token) >= 16 && length(var.auth_token) <= 128
-    error_message = "auth_token must be 16–128 characters (ElastiCache AUTH requirement)."
+    condition = (
+      length(var.auth_token) >= 16 &&
+      length(var.auth_token) <= 128 &&
+      can(regex("^[A-Za-z0-9!&#$^<>-]+$", var.auth_token))
+    )
+    error_message = "auth_token must be 16–128 characters and only contain alphanumeric or ! & # $ ^ < > - (ElastiCache AUTH charset)."
   }
 }
 

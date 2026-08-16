@@ -143,7 +143,7 @@ resource "aws_iam_role_policy" "gha_deploy" {
         Resource = "*"
       },
       {
-        Sid    = "TerraformStateAndRead"
+        Sid    = "TerraformRead"
         Effect = "Allow"
         Action = [
           "ec2:Describe*",
@@ -163,16 +163,39 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "cloudwatch:Describe*",
           "logs:DescribeLogGroups",
           "ecs:Describe*",
-          "ecs:List*",
+          "ecs:List*"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "TerraformStateS3Bucket"
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket",
+          "s3:GetBucketVersioning"
+        ]
+        Resource = var.tf_state_bucket_arn
+      },
+      {
+        Sid    = "TerraformStateS3Objects"
+        Effect = "Allow"
+        Action = [
           "s3:GetObject",
           "s3:PutObject",
-          "s3:ListBucket",
+          "s3:DeleteObject"
+        ]
+        Resource = var.tf_state_objects_arn
+      },
+      {
+        Sid    = "TerraformStateLock"
+        Effect = "Allow"
+        Action = [
           "dynamodb:GetItem",
           "dynamodb:PutItem",
           "dynamodb:DeleteItem",
           "dynamodb:DescribeTable"
         ]
-        Resource = "*"
+        Resource = var.tf_lock_table_arn
       },
       {
         Sid    = "TerraformApplyDemo"
@@ -251,7 +274,6 @@ resource "aws_iam_role_policy" "gha_plan" {
           "elasticache:Describe*",
           "secretsmanager:Describe*",
           "secretsmanager:ListSecrets",
-          "secretsmanager:GetSecretValue",
           "iam:GetRole",
           "iam:GetRolePolicy",
           "iam:GetOpenIDConnectProvider",
@@ -267,15 +289,37 @@ resource "aws_iam_role_policy" "gha_plan" {
           "ecr:DescribeRepositories",
           "ecr:DescribeImages",
           "ecr:ListImages",
-          "ecr:GetAuthorizationToken",
-          "s3:GetObject",
+          "ecr:GetAuthorizationToken"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "TerraformStateS3Bucket"
+        Effect = "Allow"
+        Action = [
           "s3:ListBucket",
+          "s3:GetBucketVersioning"
+        ]
+        Resource = var.tf_state_bucket_arn
+      },
+      {
+        Sid    = "TerraformStateS3Objects"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject"
+        ]
+        Resource = var.tf_state_objects_arn
+      },
+      {
+        Sid    = "TerraformStateLock"
+        Effect = "Allow"
+        Action = [
           "dynamodb:GetItem",
           "dynamodb:PutItem",
           "dynamodb:DeleteItem",
           "dynamodb:DescribeTable"
         ]
-        Resource = "*"
+        Resource = var.tf_lock_table_arn
       }
     ]
   })

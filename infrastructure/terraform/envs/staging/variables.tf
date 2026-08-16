@@ -14,6 +14,17 @@ variable "vpc_cidr" {
   default = "10.20.0.0/16"
 }
 
+# --- Remote state (for gha-oidc IAM scoping; must match backend bootstrap) ---
+variable "tf_state_bucket" {
+  description = "S3 bucket name for Terraform state (same as backend -backend-config bucket)"
+  type        = string
+}
+
+variable "tf_lock_table" {
+  description = "DynamoDB lock table name (same as backend -backend-config dynamodb_table)"
+  type        = string
+}
+
 # --- GitHub OIDC ---
 variable "github_org" {
   description = "GitHub org or username owning the repo"
@@ -67,17 +78,29 @@ variable "db_name" {
 }
 
 variable "db_password" {
-  description = "RDS master password. Leave empty to auto-generate. Seed DATABASE_URL into SM after apply."
+  description = "RDS master password (required). Operator/CI supplies; also used when seeding DATABASE_URL into SM. Lives in TF state as RDS attribute — use encrypted remote state + tight IAM."
   type        = string
-  default     = ""
   sensitive   = true
+
+  validation {
+    condition     = length(var.db_password) >= 8
+    error_message = "db_password is required (min 8 characters). Supply via TF_VAR_db_password / tfvars; do not rely on Terraform random generation."
+  }
 }
 
 variable "redis_auth_token" {
-  description = "Redis AUTH (16–128 chars). Leave empty to auto-generate. Required for TLS+AUTH; seed rediss:// REDIS_URL into SM after apply."
+  description = "Redis AUTH token (required, 16–128 chars, ElastiCache AUTH charset). Operator/CI supplies; seed rediss:// REDIS_URL into SM after apply. Lives in TF state as ElastiCache attribute."
   type        = string
-  default     = ""
   sensitive   = true
+
+  validation {
+    condition = (
+      length(var.redis_auth_token) >= 16 &&
+      length(var.redis_auth_token) <= 128 &&
+      can(regex("^[A-Za-z0-9!&#$^<>-]+$", var.redis_auth_token))
+    )
+    error_message = "redis_auth_token must be 16–128 characters and only contain alphanumeric or ! & # $ ^ < > - (ElastiCache AUTH charset)."
+  }
 }
 
 variable "ecr_repository_name" {

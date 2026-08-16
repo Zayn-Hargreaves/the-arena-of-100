@@ -39,6 +39,21 @@ variable "task_role_arn" {
   type = string
 }
 
+variable "tf_state_bucket_arn" {
+  description = "S3 bucket ARN for Terraform state (bucket-level actions)"
+  type        = string
+}
+
+variable "tf_state_objects_arn" {
+  description = "S3 object ARN prefix for Terraform state (e.g. arn:aws:s3:::bucket/*)"
+  type        = string
+}
+
+variable "tf_lock_table_arn" {
+  description = "DynamoDB lock table ARN for Terraform state locking"
+  type        = string
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

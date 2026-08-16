@@ -1,10 +1,6 @@
-# Public ALB defaults to HTTPS; refuse empty cert when enable_https is true.
-# (Variable validation cannot reference other variables in Terraform 1.5.)
-check "https_requires_certificate" {
-  assert {
-    condition     = !var.enable_https || length(trimspace(var.certificate_arn)) > 0
-    error_message = "certificate_arn must be a non-empty ACM ARN when enable_https is true. HTTP-only is not the default for public ALBs."
-  }
+# Public ALB defaults to HTTPS; lifecycle.precondition rejects empty cert when enable_https.
+locals {
+  certificate_arn = trimspace(var.certificate_arn)
 }
 
 resource "aws_lb" "this" {
@@ -19,6 +15,13 @@ resource "aws_lb" "this" {
   drop_invalid_header_fields = true
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-alb" })
+
+  lifecycle {
+    precondition {
+      condition     = !var.enable_https || length(local.certificate_arn) > 0
+      error_message = "certificate_arn must be a non-empty ACM ARN when enable_https is true. HTTP-only is not the default for public ALBs."
+    }
+  }
 }
 
 resource "aws_lb_target_group" "api" {
@@ -61,7 +64,7 @@ resource "aws_lb_listener" "http" {
   protocol          = "HTTP"
 
   dynamic "default_action" {
-    for_each = var.enable_https && var.certificate_arn != "" ? [1] : []
+    for_each = var.enable_https && local.certificate_arn != "" ? [1] : []
     content {
       type = "redirect"
       redirect {
@@ -73,7 +76,7 @@ resource "aws_lb_listener" "http" {
   }
 
   dynamic "default_action" {
-    for_each = var.enable_https && var.certificate_arn != "" ? [] : [1]
+    for_each = var.enable_https && local.certificate_arn != "" ? [] : [1]
     content {
       type             = "forward"
       target_group_arn = aws_lb_target_group.api.arn
@@ -82,13 +85,13 @@ resource "aws_lb_listener" "http" {
 }
 
 resource "aws_lb_listener" "https" {
-  count = var.enable_https && var.certificate_arn != "" ? 1 : 0
+  count = var.enable_https && local.certificate_arn != "" ? 1 : 0
 
   load_balancer_arn = aws_lb.this.arn
   port              = 443
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
-  certificate_arn   = var.certificate_arn
+  certificate_arn   = local.certificate_arn
 
   default_action {
     type             = "forward"

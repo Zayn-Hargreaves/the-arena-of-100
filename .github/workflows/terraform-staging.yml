@@ -34,7 +34,7 @@ jobs:
   plan:
     name: Plan
     runs-on: ubuntu-latest
-    # Always schedule on matching events; steps no-op without AWS_ROLE_ARN_PLAN / AWS_ROLE_ARN
+    # Always schedule on matching events; steps no-op without AWS_ROLE_ARN_PLAN
     # so forks/contributors without AWS stay green.
     if: >
       github.event_name == 'pull_request' ||
@@ -47,12 +47,16 @@ jobs:
       - name: Check AWS configured
         id: gate
         env:
-          # Prefer read-only plan role; fall back to deploy role for bootstrap
-          ROLE: ${{ secrets.AWS_ROLE_ARN_PLAN || secrets.AWS_ROLE_ARN }}
+          ROLE: ${{ secrets.AWS_ROLE_ARN_PLAN }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_LOCK_TABLE: ${{ vars.TF_LOCK_TABLE }}
         run: |
           if [ -z "$ROLE" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "AWS_ROLE_ARN_PLAN / AWS_ROLE_ARN not configured — skipping Terraform plan."
+            echo "AWS_ROLE_ARN_PLAN not configured — skipping Terraform plan."
+          elif [ -z "$TF_STATE_BUCKET" ] || [ -z "$TF_LOCK_TABLE" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "TF_STATE_BUCKET / TF_LOCK_TABLE not configured — skipping Terraform plan."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "role=$ROLE" >> "$GITHUB_OUTPUT"
@@ -77,7 +81,10 @@ jobs:
 
       - name: Terraform init
         if: steps.gate.outputs.skip != 'true'
-        run: terraform init -input=false
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}"
 
       - name: Terraform fmt
         if: steps.gate.outputs.skip != 'true'
@@ -102,6 +109,10 @@ jobs:
           TF_VAR_enable_https: ${{ vars.TF_ENABLE_HTTPS || 'true' }}
           TF_VAR_certificate_arn: ${{ vars.TF_CERTIFICATE_ARN || 'arn:aws:acm:ap-southeast-1:000000000000:certificate/ci-plan-placeholder' }}
           TF_VAR_domain_name: ${{ vars.TF_DOMAIN_NAME || 'api.example.com' }}
+          TF_VAR_db_password: ${{ secrets.TF_DB_PASSWORD || 'ci-plan-placeholder-db-pw' }}
+          TF_VAR_redis_auth_token: ${{ secrets.TF_REDIS_AUTH_TOKEN || 'ci-plan-placeholder-redis' }}
+          TF_VAR_tf_state_bucket: ${{ vars.TF_STATE_BUCKET }}
+          TF_VAR_tf_lock_table: ${{ vars.TF_LOCK_TABLE }}
 
       - name: PR plan comment
         if: steps.gate.outputs.skip != 'true' && github.event_name == 'pull_request'
@@ -147,13 +158,39 @@ jobs:
         env:
           ROLE: ${{ secrets.AWS_ROLE_ARN }}
           JWT: ${{ secrets.TF_JWT_SECRET }}
+          REDIS_AUTH: ${{ secrets.TF_REDIS_AUTH_TOKEN }}
+          DB_PASSWORD: ${{ secrets.TF_DB_PASSWORD }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_LOCK_TABLE: ${{ vars.TF_LOCK_TABLE }}
+          TF_ENABLE_HTTPS: ${{ vars.TF_ENABLE_HTTPS || 'true' }}
+          TF_CERTIFICATE_ARN: ${{ vars.TF_CERTIFICATE_ARN }}
+          TF_DOMAIN_NAME: ${{ vars.TF_DOMAIN_NAME }}
         run: |
-          if [ -z "$ROLE" ] || [ -z "$JWT" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Missing AWS_ROLE_ARN or TF_JWT_SECRET — skip apply."
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+          missing=()
+          [ -z "$ROLE" ] && missing+=("AWS_ROLE_ARN")
+          [ -z "$JWT" ] && missing+=("TF_JWT_SECRET")
+          [ -z "$REDIS_AUTH" ] && missing+=("TF_REDIS_AUTH_TOKEN")
+          [ -z "$DB_PASSWORD" ] && missing+=("TF_DB_PASSWORD")
+          [ -z "$TF_STATE_BUCKET" ] && missing+=("TF_STATE_BUCKET")
+          [ -z "$TF_LOCK_TABLE" ] && missing+=("TF_LOCK_TABLE")
+
+          # Normalize enable_https (default true)
+          case "$(echo "$TF_ENABLE_HTTPS" | tr '[:upper:]' '[:lower:]')" in
+            true|1|yes) HTTPS_ON=true ;;
+            *) HTTPS_ON=false ;;
+          esac
+
+          if [ "$HTTPS_ON" = true ]; then
+            [ -z "$TF_CERTIFICATE_ARN" ] && missing+=("TF_CERTIFICATE_ARN")
+            [ -z "$TF_DOMAIN_NAME" ] && missing+=("TF_DOMAIN_NAME")
           fi
+
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Missing required apply inputs: ${missing[*]} — blocking terraform apply."
+            exit 1
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
         working-directory: .
 
       - uses: actions/checkout@v4
@@ -173,7 +210,10 @@ jobs:
 
       - name: Terraform init
         if: steps.gate.outputs.skip != 'true'
-        run: terraform init -input=false
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}"
 
       - name: Terraform apply
         if: steps.gate.outputs.skip != 'true'
@@ -188,3 +228,5 @@ jobs:
           TF_VAR_enable_https: ${{ vars.TF_ENABLE_HTTPS || 'true' }}
           TF_VAR_certificate_arn: ${{ vars.TF_CERTIFICATE_ARN }}
           TF_VAR_domain_name: ${{ vars.TF_DOMAIN_NAME }}
+          TF_VAR_tf_state_bucket: ${{ vars.TF_STATE_BUCKET }}
+          TF_VAR_tf_lock_table: ${{ vars.TF_LOCK_TABLE }}

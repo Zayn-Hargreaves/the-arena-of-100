@@ -5,8 +5,10 @@
 #   cd infrastructure/terraform/backend
 #   terraform init
 #   terraform apply -var="state_bucket_name=YOUR_UNIQUE_BUCKET"
-# Fill envs/staging/backend.tf placeholders from outputs, then:
-#   cd ../envs/staging && terraform init -migrate-state
+# Staging uses a partial backend (key/region/encrypt committed). Pass bucket +
+# lock table at init from this module's outputs / backend_config_snippet:
+#   cd ../envs/staging
+#   terraform init -backend-config="bucket=..." -backend-config="dynamodb_table=..."
 
 terraform {
   required_version = ">= 1.5.0"
