@@ -10,9 +10,9 @@ locals {
 
   migrate_image_uri = var.migrate_image_uri != "" ? var.migrate_image_uri : "${module.ecr.repository_url}:${var.migrate_image_tag}"
 
-  # ARNs for gha-oidc remote-state IAM scoping (match backend bootstrap names)
+  # ARNs for gha-oidc remote-state IAM scoping (match backend.tf key; locks via DynamoDB)
   tf_state_bucket_arn  = "arn:aws:s3:::${var.tf_state_bucket}"
-  tf_state_objects_arn = "arn:aws:s3:::${var.tf_state_bucket}/*"
+  tf_state_objects_arn = "arn:aws:s3:::${var.tf_state_bucket}/arena-of-100/staging/terraform.tfstate"
   tf_lock_table_arn    = "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.tf_lock_table}"
 }
 

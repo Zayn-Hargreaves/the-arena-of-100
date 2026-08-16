@@ -27,7 +27,7 @@ cors_origin = "https://your-app.vercel.app"
 # Required: operator/CI supplies passwords (no Terraform random_* generation).
 # These enter TF state as RDS/ElastiCache resource attributes — use encrypted remote state.
 db_password      = "CHANGE_ME_rds_master_password"
-redis_auth_token = "CHANGE_ME_redis_auth_16chars" # 16–128 chars; charset: alnum !&#$^<>-
+redis_auth_token = "CHANGE-ME-RedisAuth1!" # 16–128 chars; charset alnum !&#$^<>-; ≥3 of upper/lower/digit/symbol
 
 # HTTPS is the default for public ALB. Provide ACM cert + domain before Vercel.
 enable_https    = true

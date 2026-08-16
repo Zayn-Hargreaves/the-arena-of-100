@@ -89,17 +89,24 @@ variable "db_password" {
 }
 
 variable "redis_auth_token" {
-  description = "Redis AUTH token (required, 16–128 chars, ElastiCache AUTH charset). Operator/CI supplies; seed rediss:// REDIS_URL into SM after apply. Lives in TF state as ElastiCache attribute."
+  description = "Redis AUTH token (required, 16–128 chars, ElastiCache AUTH charset, ≥3 of 4 char classes). Operator/CI supplies; seed rediss:// REDIS_URL into SM after apply. Lives in TF state as ElastiCache attribute."
   type        = string
+  nullable    = false
   sensitive   = true
 
   validation {
     condition = (
       length(var.redis_auth_token) >= 16 &&
       length(var.redis_auth_token) <= 128 &&
-      can(regex("^[A-Za-z0-9!&#$^<>-]+$", var.redis_auth_token))
+      can(regex("^[A-Za-z0-9!&#$^<>-]+$", var.redis_auth_token)) &&
+      (
+        (can(regex("[A-Z]", var.redis_auth_token)) ? 1 : 0) +
+        (can(regex("[a-z]", var.redis_auth_token)) ? 1 : 0) +
+        (can(regex("[0-9]", var.redis_auth_token)) ? 1 : 0) +
+        (can(regex("[!&#$^<>-]", var.redis_auth_token)) ? 1 : 0)
+      ) >= 3
     )
-    error_message = "redis_auth_token must be 16–128 characters and only contain alphanumeric or ! & # $ ^ < > - (ElastiCache AUTH charset)."
+    error_message = "redis_auth_token must be 16–128 characters, only alphanumeric or ! & # $ ^ < > - (ElastiCache AUTH charset), and include at least 3 of: uppercase, lowercase, digit, non-alphanumeric."
   }
 }
 
