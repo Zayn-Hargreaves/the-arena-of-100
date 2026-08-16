@@ -269,35 +269,42 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
         MATCHMAKING_CONFIG.AUTO_FILL_BOTS &&
         successfulPlayers.length < MATCHMAKING_CONFIG.TARGET_PLAYERS_PER_MATCH
       ) {
-        const neededBots =
-          MATCHMAKING_CONFIG.TARGET_PLAYERS_PER_MATCH -
-          successfulPlayers.length;
-        const avgElo = Math.round(
-          successfulPlayers.reduce((sum, p) => sum + p.elo, 0) /
-            successfulPlayers.length,
-        );
+        try {
+          const neededBots =
+            MATCHMAKING_CONFIG.TARGET_PLAYERS_PER_MATCH -
+            successfulPlayers.length;
+          const avgElo = Math.round(
+            successfulPlayers.reduce((sum, p) => sum + p.elo, 0) /
+              successfulPlayers.length,
+          );
 
-        const bots = await this.botService.ensureBotUsers(neededBots, avgElo);
-        for (const bot of bots) {
-          try {
-            await this.prisma.roomPlayer.create({
-              data: {
-                roomId: room.id,
-                userId: bot.id,
-              },
-            });
-            await this.redis.sadd(roomPlayersKey(room.id), bot.id);
-            botCount++;
-          } catch (err) {
-            this.logger.warn(
-              `Failed to add bot ${bot.username} to matched room ${room.id}`,
-              err,
-            );
+          const bots = await this.botService.ensureBotUsers(neededBots, avgElo);
+          for (const bot of bots) {
+            try {
+              await this.prisma.roomPlayer.create({
+                data: {
+                  roomId: room.id,
+                  userId: bot.id,
+                },
+              });
+              await this.redis.sadd(roomPlayersKey(room.id), bot.id);
+              botCount++;
+            } catch (err) {
+              this.logger.warn(
+                `Failed to add bot ${bot.username} to matched room ${room.id}`,
+                err,
+              );
+            }
           }
+          this.logger.log(
+            `Filled room ${room.code} with ${botCount} AI bots (total ${successfulPlayers.length + botCount} players)`,
+          );
+        } catch (botErr) {
+          this.logger.warn(
+            `Failed to auto-fill bots for matched room ${room.id}`,
+            botErr,
+          );
         }
-        this.logger.log(
-          `Filled room ${room.code} with ${botCount} AI bots (total ${successfulPlayers.length + botCount} players)`,
-        );
       }
 
       // 4. Notify human clients via WebSocket

@@ -118,6 +118,7 @@ export default function HomePage() {
     try {
       let authenticated = false;
       try {
+        await connect();
         await authenticate(nickname.trim());
         authenticated = true;
       } catch (err) {

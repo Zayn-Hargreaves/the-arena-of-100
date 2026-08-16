@@ -55,11 +55,36 @@ describe("MatchmakingHandler", () => {
     );
   });
 
-  it("handles leave_matchmaking event", async () => {
+  it("handles leave_matchmaking event with socketId", async () => {
     await handler.handleLeaveMatchmaking(mockSocket);
 
-    expect(mockMatchmakingService.leaveQueue).toHaveBeenCalledWith("user-123");
+    expect(mockMatchmakingService.leaveQueue).toHaveBeenCalledWith(
+      "user-123",
+      "socket-123",
+    );
     expect(mockSocket.emit).toHaveBeenCalledWith(
+      ServerEvent.MATCHMAKING_STATUS,
+      expect.objectContaining({ isQueued: false }),
+    );
+  });
+
+  it("passes socket id when an old socket sends leave after a newer socket has created a ticket", async () => {
+    const oldSocket: any = {
+      id: "socket-old",
+      data: {
+        userId: "user-123",
+        username: "Player1",
+      },
+      emit: vi.fn(),
+    };
+
+    await handler.handleLeaveMatchmaking(oldSocket);
+
+    expect(mockMatchmakingService.leaveQueue).toHaveBeenCalledWith(
+      "user-123",
+      "socket-old",
+    );
+    expect(oldSocket.emit).toHaveBeenCalledWith(
       ServerEvent.MATCHMAKING_STATUS,
       expect.objectContaining({ isQueued: false }),
     );

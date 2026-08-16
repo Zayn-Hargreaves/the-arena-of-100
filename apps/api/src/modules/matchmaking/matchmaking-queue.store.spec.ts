@@ -137,7 +137,30 @@ describe("MatchmakingQueueStore", () => {
     const popped = await store.atomicPopTickets(["u1"]);
     expect(popped).toHaveLength(1);
     expect(popped[0].userId).toBe("u1");
-    expect(mockClient.eval).toHaveBeenCalled();
+    expect(mockClient.eval).toHaveBeenCalledWith(
+      expect.any(String),
+      2,
+      MATCHMAKING_QUEUE_ZSET,
+      `${MATCHMAKING_TICKET_PREFIX}u1`,
+      "u1",
+    );
+  });
+
+  it("skips malformed JSON entries while retaining valid tickets", async () => {
+    mockClient.eval.mockResolvedValueOnce([
+      JSON.stringify({
+        userId: "u1",
+        username: "Alice",
+        elo: 1200,
+        socketId: "s1",
+        joinedAt: 1000,
+      }),
+      "not-valid-json",
+    ]);
+
+    const popped = await store.atomicPopTickets(["u1", "u2"]);
+    expect(popped).toHaveLength(1);
+    expect(popped[0].userId).toBe("u1");
   });
 
   it("returns empty array when popping empty userIds", async () => {

@@ -19,10 +19,6 @@ describe("BotService", () => {
           id: `bot_${Math.random()}`,
           ...data,
         })),
-        upsert: vi.fn().mockImplementation(({ create }) => ({
-          id: `bot_${Math.random()}`,
-          ...create,
-        })),
       },
     };
 
@@ -101,7 +97,7 @@ describe("BotService", () => {
     expect(mockPrisma.user.create).toHaveBeenCalledTimes(1);
   });
 
-  it("throws the final username-conflict error when attempts limit is reached", async () => {
+  it("falls back and returns created bots so far when attempts limit is reached", async () => {
     mockPrisma.user.findMany.mockResolvedValueOnce([]);
     const p2002UsernameErr = Object.assign(
       new Error("Unique constraint failed on username"),
@@ -112,7 +108,8 @@ describe("BotService", () => {
     );
     mockPrisma.user.create.mockRejectedValue(p2002UsernameErr);
 
-    await expect(service.ensureBotUsers(1)).rejects.toThrow(p2002UsernameErr);
+    const bots = await service.ensureBotUsers(1);
+    expect(bots).toEqual([]);
     expect(mockPrisma.user.create).toHaveBeenCalledTimes(3);
   });
 

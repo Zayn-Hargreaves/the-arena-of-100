@@ -151,13 +151,16 @@ export class MatchmakingQueueStore {
 
     const client = this.redis.getClient();
     const ticketKeys = userIds.map((id) => `${MATCHMAKING_TICKET_PREFIX}${id}`);
+    const keys = [MATCHMAKING_QUEUE_ZSET, ...ticketKeys];
 
     // Lua script: Checks existence of all tickets, fetches them, and atomically deletes them.
     const luaScript = `
+      local zsetKey = KEYS[1]
       local popped = {}
       local foundAll = true
-      for i, key in ipairs(KEYS) do
-        local val = redis.call('GET', key)
+      for i = 1, #ARGV do
+        local ticketKey = KEYS[i + 1]
+        local val = redis.call('GET', ticketKey)
         if val then
           table.insert(popped, val)
         else
@@ -166,19 +169,21 @@ export class MatchmakingQueueStore {
       end
       
       if not foundAll then
-        for i, key in ipairs(KEYS) do
-          local val = redis.call('GET', key)
+        for i = 1, #ARGV do
+          local ticketKey = KEYS[i + 1]
+          local val = redis.call('GET', ticketKey)
           if not val then
-            redis.call('ZREM', '${MATCHMAKING_QUEUE_ZSET}', ARGV[i])
+            redis.call('ZREM', zsetKey, ARGV[i])
           end
         end
         return {}
       end
       
       -- Remove from zset and delete keys
-      for i, userId in ipairs(ARGV) do
-        redis.call('ZREM', '${MATCHMAKING_QUEUE_ZSET}', userId)
-        redis.call('DEL', '${MATCHMAKING_TICKET_PREFIX}' .. userId)
+      for i = 1, #ARGV do
+        local ticketKey = KEYS[i + 1]
+        redis.call('ZREM', zsetKey, ARGV[i])
+        redis.call('DEL', ticketKey)
       end
       
       return popped
@@ -187,8 +192,8 @@ export class MatchmakingQueueStore {
     try {
       const results = (await client.eval(
         luaScript,
-        ticketKeys.length,
-        ...ticketKeys,
+        keys.length,
+        ...keys,
         ...userIds,
       )) as string[];
 
@@ -196,7 +201,15 @@ export class MatchmakingQueueStore {
         return [];
       }
 
-      return results.map((r) => JSON.parse(r) as MatchmakingTicket);
+      const tickets: MatchmakingTicket[] = [];
+      for (const r of results) {
+        try {
+          tickets.push(JSON.parse(r) as MatchmakingTicket);
+        } catch {
+          // Skip malformed JSON entry
+        }
+      }
+      return tickets;
     } catch (err) {
       this.logger.error("Failed to execute atomicPopTickets Lua script", err);
       return [];

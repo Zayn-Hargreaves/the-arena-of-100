@@ -19,7 +19,7 @@ import type { GameLoopService } from "../match/game-loop.service";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { RedisService } from "../redis/redis.service";
 import type { ClusterService } from "../cluster/cluster.service";
-import { MATCHMAKING_CONFIG } from "@arena/shared";
+import { MATCHMAKING_CONFIG, ServerEvent } from "@arena/shared";
 
 describe("MatchmakingWorkerService", () => {
   let worker: MatchmakingWorkerService;
@@ -305,6 +305,46 @@ describe("MatchmakingWorkerService", () => {
     await expect(worker.tick()).resolves.toBeUndefined();
     expect(mockRoomService.createRoom).toHaveBeenCalledTimes(1);
     expect(mockQueueStore.addTicket).not.toHaveBeenCalled();
+  });
+
+  it("proceeds with match notification and forceStartRoomMatch even if ensureBotUsers fails", async () => {
+    const tickets: MatchmakingTicket[] = [
+      {
+        userId: "u1",
+        username: "Alice",
+        elo: 1200,
+        socketId: "s1",
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 5000),
+      },
+      {
+        userId: "u2",
+        username: "Bob",
+        elo: 1250,
+        socketId: "s2",
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 2000),
+      },
+    ];
+
+    mockQueueStore.getAllTickets.mockResolvedValueOnce(tickets);
+    mockBotService.ensureBotUsers.mockRejectedValueOnce(
+      new Error("Bot creation failed"),
+    );
+
+    await expect(worker.tick()).resolves.toBeUndefined();
+    expect(mockRoomService.createRoom).toHaveBeenCalledTimes(1);
+    expect(mockServer.to).toHaveBeenCalledWith("s1");
+    expect(mockServer.to).toHaveBeenCalledWith("s2");
+    expect(mockEmit).toHaveBeenCalledWith(
+      ServerEvent.MATCHMAKING_MATCHED,
+      expect.objectContaining({
+        roomId: "room_123",
+        roomCode: "ARENA1",
+      }),
+    );
+    expect(mockGameLoopService.forceStartRoomMatch).toHaveBeenCalledWith(
+      "room_123",
+      mockServer,
+    );
   });
 
   it("halts queue processing if leadership lease is lost before forming match", async () => {

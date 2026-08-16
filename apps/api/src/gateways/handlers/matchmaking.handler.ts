@@ -57,7 +57,7 @@ export class MatchmakingHandler extends BaseHandler {
       client,
       async () => {
         const userId = this.requireAuth(client);
-        await this.matchmakingService.leaveQueue(userId);
+        await this.matchmakingService.leaveQueue(userId, client.id);
 
         const status = await this.matchmakingService.getQueueStatus(userId);
         client.emit(ServerEvent.MATCHMAKING_STATUS, status);

@@ -134,7 +134,7 @@ export class BotService {
               `Failed to create bot user ${failedUsername} after ${attempts} attempts`,
               err,
             );
-            throw err;
+            break;
           }
           username = `${prefix}_${suffix}_${Math.floor(Math.random() * 9000) + 1000}`;
         }
@@ -212,7 +212,7 @@ export function simulateBotAnswers(
       answer: chosenAnswer,
       responseTimeMs,
       submissionId: `bot_sub_${nanoid(10)}`,
-      clientTimestamp: now - (maxDelay - responseTimeMs),
+      clientTimestamp: now + responseTimeMs,
     });
   }
 

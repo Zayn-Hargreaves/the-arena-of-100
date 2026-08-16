@@ -2992,6 +2992,64 @@ describe("MatchRoundRunner", () => {
       }
     });
 
+    it("skips submitting bot answer if current time is at or beyond round.endsAt", async () => {
+      vi.useFakeTimers();
+      try {
+        const smWithBot = new MatchStateMachine("match-late-bot", "room-1", [
+          {
+            id: "bot_late",
+            name: "Bot_Late",
+            status: PlayerStatus.ACTIVE,
+            score: 0,
+            totalResponseTimeMs: 0,
+            correctAnswers: 0,
+            isOnline: true,
+          },
+        ]);
+        smWithBot.transition(MatchStatus.COUNTDOWN);
+        smWithBot.transition(MatchStatus.ROUND_ACTIVE);
+        smWithBot.startRound({
+          id: "q1",
+          content: "Test question",
+          options: ["A", "B", "C", "D"],
+          correctAnswer: "A",
+          difficulty: "EASY",
+        });
+
+        (matchService.getStateMachine as any).mockResolvedValue(smWithBot);
+        (matchService.getBotPlayerIds as any).mockResolvedValue(
+          new Set(["bot_late"]),
+        );
+
+        const submitAnswerSpy = vi.spyOn(smWithBot, "submitAnswer");
+
+        await (runner as any).scheduleBotAnswers(
+          "match-late-bot",
+          "room-1",
+          mockServer,
+          smWithBot,
+          {
+            id: "q1",
+            correctAnswer: "A",
+            options: ["A", "B", "C", "D"],
+            difficulty: "EASY",
+          },
+        );
+
+        // Advance fake time past round.endsAt before callback executes
+        const round = smWithBot.getCurrentRound()!;
+        vi.setSystemTime(round.endsAt + 1000);
+
+        await vi.advanceTimersByTimeAsync(
+          MATCHMAKING_CONFIG.MAX_BOT_ANSWER_DELAY_MS + 100,
+        );
+
+        expect(submitAnswerSpy).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("handles getBotPlayerIds failure gracefully without extending round end or failing executeRound", async () => {
       vi.useFakeTimers();
       try {

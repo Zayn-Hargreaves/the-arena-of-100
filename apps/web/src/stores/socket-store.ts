@@ -832,18 +832,6 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     emitIfConnected(socket, ClientEvent.JOIN_MATCHMAKING, {
       category: category && category !== "ALL" ? category : undefined,
     });
-    set((state) => ({
-      matchmaking: {
-        ...state.matchmaking,
-        isQueued: true,
-        queuedAt: Date.now(),
-        elapsedSeconds: 0,
-        estimatedWaitSeconds: 15,
-        playersInQueue: 0,
-        matchedRoomCode: null,
-        matchedRoomId: null,
-      },
-    }));
   },
 
   leaveMatchmaking: () => {

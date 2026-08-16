@@ -720,9 +720,11 @@ export class MatchRoundRunner {
             const round = sm.getCurrentRound();
             if (!round) return;
 
+            const now = Date.now();
+            if (now >= round.endsAt) return;
+
             const serialized = sm.serialize();
-            const serverTimestamp =
-              (round.startedAt || Date.now()) + sim.responseTimeMs;
+            const serverTimestamp = Math.min(now, round.endsAt);
             const result = sm.submitAnswer(
               sim.userId,
               sim.answer,
