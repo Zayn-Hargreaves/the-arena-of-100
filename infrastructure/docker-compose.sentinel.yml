@@ -1,0 +1,151 @@
+# ============================================================
+# Arena of 100 - Docker Compose (Redis Sentinel HA Stack)
+# ============================================================
+# Topology:
+# - 1 Redis Master (port 6379)
+# - 2 Redis Replicas (ports 6380, 6381)
+# - 3 Redis Sentinels (ports 26379, 26380, 26381, quorum = 2)
+# - 1 PostgreSQL Database (port 5432)
+# ============================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: arena-postgres-ha
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: arena
+      POSTGRES_PASSWORD: arena123
+      POSTGRES_DB: arena_of_100
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_ha_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arena -d arena_of_100"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis Master
+  redis-master:
+    image: redis:7-alpine
+    container_name: arena-redis-master
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_master_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis Replica 1
+  redis-replica-1:
+    image: redis:7-alpine
+    container_name: arena-redis-replica-1
+    restart: unless-stopped
+    command: redis-server --appendonly yes --replicaof redis-master 6379
+    ports:
+      - "6380:6379"
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    volumes:
+      - redis_replica1_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis Replica 2
+  redis-replica-2:
+    image: redis:7-alpine
+    container_name: arena-redis-replica-2
+    restart: unless-stopped
+    command: redis-server --appendonly yes --replicaof redis-master 6379
+    ports:
+      - "6381:6379"
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    volumes:
+      - redis_replica2_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis Sentinel 1
+  redis-sentinel-1:
+    image: redis:7-alpine
+    container_name: arena-redis-sentinel-1
+    restart: unless-stopped
+    entrypoint: ["sh", "-c", "if [ ! -f /data/sentinel.conf ]; then cp /etc/redis/sentinel.conf /data/sentinel.conf; fi && redis-sentinel /data/sentinel.conf"]
+    ports:
+      - "26379:26379"
+    volumes:
+      - ./sentinel/sentinel.conf:/etc/redis/sentinel.conf:ro
+      - redis_sentinel1_data:/data
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis Sentinel 2
+  redis-sentinel-2:
+    image: redis:7-alpine
+    container_name: arena-redis-sentinel-2
+    restart: unless-stopped
+    entrypoint: ["sh", "-c", "if [ ! -f /data/sentinel.conf ]; then cp /etc/redis/sentinel.conf /data/sentinel.conf; fi && redis-sentinel /data/sentinel.conf"]
+    ports:
+      - "26380:26379"
+    volumes:
+      - ./sentinel/sentinel.conf:/etc/redis/sentinel.conf:ro
+      - redis_sentinel2_data:/data
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis Sentinel 3
+  redis-sentinel-3:
+    image: redis:7-alpine
+    container_name: arena-redis-sentinel-3
+    restart: unless-stopped
+    entrypoint: ["sh", "-c", "if [ ! -f /data/sentinel.conf ]; then cp /etc/redis/sentinel.conf /data/sentinel.conf; fi && redis-sentinel /data/sentinel.conf"]
+    ports:
+      - "26381:26379"
+    volumes:
+      - ./sentinel/sentinel.conf:/etc/redis/sentinel.conf:ro
+      - redis_sentinel3_data:/data
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_ha_data:
+  redis_master_data:
+  redis_replica1_data:
+  redis_replica2_data:
+  redis_sentinel1_data:
+  redis_sentinel2_data:
+  redis_sentinel3_data:

@@ -5,7 +5,7 @@
 
 ## Current Working Mode
 
-- **Phase 3 implementation complete 2026-08-12 (commit pending).** Spec §7 15-item checklist fully ticked; test counts (measured 2026-08-13): shared 61 / game-core 280 / API 1719 / web 267 / load-test 71 = **2398 tests pass**, no regression. Source of truth: `memory-bank/spec/class-cards-phase.md`.
+- **Phase 3 implementation complete 2026-08-12 (merged PR #88 as 6e9179e).** Spec §7 15-item checklist fully ticked; test counts (measured 2026-08-13): shared 61 / game-core 280 / API 1719 / web 267 / load-test 71 = **2398 tests pass**, no regression. Source of truth: `memory-bank/spec/class-cards-phase.md`.
 - Memory-bank consolidation vẫn là baseline; spec thuộc supplementary folder `spec/`.
 - Spec doc là authoritative cho Phase 1-3; mọi thay đổi update spec trước rồi reflect activeContext/progress.
 
@@ -19,9 +19,9 @@
 - `Room.maxPlayers` is already exposed through realtime room create/join payloads and consumed by the game UI.
 - `submitAnswer` now uses `submissionId` as a server-side idempotency key for duplicate retries in the same round.
 - Distributed match runtime is implemented (Stage B: Redis Socket.IO adapter, fenced owner-lease + failover, owner-single-writer answers, presence leader election) and the Stage C measurement harness + D1 architecture narrative are in place (`docs/architecture-distributed.md`).
-- **2026-07-28: multi-node k6 RUN done** — 800→3200 VU on the 3-node `docker:multi` cluster; two real bottlenecks found & fixed with numbers (consumer poll loop: answer p95 1126→201ms; pg pool default-10 ceiling → `DB_POOL_MAX`); capacity envelope linear 201/357/669ms p95 @ 800/1600/3200, 0 connect errors. Full story + interview prep: `career-assessment.md` §2026-07-28; raw: `load-test/results/`. Outstanding: **C3-owner-failover** numbers (baseline owner-lease); Plan A single-room 100-user baseline table (P2). **C3-card-batch-failover** is a separate Phase 3 gate.
+- **2026-07-28: multi-node k6 RUN done** — 800→3200 VU on the 3-node `docker:multi` cluster; two real bottlenecks found & fixed with numbers (consumer poll loop: answer p95 1126→201ms; pg pool default-10 ceiling → `DB_POOL_MAX`); capacity envelope linear 201/357/669ms p95 @ 800/1600/3200, 0 connect errors. Full story + interview prep: `career-assessment.md` §2026-07-28; raw: `load-test/results/`. Outstanding: **C3-owner-failover** failover mechanics PASS, complete `t_recover` measurement requires re-running. **C3-card-batch-failover** is a separate Phase 3 gate.
 - **2026-07-30: Content Roadmap locked — Class + Card Hybrid.** 2 classes (Công / Thủ) random assignment, 18 cards (10 Thủ + 8 Công), 20s round stream-lined overlay pattern, `CARD_RESOLVED_BATCH` aggregation, AOE cap 2/round, clock-drift safe rehydrate. Banned vĩnh viễn: `Time Drain` (snowball), `Push Down` (phá score determinism). Ban/pick draft defer; Territory mode defer vô thời hạn; Gauntlet scope-down (replaced bởi class+card). Full spec: `memory-bank/spec/class-cards-phase.md`. Timeline: 8 tuần (Phase 1: Week 1-2 / Phase 2: Week 3-6 / Phase 3: Week 7-8).
-- **2026-08-12: Phase 3 implementation complete (commit pending).** Days 25-36 of the locked 8-week plan. Spec §7 15-item DoD checklist fully ticked. Test counts (measured 2026-08-13): shared 61 / game-core 280 / API 1719 / web 267 / load-test 71 = **2398 tests pass**, no regression. Highlights:
+- **2026-08-12: Phase 3 implementation complete (merged PR #88 as 6e9179e).** Days 25-36 of the locked 8-week plan. Spec §7 15-item DoD checklist fully ticked. Test counts (measured 2026-08-13): shared 61 / game-core 280 / API 1719 / web 267 / load-test 71 = **2398 tests pass**, no regression. Highlights:
   - Daily streak ≥ 7 → card variant cosmetic unlock (DEFAULT / NEON / GOLD enum + `UserCardVariant` table; idempotent upsert; UI ring/glow overlay).
   - Daily leaderboard cross-show "Most cards played this week" — `LATERAL` aggregate over `MatchPlayer.cardsPlayed` (persisted at `finishMatch` from event-log traversal).
   - Profile page — `GET /users/me/class-stats` returns class winrate (ATTACK / DEFENSE per-class) + current streak + cards played count.
@@ -37,16 +37,17 @@
 - Consider Strategy Pattern only for focused tie-break refactor if/when needed.
 - Treat BotFactory/AvatarFactory/EmoteFactory/ContentModerationFactory as planned/future only.
 - **Class + Card Hybrid (Phase 2)**: 2 classes (Công / Thủ) random server-side, 18 cards milestone-based, 20s round flow. Card events là event log extension (Track D compatible), KHÔNG transient state. Client rehydrate dựa trên `serverTimestamp` + `remainingMs` + `targetPlayerIds` (clock drift safe, MUTATION/TEMPORARY split). AOE cap 2/round + immediate apply + ≤50ms `CARD_RESOLVED_BATCH` micro-batch. **durable ordering of inner `CARD_RESOLVED` events**: mỗi inner `CARD_RESOLVED` event có stable identity và `seqNo` được persist TRƯỚC khi apply state, rồi apply ngay lập tức; replay/failover dedup từng effect dùng identity + `seqNo` đó. `CARD_RESOLVED_BATCH` chỉ là transport frame — KHÔNG có replay identity riêng, `seqNo` của batch KHÔNG phải replay cursor. Banned: `Time Drain`, `Push Down`. Chi tiết: `memory-bank/spec/class-cards-phase.md`.
-- **Phase 3 (Integration & Polish) — implementation complete 2026-08-12 (commit pending)**: card variant cosmetic unlock (default / neon / gold enum, threshold 7/14/21…); profile stats (class winrate, streak, cards played count via `cardsPlayed`); shareable card unlock notification; VI i18n card names; **C3-card-batch-failover gate (chaos-only, no production change)**.
+- **Phase 3 (Integration & Polish) — implementation complete 2026-08-12 (merged PR #88 as 6e9179e)**: card variant cosmetic unlock (default / neon / gold enum, threshold 7/14/21…); profile stats (class winrate, streak, cards played count via `cardsPlayed`); shareable card unlock notification; VI i18n card names; **C3-card-batch-failover gate (chaos-only, no production change)**.
 
 ## Immediate Priority Queue
 
 1. ~~Commit the 2026-08-12 Phase 3 implementation~~ ✅ Done (PR #88 merged as `6e9179e`).
-2. **Phase 3 → Phase 4 transition**: evidence gates (Plan A + C3-owner-failover) **filled 2026-08-14**. Next decision: pick from (a) Ban/pick draft (orthogonal), (b) Elo + matchmaking queue (needs Daily + Card data thật), (c) Redis HA (Sentinel) — see `career-assessment.md` interview-prep list.
-3. **C3-owner-failover** mechanics PASS (kill+flip+fence increment+latency recovery all green); verdict INCONCLUSIVE on full `t_recover` measurement (k6 deadline issue). Follow-up: re-run with `--kill-at-round 1 --k6-wait-ms 900000` to downgrade INCONCLUSIVE → PASS. Source of truth: `load-test/MULTI-BASELINE.md` §C3-owner-failover.
-4. **Plan A single-room 100-user baseline** ✅ filled 2026-08-14 — `load-test/README.md` §Baseline results table + P2 conclusion = **No spectator transport split**. 100 VU on multi-node, 0 errors, answer p95 = 95.7ms, balanced 3-node distribution.
-5. Optional fixes (cheap, not urgent): Prisma `IN (NULL)` no-ops; `rooms.status` index; harness polling → WS-event wait (needed only to measure >3200).
-6. Historical roadmap reference only: xem `progress.md` §Content Roadmap v1 nếu
+2. ~~Elo + Matchmaking Queue~~ ✅ Done (PR #92 merged as `c628f24` — dynamic Elo engine, ZSET queue store, worker with bot backfill, matchmaking gateway + UI modal).
+3. ~~Redis HA (Sentinel & Automatic Failover)~~ ✅ Done (Sentinel configuration parser, `ioredis` Sentinel HA connection & `reconnectOnError` READONLY failover handling in `RedisCore` and `RedisIoAdapter`, compose stack `docker-compose.sentinel.yml`).
+4. **C3-owner-failover** mechanics PASS (kill+flip+fence increment+latency recovery all green); verdict INCONCLUSIVE on full `t_recover` measurement (k6 deadline issue). Follow-up: re-run with `--kill-at-round 1 --k6-wait-ms 900000` to promote/confirm INCONCLUSIVE → PASS. Source of truth: `load-test/MULTI-BASELINE.md` §C3-owner-failover.
+5. **Plan A single-room 100-user baseline** ✅ filled 2026-08-14 — `load-test/README.md` §Baseline results table + P2 conclusion = **No spectator transport split**. 100 VU on multi-node, 0 errors, answer p95 = 95.7ms, balanced 3-node distribution.
+6. Optional fixes (cheap, not urgent): Prisma `IN (NULL)` no-ops; `rooms.status` index; harness polling → WS-event wait (needed only to measure >3200).
+7. Historical roadmap reference only: xem `progress.md` §Content Roadmap v1 nếu
    cần rationale cũ của roadmap 2026-07-28 đã bị supersede.
 
 ## Open Product / Engineering Gaps
@@ -55,7 +56,7 @@
 - In-match AFK policy should follow locked product semantics: missing active round deadline means elimination in that round.
 - Mass-spectator transport split is deferred until `k6` evidence exists.
 - Moderation MVP is completed; deeper fingerprint/shadow-ban is post-MVP.
-- **Class + Card Hybrid (Phase 1-3, locked 2026-07-30, Phase 3 implementation complete 2026-08-12, commit pending)**: spec §7 all DoD items ticked. Source of truth: `memory-bank/spec/class-cards-phase.md`. Phase 1 (Daily Challenge) Week 1-2 ✅; Phase 2 (Class+Card) Week 3-6 ✅; Phase 3 (Integration + VI i18n) Week 7-8 ✅. Phase 4 (next orthogonal work — see Priority #2).
+- **Class + Card Hybrid (Phase 1-3, locked 2026-07-30, Phase 3 implementation complete 2026-08-12, merged PR #88 as 6e9179e)**: spec §7 all DoD items ticked. Source of truth: `memory-bank/spec/class-cards-phase.md`. Phase 1 (Daily Challenge) Week 1-2 ✅; Phase 2 (Class+Card) Week 3-6 ✅; Phase 3 (Integration + VI i18n) Week 7-8 ✅. Phase 4 (Elo + Matchmaking — merged PR #92 as `c628f24` ✅).
 
 ## Agent Read Policy
 

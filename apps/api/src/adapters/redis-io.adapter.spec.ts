@@ -1,16 +1,21 @@
 import { EventEmitter } from "node:events";
 import { IoAdapter } from "@nestjs/platform-socket.io";
 import type Redis from "ioredis";
+import type { RedisOptions } from "ioredis";
 import {
   RedisIoAdapter,
   REDIS_READY_TIMEOUT_MS,
   REDIS_QUIT_TIMEOUT_MS,
 } from "./redis-io.adapter";
 
-const { redisConstructorMock } = vi.hoisted(() => ({
+const { redisConstructorMock, createAdapterMock } = vi.hoisted(() => ({
   redisConstructorMock: vi.fn(),
+  createAdapterMock: vi.fn(() => vi.fn()),
 }));
 vi.mock("ioredis", () => ({ default: redisConstructorMock }));
+vi.mock("@socket.io/redis-adapter", () => ({
+  createAdapter: createAdapterMock,
+}));
 
 // Minimal stand-in for the slice of the ioredis client waitForReady touches:
 // a mutable `status` plus the ready/error/end event surface.
@@ -233,6 +238,139 @@ describe("RedisIoAdapter.connectToRedis", () => {
     } finally {
       superCreate.mockRestore();
     }
+  });
+
+  it("connects successfully with Sentinel options object", async () => {
+    const pub = new FakeConnectClient();
+    pub.status = "ready";
+    const sub = new FakeConnectClient();
+    sub.status = "ready";
+    pub.duplicate.mockReturnValue(sub);
+    redisConstructorMock.mockImplementation(() => pub);
+
+    const adapter = new RedisIoAdapter({} as never);
+    await adapter.connectToRedis({
+      sentinels: [{ host: "127.0.0.1", port: 26379 }],
+      name: "mymaster",
+      keyPrefix: "arena:",
+    });
+
+    expect(redisConstructorMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sentinels: [{ host: "127.0.0.1", port: 26379 }],
+        name: "mymaster",
+        keyPrefix: "arena:",
+        maxRetriesPerRequest: null,
+        reconnectOnError: expect.any(Function),
+      }),
+    );
+    const [sentinelPassedOpts] = (redisConstructorMock.mock.lastCall ?? []) as [
+      RedisOptions | undefined,
+    ];
+    expect(sentinelPassedOpts?.reconnectOnError).toBeDefined();
+    expect(
+      sentinelPassedOpts?.reconnectOnError?.(
+        new Error("READONLY You can't write against a read only replica."),
+      ),
+    ).toBe(2);
+    expect(
+      sentinelPassedOpts?.reconnectOnError?.(new Error("ECONNREFUSED")),
+    ).toBe(false);
+    expect(privateClients(adapter).pubClient).toBe(pub);
+    expect(privateClients(adapter).subClient).toBe(sub);
+  });
+
+  it("connects successfully with environment variable map containing REDIS_SENTINELS", async () => {
+    const pub = new FakeConnectClient();
+    pub.status = "ready";
+    const sub = new FakeConnectClient();
+    sub.status = "ready";
+    pub.duplicate.mockReturnValue(sub);
+    redisConstructorMock.mockImplementation(() => pub);
+
+    const adapter = new RedisIoAdapter({} as never);
+    await adapter.connectToRedis({
+      REDIS_SENTINELS: "sentinel-1:26379,sentinel-2:26380",
+      REDIS_SENTINEL_MASTER_NAME: "arena-master",
+      REDIS_KEY_PREFIX: "arena-io:",
+    });
+
+    expect(redisConstructorMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sentinels: [
+          { host: "sentinel-1", port: 26379 },
+          { host: "sentinel-2", port: 26380 },
+        ],
+        name: "arena-master",
+        keyPrefix: "arena-io:",
+        maxRetriesPerRequest: null,
+      }),
+    );
+  });
+
+  it("connects successfully with RedisOptions containing only password and keyPrefix", async () => {
+    const pub = new FakeConnectClient();
+    pub.status = "ready";
+    const sub = new FakeConnectClient();
+    sub.status = "ready";
+    pub.duplicate.mockReturnValue(sub);
+    redisConstructorMock.mockImplementation(() => pub);
+
+    const adapter = new RedisIoAdapter({} as never);
+    await adapter.connectToRedis({
+      password: "secret-password",
+      keyPrefix: "arena-opts:",
+    });
+
+    expect(redisConstructorMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        password: "secret-password",
+        keyPrefix: "arena-opts:",
+        maxRetriesPerRequest: null,
+        reconnectOnError: expect.any(Function),
+      }),
+    );
+    const [directPassedOpts] = (redisConstructorMock.mock.lastCall ?? []) as [
+      RedisOptions | undefined,
+    ];
+    expect(directPassedOpts?.reconnectOnError).toBeDefined();
+    expect(
+      directPassedOpts?.reconnectOnError?.(
+        new Error("READONLY You can't write against a read only replica."),
+      ),
+    ).toBe(2);
+    expect(
+      directPassedOpts?.reconnectOnError?.(new Error("ECONNREFUSED")),
+    ).toBe(false);
+    expect(createAdapterMock).toHaveBeenCalledWith(
+      pub,
+      sub,
+      expect.objectContaining({
+        key: "arena-opts::socket.io",
+      }),
+    );
+  });
+
+  it("applies parsed.options.keyPrefix from env map to adapter creation", async () => {
+    const pub = new FakeConnectClient();
+    pub.status = "ready";
+    const sub = new FakeConnectClient();
+    sub.status = "ready";
+    pub.duplicate.mockReturnValue(sub);
+    redisConstructorMock.mockImplementation(() => pub);
+
+    const adapter = new RedisIoAdapter({} as never);
+    await adapter.connectToRedis({
+      REDIS_KEY_PREFIX: "env-channel-prefix:",
+    });
+
+    expect(createAdapterMock).toHaveBeenCalledWith(
+      pub,
+      sub,
+      expect.objectContaining({
+        key: "env-channel-prefix::socket.io",
+      }),
+    );
   });
 });
 

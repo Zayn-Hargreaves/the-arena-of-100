@@ -137,12 +137,52 @@ describe("RedisService", () => {
     expect(Redis).toHaveBeenCalledWith("redis://localhost:6379", {
       maxRetriesPerRequest: 3,
       retryStrategy: expect.any(Function),
+      reconnectOnError: expect.any(Function),
     });
 
     const options = (vi.mocked(Redis).mock.calls as any)[0][1];
     expect(options?.retryStrategy?.(1)).toBe(50);
     expect(options?.retryStrategy?.(100)).toBe(2000);
     expect(options).not.toHaveProperty("keyPrefix");
+    expect(
+      options?.reconnectOnError?.(
+        new Error("READONLY You can't write against a read only replica."),
+      ),
+    ).toBe(2);
+    expect(options?.reconnectOnError?.(new Error("ECONNREFUSED"))).toBe(false);
+  });
+
+  it("passes through valid REDIS_DB and rejects invalid values", () => {
+    configService.get.mockImplementation(
+      (key: string, defaultValue?: string) => {
+        if (key === "REDIS_DB") return "3";
+        return defaultValue;
+      },
+    );
+
+    new RedisService(configService as unknown as ConfigService);
+    expect(Redis).toHaveBeenLastCalledWith(
+      "redis://localhost:6379",
+      expect.objectContaining({ db: 3 }),
+    );
+
+    for (const invalidDb of [
+      "2invalid",
+      "-1",
+      "abc",
+      "1.5",
+      String(Number.MAX_SAFE_INTEGER + 10),
+    ]) {
+      configService.get.mockImplementation(
+        (key: string, defaultValue?: string) => {
+          if (key === "REDIS_DB") return invalidDb;
+          return defaultValue;
+        },
+      );
+      expect(
+        () => new RedisService(configService as unknown as ConfigService),
+      ).toThrow("Invalid REDIS_DB");
+    }
   });
 
   it("passes through a configured key prefix when present", () => {
@@ -160,7 +200,86 @@ describe("RedisService", () => {
       keyPrefix: "arena:",
       maxRetriesPerRequest: 3,
       retryStrategy: expect.any(Function),
+      reconnectOnError: expect.any(Function),
     });
+  });
+
+  it("creates the redis client with sentinel options when REDIS_SENTINELS is configured", () => {
+    configService.get.mockImplementation(
+      (key: string, defaultValue?: string) => {
+        if (key === "REDIS_SENTINELS")
+          return "sentinel-1:26379, sentinel-2:26380, sentinel-3:26381";
+        if (key === "REDIS_KEY_PREFIX") return "arena:";
+        return defaultValue;
+      },
+    );
+
+    new RedisService(configService as unknown as ConfigService);
+
+    expect(Redis).toHaveBeenLastCalledWith({
+      sentinels: [
+        { host: "sentinel-1", port: 26379 },
+        { host: "sentinel-2", port: 26380 },
+        { host: "sentinel-3", port: 26381 },
+      ],
+      name: "mymaster",
+      role: "master",
+      keyPrefix: "arena:",
+      maxRetriesPerRequest: 3,
+      retryStrategy: expect.any(Function),
+      reconnectOnError: expect.any(Function),
+    });
+  });
+
+  it("creates the redis client with custom sentinel master name, credentials, and role", () => {
+    configService.get.mockImplementation(
+      (key: string, defaultValue?: string) => {
+        if (key === "REDIS_SENTINELS") return "sentinel-1:26379";
+        if (key === "REDIS_SENTINEL_MASTER_NAME") return "custom-master";
+        if (key === "REDIS_SENTINEL_PASSWORD") return "sentinel-pass";
+        if (key === "REDIS_PASSWORD") return "redis-pass";
+        if (key === "REDIS_SENTINEL_ROLE") return "slave";
+        return defaultValue;
+      },
+    );
+
+    new RedisService(configService as unknown as ConfigService);
+
+    expect(Redis).toHaveBeenLastCalledWith({
+      sentinels: [{ host: "sentinel-1", port: 26379 }],
+      name: "custom-master",
+      role: "slave",
+      sentinelPassword: "sentinel-pass",
+      password: "redis-pass",
+      maxRetriesPerRequest: 3,
+      retryStrategy: expect.any(Function),
+      reconnectOnError: expect.any(Function),
+    });
+  });
+
+  it("validates REDIS_SENTINELS and REDIS_SENTINEL_ROLE throwing on invalid configuration", () => {
+    const invalidConfigs: ReadonlyArray<Record<string, string>> = [
+      { REDIS_SENTINELS: "   " },
+      { REDIS_SENTINELS: ",," },
+      { REDIS_SENTINELS: ":26379" },
+      { REDIS_SENTINELS: "sentinel-1:invalidPort" },
+      { REDIS_SENTINELS: "sentinel-1:70000" },
+      { REDIS_SENTINELS: "sentinel-1:-1" },
+      { REDIS_SENTINELS: "sentinel-1:26379:extra" },
+      {
+        REDIS_SENTINELS: "sentinel-1:26379",
+        REDIS_SENTINEL_ROLE: "invalid-role",
+      },
+    ];
+
+    for (const conf of invalidConfigs) {
+      configService.get.mockImplementation((key: string, def?: string) => {
+        return conf[key] ?? def;
+      });
+      expect(
+        () => new RedisService(configService as unknown as ConfigService),
+      ).toThrow();
+    }
   });
 
   it("registers connect and error handlers that log connection state", () => {
