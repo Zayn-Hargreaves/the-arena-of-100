@@ -257,28 +257,79 @@ describe("RedisService", () => {
     });
   });
 
+  it.each(["", "   "])(
+    "treats %j REDIS_SENTINELS as unconfigured and falls back to standalone mode",
+    (sentinelVal) => {
+      configService.get.mockImplementation(
+        (key: string, defaultValue?: string) => {
+          if (key === "REDIS_SENTINELS") return sentinelVal;
+          if (key === "REDIS_URL") return "redis://localhost:6379";
+          return defaultValue;
+        },
+      );
+
+      new RedisService(configService as unknown as ConfigService);
+
+      expect(Redis).toHaveBeenLastCalledWith(
+        "redis://localhost:6379",
+        expect.objectContaining({
+          maxRetriesPerRequest: 3,
+        }),
+      );
+    },
+  );
+
   it("validates REDIS_SENTINELS and REDIS_SENTINEL_ROLE throwing on invalid configuration", () => {
-    const invalidConfigs: ReadonlyArray<Record<string, string>> = [
-      { REDIS_SENTINELS: "   " },
-      { REDIS_SENTINELS: ",," },
-      { REDIS_SENTINELS: ":26379" },
-      { REDIS_SENTINELS: "sentinel-1:invalidPort" },
-      { REDIS_SENTINELS: "sentinel-1:70000" },
-      { REDIS_SENTINELS: "sentinel-1:-1" },
-      { REDIS_SENTINELS: "sentinel-1:26379:extra" },
+    const invalidConfigs: ReadonlyArray<{
+      config: Record<string, string>;
+      expectedError: string | RegExp;
+    }> = [
       {
-        REDIS_SENTINELS: "sentinel-1:26379",
-        REDIS_SENTINEL_ROLE: "invalid-role",
+        config: { REDIS_SENTINELS: ",," },
+        expectedError: "Invalid REDIS_SENTINELS: sentinel list cannot be empty",
+      },
+      {
+        config: { REDIS_SENTINELS: ":26379" },
+        expectedError:
+          'Invalid sentinel configuration ":26379": host is required',
+      },
+      {
+        config: { REDIS_SENTINELS: "sentinel-1:invalidPort" },
+        expectedError:
+          'Invalid sentinel port in "sentinel-1:invalidPort": port must be a valid numeric value',
+      },
+      {
+        config: { REDIS_SENTINELS: "sentinel-1:70000" },
+        expectedError:
+          'Invalid sentinel port in "sentinel-1:70000": port must be between 1 and 65535',
+      },
+      {
+        config: { REDIS_SENTINELS: "sentinel-1:-1" },
+        expectedError:
+          'Invalid sentinel port in "sentinel-1:-1": port must be a valid numeric value',
+      },
+      {
+        config: { REDIS_SENTINELS: "sentinel-1:26379:extra" },
+        expectedError:
+          'Invalid sentinel configuration "sentinel-1:26379:extra": too many components',
+      },
+      {
+        config: {
+          REDIS_SENTINELS: "sentinel-1:26379",
+          REDIS_SENTINEL_ROLE: "invalid-role",
+        },
+        expectedError:
+          'Invalid REDIS_SENTINEL_ROLE: "invalid-role". Expected "master" or "slave"',
       },
     ];
 
-    for (const conf of invalidConfigs) {
+    for (const { config, expectedError } of invalidConfigs) {
       configService.get.mockImplementation((key: string, def?: string) => {
-        return conf[key] ?? def;
+        return config[key] ?? def;
       });
       expect(
         () => new RedisService(configService as unknown as ConfigService),
-      ).toThrow();
+      ).toThrow(expectedError);
     }
   });
 

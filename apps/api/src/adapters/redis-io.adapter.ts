@@ -103,8 +103,8 @@ export class RedisIoAdapter extends IoAdapter {
     ) {
       const userOpts = redisConfigOrUrl as RedisOptions;
       const opts: RedisOptions = {
-        reconnectOnError: userOpts.reconnectOnError ?? defaultReconnectOnError,
         ...userOpts,
+        reconnectOnError: userOpts.reconnectOnError ?? defaultReconnectOnError,
         maxRetriesPerRequest: null,
       };
       if (!effectiveKeyPrefix && opts.keyPrefix) {

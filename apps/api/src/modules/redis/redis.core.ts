@@ -67,7 +67,7 @@ export function parseRedisConnectionOptions(
     },
   };
 
-  if (rawSentinels !== undefined) {
+  if (rawSentinels !== undefined && rawSentinels.trim().length > 0) {
     const items = rawSentinels
       .split(",")
       .map((item) => item.trim())
@@ -113,10 +113,6 @@ export function parseRedisConnectionOptions(
         port,
       };
     });
-
-    if (sentinels.length === 0) {
-      throw new Error("Invalid REDIS_SENTINELS: sentinel list cannot be empty");
-    }
 
     const name = getVal("REDIS_SENTINEL_MASTER_NAME", "mymaster") || "mymaster";
     const sentinelPassword = getVal("REDIS_SENTINEL_PASSWORD");

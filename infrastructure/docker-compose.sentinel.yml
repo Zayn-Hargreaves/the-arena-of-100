@@ -48,12 +48,35 @@ services:
     image: redis:7-alpine
     container_name: arena-redis-replica-1
     restart: unless-stopped
-    command: redis-server --appendonly yes --replicaof redis-master 6379
+    entrypoint:
+      - sh
+      - -c
+      - |
+        MASTER_HOST=""
+        MASTER_PORT=""
+        for i in 1 2 3 4 5; do
+          RESP=$$(redis-cli -h redis-sentinel-1 -p 26379 sentinel get-master-addr-by-name mymaster 2>/dev/null || redis-cli -h redis-sentinel-2 -p 26379 sentinel get-master-addr-by-name mymaster 2>/dev/null || redis-cli -h redis-sentinel-3 -p 26379 sentinel get-master-addr-by-name mymaster 2>/dev/null)
+          set -- $$RESP
+          if [ "$$#" -eq 2 ] && [ "$$1" != "(nil)" ] && [ "$$1" != "nil" ] && [ -n "$$1" ] && [ -n "$$2" ] && [ "$$2" -gt 0 ] 2>/dev/null; then
+            MASTER_HOST="$$1"
+            MASTER_PORT="$$2"
+            break
+          fi
+          sleep 1
+        done
+        if [ -z "$$MASTER_HOST" ] || [ -z "$$MASTER_PORT" ]; then
+          echo "Failed to discover Redis master from Sentinel" >&2
+          exit 1
+        fi
+        MY_IP=$$(hostname -i 2>/dev/null | awk '{print $$1}')
+        MY_HOST=$$(hostname 2>/dev/null)
+        if [ "$$MASTER_HOST" = "$$MY_HOST" ] || [ "$$MASTER_HOST" = "$$MY_IP" ] || [ "$$MASTER_HOST" = "arena-redis-replica-1" ] || [ "$$MASTER_HOST" = "redis-replica-1" ]; then
+          exec redis-server --appendonly yes
+        else
+          exec redis-server --appendonly yes --replicaof "$$MASTER_HOST" "$$MASTER_PORT"
+        fi
     ports:
       - "6380:6379"
-    depends_on:
-      redis-master:
-        condition: service_healthy
     volumes:
       - redis_replica1_data:/data
     healthcheck:
@@ -67,12 +90,35 @@ services:
     image: redis:7-alpine
     container_name: arena-redis-replica-2
     restart: unless-stopped
-    command: redis-server --appendonly yes --replicaof redis-master 6379
+    entrypoint:
+      - sh
+      - -c
+      - |
+        MASTER_HOST=""
+        MASTER_PORT=""
+        for i in 1 2 3 4 5; do
+          RESP=$$(redis-cli -h redis-sentinel-1 -p 26379 sentinel get-master-addr-by-name mymaster 2>/dev/null || redis-cli -h redis-sentinel-2 -p 26379 sentinel get-master-addr-by-name mymaster 2>/dev/null || redis-cli -h redis-sentinel-3 -p 26379 sentinel get-master-addr-by-name mymaster 2>/dev/null)
+          set -- $$RESP
+          if [ "$$#" -eq 2 ] && [ "$$1" != "(nil)" ] && [ "$$1" != "nil" ] && [ -n "$$1" ] && [ -n "$$2" ] && [ "$$2" -gt 0 ] 2>/dev/null; then
+            MASTER_HOST="$$1"
+            MASTER_PORT="$$2"
+            break
+          fi
+          sleep 1
+        done
+        if [ -z "$$MASTER_HOST" ] || [ -z "$$MASTER_PORT" ]; then
+          echo "Failed to discover Redis master from Sentinel" >&2
+          exit 1
+        fi
+        MY_IP=$$(hostname -i 2>/dev/null | awk '{print $$1}')
+        MY_HOST=$$(hostname 2>/dev/null)
+        if [ "$$MASTER_HOST" = "$$MY_HOST" ] || [ "$$MASTER_HOST" = "$$MY_IP" ] || [ "$$MASTER_HOST" = "arena-redis-replica-2" ] || [ "$$MASTER_HOST" = "redis-replica-2" ]; then
+          exec redis-server --appendonly yes
+        else
+          exec redis-server --appendonly yes --replicaof "$$MASTER_HOST" "$$MASTER_PORT"
+        fi
     ports:
       - "6381:6379"
-    depends_on:
-      redis-master:
-        condition: service_healthy
     volumes:
       - redis_replica2_data:/data
     healthcheck:
@@ -92,9 +138,6 @@ services:
     volumes:
       - ./sentinel/sentinel.conf:/etc/redis/sentinel.conf:ro
       - redis_sentinel1_data:/data
-    depends_on:
-      redis-master:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "redis-cli", "-p", "26379", "ping"]
       interval: 5s
@@ -112,9 +155,6 @@ services:
     volumes:
       - ./sentinel/sentinel.conf:/etc/redis/sentinel.conf:ro
       - redis_sentinel2_data:/data
-    depends_on:
-      redis-master:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "redis-cli", "-p", "26379", "ping"]
       interval: 5s
@@ -132,9 +172,6 @@ services:
     volumes:
       - ./sentinel/sentinel.conf:/etc/redis/sentinel.conf:ro
       - redis_sentinel3_data:/data
-    depends_on:
-      redis-master:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "redis-cli", "-p", "26379", "ping"]
       interval: 5s

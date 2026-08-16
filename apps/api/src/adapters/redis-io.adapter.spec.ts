@@ -364,6 +364,13 @@ describe("RedisIoAdapter.connectToRedis", () => {
       REDIS_KEY_PREFIX: "env-channel-prefix:",
     });
 
+    expect(redisConstructorMock).toHaveBeenCalledWith(
+      "redis://localhost:6379",
+      expect.objectContaining({
+        keyPrefix: "env-channel-prefix:",
+        maxRetriesPerRequest: null,
+      }),
+    );
     expect(createAdapterMock).toHaveBeenCalledWith(
       pub,
       sub,
