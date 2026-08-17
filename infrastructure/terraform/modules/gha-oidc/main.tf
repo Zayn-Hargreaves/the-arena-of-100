@@ -20,7 +20,7 @@ locals {
   ]
 
   # App secret shells (${name_prefix}/KEY). SM ARNs append a random 6-char suffix.
-  aws_region = data.aws_region.current.region
+  aws_region = data.aws_region.current.name
 
   secrets_arn_prefix = "arn:aws:secretsmanager:${local.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.name_prefix}/*"
   # ECS log group is /ecs/${name_prefix}/api (ecs-api module).
