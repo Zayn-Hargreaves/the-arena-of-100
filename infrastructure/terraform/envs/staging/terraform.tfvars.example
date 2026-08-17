@@ -1,0 +1,44 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# WARNING: tfvars / local plans may contain plaintext secrets. Prefer remote
+# encrypted state (see README backend bootstrap) and never commit this file.
+
+aws_region  = "ap-southeast-1"
+name_prefix = "arena-staging"
+
+# Must match backend bootstrap bucket/table (also pass via -backend-config on init)
+tf_state_bucket = "YOUR_UNIQUE_TF_STATE_BUCKET"
+tf_lock_table   = "arena-terraform-locks"
+
+# GitHub repo that may assume OIDC roles
+github_org  = "YOUR_GITHUB_ORG_OR_USER"
+github_repo = "the-arena-of-100"
+
+# Set false if AWS account already has token.actions.githubusercontent.com
+create_github_oidc_provider = true
+
+# JWT — generate something long and random; seed into Secrets Manager after apply
+jwt_secret = "CHANGE_ME_long_random_string_at_least_32_chars"
+
+# HTTPS Vercel origin (no trailing slash) — required for cross-site cookies
+cors_origin = "https://your-app.vercel.app"
+
+# RDS master password is managed by AWS (manage_master_user_password) — not a tfvar.
+# Required: Redis AUTH (enters TF state as ElastiCache attribute — encrypted remote state).
+redis_auth_token = "CHANGE-ME-RedisAuth1!" # 16–128 chars; charset alnum !&#$^<>-; ≥3 of upper/lower/digit/symbol
+
+# HTTPS is the default for public ALB. Provide ACM cert + domain before Vercel.
+enable_https    = true
+certificate_arn = "arn:aws:acm:ap-southeast-1:ACCOUNT:certificate/UUID"
+domain_name     = "api.example.com"
+# route53_zone_id = "Zxxxxxxxxxxxx"
+
+# Immutable ECR: unique tags only (CI uses commit SHA). First push must create these tags.
+image_tag         = "bootstrap"
+migrate_image_tag = "migrate-bootstrap"
+# migrate_image_uri = ""  # optional full URI override
+
+api_cpu           = 256
+api_memory        = 512
+api_desired_count = 0 # seed SM first, then scale service to 1

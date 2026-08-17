@@ -1,0 +1,199 @@
+name: Deploy API (staging)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/api/**"
+      - "packages/shared/**"
+      - "packages/game-core/**"
+      - "pnpm-lock.yaml"
+      - "apps/api/Dockerfile"
+      - ".github/workflows/deploy-api-staging.yml"
+  workflow_dispatch:
+    inputs:
+      skip_migrate:
+        description: "Skip prisma migrate task"
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+  # Override via repo variables after first terraform apply
+  ECS_CLUSTER: ${{ vars.ECS_CLUSTER || 'arena-staging-cluster' }}
+  ECS_SERVICE: ${{ vars.ECS_SERVICE || 'arena-staging-api' }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'arena-of-100-api' }}
+  CONTAINER_NAME: api
+
+jobs:
+  deploy:
+    name: Build · migrate · deploy
+    runs-on: ubuntu-latest
+    environment: staging
+    # Shared with terraform-staging apply. queue:max keeps up to 100 pending (FIFO).
+    concurrency:
+      group: staging-mutations
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - name: Check AWS configured
+        id: gate
+        env:
+          ROLE: ${{ secrets.AWS_ROLE_ARN }}
+        run: |
+          if [ -z "$ROLE" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "AWS_ROLE_ARN not set — skipping deploy (local/CI without AWS is OK)."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
+        if: steps.gate.outputs.skip != 'true'
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate migrate network vars
+        if: steps.gate.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || inputs.skip_migrate != true)
+        env:
+          SUBNETS: ${{ vars.ECS_SUBNET_IDS }}
+          SECURITY_GROUPS: ${{ vars.ECS_SECURITY_GROUP_ID }}
+        run: |
+          if [ -z "$SUBNETS" ] || [ -z "$SECURITY_GROUPS" ]; then
+            echo "ECS_SUBNET_IDS / ECS_SECURITY_GROUP_ID vars not set — failing migrate."
+            echo "Set them from: terraform output public_subnet_ids / ecs_security_group_id"
+            echo "Or re-run workflow_dispatch with skip_migrate=true to skip migrate intentionally."
+            exit 1
+          fi
+
+      - uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
+        if: steps.gate.outputs.skip != 'true'
+        id: ecr
+
+      - name: Set image tags (immutable SHA only — ECR IMMUTABLE)
+        if: steps.gate.outputs.skip != 'true'
+        id: meta
+        run: |
+          REGISTRY="${{ steps.ecr.outputs.registry }}"
+          REPO="${{ env.ECR_REPOSITORY }}"
+          SHA_TAG="${{ github.sha }}"
+          echo "runtime=${REGISTRY}/${REPO}:${SHA_TAG}" >> "$GITHUB_OUTPUT"
+          echo "migrate=${REGISTRY}/${REPO}:migrate-${SHA_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        if: steps.gate.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v3
+
+      - name: Build & push runtime image
+        if: steps.gate.outputs.skip != 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          target: runtime
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.runtime }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build & push migrate image (build stage)
+        if: steps.gate.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || inputs.skip_migrate != true)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          target: build
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.migrate }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run prisma migrate (Fargate one-shot)
+        if: steps.gate.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || inputs.skip_migrate != true)
+        env:
+          MIGRATE_IMAGE: ${{ steps.meta.outputs.migrate }}
+          SUBNETS: ${{ vars.ECS_SUBNET_IDS }}
+          SECURITY_GROUPS: ${{ vars.ECS_SECURITY_GROUP_ID }}
+        run: |
+          set -euo pipefail
+          TASK_FAMILY="${{ vars.ECS_MIGRATE_FAMILY || 'arena-staging-api-migrate' }}"
+
+          # Register new migrate TD revision with SHA-tagged migrate image + prisma command.
+          # Do not replace container image via run-task overrides.
+          TD_JSON=$(aws ecs describe-task-definition --task-definition "$TASK_FAMILY" --query taskDefinition)
+          NEW_TD=$(echo "$TD_JSON" | jq --arg IMAGE "$MIGRATE_IMAGE" '
+            .containerDefinitions[0].image = $IMAGE
+            | .containerDefinitions[0].command = ["sh","-c","pnpm --filter @arena/api exec prisma migrate deploy"]
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)
+          ')
+          echo "$NEW_TD" > /tmp/td.json
+          NEW_ARN=$(aws ecs register-task-definition --cli-input-json file:///tmp/td.json --query taskDefinition.taskDefinitionArn --output text)
+
+          SUBNET_CSV=$(echo "$SUBNETS" | tr ' ' ',')
+          RUN=$(aws ecs run-task \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --launch-type FARGATE \
+            --task-definition "$NEW_ARN" \
+            --network-configuration "awsvpcConfiguration={subnets=[${SUBNET_CSV}],securityGroups=[${SECURITY_GROUPS}],assignPublicIp=ENABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+
+          echo "Migrate task: $RUN"
+          aws ecs wait tasks-stopped --cluster "${{ env.ECS_CLUSTER }}" --tasks "$RUN"
+          EXIT=$(aws ecs describe-tasks --cluster "${{ env.ECS_CLUSTER }}" --tasks "$RUN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          if [ "$EXIT" != "0" ]; then
+            echo "Migrate failed exit=$EXIT"
+            aws ecs describe-tasks --cluster "${{ env.ECS_CLUSTER }}" --tasks "$RUN"
+            exit 1
+          fi
+          echo "Migrate OK"
+
+      - name: Deploy ECS service (new task definition revision)
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          IMAGE: ${{ steps.meta.outputs.runtime }}
+        run: |
+          set -euo pipefail
+          FAMILY="${{ vars.ECS_TASK_FAMILY || 'arena-staging-api' }}"
+          TD_JSON=$(aws ecs describe-task-definition --task-definition "$FAMILY" --query taskDefinition)
+          NEW_TD=$(echo "$TD_JSON" | jq --arg IMAGE "$IMAGE" '
+            .containerDefinitions[0].image = $IMAGE
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)
+          ')
+          echo "$NEW_TD" > /tmp/api-td.json
+          NEW_ARN=$(aws ecs register-task-definition --cli-input-json file:///tmp/api-td.json --query taskDefinition.taskDefinitionArn --output text)
+          aws ecs update-service \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --service "${{ env.ECS_SERVICE }}" \
+            --task-definition "$NEW_ARN" \
+            --force-new-deployment
+          echo "Updated service to $NEW_ARN"
+
+          echo "Waiting for service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --services "${{ env.ECS_SERVICE }}"
+
+          DEPLOYED_TD=$(aws ecs describe-services \
+            --cluster "${{ env.ECS_CLUSTER }}" \
+            --services "${{ env.ECS_SERVICE }}" \
+            --query 'services[0].taskDefinition' \
+            --output text)
+
+          if [ "$DEPLOYED_TD" != "$NEW_ARN" ]; then
+            echo "ERROR: service taskDefinition mismatch"
+            echo "  expected: $NEW_ARN"
+            echo "  actual:   $DEPLOYED_TD"
+            exit 1
+          fi
+          echo "Service stable on $DEPLOYED_TD"
