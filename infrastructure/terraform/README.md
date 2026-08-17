@@ -56,7 +56,7 @@ This is **acceptable for a short private demo**, not for long-term production. P
 4. GitHub repo access (for OIDC deploy workflows)
 5. **ACM certificate** in `ap-southeast-1` + **domain** for HTTPS (required before connecting Vercel)
 6. **Encrypted remote backend** (next section) — **mandatory before first `apply`**
-7. **Operator-held passwords** for RDS master + Redis AUTH (no Terraform `random_*` generation)
+7. **Operator-held secrets**: Redis AUTH (`redis_auth_token`) and app secrets (JWT). RDS master password is **AWS-managed** (`manage_master_user_password`) — read via `rds_master_user_secret_arn`, not a Terraform input
 
 ### HTTPS + domain (required for Vercel)
 
@@ -154,12 +154,16 @@ terraform output -raw redis_endpoint
 
 ### Seed Secrets Manager (values are **not** re-exported by Terraform)
 
-Terraform only creates secret **shells** and starts ECS at **desired_count = 0**. After apply, construct URLs in your shell (OIDC deploy role or local AWS CLI), `put-secret-value`, then scale the service to 1. Do **not** store production secret values via `aws_secretsmanager_secret_version` in Terraform.
+Terraform only creates secret **shells** and starts ECS at **desired_count = 0**. After apply, construct URLs in your shell (OIDC deploy role or local AWS CLI) and `put-secret-value`. Scale to 1 only after the first image is in ECR (next section). Do **not** store production secret values via `aws_secretsmanager_secret_version` in Terraform.
 
 Percent-encode passwords/tokens before embedding them in URLs (Redis AUTH may contain `#`, `&`, etc. — same as Terraform `urlencode(var.auth_token)`).
 
 ```bash
 cd infrastructure/terraform/envs/staging
+
+# Avoid shell tracing (set -x) while handling secrets
+set +x
+set -euo pipefail
 
 # Operator-held secrets (never commit; from password manager / CI secrets)
 DB_USER="arena"                          # or var.db_username
@@ -183,28 +187,29 @@ enc() { python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1
 DATABASE_URL="postgresql://${DB_USER}:$(enc "$DB_PASSWORD")@${RDS_HOST}:${RDS_PORT}/${DB_NAME}?sslmode=require"
 REDIS_URL="rediss://:$(enc "$REDIS_AUTH")@${REDIS_HOST}:${REDIS_PORT}"
 
-aws secretsmanager put-secret-value \
-  --secret-id "$(terraform output -json secret_names | jq -r '.DATABASE_URL')" \
-  --secret-string "$DATABASE_URL"
+# Put secret values via file input (not argv) — AWS CLI file://; requires CLI v2+
+SECRET_TMP=$(mktemp)
+chmod 600 "$SECRET_TMP"
+trap 'rm -f "$SECRET_TMP"' EXIT
 
-aws secretsmanager put-secret-value \
-  --secret-id "$(terraform output -json secret_names | jq -r '.REDIS_URL')" \
-  --secret-string "$REDIS_URL"
+put_secret() {
+  local secret_id="$1" value="$2"
+  printf '%s' "$value" > "$SECRET_TMP"
+  aws secretsmanager put-secret-value \
+    --secret-id "$secret_id" \
+    --secret-string "file://$SECRET_TMP"
+}
 
-aws secretsmanager put-secret-value \
-  --secret-id "$(terraform output -json secret_names | jq -r '.JWT_SECRET')" \
-  --secret-string "$JWT_SECRET"
+put_secret "$(terraform output -json secret_names | jq -r '.DATABASE_URL')" "$DATABASE_URL"
+put_secret "$(terraform output -json secret_names | jq -r '.REDIS_URL')" "$REDIS_URL"
+put_secret "$(terraform output -json secret_names | jq -r '.JWT_SECRET')" "$JWT_SECRET"
 
-# Allow tasks to start (lifecycle ignores desired_count after first apply)
-aws ecs update-service \
-  --cluster "$(terraform output -raw ecs_cluster_name)" \
-  --service "$(terraform output -raw ecs_service_name)" \
-  --desired-count 1
+# Keep desired_count=0 until the first image exists in ECR (next section).
 ```
 
 `REDIS_URL` must use **`rediss://`** (TLS) and include the AUTH token (percent-encoded). The API accepts this via ioredis `REDIS_URL`.
 
-ECS may stay unhealthy until secrets are seeded and the first image is pushed.
+ECS stays at **desired_count = 0** until secrets are seeded **and** the first image is pushed (scale up only after the image is in ECR).
 
 ---
 
@@ -232,12 +237,17 @@ docker push "$ECR_URL:migrate-$TAG"
 
 If the initial task definition used `image_tag = "bootstrap"`, either push that tag once or let the **Deploy API (staging)** workflow register a SHA-tagged revision.
 
-Force a new deployment after pushing a matching tag:
+**Only after** the runtime image is in ECR: scale the service up (lifecycle ignores `desired_count` after first apply). Do not start tasks against a missing image tag.
 
 ```bash
 CLUSTER=$(cd infrastructure/terraform/envs/staging && terraform output -raw ecs_cluster_name)
 SERVICE=$(cd infrastructure/terraform/envs/staging && terraform output -raw ecs_service_name)
-aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --force-new-deployment --region ap-southeast-1
+aws ecs update-service \
+  --cluster "$CLUSTER" \
+  --service "$SERVICE" \
+  --desired-count 1 \
+  --force-new-deployment \
+  --region ap-southeast-1
 ```
 
 ---
@@ -324,7 +334,7 @@ Workflows (no-op unless secrets/vars exist):
 - Required reviewers: at least one approval before apply/deploy
 - Deploy OIDC subject is **only** `repo:ORG/REPO:environment:staging` — **no** `pull_request` on the apply/deploy role
 - Plan job uses **only** `AWS_ROLE_ARN_PLAN` (`main` ref subject only — read-only)
-- Apply / deploy jobs share concurrency group `staging-mutations` (`cancel-in-progress: false`)
+- Apply / deploy jobs share concurrency group `staging-mutations` (`cancel-in-progress: false`) plus a turnstyle queue so mutations run FIFO
 - Apply blocks if `TF_REDIS_AUTH_TOKEN` is missing, or if HTTPS is on and cert/domain are missing
 - RDS master password is AWS-managed (no `TF_DB_PASSWORD`)
 

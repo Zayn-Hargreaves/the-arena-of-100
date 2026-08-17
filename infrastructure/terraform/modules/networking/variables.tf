@@ -9,10 +9,11 @@ variable "vpc_cidr" {
   default     = "10.20.0.0/16"
 
   validation {
-    condition = (
+    condition = try(
       can(cidrhost(var.vpc_cidr, 0)) &&
       tonumber(split("/", var.vpc_cidr)[1]) >= 16 &&
-      tonumber(split("/", var.vpc_cidr)[1]) <= 24
+      tonumber(split("/", var.vpc_cidr)[1]) <= 24,
+      false
     )
     error_message = "vpc_cidr prefix length must be between /16 and /24 inclusive (/25–/28 are rejected — too small for dual-AZ public+private subnets)."
   }

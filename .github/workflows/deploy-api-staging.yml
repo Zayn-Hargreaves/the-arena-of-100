@@ -20,6 +20,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  actions: read
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
@@ -58,6 +59,28 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+
+      # FIFO queue: concurrency alone drops intermediate pending runs in the same group.
+      - name: Queue staging mutation
+        if: steps.gate.outputs.skip != 'true'
+        uses: softprops/turnstyle@807f6009e7cee5c2c9faa41ccef03a8bb24b06ab # v2.1.0
+        with:
+          poll-interval-seconds: 20
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate migrate network vars
+        if: steps.gate.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || inputs.skip_migrate != true)
+        env:
+          SUBNETS: ${{ vars.ECS_SUBNET_IDS }}
+          SECURITY_GROUPS: ${{ vars.ECS_SECURITY_GROUP_ID }}
+        run: |
+          if [ -z "$SUBNETS" ] || [ -z "$SECURITY_GROUPS" ]; then
+            echo "ECS_SUBNET_IDS / ECS_SECURITY_GROUP_ID vars not set — failing migrate."
+            echo "Set them from: terraform output public_subnet_ids / ecs_security_group_id"
+            echo "Or re-run workflow_dispatch with skip_migrate=true to skip migrate intentionally."
+            exit 1
+          fi
 
       - uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
         if: steps.gate.outputs.skip != 'true'
@@ -107,18 +130,11 @@ jobs:
         if: steps.gate.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || inputs.skip_migrate != true)
         env:
           MIGRATE_IMAGE: ${{ steps.meta.outputs.migrate }}
+          SUBNETS: ${{ vars.ECS_SUBNET_IDS }}
+          SECURITY_GROUPS: ${{ vars.ECS_SECURITY_GROUP_ID }}
         run: |
           set -euo pipefail
           TASK_FAMILY="${{ vars.ECS_MIGRATE_FAMILY || 'arena-staging-api-migrate' }}"
-          SUBNETS="${{ vars.ECS_SUBNET_IDS }}"
-          SECURITY_GROUPS="${{ vars.ECS_SECURITY_GROUP_ID }}"
-
-          if [ -z "$SUBNETS" ] || [ -z "$SECURITY_GROUPS" ]; then
-            echo "ECS_SUBNET_IDS / ECS_SECURITY_GROUP_ID vars not set — failing migrate."
-            echo "Set them from: terraform output public_subnet_ids / ecs_security_group_id"
-            echo "Or re-run workflow_dispatch with skip_migrate=true to skip migrate intentionally."
-            exit 1
-          fi
 
           # Register new migrate TD revision with SHA-tagged migrate image + prisma command.
           # Do not replace container image via run-task overrides.

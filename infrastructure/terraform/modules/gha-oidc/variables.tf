@@ -54,6 +54,11 @@ variable "tf_lock_table_arn" {
   type        = string
 }
 
+variable "rds_master_user_secret_arn" {
+  description = "Exact ARN of the RDS-managed master user secret (manage_master_user_password)"
+  type        = string
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

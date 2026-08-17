@@ -19,12 +19,12 @@ locals {
     "repo:${var.github_org}/${var.github_repo}:ref:refs/heads/main",
   ]
 
-  # App secret shells (${name_prefix}/KEY) + RDS-managed master user (rds!db-…).
-  # SM ARNs append a random 6-char suffix; trailing * matches it.
+  # App secret shells (${name_prefix}/KEY). SM ARNs append a random 6-char suffix.
   aws_region = data.aws_region.current.region
 
-  secrets_arn_prefix            = "arn:aws:secretsmanager:${local.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.name_prefix}/*"
-  rds_managed_secret_arn_prefix = "arn:aws:secretsmanager:${local.aws_region}:${data.aws_caller_identity.current.account_id}:secret:rds!*"
+  secrets_arn_prefix = "arn:aws:secretsmanager:${local.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.name_prefix}/*"
+  # ECS log group is /ecs/${name_prefix}/api (ecs-api module).
+  logs_log_group_arn_prefix = "arn:aws:logs:${local.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/ecs/${var.name_prefix}*"
 
   iam_role_arn_prefix   = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.name_prefix}-*"
   oidc_provider_iam_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"
@@ -120,15 +120,28 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "ecs:DescribeServices",
           "ecs:DescribeTasks",
           "ecs:ListTasks",
-          "ecs:UpdateService",
-          "ecs:RunTask"
+          "ecs:UpdateService"
         ]
         Resource = [
           var.ecs_cluster_arn,
           var.ecs_service_arn,
-          local.ecs_tasks_arn_prefix,
+          local.ecs_tasks_arn_prefix
+        ]
+      },
+      {
+        Sid    = "ECSRunTask"
+        Effect = "Allow"
+        Action = [
+          "ecs:RunTask"
+        ]
+        Resource = [
           local.ecs_task_definition_arn_prefix
         ]
+        Condition = {
+          ArnEquals = {
+            "ecs:cluster" = var.ecs_cluster_arn
+          }
+        }
       },
       {
         Sid    = "ECSDeployDefinitions"
@@ -158,7 +171,7 @@ resource "aws_iam_role_policy" "gha_deploy" {
         Resource = "*"
       },
       {
-        Sid    = "SecretsSeed"
+        Sid    = "SecretsSeedApp"
         Effect = "Allow"
         Action = [
           "secretsmanager:PutSecretValue",
@@ -166,8 +179,18 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "secretsmanager:DescribeSecret"
         ]
         Resource = [
-          local.secrets_arn_prefix,
-          local.rds_managed_secret_arn_prefix
+          local.secrets_arn_prefix
+        ]
+      },
+      {
+        Sid    = "SecretsSeedRdsMasterRead"
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret"
+        ]
+        Resource = [
+          var.rds_master_user_secret_arn
         ]
       },
       {
@@ -202,7 +225,7 @@ resource "aws_iam_role_policy" "gha_deploy" {
         ]
         Resource = [
           local.secrets_arn_prefix,
-          local.rds_managed_secret_arn_prefix
+          var.rds_master_user_secret_arn
         ]
       },
       {
@@ -244,10 +267,42 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "rds:*",
           "elasticache:*",
           "ecr:*",
-          "ecs:*",
-          "logs:*"
+          "ecs:*"
         ]
         Resource = "*"
+      },
+      {
+        # DescribeLogGroups / DescribeLogStreams do not support resource-level permissions.
+        Sid    = "TerraformApplyDemoLogsDescribe"
+        Effect = "Allow"
+        Action = [
+          "logs:DescribeLogGroups",
+          "logs:DescribeLogStreams"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "TerraformApplyDemoLogsManage"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:DeleteLogGroup",
+          "logs:PutRetentionPolicy",
+          "logs:DeleteRetentionPolicy",
+          "logs:TagResource",
+          "logs:UntagResource",
+          "logs:ListTagsLogGroup",
+          "logs:ListTagsForResource",
+          "logs:CreateLogStream",
+          "logs:DeleteLogStream",
+          "logs:PutLogEvents",
+          "logs:GetLogEvents",
+          "logs:FilterLogEvents"
+        ]
+        Resource = [
+          local.logs_log_group_arn_prefix,
+          "${local.logs_log_group_arn_prefix}:*"
+        ]
       },
       {
         # CreateSecret requires Resource "*" until the ARN exists (AWS IAM limitation).
@@ -275,8 +330,18 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "secretsmanager:RestoreSecret"
         ]
         Resource = [
-          local.secrets_arn_prefix,
-          local.rds_managed_secret_arn_prefix
+          local.secrets_arn_prefix
+        ]
+      },
+      {
+        Sid    = "TerraformApplyDemoRdsMasterRead"
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:DescribeSecret",
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = [
+          var.rds_master_user_secret_arn
         ]
       },
       {
@@ -305,10 +370,18 @@ resource "aws_iam_role_policy" "gha_deploy" {
         ]
       },
       {
+        # CreateOpenIDConnectProvider requires Resource "*" (ARN does not exist yet).
+        Sid    = "TerraformApplyDemoOidcCreate"
+        Effect = "Allow"
+        Action = [
+          "iam:CreateOpenIDConnectProvider"
+        ]
+        Resource = "*"
+      },
+      {
         Sid    = "TerraformApplyDemoOidc"
         Effect = "Allow"
         Action = [
-          "iam:CreateOpenIDConnectProvider",
           "iam:DeleteOpenIDConnectProvider",
           "iam:TagOpenIDConnectProvider",
           "iam:UpdateOpenIDConnectProviderThumbprint",

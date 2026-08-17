@@ -24,6 +24,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  actions: read
   pull-requests: write
 
 env:
@@ -51,7 +52,12 @@ jobs:
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           TF_LOCK_TABLE: ${{ vars.TF_LOCK_TABLE }}
         run: |
-          if [ -z "$ROLE" ]; then
+          # Plan OIDC is main-only (push / workflow_dispatch on main). Never emit a
+          # usable plan role for pull_request or other refs — even if ROLE is set.
+          if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Terraform plan OIDC is main-only — skipping plan on this ref/event."
+          elif [ -z "$ROLE" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "AWS_ROLE_ARN_PLAN not configured — skipping Terraform plan."
           elif [ -z "$TF_STATE_BUCKET" ] || [ -z "$TF_LOCK_TABLE" ]; then
@@ -205,6 +211,15 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+
+      # FIFO queue with deploy-api-staging (shared staging-mutations group).
+      - name: Queue staging mutation
+        if: steps.gate.outputs.skip != 'true'
+        uses: softprops/turnstyle@807f6009e7cee5c2c9faa41ccef03a8bb24b06ab # v2.1.0
+        with:
+          poll-interval-seconds: 20
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         if: steps.gate.outputs.skip != 'true'

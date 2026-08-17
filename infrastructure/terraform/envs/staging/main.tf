@@ -129,19 +129,20 @@ module "ecs_api" {
 module "gha_oidc" {
   source = "../../modules/gha-oidc"
 
-  name_prefix             = var.name_prefix
-  github_org              = var.github_org
-  github_repo             = var.github_repo
-  create_oidc_provider    = var.create_github_oidc_provider
-  ecr_repository_arn      = module.ecr.repository_arn
-  ecs_cluster_arn         = module.ecs_api.cluster_arn
-  ecs_service_arn         = module.ecs_api.service_id
-  task_execution_role_arn = module.ecs_api.execution_role_arn
-  task_role_arn           = module.ecs_api.task_role_arn
-  tf_state_bucket_arn     = local.tf_state_bucket_arn
-  tf_state_objects_arn    = local.tf_state_objects_arn
-  tf_lock_table_arn       = local.tf_lock_table_arn
-  tags                    = local.tags
+  name_prefix                = var.name_prefix
+  github_org                 = var.github_org
+  github_repo                = var.github_repo
+  create_oidc_provider       = var.create_github_oidc_provider
+  ecr_repository_arn         = module.ecr.repository_arn
+  ecs_cluster_arn            = module.ecs_api.cluster_arn
+  ecs_service_arn            = module.ecs_api.service_id
+  task_execution_role_arn    = module.ecs_api.execution_role_arn
+  task_role_arn              = module.ecs_api.task_role_arn
+  tf_state_bucket_arn        = local.tf_state_bucket_arn
+  tf_state_objects_arn       = local.tf_state_objects_arn
+  tf_lock_table_arn          = local.tf_lock_table_arn
+  rds_master_user_secret_arn = module.postgres.master_user_secret_arn
+  tags                       = local.tags
 }
 
 # Optional alias A/AAAA for custom domain → ALB (only if both set)
