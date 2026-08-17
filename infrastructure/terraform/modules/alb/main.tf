@@ -1,11 +1,13 @@
 # Public ALB defaults to HTTPS; lifecycle.precondition rejects empty cert when enable_https.
 locals {
   certificate_arn = trimspace(var.certificate_arn)
+  # Staging ALB is internet-facing; keep symbol so HTTP-only stays valid only if internal.
+  internal = false
 }
 
 resource "aws_lb" "this" {
   name               = "${var.name_prefix}-alb"
-  internal           = false
+  internal           = local.internal
   load_balancer_type = "application"
   security_groups    = var.security_group_ids
   subnets            = var.subnet_ids
@@ -18,6 +20,10 @@ resource "aws_lb" "this" {
 
   lifecycle {
     precondition {
+      condition     = local.internal || var.enable_https
+      error_message = "Public ALBs require enable_https = true. HTTP-only is allowed only for internal load balancers."
+    }
+    precondition {
       condition     = !var.enable_https || length(local.certificate_arn) > 0
       error_message = "certificate_arn must be a non-empty ACM ARN when enable_https is true. HTTP-only is not the default for public ALBs."
     }
@@ -25,7 +31,8 @@ resource "aws_lb" "this" {
 }
 
 resource "aws_lb_target_group" "api" {
-  name        = "${var.name_prefix}-api"
+  # name_prefix required with create_before_destroy (fixed name collides on replace)
+  name_prefix = substr(replace(var.name_prefix, "-", ""), 0, 6)
   port        = var.target_port
   protocol    = "HTTP"
   vpc_id      = var.vpc_id

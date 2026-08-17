@@ -77,17 +77,6 @@ variable "db_name" {
   default = "arena_of_100"
 }
 
-variable "db_password" {
-  description = "RDS master password (required). Operator/CI supplies; also used when seeding DATABASE_URL into SM. Lives in TF state as RDS attribute — use encrypted remote state + tight IAM."
-  type        = string
-  sensitive   = true
-
-  validation {
-    condition     = length(var.db_password) >= 8
-    error_message = "db_password is required (min 8 characters). Supply via TF_VAR_db_password / tfvars; do not rely on Terraform random generation."
-  }
-}
-
 variable "redis_auth_token" {
   description = "Redis AUTH token (required, 16–128 chars, ElastiCache AUTH charset, ≥3 of 4 char classes). Operator/CI supplies; seed rediss:// REDIS_URL into SM after apply. Lives in TF state as ElastiCache attribute."
   type        = string
@@ -144,8 +133,9 @@ variable "api_memory" {
 }
 
 variable "api_desired_count" {
-  type    = number
-  default = 1
+  description = "ECS desired count. Default 0 so tasks do not start before SM shells are seeded; scale to 1+ after put-secret-value (lifecycle ignores desired_count drift)."
+  type        = number
+  default     = 0
 }
 
 # --- HTTPS (default on for public ALB + Vercel clients) ---

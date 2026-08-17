@@ -34,6 +34,9 @@ jobs:
     name: Build · migrate · deploy
     runs-on: ubuntu-latest
     environment: staging
+    concurrency:
+      group: staging-mutations
+      cancel-in-progress: false
     steps:
       - name: Check AWS configured
         id: gate
@@ -47,16 +50,16 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
         if: steps.gate.outputs.skip != 'true'
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         if: steps.gate.outputs.skip != 'true'
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2
         if: steps.gate.outputs.skip != 'true'
         id: ecr
 
@@ -72,11 +75,11 @@ jobs:
 
       - name: Set up Docker Buildx
         if: steps.gate.outputs.skip != 'true'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v3
 
       - name: Build & push runtime image
         if: steps.gate.outputs.skip != 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v6
         with:
           context: .
           file: apps/api/Dockerfile
@@ -89,7 +92,7 @@ jobs:
 
       - name: Build & push migrate image (build stage)
         if: steps.gate.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || inputs.skip_migrate != true)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v6
         with:
           context: .
           file: apps/api/Dockerfile
@@ -111,9 +114,10 @@ jobs:
           SECURITY_GROUPS="${{ vars.ECS_SECURITY_GROUP_ID }}"
 
           if [ -z "$SUBNETS" ] || [ -z "$SECURITY_GROUPS" ]; then
-            echo "ECS_SUBNET_IDS / ECS_SECURITY_GROUP_ID vars not set — skip migrate."
+            echo "ECS_SUBNET_IDS / ECS_SECURITY_GROUP_ID vars not set — failing migrate."
             echo "Set them from: terraform output public_subnet_ids / ecs_security_group_id"
-            exit 0
+            echo "Or re-run workflow_dispatch with skip_migrate=true to skip migrate intentionally."
+            exit 1
           fi
 
           # Register new migrate TD revision with SHA-tagged migrate image + prisma command.

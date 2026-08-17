@@ -14,11 +14,24 @@ locals {
     "repo:${var.github_org}/${var.github_repo}:environment:staging",
   ]
 
-  # Read-only plan: PRs + main (no environment gate required for plan job).
+  # Read-only plan: main only (no pull_request — avoids untrusted PR OIDC + state read).
   plan_subjects = [
     "repo:${var.github_org}/${var.github_repo}:ref:refs/heads/main",
-    "repo:${var.github_org}/${var.github_repo}:pull_request",
   ]
+
+  # App secret shells (${name_prefix}/KEY) + RDS-managed master user (rds!db-…).
+  # SM ARNs append a random 6-char suffix; trailing * matches it.
+  aws_region = data.aws_region.current.region
+
+  secrets_arn_prefix            = "arn:aws:secretsmanager:${local.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.name_prefix}/*"
+  rds_managed_secret_arn_prefix = "arn:aws:secretsmanager:${local.aws_region}:${data.aws_caller_identity.current.account_id}:secret:rds!*"
+
+  iam_role_arn_prefix   = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.name_prefix}-*"
+  oidc_provider_iam_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"
+  # task ARN is arn:aws:ecs:region:acct:task/cluster-name/id (not cluster-arn/*)
+  ecs_cluster_name               = element(split("/", var.ecs_cluster_arn), length(split("/", var.ecs_cluster_arn)) - 1)
+  ecs_tasks_arn_prefix           = "arn:aws:ecs:${local.aws_region}:${data.aws_caller_identity.current.account_id}:task/${local.ecs_cluster_name}/*"
+  ecs_task_definition_arn_prefix = "arn:aws:ecs:${local.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/${var.name_prefix}-*"
 }
 
 resource "aws_iam_openid_connect_provider" "github" {
@@ -101,17 +114,29 @@ resource "aws_iam_role_policy" "gha_deploy" {
         Resource = var.ecr_repository_arn
       },
       {
-        Sid    = "ECSDeploy"
+        Sid    = "ECSDeployClusterService"
+        Effect = "Allow"
+        Action = [
+          "ecs:DescribeServices",
+          "ecs:DescribeTasks",
+          "ecs:ListTasks",
+          "ecs:UpdateService",
+          "ecs:RunTask"
+        ]
+        Resource = [
+          var.ecs_cluster_arn,
+          var.ecs_service_arn,
+          local.ecs_tasks_arn_prefix,
+          local.ecs_task_definition_arn_prefix
+        ]
+      },
+      {
+        Sid    = "ECSDeployDefinitions"
         Effect = "Allow"
         Action = [
           "ecs:DescribeClusters",
-          "ecs:DescribeServices",
           "ecs:DescribeTaskDefinition",
-          "ecs:DescribeTasks",
-          "ecs:ListTasks",
           "ecs:RegisterTaskDefinition",
-          "ecs:UpdateService",
-          "ecs:RunTask",
           "ecs:TagResource"
         ]
         Resource = "*"
@@ -140,7 +165,10 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "secretsmanager:GetSecretValue",
           "secretsmanager:DescribeSecret"
         ]
-        Resource = "*"
+        Resource = [
+          local.secrets_arn_prefix,
+          local.rds_managed_secret_arn_prefix
+        ]
       },
       {
         Sid    = "TerraformRead"
@@ -150,8 +178,6 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "elasticloadbalancing:Describe*",
           "rds:Describe*",
           "elasticache:Describe*",
-          "secretsmanager:Describe*",
-          "secretsmanager:GetSecretValue",
           "secretsmanager:ListSecrets",
           "iam:GetRole",
           "iam:GetRolePolicy",
@@ -166,6 +192,18 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "ecs:List*"
         ]
         Resource = "*"
+      },
+      {
+        Sid    = "TerraformReadSecrets"
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:DescribeSecret",
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = [
+          local.secrets_arn_prefix,
+          local.rds_managed_secret_arn_prefix
+        ]
       },
       {
         Sid    = "TerraformStateS3Bucket"
@@ -205,10 +243,46 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "elasticloadbalancing:*",
           "rds:*",
           "elasticache:*",
-          "secretsmanager:*",
           "ecr:*",
           "ecs:*",
-          "logs:*",
+          "logs:*"
+        ]
+        Resource = "*"
+      },
+      {
+        # CreateSecret requires Resource "*" until the ARN exists (AWS IAM limitation).
+        Sid    = "TerraformApplyDemoSecretsCreate"
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:CreateSecret",
+          "secretsmanager:ListSecrets",
+          "secretsmanager:TagResource"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "TerraformApplyDemoSecrets"
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:DescribeSecret",
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:PutSecretValue",
+          "secretsmanager:UpdateSecret",
+          "secretsmanager:DeleteSecret",
+          "secretsmanager:GetResourcePolicy",
+          "secretsmanager:PutResourcePolicy",
+          "secretsmanager:DeleteResourcePolicy",
+          "secretsmanager:RestoreSecret"
+        ]
+        Resource = [
+          local.secrets_arn_prefix,
+          local.rds_managed_secret_arn_prefix
+        ]
+      },
+      {
+        Sid    = "TerraformApplyDemoIamRoles"
+        Effect = "Allow"
+        Action = [
           "iam:CreateRole",
           "iam:DeleteRole",
           "iam:PutRolePolicy",
@@ -218,13 +292,29 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "iam:TagRole",
           "iam:UntagRole",
           "iam:UpdateAssumeRolePolicy",
+          "iam:PassRole",
+          "iam:GetRole",
+          "iam:GetRolePolicy",
+          "iam:ListRolePolicies",
+          "iam:ListAttachedRolePolicies"
+        ]
+        Resource = [
+          local.iam_role_arn_prefix,
+          var.task_execution_role_arn,
+          var.task_role_arn
+        ]
+      },
+      {
+        Sid    = "TerraformApplyDemoOidc"
+        Effect = "Allow"
+        Action = [
           "iam:CreateOpenIDConnectProvider",
           "iam:DeleteOpenIDConnectProvider",
           "iam:TagOpenIDConnectProvider",
           "iam:UpdateOpenIDConnectProviderThumbprint",
-          "iam:PassRole"
+          "iam:GetOpenIDConnectProvider"
         ]
-        Resource = "*"
+        Resource = local.oidc_provider_iam_arn
       }
     ]
   })

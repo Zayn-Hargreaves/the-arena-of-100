@@ -18,7 +18,10 @@ resource "aws_db_instance" "this" {
 
   db_name  = var.db_name
   username = var.db_username
-  password = var.db_password
+
+  # RDS-managed master password (Secrets Manager). Not stored as a TF input;
+  # read the managed secret outside Terraform when building DATABASE_URL.
+  manage_master_user_password = true
 
   db_subnet_group_name   = aws_db_subnet_group.this.name
   vpc_security_group_ids = var.security_group_ids

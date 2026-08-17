@@ -4,9 +4,18 @@ variable "name_prefix" {
 }
 
 variable "vpc_cidr" {
-  description = "VPC CIDR block"
+  description = "VPC CIDR block (prefix length /16–/24 so public+private subnets fit)"
   type        = string
   default     = "10.20.0.0/16"
+
+  validation {
+    condition = (
+      can(cidrhost(var.vpc_cidr, 0)) &&
+      tonumber(split("/", var.vpc_cidr)[1]) >= 16 &&
+      tonumber(split("/", var.vpc_cidr)[1]) <= 24
+    )
+    error_message = "vpc_cidr prefix length must be between /16 and /24 inclusive (/25–/28 are rejected — too small for dual-AZ public+private subnets)."
+  }
 }
 
 variable "azs" {

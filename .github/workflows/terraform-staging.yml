@@ -63,16 +63,16 @@ jobs:
           fi
         working-directory: .
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
         if: steps.gate.outputs.skip != 'true'
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         if: steps.gate.outputs.skip != 'true'
         with:
           role-to-assume: ${{ steps.gate.outputs.role }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         if: steps.gate.outputs.skip != 'true'
         with:
           terraform_version: "1.5.7"
@@ -98,9 +98,10 @@ jobs:
       - name: Terraform plan
         if: steps.gate.outputs.skip != 'true'
         # pipefail: preserve terraform plan exit status when teeing to plan.txt
-        # Real DB/Redis secrets only on refs/heads/main (push or workflow_dispatch).
+        # Real secrets only on refs/heads/main (push or workflow_dispatch).
         # PR and non-main workflow_dispatch use placeholders (fork/supply-chain risk).
         # Placeholders satisfy var validation (redis: 16–128, charset, 3-of-4 classes).
+        # Plan OIDC is main-only; PR plans skip unless ROLE is usable (usually skip).
         run: |
           set -euo pipefail
           terraform plan -input=false -no-color -out=tfplan 2>&1 | tee plan.txt
@@ -112,14 +113,13 @@ jobs:
           TF_VAR_enable_https: ${{ vars.TF_ENABLE_HTTPS || 'true' }}
           TF_VAR_certificate_arn: ${{ vars.TF_CERTIFICATE_ARN || 'arn:aws:acm:ap-southeast-1:000000000000:certificate/ci-plan-placeholder' }}
           TF_VAR_domain_name: ${{ vars.TF_DOMAIN_NAME || 'api.example.com' }}
-          TF_VAR_db_password: ${{ github.ref == 'refs/heads/main' && secrets.TF_DB_PASSWORD || 'CiPlanPlaceholderDbPw1!' }}
           TF_VAR_redis_auth_token: ${{ github.ref == 'refs/heads/main' && secrets.TF_REDIS_AUTH_TOKEN || 'CiPlanPlaceholderRd1!' }}
           TF_VAR_tf_state_bucket: ${{ vars.TF_STATE_BUCKET }}
           TF_VAR_tf_lock_table: ${{ vars.TF_LOCK_TABLE }}
 
       - name: PR plan comment
         if: steps.gate.outputs.skip != 'true' && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const fs = require('fs');
@@ -152,6 +152,9 @@ jobs:
       )
     # Deploy role trust is environment:staging only — protect with required reviewers + main.
     environment: staging
+    concurrency:
+      group: staging-mutations
+      cancel-in-progress: false
     defaults:
       run:
         working-directory: ${{ env.TF_WORKING_DIR }}
@@ -162,7 +165,6 @@ jobs:
           ROLE: ${{ secrets.AWS_ROLE_ARN }}
           JWT: ${{ secrets.TF_JWT_SECRET }}
           REDIS_AUTH: ${{ secrets.TF_REDIS_AUTH_TOKEN }}
-          DB_PASSWORD: ${{ secrets.TF_DB_PASSWORD }}
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           TF_LOCK_TABLE: ${{ vars.TF_LOCK_TABLE }}
           TF_ENABLE_HTTPS: ${{ vars.TF_ENABLE_HTTPS || 'true' }}
@@ -173,7 +175,6 @@ jobs:
           [ -z "$ROLE" ] && missing+=("AWS_ROLE_ARN")
           [ -z "$JWT" ] && missing+=("TF_JWT_SECRET")
           [ -z "$REDIS_AUTH" ] && missing+=("TF_REDIS_AUTH_TOKEN")
-          [ -z "$DB_PASSWORD" ] && missing+=("TF_DB_PASSWORD")
           [ -z "$TF_STATE_BUCKET" ] && missing+=("TF_STATE_BUCKET")
           [ -z "$TF_LOCK_TABLE" ] && missing+=("TF_LOCK_TABLE")
 
@@ -196,16 +197,16 @@ jobs:
           echo "skip=false" >> "$GITHUB_OUTPUT"
         working-directory: .
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
         if: steps.gate.outputs.skip != 'true'
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         if: steps.gate.outputs.skip != 'true'
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         if: steps.gate.outputs.skip != 'true'
         with:
           terraform_version: "1.5.7"
@@ -226,7 +227,6 @@ jobs:
           TF_VAR_github_repo: ${{ vars.TF_GITHUB_REPO || github.event.repository.name }}
           TF_VAR_jwt_secret: ${{ secrets.TF_JWT_SECRET }}
           TF_VAR_cors_origin: ${{ vars.TF_CORS_ORIGIN || 'https://localhost:3000' }}
-          TF_VAR_db_password: ${{ secrets.TF_DB_PASSWORD }}
           TF_VAR_redis_auth_token: ${{ secrets.TF_REDIS_AUTH_TOKEN }}
           TF_VAR_enable_https: ${{ vars.TF_ENABLE_HTTPS || 'true' }}
           TF_VAR_certificate_arn: ${{ vars.TF_CERTIFICATE_ARN }}

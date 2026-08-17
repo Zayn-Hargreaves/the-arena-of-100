@@ -34,6 +34,12 @@ output "rds_port" {
   value = module.postgres.port
 }
 
+output "rds_master_user_secret_arn" {
+  description = "RDS-managed master password secret — GetSecretValue when seeding DATABASE_URL"
+  value       = module.postgres.master_user_secret_arn
+  sensitive   = true
+}
+
 output "redis_endpoint" {
   description = "Redis primary endpoint hostname (no AUTH) — build REDIS_URL in shell when seeding SM"
   value       = module.redis.primary_endpoint_address

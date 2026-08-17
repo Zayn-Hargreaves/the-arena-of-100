@@ -21,11 +21,6 @@ variable "db_username" {
   default = "arena"
 }
 
-variable "db_password" {
-  type      = string
-  sensitive = true
-}
-
 variable "instance_class" {
   type    = string
   default = "db.t4g.micro"

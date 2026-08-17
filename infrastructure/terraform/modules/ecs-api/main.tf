@@ -191,9 +191,14 @@ resource "aws_ecs_service" "api" {
     container_port   = var.container_port
   }
 
-  deployment_minimum_healthy_percent = 0
+  deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
   health_check_grace_period_seconds  = 120
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-api-svc" })
 

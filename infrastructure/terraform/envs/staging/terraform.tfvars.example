@@ -24,9 +24,8 @@ jwt_secret = "CHANGE_ME_long_random_string_at_least_32_chars"
 # HTTPS Vercel origin (no trailing slash) — required for cross-site cookies
 cors_origin = "https://your-app.vercel.app"
 
-# Required: operator/CI supplies passwords (no Terraform random_* generation).
-# These enter TF state as RDS/ElastiCache resource attributes — use encrypted remote state.
-db_password      = "CHANGE_ME_rds_master_password"
+# RDS master password is managed by AWS (manage_master_user_password) — not a tfvar.
+# Required: Redis AUTH (enters TF state as ElastiCache attribute — encrypted remote state).
 redis_auth_token = "CHANGE-ME-RedisAuth1!" # 16–128 chars; charset alnum !&#$^<>-; ≥3 of upper/lower/digit/symbol
 
 # HTTPS is the default for public ALB. Provide ACM cert + domain before Vercel.
@@ -42,4 +41,4 @@ migrate_image_tag = "migrate-bootstrap"
 
 api_cpu           = 256
 api_memory        = 512
-api_desired_count = 1
+api_desired_count = 0 # seed SM first, then scale service to 1

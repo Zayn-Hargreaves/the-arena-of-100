@@ -33,7 +33,6 @@ module "postgres" {
   security_group_ids      = [module.networking.rds_security_group_id]
   db_name                 = var.db_name
   db_username             = var.db_username
-  db_password             = var.db_password
   instance_class          = "db.t4g.micro"
   allocated_storage       = 20
   backup_retention_period = 1
@@ -61,7 +60,8 @@ module "ecr" {
 }
 
 # Secret shells only — seed DATABASE_URL / REDIS_URL / JWT_SECRET after apply
-# (see README). Values must not live in Terraform state via secret_version.
+# via aws secretsmanager put-secret-value (see README). Never write secret
+# versions through Terraform. ECS desired_count defaults to 0 until seeded.
 module "secrets" {
   source = "../../modules/secrets"
 
@@ -92,7 +92,7 @@ module "ecs_api" {
   name_prefix        = var.name_prefix
   aws_region         = var.aws_region
   vpc_id             = module.networking.vpc_id
-  subnet_ids         = [module.networking.primary_subnet_id]
+  subnet_ids         = module.networking.public_subnet_ids
   security_group_ids = [module.networking.ecs_security_group_id]
   target_group_arn   = module.alb.target_group_arn
   ecr_repository_url = module.ecr.repository_url
@@ -101,7 +101,7 @@ module "ecs_api" {
   cpu                = var.api_cpu
   memory             = var.api_memory
   desired_count      = var.api_desired_count
-  assign_public_ip   = true # demo: no NAT (~$32/mo saved); reaches private data via VPC
+  assign_public_ip   = true # demo: no NAT (~$32/mo saved); multi-AZ public subnets
   log_retention_days = 7
   tags               = local.tags
 

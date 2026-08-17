@@ -21,6 +21,12 @@ output "username" {
   value = aws_db_instance.this.username
 }
 
+output "master_user_secret_arn" {
+  description = "ARN of the RDS-managed master-user secret (Secrets Manager)"
+  value       = try(aws_db_instance.this.master_user_secret[0].secret_arn, null)
+  sensitive   = true
+}
+
 output "resource_id" {
   value = aws_db_instance.this.resource_id
 }
