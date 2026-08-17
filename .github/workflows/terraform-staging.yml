@@ -24,8 +24,6 @@ on:
 permissions:
   id-token: write
   contents: read
-  actions: read
-  pull-requests: write
 
 env:
   TF_WORKING_DIR: infrastructure/terraform/envs/staging
@@ -35,8 +33,8 @@ jobs:
   plan:
     name: Plan
     runs-on: ubuntu-latest
-    # Always schedule on matching events; steps no-op without AWS_ROLE_ARN_PLAN
-    # so forks/contributors without AWS stay green.
+    # PR events still schedule so path filters stay green, but the gate always
+    # skips (no plan OIDC / no plan output). Real plan: push or workflow_dispatch on main.
     if: >
       github.event_name == 'pull_request' ||
       github.event_name == 'push' ||
@@ -56,7 +54,7 @@ jobs:
           # usable plan role for pull_request or other refs — even if ROLE is set.
           if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ github.ref }}" != "refs/heads/main" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Terraform plan OIDC is main-only — skipping plan on this ref/event."
+            echo "Terraform plan OIDC is main-only — skipping plan on this ref/event (PRs do not produce a plan)."
           elif [ -z "$ROLE" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "AWS_ROLE_ARN_PLAN not configured — skipping Terraform plan."
@@ -104,10 +102,8 @@ jobs:
       - name: Terraform plan
         if: steps.gate.outputs.skip != 'true'
         # pipefail: preserve terraform plan exit status when teeing to plan.txt
-        # Real secrets only on refs/heads/main (push or workflow_dispatch).
-        # PR and non-main workflow_dispatch use placeholders (fork/supply-chain risk).
-        # Placeholders satisfy var validation (redis: 16–128, charset, 3-of-4 classes).
-        # Plan OIDC is main-only; PR plans skip unless ROLE is usable (usually skip).
+        # Only runs on refs/heads/main (push or workflow_dispatch). Placeholders
+        # cover optional vars when secrets are absent; redis still prefers real secret on main.
         run: |
           set -euo pipefail
           terraform plan -input=false -no-color -out=tfplan 2>&1 | tee plan.txt
@@ -119,31 +115,9 @@ jobs:
           TF_VAR_enable_https: ${{ vars.TF_ENABLE_HTTPS || 'true' }}
           TF_VAR_certificate_arn: ${{ vars.TF_CERTIFICATE_ARN || 'arn:aws:acm:ap-southeast-1:000000000000:certificate/ci-plan-placeholder' }}
           TF_VAR_domain_name: ${{ vars.TF_DOMAIN_NAME || 'api.example.com' }}
-          TF_VAR_redis_auth_token: ${{ github.ref == 'refs/heads/main' && secrets.TF_REDIS_AUTH_TOKEN || 'CiPlanPlaceholderRd1!' }}
+          TF_VAR_redis_auth_token: ${{ secrets.TF_REDIS_AUTH_TOKEN || 'CiPlanPlaceholderRd1!' }}
           TF_VAR_tf_state_bucket: ${{ vars.TF_STATE_BUCKET }}
           TF_VAR_tf_lock_table: ${{ vars.TF_LOCK_TABLE }}
-
-      - name: PR plan comment
-        if: steps.gate.outputs.skip != 'true' && github.event_name == 'pull_request'
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
-        with:
-          script: |
-            const fs = require('fs');
-            const path = '${{ env.TF_WORKING_DIR }}/plan.txt';
-            let body = '## Terraform plan (staging)\n\n```\n';
-            try {
-              const txt = fs.readFileSync(path, 'utf8');
-              body += txt.length > 60000 ? txt.slice(0, 60000) + '\n…truncated…' : txt;
-            } catch (e) {
-              body += 'No plan output.';
-            }
-            body += '\n```';
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body
-            });
 
   apply:
     name: Apply
@@ -158,9 +132,11 @@ jobs:
       )
     # Deploy role trust is environment:staging only — protect with required reviewers + main.
     environment: staging
+    # Shared with deploy-api-staging. queue:max keeps up to 100 pending (FIFO).
     concurrency:
       group: staging-mutations
       cancel-in-progress: false
+      queue: max
     defaults:
       run:
         working-directory: ${{ env.TF_WORKING_DIR }}
@@ -211,15 +187,6 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-
-      # FIFO queue with deploy-api-staging (shared staging-mutations group).
-      - name: Queue staging mutation
-        if: steps.gate.outputs.skip != 'true'
-        uses: softprops/turnstyle@807f6009e7cee5c2c9faa41ccef03a8bb24b06ab # v2.1.0
-        with:
-          poll-interval-seconds: 20
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         if: steps.gate.outputs.skip != 'true'

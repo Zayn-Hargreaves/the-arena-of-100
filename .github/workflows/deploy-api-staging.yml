@@ -20,7 +20,6 @@ on:
 permissions:
   id-token: write
   contents: read
-  actions: read
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
@@ -35,9 +34,11 @@ jobs:
     name: Build · migrate · deploy
     runs-on: ubuntu-latest
     environment: staging
+    # Shared with terraform-staging apply. queue:max keeps up to 100 pending (FIFO).
     concurrency:
       group: staging-mutations
       cancel-in-progress: false
+      queue: max
     steps:
       - name: Check AWS configured
         id: gate
@@ -59,15 +60,6 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-
-      # FIFO queue: concurrency alone drops intermediate pending runs in the same group.
-      - name: Queue staging mutation
-        if: steps.gate.outputs.skip != 'true'
-        uses: softprops/turnstyle@807f6009e7cee5c2c9faa41ccef03a8bb24b06ab # v2.1.0
-        with:
-          poll-interval-seconds: 20
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Validate migrate network vars
         if: steps.gate.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || inputs.skip_migrate != true)

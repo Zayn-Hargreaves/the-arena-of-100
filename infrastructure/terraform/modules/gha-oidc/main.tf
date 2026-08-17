@@ -32,6 +32,9 @@ locals {
   ecs_cluster_name               = element(split("/", var.ecs_cluster_arn), length(split("/", var.ecs_cluster_arn)) - 1)
   ecs_tasks_arn_prefix           = "arn:aws:ecs:${local.aws_region}:${data.aws_caller_identity.current.account_id}:task/${local.ecs_cluster_name}/*"
   ecs_task_definition_arn_prefix = "arn:aws:ecs:${local.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/${var.name_prefix}-*"
+  # Service ARN path form: arn:aws:ecs:region:acct:service/cluster-name/service-name
+  ecs_service_arn_prefix = "arn:aws:ecs:${local.aws_region}:${data.aws_caller_identity.current.account_id}:service/${local.ecs_cluster_name}/${var.name_prefix}-*"
+  ecs_cluster_arn_prefix = "arn:aws:ecs:${local.aws_region}:${data.aws_caller_identity.current.account_id}:cluster/${var.name_prefix}-*"
 }
 
 resource "aws_iam_openid_connect_provider" "github" {
@@ -266,10 +269,56 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "elasticloadbalancing:*",
           "rds:*",
           "elasticache:*",
-          "ecr:*",
-          "ecs:*"
+          "ecr:*"
         ]
         Resource = "*"
+      },
+      {
+        # List/Describe*, Register/Deregister TD, and Create* need Resource "*"
+        # (ARN unknown at create time / no resource-level support).
+        Sid    = "TerraformApplyDemoEcsGlobal"
+        Effect = "Allow"
+        Action = [
+          "ecs:ListClusters",
+          "ecs:ListServices",
+          "ecs:ListTaskDefinitions",
+          "ecs:ListTasks",
+          "ecs:ListAccountSettings",
+          "ecs:ListTagsForResource",
+          "ecs:DescribeClusters",
+          "ecs:DescribeServices",
+          "ecs:DescribeTaskDefinition",
+          "ecs:DescribeTasks",
+          "ecs:DescribeCapacityProviders",
+          "ecs:RegisterTaskDefinition",
+          "ecs:DeregisterTaskDefinition",
+          "ecs:CreateCluster",
+          "ecs:CreateService"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "TerraformApplyDemoEcsScoped"
+        Effect = "Allow"
+        Action = [
+          "ecs:DeleteCluster",
+          "ecs:UpdateCluster",
+          "ecs:UpdateClusterSettings",
+          "ecs:PutClusterCapacityProviders",
+          "ecs:UpdateService",
+          "ecs:DeleteService",
+          "ecs:TagResource",
+          "ecs:UntagResource",
+          "ecs:StopTask"
+        ]
+        Resource = [
+          var.ecs_cluster_arn,
+          local.ecs_cluster_arn_prefix,
+          var.ecs_service_arn,
+          local.ecs_service_arn_prefix,
+          local.ecs_tasks_arn_prefix,
+          local.ecs_task_definition_arn_prefix
+        ]
       },
       {
         # DescribeLogGroups / DescribeLogStreams do not support resource-level permissions.

@@ -187,7 +187,7 @@ enc() { python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1
 DATABASE_URL="postgresql://${DB_USER}:$(enc "$DB_PASSWORD")@${RDS_HOST}:${RDS_PORT}/${DB_NAME}?sslmode=require"
 REDIS_URL="rediss://:$(enc "$REDIS_AUTH")@${REDIS_HOST}:${REDIS_PORT}"
 
-# Put secret values via file input (not argv) — AWS CLI file://; requires CLI v2+
+# Put secret values via file input (not argv) — AWS CLI file:// (v1 and v2)
 SECRET_TMP=$(mktemp)
 chmod 600 "$SECRET_TMP"
 trap 'rm -f "$SECRET_TMP"' EXIT
@@ -309,10 +309,10 @@ HTTP without TLS is reserved for **local** API testing only — not for browsers
 
 Workflows (no-op unless secrets/vars exist):
 
-| Workflow                 | Trigger                                                                      | Purpose                                    |
-| ------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------ |
-| `terraform-staging.yml`  | PR / push to `main` on `infrastructure/terraform/**`, or `workflow_dispatch` | `plan` (read-only role); `apply` on env    |
-| `deploy-api-staging.yml` | push `main` (API paths) or `workflow_dispatch`                               | SHA tags → ECR, migrate, ECS + wait stable |
+| Workflow                 | Trigger                                                                      | Purpose                                                                  |
+| ------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `terraform-staging.yml`  | PR / push to `main` on `infrastructure/terraform/**`, or `workflow_dispatch` | PR: no plan (skip). Plan on `main` only (read-only role); `apply` on env |
+| `deploy-api-staging.yml` | push `main` (API paths) or `workflow_dispatch`                               | SHA tags → ECR, migrate, ECS + wait stable                               |
 
 **GitHub configuration**
 
@@ -333,8 +333,8 @@ Workflows (no-op unless secrets/vars exist):
 - Deployment branches: **main only**
 - Required reviewers: at least one approval before apply/deploy
 - Deploy OIDC subject is **only** `repo:ORG/REPO:environment:staging` — **no** `pull_request` on the apply/deploy role
-- Plan job uses **only** `AWS_ROLE_ARN_PLAN` (`main` ref subject only — read-only)
-- Apply / deploy jobs share concurrency group `staging-mutations` (`cancel-in-progress: false`) plus a turnstyle queue so mutations run FIFO
+- Plan job uses **only** `AWS_ROLE_ARN_PLAN` (`main` ref subject only — read-only); **pull requests do not produce a plan**
+- Apply / deploy jobs share concurrency group `staging-mutations` (`cancel-in-progress: false`, `queue: max`) so mutations queue FIFO across both workflows
 - Apply blocks if `TF_REDIS_AUTH_TOKEN` is missing, or if HTTPS is on and cert/domain are missing
 - RDS master password is AWS-managed (no `TF_DB_PASSWORD`)
 
