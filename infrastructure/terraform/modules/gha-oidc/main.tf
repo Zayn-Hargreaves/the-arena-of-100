@@ -268,14 +268,54 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "ec2:*",
           "elasticloadbalancing:*",
           "rds:*",
-          "elasticache:*",
-          "ecr:*"
+          "elasticache:*"
         ]
         Resource = "*"
       },
       {
-        # List/Describe*, Register/Deregister TD, and Create* need Resource "*"
-        # (ARN unknown at create time / no resource-level support).
+        # GetAuthorizationToken is registry-level only (no repository resource).
+        Sid    = "TerraformApplyDemoEcrGlobal"
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "TerraformApplyDemoEcrCreateRepository"
+        Effect = "Allow"
+        Action = [
+          "ecr:CreateRepository"
+        ]
+        Resource = var.ecr_repository_arn
+      },
+      {
+        # Staging repo only: manage + push/pull. No SetRepositoryPolicy / PutRegistryPolicy.
+        Sid    = "TerraformApplyDemoEcrRepo"
+        Effect = "Allow"
+        Action = [
+          "ecr:DescribeRepositories",
+          "ecr:DeleteRepository",
+          "ecr:ListImages",
+          "ecr:DescribeImages",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:PutImage",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload",
+          "ecr:GetLifecyclePolicy",
+          "ecr:PutLifecyclePolicy",
+          "ecr:DeleteLifecyclePolicy",
+          "ecr:TagResource",
+          "ecr:UntagResource",
+          "ecr:ListTagsForResource"
+        ]
+        Resource = var.ecr_repository_arn
+      },
+      {
+        # Only actions that lack useful resource-level support.
         Sid    = "TerraformApplyDemoEcsGlobal"
         Effect = "Allow"
         Action = [
@@ -290,12 +330,36 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "ecs:DescribeTaskDefinition",
           "ecs:DescribeTasks",
           "ecs:DescribeCapacityProviders",
-          "ecs:RegisterTaskDefinition",
-          "ecs:DeregisterTaskDefinition",
-          "ecs:CreateCluster",
-          "ecs:CreateService"
+          "ecs:CreateCluster"
         ]
         Resource = "*"
+      },
+      {
+        Sid    = "TerraformApplyDemoEcsRegisterTaskDefinition"
+        Effect = "Allow"
+        Action = [
+          "ecs:RegisterTaskDefinition",
+          "ecs:DeregisterTaskDefinition"
+        ]
+        Resource = [
+          local.ecs_task_definition_arn_prefix
+        ]
+      },
+      {
+        Sid    = "TerraformApplyDemoEcsCreateService"
+        Effect = "Allow"
+        Action = [
+          "ecs:CreateService"
+        ]
+        Resource = [
+          var.ecs_service_arn,
+          local.ecs_service_arn_prefix
+        ]
+        Condition = {
+          ArnEquals = {
+            "ecs:cluster" = var.ecs_cluster_arn
+          }
+        }
       },
       {
         Sid    = "TerraformApplyDemoEcsScoped"
