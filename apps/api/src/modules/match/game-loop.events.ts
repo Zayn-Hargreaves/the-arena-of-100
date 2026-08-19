@@ -6,6 +6,8 @@ import {
   type TopicVotingStartedPayload,
   type TopicVotingSummaryPayload,
   type TopicVotingFinishedPayload,
+  type CardId,
+  type ClassId,
 } from "@arena/shared";
 import type { Server } from "socket.io";
 
@@ -253,4 +255,49 @@ export function emitTopicVotingFinished(
     voteCounts,
   };
   server.to(channel).emit(ServerEvent.TOPIC_VOTING_FINISHED, payload);
+}
+
+// ---------------------------------------------------------------------------
+// Class & Card Emitters (Phase 2)
+// ---------------------------------------------------------------------------
+
+export function emitClassAssigned(
+  server: Server,
+  roomId: string,
+  matchId: string,
+  assignments: Array<{ playerId: string; classId: ClassId }>,
+  seedUsed: string,
+) {
+  const channel = getRoomChannel(roomId);
+  server.to(channel).emit(ServerEvent.CLASS_ASSIGNED, {
+    matchId,
+    assignments,
+    seedUsed,
+  });
+}
+
+export function emitCardOffer(
+  server: Server,
+  playerId: string,
+  roomId: string,
+  matchId: string,
+  roundNo: number,
+  offeredCardIds: readonly [CardId, CardId, CardId],
+  offerSeqNo: number,
+  seedUsed: string,
+) {
+  // Emit to both player private channel and room channel (with playerId filtering)
+  const playerChannel = getPlayerChannel(playerId);
+  const payload = {
+    matchId,
+    roundNo,
+    playerId,
+    offeredCardIds,
+    offerSeqNo,
+    seedUsed,
+  };
+  server.to(playerChannel).emit(ServerEvent.CARD_OFFER, payload);
+  // Also emit to room channel so spectators/clients connected directly see it
+  const roomChannel = getRoomChannel(roomId);
+  server.to(roomChannel).emit(ServerEvent.CARD_OFFER, payload);
 }

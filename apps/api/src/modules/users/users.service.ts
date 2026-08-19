@@ -9,6 +9,7 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { RedisService } from "../redis/redis.service";
 import { MatchStatus, getRankTier, type AvatarSeed } from "@arena/shared";
 import type {
   HistoryItem,
@@ -99,7 +100,10 @@ function getHistoryItemStatus(
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redis?: RedisService,
+  ) {}
 
   // GET /users/me/stats
   // Aggregates from MatchPlayer, Match, Answer — only FINISHED matches.
@@ -295,10 +299,28 @@ export class UsersService {
       data: { avatar },
       select: { id: true, username: true, avatar: true, role: true, elo: true },
     });
+    await this.invalidateLeaderboardCache();
     return {
       ...user,
       rankTier: getRankTier(user.elo),
     };
+  }
+
+  private async invalidateLeaderboardCache(): Promise<void> {
+    if (!this.redis) return;
+    const limits = [10, 25, 50, 100];
+    const periods = ["weekly", "all"];
+    const promises: Promise<void>[] = [];
+    for (const period of periods) {
+      for (const limit of limits) {
+        promises.push(
+          this.redis
+            .del(`leaderboard:v2:${period}:limit=${limit}`)
+            .catch(() => undefined),
+        );
+      }
+    }
+    await Promise.all(promises);
   }
 
   // ============================================================

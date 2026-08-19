@@ -17,6 +17,7 @@ import { AuthService, AuthResult } from "./auth.service";
 import { Public } from "../../common/decorators/public.decorator";
 import { ApiTags, ApiOperation, ApiResponse } from "@nestjs/swagger";
 import { GuestLoginDto, guestLoginSchema } from "./dto/guest-login.dto";
+import { AdminLoginDto, adminLoginSchema } from "./dto/admin-login.dto";
 import { ZodValidationPipe } from "../../common/pipes/zod-validation.pipe";
 import { FastifyReply, FastifyRequest } from "fastify";
 import {
@@ -34,6 +35,7 @@ import {
 } from "./auth-cookie";
 
 const guestLoginPipe = new ZodValidationPipe(guestLoginSchema);
+const adminLoginPipe = new ZodValidationPipe(adminLoginSchema);
 
 type AuthResponse = Omit<AuthResult, "refreshToken">;
 
@@ -48,6 +50,10 @@ export class AuthController {
   @ApiOperation({ summary: "Guest login" })
   @ApiResponse({ status: 200, description: "Login successful" })
   @ApiResponse({ status: 400, description: "Validation failed" })
+  @ApiResponse({
+    status: 401,
+    description: "Unauthorized or nickname already taken",
+  })
   async guestLogin(
     @Body(guestLoginPipe)
     guestLoginDto: GuestLoginDto,
@@ -55,6 +61,35 @@ export class AuthController {
   ): Promise<AuthResponse> {
     const authResult = await this.authService.guestLogin(
       guestLoginDto.username,
+      guestLoginDto.guestSecret,
+      guestLoginDto.avatar,
+    );
+    this.writeAuthCookies(
+      reply,
+      authResult.accessToken,
+      authResult.refreshToken,
+    );
+
+    return {
+      accessToken: authResult.accessToken,
+      guestSecret: authResult.guestSecret,
+      user: authResult.user,
+    };
+  }
+
+  @Post("admin-login")
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Admin login with password" })
+  @ApiResponse({ status: 200, description: "Admin login successful" })
+  @ApiResponse({ status: 401, description: "Invalid admin credentials" })
+  async adminLogin(
+    @Body(adminLoginPipe)
+    adminLoginDto: AdminLoginDto,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<AuthResponse> {
+    const authResult = await this.authService.adminLogin(
+      adminLoginDto.password,
     );
     this.writeAuthCookies(
       reply,

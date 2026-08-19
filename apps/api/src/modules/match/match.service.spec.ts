@@ -616,9 +616,21 @@ describe("MatchService", () => {
   describe("getMatch", () => {
     it("returns match when found from DB and caches it in Redis", async () => {
       vi.mocked(redis.mget).mockResolvedValue([null, null]);
-      vi.mocked(prisma.match.findUnique).mockResolvedValue({ id: "m1" } as any);
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
+        id: "m1",
+        status: "FINISHED",
+        answers: [
+          {
+            userId: "u1",
+            isCorrect: true,
+            responseTimeMs: 100,
+            roundId: "r1",
+          },
+        ],
+      } as any);
       const result = await service.getMatch("m1");
       expect(result.id).toBe("m1");
+      expect(result.answers).toHaveLength(1);
       expect(redis.mget).toHaveBeenCalledTimes(1);
       expect(redis.mget).toHaveBeenCalledWith(
         matchCacheKey("m1"),
@@ -629,16 +641,74 @@ describe("MatchService", () => {
         where: { id: "m1" },
         include: {
           players: {
-            include: { user: { select: { id: true, username: true } } },
+            include: {
+              user: { select: { id: true, username: true, avatar: true } },
+            },
           },
           rounds: true,
+          answers: {
+            select: {
+              userId: true,
+              isCorrect: true,
+              responseTimeMs: true,
+              roundId: true,
+            },
+          },
         },
       });
       expect(redis.setIfGenMatches).toHaveBeenCalledWith(
         "match:gen:m1",
         matchCacheKey("m1"),
         "0",
-        JSON.stringify({ gen: "0", data: { id: "m1" } }),
+        JSON.stringify({
+          gen: "0",
+          data: {
+            id: "m1",
+            status: "FINISHED",
+            answers: [
+              {
+                userId: "u1",
+                isCorrect: true,
+                responseTimeMs: 100,
+                roundId: "r1",
+              },
+            ],
+          },
+        }),
+        5,
+      );
+    });
+
+    it("strips per-player answers when match is not FINISHED", async () => {
+      vi.mocked(redis.mget).mockResolvedValue([null, null]);
+      vi.mocked(prisma.match.findUnique).mockResolvedValue({
+        id: "m-live",
+        status: "ROUND_ACTIVE",
+        answers: [
+          {
+            userId: "u1",
+            isCorrect: true,
+            responseTimeMs: 50,
+            roundId: "r1",
+          },
+        ],
+      } as any);
+
+      const result = await service.getMatch("m-live");
+
+      expect(result.answers).toEqual([]);
+      expect(redis.setIfGenMatches).toHaveBeenCalledWith(
+        "match:gen:m-live",
+        matchCacheKey("m-live"),
+        "0",
+        JSON.stringify({
+          gen: "0",
+          data: {
+            id: "m-live",
+            status: "ROUND_ACTIVE",
+            answers: [],
+          },
+        }),
         5,
       );
     });

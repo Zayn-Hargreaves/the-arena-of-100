@@ -1,12 +1,13 @@
 import { Logger } from "@nestjs/common";
 import { Server } from "socket.io";
-import { MatchStateMachine } from "@arena/game-core";
+import { MatchStateMachine, resolveCardEffect } from "@arena/game-core";
 import {
   GAME_CONFIG,
   MatchStatus,
   RoomStatus,
   RoomError,
   ErrorCode,
+  getCardDefinition,
 } from "@arena/shared";
 import { MatchService, type PersistOutcome } from "./match.service";
 import { MatchOwnershipService } from "./match-ownership.service";
@@ -22,7 +23,11 @@ import {
   emitRoundStarted,
   emitTopicVotingStarted,
   emitTopicVotingFinished,
+  emitClassAssigned,
+  emitCardOffer,
 } from "./game-loop.events";
+import { isMilestoneRound } from "./card-validator";
+import { emitCardResolved } from "./match-card-command.helpers";
 
 import { recoverRoundEnd, type RoundEndContext } from "./match-round-recovery";
 import {
@@ -664,6 +669,17 @@ export class MatchRoundRunner {
       GAME_CONFIG.ROUND_DURATION_MS,
     );
 
+    // Phase 2: Milestone Card Offers (Round 5, 12, 20)
+    if (isMilestoneRound(state.currentRoundNo)) {
+      this.triggerMilestoneCardOffers(
+        matchId,
+        roomId,
+        server,
+        stateMachine,
+        state.currentRoundNo,
+      );
+    }
+
     // 7. Schedule simulated bot answers if any bot players are active
     await this.scheduleBotAnswers(matchId, roomId, server, stateMachine, {
       id: question.id,
@@ -671,6 +687,83 @@ export class MatchRoundRunner {
       options: question.options,
       difficulty: question.difficulty,
     });
+  }
+
+  /**
+   * Phase 2: Milestone Card Offer (Q5, 12, 20).
+   * Renders 3 card candidates per surviving player according to class-specific sampling.
+   */
+  private triggerMilestoneCardOffers(
+    matchId: string,
+    roomId: string,
+    server: Server,
+    stateMachine: MatchStateMachine,
+    roundNo: number,
+  ): void {
+    const state = stateMachine.getState();
+    const survivingPlayerIds = state.survivingPlayerIds;
+
+    // Ensure classes are assigned if not already
+    const playerClasses = (
+      stateMachine as unknown as { playerClasses?: Map<string, unknown> }
+    ).playerClasses;
+    if (!playerClasses || playerClasses.size === 0) {
+      const allPlayerIds = Array.from(state.players.keys());
+      const classSeed = `${matchId}:class:${Date.now()}`;
+      const assignments = stateMachine.classAssignment(allPlayerIds, classSeed);
+      emitClassAssigned(server, roomId, matchId, assignments, classSeed);
+    }
+
+    for (const playerId of survivingPlayerIds) {
+      try {
+        const offerSeed = `${matchId}:offer:r${roundNo}:${playerId}:${Date.now()}`;
+        const offeredCards = stateMachine.pickOffer(
+          playerId,
+          roundNo,
+          offerSeed,
+        );
+        const eventLog = stateMachine.getEventLog();
+        const offerEvent = [...eventLog]
+          .reverse()
+          .find(
+            (e) =>
+              e.type === "CARD_OFFER" &&
+              typeof e.payload === "object" &&
+              e.payload !== null &&
+              "playerId" in e.payload &&
+              (e.payload as { playerId: string }).playerId === playerId,
+          );
+        const offerSeqNo = offerEvent?.seqNo ?? 0;
+
+        emitCardOffer(
+          server,
+          playerId,
+          roomId,
+          matchId,
+          roundNo,
+          offeredCards,
+          offerSeqNo,
+          offerSeed,
+        );
+
+        // Phase 2 / Bot AI: If the player is a bot, auto-pick one offered card
+        if (playerId.startsWith("bot_") && offeredCards.length > 0) {
+          const chosenCard =
+            offeredCards[Math.floor(Math.random() * offeredCards.length)];
+          try {
+            stateMachine.pickCard(playerId, chosenCard, offerSeqNo);
+          } catch (pickErr) {
+            this.logger.warn(
+              `Bot auto-pick failed for ${playerId}: ${pickErr}`,
+            );
+          }
+        }
+      } catch (err) {
+        this.logger.warn(
+          `triggerMilestoneCardOffers: failed to offer cards to player ${playerId} in match ${matchId} round ${roundNo}: ${err}`,
+        );
+      }
+    }
   }
 
   /**
@@ -704,6 +797,16 @@ export class MatchRoundRunner {
     );
 
     if (botPlayerIds.length === 0) return;
+
+    // Schedule bot card casting alongside answering
+    this.scheduleBotCardPlays(
+      matchId,
+      roomId,
+      server,
+      stateMachine,
+      botPlayerIds,
+      question,
+    );
 
     const simulations = simulateBotAnswers(question, botPlayerIds);
 
@@ -764,6 +867,140 @@ export class MatchRoundRunner {
         },
         sim.responseTimeMs,
       );
+    }
+  }
+
+  /**
+   * Schedule simulated card plays for bot players during ROUND_ACTIVE.
+   */
+  private scheduleBotCardPlays(
+    matchId: string,
+    roomId: string,
+    server: Server,
+    stateMachine: MatchStateMachine,
+    botPlayerIds: string[],
+    question: {
+      id: string;
+      correctAnswer: string;
+      options: string[];
+      difficulty?: string;
+    },
+  ): void {
+    const state = stateMachine.getState();
+    const survivingPlayerIds = state.survivingPlayerIds;
+    if (survivingPlayerIds.length <= 1) return;
+
+    for (const botId of botPlayerIds) {
+      try {
+        const hand = stateMachine.getHand(botId);
+        const played = stateMachine.getPlayedCards(botId);
+        const playableCards = hand.filter((c) => !played.has(c));
+
+        if (playableCards.length === 0) continue;
+
+        // 100% probability that bot casts a spell when holding a card (Testing mode)
+        const cardId =
+          playableCards[Math.floor(Math.random() * playableCards.length)];
+        const cardDef = getCardDefinition(cardId);
+
+        // Fast cast delay between 800ms and 2500ms so effects appear right away
+        const delayMs = Math.floor(800 + Math.random() * 1700);
+
+        this.armPhaseTimer(
+          matchId,
+          async () => {
+            try {
+              if (!(await this.ownership.assertOwnership(matchId))) return;
+              const sm = await this.matchService.getStateMachine(matchId);
+              if (!sm || sm.getState().status !== MatchStatus.ROUND_ACTIVE)
+                return;
+
+              const round = sm.getCurrentRound();
+              if (!round) return;
+
+              const now = Date.now();
+              if (now >= round.endsAt) return;
+
+              const currentSurviving = sm.getState().survivingPlayerIds;
+              let targetPlayerIds: string[];
+
+              if (cardDef.classId === "ATTACK") {
+                const enemies = currentSurviving.filter((id) => id !== botId);
+                if (enemies.length === 0) return;
+                const chosenTarget =
+                  enemies[Math.floor(Math.random() * enemies.length)];
+                targetPlayerIds = [chosenTarget];
+              } else {
+                targetPlayerIds = [botId];
+              }
+
+              const effect = resolveCardEffect(
+                cardId,
+                cardDef.effectTemplate,
+                Math.random,
+                {
+                  targetHand: sm.getHand(targetPlayerIds[0]!),
+                  options: question.options,
+                  correctAnswer: question.correctAnswer,
+                  currentRoundNo: round.roundNo,
+                },
+              );
+
+              const serverTimestamp = Math.min(now, round.endsAt);
+              const durationMs = (effect as { durationMs?: number }).durationMs;
+              const resolution =
+                durationMs !== undefined ? "TEMPORARY" : "MUTATION";
+              const expiresAtServer =
+                resolution === "TEMPORARY"
+                  ? serverTimestamp + (durationMs ?? 0)
+                  : null;
+              const remainingMs =
+                resolution === "TEMPORARY" ? (durationMs ?? null) : null;
+
+              const serialized = sm.serialize();
+              const seqNo = sm.playCard(
+                botId,
+                cardId,
+                1,
+                effect,
+                targetPlayerIds,
+                serverTimestamp,
+              );
+
+              const outcome =
+                await this.matchService.persistStateMachine(matchId);
+              if (outcome !== "APPLIED") {
+                this.matchService.evictStateMachine(matchId);
+                const canonical = MatchStateMachine.deserialize(serialized);
+                Object.assign(sm, canonical);
+                return;
+              }
+
+              emitCardResolved(this.logger, server, roomId, {
+                seqNo,
+                matchId,
+                roundNo: round.roundNo,
+                cardId,
+                offerSeqNo: 1,
+                playedByPlayerId: botId,
+                targetPlayerIds,
+                resolution,
+                serverTimestamp,
+                expiresAtServer,
+                remainingMs,
+                effect,
+              });
+            } catch (playErr) {
+              this.logger.warn(
+                `Bot ${botId} failed to play card ${cardId}: ${playErr}`,
+              );
+            }
+          },
+          delayMs,
+        );
+      } catch (err) {
+        this.logger.warn(`scheduleBotCardPlays error for bot ${botId}: ${err}`);
+      }
     }
   }
 
@@ -960,6 +1197,9 @@ export class MatchRoundRunner {
     stateMachine.transition(MatchStatus.ROUND_EVALUATING);
 
     const evaluation = stateMachine.evaluateRound();
+    this.logger.log(
+      `[EVALUATE_ROUND] Match ${matchId} round ${stateMachine.getState().currentRoundNo}: surviving=${evaluation.survivingIds.length}, eliminated=${evaluation.eliminatedIds.length}`,
+    );
 
     // Fully snapshot the ROUND_EVALUATING state in Redis before database writes.
     // B2c: this is a canonical write. If it does not land (RETRY = lost the

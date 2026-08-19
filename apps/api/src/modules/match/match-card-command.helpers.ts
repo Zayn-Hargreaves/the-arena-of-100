@@ -153,6 +153,9 @@ export function emitCardResolved(
   const baseFrame = {
     matchId,
     roundNo: payload.roundNo,
+    targetRoundNo:
+      payload.targetRoundNo ??
+      (typeof payload.roundNo === "number" ? payload.roundNo + 1 : undefined),
     cardId: payload.cardId as string,
     offerSeqNo: payload.offerSeqNo,
     playedByPlayerId: payload.playedByPlayerId as string,

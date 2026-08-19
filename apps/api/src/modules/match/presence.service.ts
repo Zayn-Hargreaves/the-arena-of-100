@@ -222,11 +222,17 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
   private async getRoomStalePlayers(
     room: Awaited<ReturnType<RoomService["getActiveRooms"]>>[number],
   ): Promise<{ stalePlayerIds: string[]; isHostStale: boolean }> {
-    // Check all players' presence in parallel (single round-trip per player
+    // Exclude bot players from presence sweep: bots are simulated on-server and do not maintain socket heartbeats
+    const humanPlayers = room.players.filter(
+      (rp: { user?: { guestId?: string | null } | null }) =>
+        !rp.user?.guestId?.startsWith("bot_"),
+    );
+
+    // Check all human players' presence in parallel (single round-trip per player
     // to Redis, but no longer N+1 sequential awaits per room). The N+1
     // pattern was making the 5s sweep scale linearly with room size.
     const presenceFlags = await Promise.all(
-      room.players.map((rp) =>
+      humanPlayers.map((rp) =>
         this.roomService
           .checkPresence(room.id, rp.userId)
           .then((isPresent) => ({ rp, isPresent })),

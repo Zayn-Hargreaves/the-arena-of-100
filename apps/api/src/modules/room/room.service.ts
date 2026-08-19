@@ -497,7 +497,11 @@ export class RoomService {
         },
       },
       include: {
-        players: true,
+        players: {
+          include: {
+            user: { select: { guestId: true } },
+          },
+        },
       },
     });
   }
