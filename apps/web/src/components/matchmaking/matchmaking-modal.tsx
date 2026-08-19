@@ -4,8 +4,13 @@ import React, { useEffect, useState, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { useSocketStore } from "@/stores/socket-store";
 import { useRouter } from "@/i18n/routing";
-import { Zap, Swords, X } from "lucide-react";
-import { MiniGlyph } from "@/components/ui/mini-glyph";
+import { ZapSvg, CloseSvg } from "@/components/home/home-icons";
+import { ProfessorAvatar } from "@/components/character/professor-avatar";
+import { ProfessorDialogueBox } from "@/components/character/professor-dialogue-box";
+import {
+  getRandomProfessorDialogue,
+  useSafeLocale,
+} from "@/components/character/professor-roast-engine";
 
 interface FocusableElement {
   focus: (options?: FocusOptions) => void;
@@ -22,11 +27,23 @@ function isFocusableElement(element: unknown): element is FocusableElement {
 
 export function MatchmakingModal() {
   const t = useTranslations("MatchmakingModal");
+  const locale = useSafeLocale();
   const router = useRouter();
-  const { matchmaking, leaveMatchmaking, clearMatchmakingMatched } =
-    useSocketStore();
+  const {
+    matchmaking,
+    leaveMatchmaking,
+    clearMatchmakingMatched,
+    joinRoom,
+    room,
+    match,
+  } = useSocketStore();
 
   const [displaySeconds, setDisplaySeconds] = useState(0);
+  const [professorLine, setProfessorLine] = useState(() =>
+    locale.startsWith("vi")
+      ? "Đang gom đủ 100 trò... Đừng có đứa nào trốn tiết nhé!"
+      : "Gathering 100 students... Nobody skip class while I'm not looking!",
+  );
   const dialogRef = useRef<HTMLDivElement>(null);
   const previouslyFocusedElementRef = useRef<FocusableElement | null>(null);
 
@@ -139,19 +156,66 @@ export function MatchmakingModal() {
     return () => clearInterval(interval);
   }, [matchmaking.isQueued, matchmaking.queuedAt, matchmaking.elapsedSeconds]);
 
+  // Dialogue ticker for Professor during matchmaking
+  useEffect(() => {
+    if (isMatched) {
+      setProfessorLine(
+        locale.startsWith("vi")
+          ? "Đã tìm thấy phòng thi! 100 thí sinh đã có mặt. Chuẩn bị nộp não!"
+          : "Exam room located! All 100 candidates present. Prepare your brain!",
+      );
+      return undefined;
+    }
+    if (isVisible) {
+      const interval = setInterval(() => {
+        const d = getRandomProfessorDialogue("matchmaking_waiting", locale);
+        setProfessorLine(d.text);
+      }, 4000);
+      return () => clearInterval(interval);
+    }
+    return undefined;
+  }, [isVisible, isMatched, locale]);
+
   // Handle match found auto-redirect
   useEffect(() => {
     if (matchmaking.matchedRoomCode) {
-      const timer = setTimeout(() => {
-        const targetCode = matchmaking.matchedRoomCode!;
-        clearMatchmakingMatched();
-        router.push(`/lobby/${targetCode}`);
-      }, 1200);
+      let isCancelled = false;
+      const targetCode = matchmaking.matchedRoomCode;
+      const targetMatchId = matchmaking.matchedMatchId;
 
-      return () => clearTimeout(timer);
+      // Join room via socket to establish channel membership and fetch players
+      void joinRoom(targetCode).catch((err) => {
+        console.warn("Auto-joining matched room error:", err);
+      });
+
+      const timer = setTimeout(() => {
+        if (isCancelled) return;
+        const resolvedMatchId =
+          targetMatchId ?? match?.id ?? room?.currentMatchId;
+
+        clearMatchmakingMatched();
+        if (resolvedMatchId) {
+          router.push(`/game/${resolvedMatchId}`);
+        } else {
+          router.push(`/lobby/${targetCode}`);
+        }
+      }, 500);
+
+      return () => {
+        isCancelled = true;
+        clearTimeout(timer);
+      };
     }
     return undefined;
-  }, [matchmaking.matchedRoomCode, clearMatchmakingMatched, router]);
+  }, [
+    matchmaking.matchedRoomCode,
+    matchmaking.matchedMatchId,
+    joinRoom,
+    match?.id,
+    room?.currentMatchId,
+    clearMatchmakingMatched,
+    router,
+  ]);
 
   if (!isVisible) {
     return null;
@@ -187,7 +251,7 @@ export function MatchmakingModal() {
             id="matchmaking-modal-title"
             className="inline-flex items-center gap-2 bg-candy-purple text-white font-display text-xs px-3 py-1.5 border-3 border-candy-ink rounded-full shadow-[2px_2px_0_0_#2B2D42]"
           >
-            <Zap className="w-4 h-4 text-candy-yellow fill-candy-yellow" />
+            <ZapSvg size={16} />
             <span className="font-black uppercase tracking-wider">
               {isMatched ? t("matchFoundTitle") : t("searchingTitle")}
             </span>
@@ -200,21 +264,25 @@ export function MatchmakingModal() {
               className="p-1.5 rounded-xl border-2 border-candy-ink bg-candy-cloud hover:bg-candy-red hover:text-white transition-colors cursor-pointer"
               title={t("cancelButton")}
             >
-              <X className="w-5 h-5" />
+              <CloseSvg size={18} />
             </button>
           )}
         </div>
 
         {/* Content Body */}
-        <div className="flex flex-col items-center text-center my-6 gap-4">
+        <div className="flex flex-col items-center text-center my-4 gap-3">
           {isMatched ? (
             <div className="flex flex-col items-center gap-3 animate-bounce">
-              <div className="w-20 h-20 bg-candy-mint text-white border-4 border-candy-ink rounded-2xl flex items-center justify-center shadow-[4px_4px_0_0_#2B2D42]">
-                <Swords className="w-10 h-10" />
-              </div>
+              <ProfessorAvatar mood="proud_cheer" size="lg" />
               <h3 className="font-display font-black text-2xl text-candy-ink">
                 {t("readyToBattle")}
               </h3>
+              <ProfessorDialogueBox
+                text={professorLine}
+                tailPosition="bottom"
+                variant="paper"
+                className="w-full text-center"
+              />
               <p className="font-display text-xs text-candy-slate font-bold">
                 {t("redirecting", {
                   roomCode: matchmaking.matchedRoomCode ?? "",
@@ -223,21 +291,25 @@ export function MatchmakingModal() {
             </div>
           ) : (
             <>
-              {/* Animated Radar Circle */}
-              <div className="relative flex items-center justify-center w-28 h-28">
-                <div className="absolute inset-0 rounded-full border-4 border-dashed border-candy-pink animate-[spin_8s_linear_infinite]" />
-                <div className="absolute inset-3 rounded-full bg-candy-yellow/20 animate-ping opacity-60" />
-                <div className="relative w-20 h-20 bg-candy-pink text-white border-4 border-candy-ink rounded-full flex items-center justify-center shadow-[3px_3px_0_0_#2B2D42]">
-                  <MiniGlyph variant="target" className="w-9 h-9" />
-                </div>
+              {/* Professor Examining with Magnifying Glass */}
+              <div className="relative flex items-center justify-center my-1">
+                <ProfessorAvatar mood="searching" size="lg" />
               </div>
+
+              {/* Professor Dialogue */}
+              <ProfessorDialogueBox
+                text={professorLine}
+                tailPosition="bottom"
+                variant="paper"
+                className="w-full text-center text-xs"
+              />
 
               {/* Timer Display */}
               <div>
-                <div className="font-display font-black text-4xl tracking-widest text-candy-ink">
+                <div className="font-display font-black text-3xl tracking-widest text-candy-ink">
                   {minutes}:{seconds}
                 </div>
-                <div className="font-display text-xs text-candy-slate font-bold mt-1">
+                <div className="font-display text-xs text-candy-slate font-bold mt-0.5">
                   {t("estimatedWait", { time: `${estMinutes}:${estSecs}` })}
                 </div>
               </div>
