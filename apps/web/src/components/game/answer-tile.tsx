@@ -3,12 +3,17 @@
 import React from "react";
 import { cn } from "@/lib/utils";
 
+import { CardGlyph } from "./card-glyphs";
+
 export interface AnswerTileProps {
   option: string; // E.g., "A", "B", "C", "D"
   content: string; // The answer text
   variant?: "default" | "selected" | "correct" | "incorrect" | "disabled";
   onClick?: () => void;
   disabled?: boolean;
+  isLocked?: boolean;
+  isFiftyFiftyDisabled?: boolean;
+  isFakeFlagged?: boolean;
   className?: string;
 }
 
@@ -16,7 +21,17 @@ const assertNever = (_value: never): never => {
   throw new Error("Unhandled answer tile variant");
 };
 
-const getVariantStyles = (variant: AnswerTileProps["variant"] = "default") => {
+const getVariantStyles = (
+  variant: AnswerTileProps["variant"] = "default",
+  isLocked?: boolean,
+  isFiftyFiftyDisabled?: boolean,
+) => {
+  if (isFiftyFiftyDisabled) {
+    return "opacity-35 cursor-not-allowed bg-candy-cloud/60 border-candy-ink/30 text-candy-ink/40 shadow-none line-through";
+  }
+  if (isLocked) {
+    return "opacity-60 cursor-not-allowed bg-candy-yellow/20 border-candy-orange text-candy-ink/70 shadow-[2px_2px_0_0_#2B2D42]";
+  }
   switch (variant) {
     case "default":
       return "bg-white border-candy-ink text-candy-ink hover:translate-y-[-2px] hover:shadow-[6px_6px_0_0_#2B2D42] shadow-[4px_4px_0_0_#2B2D42]";
@@ -52,26 +67,37 @@ export const AnswerTile: React.FC<AnswerTileProps> = ({
   variant = "default",
   onClick,
   disabled = false,
+  isLocked = false,
+  isFiftyFiftyDisabled = false,
+  isFakeFlagged = false,
   className = "",
 }) => {
-  const isInteractive = variant !== "disabled" && !disabled && Boolean(onClick);
-  const currentVariant = disabled ? "disabled" : variant;
+  const isInteractive =
+    variant !== "disabled" &&
+    !disabled &&
+    !isLocked &&
+    !isFiftyFiftyDisabled &&
+    Boolean(onClick);
+  const currentVariant = variant;
 
   return (
     <button
       type="button"
+      data-sfx="select_answer"
       onClick={isInteractive ? onClick : undefined}
       disabled={!isInteractive}
       className={cn(
         "w-full select-none outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-candy-yellow transition-all duration-150 active:translate-y-[2px]",
-        !isInteractive && "active:translate-y-0",
+        !isInteractive && "active:translate-y-0 cursor-not-allowed",
         className,
       )}
     >
       <span
         className={cn(
-          "flex items-center gap-4 p-4 min-h-[72px] transition-all duration-300 rounded-2xl border-[3.5px]",
-          getVariantStyles(currentVariant),
+          "flex items-center gap-4 p-4 min-h-[72px] transition-all duration-300 rounded-2xl border-[3.5px] relative overflow-hidden",
+          getVariantStyles(currentVariant, isLocked, isFiftyFiftyDisabled),
+          isFakeFlagged &&
+            "ring-2 ring-candy-pink ring-offset-2 border-candy-pink",
         )}
       >
         {/* Dynamic Option Badge */}
@@ -81,13 +107,42 @@ export const AnswerTile: React.FC<AnswerTileProps> = ({
             getBadgeStyles(currentVariant),
           )}
         >
-          {option}
+          {isLocked ? (
+            <CardGlyph
+              variant="lock"
+              size={16}
+              className="text-candy-orange animate-pulse"
+            />
+          ) : isFiftyFiftyDisabled ? (
+            <CardGlyph
+              variant="fiftyFifty"
+              size={16}
+              className="text-candy-red opacity-60"
+            />
+          ) : (
+            option
+          )}
         </span>
 
         {/* Answer Text Content */}
         <span className="flex-1 font-sans font-bold text-base text-left tracking-wide leading-relaxed">
           {content}
         </span>
+
+        {/* Locked Banner Pill */}
+        {isLocked && (
+          <span className="absolute right-3 top-2 text-[9px] font-black uppercase text-candy-orange bg-candy-yellow/30 border border-candy-orange/40 px-1.5 py-0.5 rounded shadow-sm">
+            LOCKED
+          </span>
+        )}
+
+        {/* Fake Flag Marker (CB-6) */}
+        {isFakeFlagged && (
+          <div className="absolute right-3 top-2 flex items-center gap-1 text-[9px] font-black uppercase text-candy-pink bg-candy-pink/15 border border-candy-pink/40 px-1.5 py-0.5 rounded shadow-xs animate-bounce">
+            <CardGlyph variant="flag" size={12} className="text-candy-pink" />
+            <span>GỢI Ý?</span>
+          </div>
+        )}
       </span>
     </button>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, use } from "react";
+import React, { useState, use, useMemo } from "react";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import {
   EliminatedOverlay,
@@ -14,16 +14,23 @@ import {
   MatchFinishedOverlay,
   LeaveMatchModal,
   TopicVotingOverlay,
+  CardHand,
+  CardOfferOverlay,
+  CardTargetPicker,
+  CardAnimation,
+  ClassBadge,
+  CardGlyph,
 } from "@/components/game";
+import { ProfessorHudWidget } from "@/components/character/professor-hud-widget";
 
 import { useSocketStore } from "@/stores/socket-store";
 import { useRouter } from "@/i18n/routing";
 import { useGameRoundState } from "@/hooks/use-game-round-state";
 import { useGamePageLifecycle } from "@/hooks/use-game-page-lifecycle";
-// F4 fix: room.maxPlayers is the source of truth for the
+import { INITIAL_CARD_STATE } from "@/stores/socket-store.types";
 // "remaining / total" denominator in the header. GAME_CONFIG.MAX_PLAYERS
 // is only the fallback when room capacity is not available.
-import { GAME_CONFIG } from "@arena/shared";
+import { GAME_CONFIG, type CardId } from "@arena/shared";
 
 interface GamePageProps {
   params: Promise<{ matchId: string; locale?: string }>;
@@ -48,15 +55,26 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
     room,
     requestSnapshot,
     topicVoting,
+    cardState = INITIAL_CARD_STATE,
+    pickCard,
+    playCard,
+    dismissCardOffer,
   } = useSocketStore();
+
+  const [pickingTargetCardId, setPickingTargetCardId] = useState<CardId | null>(
+    null,
+  );
 
   // Drop-in spectating baseline: a late-joiner entered the room as
   // SPECTATOR and is viewing the match read-only. The server enforces
   // the same gate independently (see MatchHandler.handleSubmitAnswer)
   // — this derivation only drives the UI.
   const isSpectator = room?.joinMode === "SPECTATOR";
+  const isObserving = isSpectator || isEliminated;
 
   const [showLeaveModal, setShowLeaveModal] = useState(false);
+  const [isSpectatingAfterElimination, setIsSpectatingAfterElimination] =
+    useState(false);
   const {
     activeAnswerResult,
     activePendingAnswer,
@@ -74,7 +92,7 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
     match,
     pendingAnswer,
     lastAnswerResult,
-    isSpectator,
+    isSpectator: isObserving,
     submitAnswer,
   });
 
@@ -96,11 +114,274 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
   // user.
 
   const maxPlayers = room?.maxPlayers ?? GAME_CONFIG.MAX_PLAYERS;
-  const livePlayerCount = remainingCount ?? match?.players?.length ?? 0;
+  const livePlayerCount =
+    remainingCount ??
+    match?.players?.filter((p) => p.status !== "ELIMINATED").length ??
+    0;
+
+  // Active temporary card visual effects targeting the local player (active players only)
+  const roundEffects = cardState.activeRoundEffects;
+  const myRoundEffects = useMemo(() => {
+    if (isObserving || !userId || !roundEffects || roundEffects.length === 0)
+      return [];
+    return roundEffects.filter(
+      (eff) =>
+        eff.targetPlayerIds?.includes(userId) ||
+        (eff.playedByPlayerId === userId && eff.targetPlayerIds?.length === 0),
+    );
+  }, [isObserving, roundEffects, userId]);
+
+  const activeEffect = cardState.lastResolvedEffect;
+  const isTargetOfActiveEffect = Boolean(
+    !isObserving &&
+    activeEffect &&
+    userId &&
+    (activeEffect.targetPlayerIds?.includes(userId) ||
+      (activeEffect.playedByPlayerId === userId &&
+        activeEffect.targetPlayerIds?.length === 0)),
+  );
+
+  const [timeDelta, setTimeDelta] = useState<{
+    deltaSeconds: number;
+    key: number;
+  } | null>(null);
+  const [timeOffsetSeconds, setTimeOffsetSeconds] = useState<number>(0);
+
+  // Reset time adjustment on every new round & activate pre-cast time effects
+  const currentRoundNo = match?.currentRoundNo ?? 0;
+  React.useEffect(() => {
+    setTimeOffsetSeconds(0);
+    setTimeDelta(null);
+
+    // If there is an active TIMER_MODIFY or TIME_BONUS for this round
+    const timerEff = myRoundEffects.find(
+      (e) =>
+        e.effect.kind === "TIMER_MODIFY" || e.effect.kind === "QUESTION_REPLAY",
+    );
+    if (timerEff) {
+      const deltaMs =
+        timerEff.effect.kind === "TIMER_MODIFY"
+          ? (timerEff.effect.deltaMs ?? 0)
+          : ((timerEff.effect as { extraMs?: number }).extraMs ?? 0);
+      const deltaSec = Math.round(deltaMs / 1000);
+      if (deltaSec !== 0) {
+        setTimeDelta({ deltaSeconds: deltaSec, key: Date.now() });
+        setTimeOffsetSeconds(deltaSec);
+      }
+    }
+  }, [currentRoundNo, myRoundEffects]);
+
+  // Trigger time delta animation and adjust countdown when TIMER_MODIFY lands during round
+  React.useEffect(() => {
+    if (!activeEffect || !userId) return;
+    const isTarget =
+      activeEffect.targetPlayerIds?.includes(userId) ||
+      (activeEffect.playedByPlayerId === userId &&
+        activeEffect.targetPlayerIds?.length === 0);
+
+    if (
+      isTarget &&
+      (activeEffect.effect.kind === "TIMER_MODIFY" ||
+        activeEffect.effect.kind === "QUESTION_REPLAY") &&
+      (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
+    ) {
+      const deltaMs =
+        activeEffect.effect.kind === "TIMER_MODIFY"
+          ? (activeEffect.effect.deltaMs ?? 0)
+          : ((activeEffect.effect as { extraMs?: number }).extraMs ?? 0);
+      const deltaSec = Math.round(deltaMs / 1000);
+      if (deltaSec !== 0) {
+        setTimeDelta({ deltaSeconds: deltaSec, key: Date.now() });
+        setTimeOffsetSeconds((prev) => prev + deltaSec);
+      }
+    }
+  }, [activeEffect, userId, currentRoundNo]);
+
+  const displayTimeLeft = Math.max(0, timeLeft + timeOffsetSeconds);
+
+  // Dynamic active timers for temporary effects that expire after durationMs/delayMs
+  const [activeLocked, setActiveLocked] = useState(false);
+  const [activeFoggy, setActiveFoggy] = useState(false);
+  const [activeDelayRender, setActiveDelayRender] = useState(false);
+  const [activeSemanticFlip, setActiveSemanticFlip] = useState(false);
+
+  // 1. OPTION_LOCK: auto-unlocks after 2s (or durationMs)
+  const lockEff = useMemo(
+    () => myRoundEffects.find((e) => e.effect.kind === "OPTION_LOCK"),
+    [myRoundEffects],
+  );
+  React.useEffect(() => {
+    if (lockEff && lockEff.effect.kind === "OPTION_LOCK") {
+      setActiveLocked(true);
+      const timer = setTimeout(
+        () => setActiveLocked(false),
+        lockEff.effect.durationMs ?? 2000,
+      );
+      return () => clearTimeout(timer);
+    } else {
+      setActiveLocked(false);
+      return undefined;
+    }
+  }, [currentRoundNo, lockEff]);
+
+  // 2. VISUAL_OVERLAY (Brain Fog): auto-clears after 5s
+  const fogEff = useMemo(
+    () => myRoundEffects.find((e) => e.effect.kind === "VISUAL_OVERLAY"),
+    [myRoundEffects],
+  );
+  React.useEffect(() => {
+    if (fogEff && fogEff.effect.kind === "VISUAL_OVERLAY") {
+      setActiveFoggy(true);
+      const timer = setTimeout(
+        () => setActiveFoggy(false),
+        fogEff.effect.durationMs ?? 5000,
+      );
+      return () => clearTimeout(timer);
+    } else {
+      setActiveFoggy(false);
+      return undefined;
+    }
+  }, [currentRoundNo, fogEff]);
+
+  // 3. DELAY_RENDER: reveals after 3s (or delayMs)
+  const delayEff = useMemo(
+    () => myRoundEffects.find((e) => e.effect.kind === "DELAY_RENDER"),
+    [myRoundEffects],
+  );
+  React.useEffect(() => {
+    if (delayEff && delayEff.effect.kind === "DELAY_RENDER") {
+      setActiveDelayRender(true);
+      const timer = setTimeout(
+        () => setActiveDelayRender(false),
+        delayEff.effect.delayMs ?? 3000,
+      );
+      return () => clearTimeout(timer);
+    } else {
+      setActiveDelayRender(false);
+      return undefined;
+    }
+  }, [currentRoundNo, delayEff]);
+
+  // 4. SEMANTIC_FLIP: resets after 4s (or durationMs)
+  const flipEff = useMemo(
+    () => myRoundEffects.find((e) => e.effect.kind === "SEMANTIC_FLIP"),
+    [myRoundEffects],
+  );
+  React.useEffect(() => {
+    if (flipEff && flipEff.effect.kind === "SEMANTIC_FLIP") {
+      setActiveSemanticFlip(true);
+      const timer = setTimeout(
+        () => setActiveSemanticFlip(false),
+        flipEff.effect.durationMs ?? 4000,
+      );
+      return () => clearTimeout(timer);
+    } else {
+      setActiveSemanticFlip(false);
+      return undefined;
+    }
+  }, [currentRoundNo, flipEff]);
+
+  const isFoggy = activeFoggy;
+  const isDelayRender = activeDelayRender;
+  const isSemanticFlipped = activeSemanticFlip;
+  const isOptionLocked = activeLocked;
+
+  const hintPartial = useMemo(() => {
+    const eff =
+      myRoundEffects.find((e) => e.effect.kind === "HINT_REVEAL") ||
+      (isTargetOfActiveEffect &&
+      activeEffect?.effect.kind === "HINT_REVEAL" &&
+      (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
+        ? activeEffect
+        : null);
+    return eff?.effect.kind === "HINT_REVEAL" ? eff.effect.partial : null;
+  }, [myRoundEffects, isTargetOfActiveEffect, activeEffect, currentRoundNo]);
+
+  const disabledOptionCodes = useMemo(() => {
+    const eff =
+      myRoundEffects.find((e) => e.effect.kind === "OPTION_DISABLE") ||
+      (userId &&
+      activeEffect?.playedByPlayerId === userId &&
+      activeEffect?.effect.kind === "OPTION_DISABLE" &&
+      (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
+        ? activeEffect
+        : null);
+    if (eff && eff.effect.kind === "OPTION_DISABLE" && eff.effect.indexes) {
+      const CODES = ["A", "B", "C", "D"];
+      return eff.effect.indexes
+        .map((idx: number) => CODES[idx])
+        .filter((code: string | undefined): code is string => Boolean(code));
+    }
+    return [];
+  }, [myRoundEffects, userId, activeEffect, currentRoundNo]);
+
+  const fakeFlaggedIndexes = useMemo(() => {
+    const eff =
+      myRoundEffects.find((e) => e.effect.kind === "OPTION_FAKE") ||
+      (isTargetOfActiveEffect &&
+      activeEffect?.effect.kind === "OPTION_FAKE" &&
+      (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
+        ? activeEffect
+        : null);
+    return eff?.effect.kind === "OPTION_FAKE" ? (eff.effect.indexes ?? []) : [];
+  }, [myRoundEffects, isTargetOfActiveEffect, activeEffect, currentRoundNo]);
+
+  const burningCardId = useMemo(() => {
+    const eff =
+      myRoundEffects.find((e) => e.effect.kind === "HAND_DESTROY") ||
+      (isTargetOfActiveEffect && activeEffect?.effect.kind === "HAND_DESTROY"
+        ? activeEffect
+        : null);
+    return eff?.effect.kind === "HAND_DESTROY"
+      ? ((eff.effect.destroyedCardIds?.[0] as CardId) ?? null)
+      : null;
+  }, [myRoundEffects, isTargetOfActiveEffect, activeEffect]);
+
+  const hasShield = Boolean(
+    userId &&
+    (myRoundEffects.some(
+      (e) => e.playedByPlayerId === userId && e.effect.kind === "SHIELD",
+    ) ||
+      (activeEffect?.playedByPlayerId === userId &&
+        activeEffect?.effect.kind === "SHIELD" &&
+        (activeEffect.targetRoundNo ?? activeEffect.roundNo) ===
+          currentRoundNo)),
+  );
+
+  const scoreMultiplier = useMemo(() => {
+    const eff =
+      myRoundEffects.find(
+        (e) => e.playedByPlayerId === userId && e.effect.kind === "SCORE_MULT",
+      ) ||
+      (userId &&
+      activeEffect?.playedByPlayerId === userId &&
+      activeEffect?.effect.kind === "SCORE_MULT" &&
+      (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
+        ? activeEffect
+        : null);
+    return eff?.effect.kind === "SCORE_MULT" ? eff.effect.factor : null;
+  }, [myRoundEffects, userId, activeEffect, currentRoundNo]);
+
+  const hasSecondChance = Boolean(
+    userId &&
+    (myRoundEffects.some(
+      (e) => e.playedByPlayerId === userId && e.effect.kind === "SECOND_CHANCE",
+    ) ||
+      (activeEffect?.playedByPlayerId === userId &&
+        activeEffect?.effect.kind === "SECOND_CHANCE" &&
+        (activeEffect.targetRoundNo ?? activeEffect.roundNo) ===
+          currentRoundNo)),
+  );
 
   return (
     <AppShellLayout>
-      {isEliminated && <EliminatedOverlay reason={eliminationReason} />}
+      {isEliminated && !isSpectatingAfterElimination && (
+        <EliminatedOverlay
+          reason={eliminationReason}
+          onSpectate={() => setIsSpectatingAfterElimination(true)}
+          onLeave={() => setShowLeaveModal(true)}
+        />
+      )}
 
       {/* Pre-Match Topic Ban Draft Overlay */}
       {Boolean(
@@ -110,20 +391,111 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
         !topicVoting.isFinished,
       ) && <TopicVotingOverlay />}
 
-      {/* Drop-in spectator banner: a thin top-of-page strip telling the
-          user they joined as a late spectator. Lighter than the
-          isEliminated fullscreen overlay because the spectator can still
-          follow the round and leave at will. */}
-      {isSpectator && !isEliminated && <SpectatorBanner />}
+      {/* Phase 2: Milestone Card Offer Overlay */}
+      {Boolean(
+        cardState.currentOffer &&
+        match?.id &&
+        cardState.currentOffer.matchId === match.id &&
+        !isObserving,
+      ) && (
+        <CardOfferOverlay
+          roundNo={cardState.currentOffer!.roundNo}
+          offeredCardIds={cardState.currentOffer!.offeredCardIds}
+          offerSeqNo={cardState.currentOffer!.offerSeqNo}
+          onPickCard={(cardId, offerSeqNo) => {
+            pickCard(cardId, offerSeqNo);
+          }}
+          onDismiss={dismissCardOffer}
+        />
+      )}
+
+      {/* Phase 2: Card Target Picker Overlay */}
+      {pickingTargetCardId && (
+        <CardTargetPicker
+          cardId={pickingTargetCardId}
+          offerSeqNo={cardState.currentOffer?.offerSeqNo ?? 0}
+          targets={(match?.players ?? room?.players ?? [])
+            .filter((p) => p.id !== userId && p.status === "ACTIVE")
+            .map((p) => ({ playerId: p.id, name: p.name }))}
+          onPick={(targetPlayerId) => {
+            playCard(
+              pickingTargetCardId,
+              cardState.currentOffer?.offerSeqNo ?? 0,
+              targetPlayerId,
+            );
+            setPickingTargetCardId(null);
+          }}
+          onCancel={() => setPickingTargetCardId(null)}
+        />
+      )}
+
+      {/* Phase 2: Card Animation Banner */}
+      {cardState.lastResolvedEffect && (
+        <CardAnimation
+          event={cardState.lastResolvedEffect}
+          userId={userId}
+          players={match?.players ?? room?.players ?? []}
+        />
+      )}
+
+      {/* Spectator banner: shown for drop-in spectators or eliminated players who chose to spectate */}
+      {(isSpectator || (isEliminated && isSpectatingAfterElimination)) && (
+        <SpectatorBanner isEliminated={isEliminated} />
+      )}
 
       <div className="max-w-6xl mx-auto w-full space-y-6 pt-2 select-none animate-slide-up">
-        <GameStateRibbon
-          roundNo={match?.currentRoundNo || 1}
-          timeLeft={timeLeft}
-          roundDuration={roundDuration}
-          livePlayerCount={livePlayerCount}
-          maxPlayers={maxPlayers}
-        />
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex-1 w-full">
+            <GameStateRibbon
+              roundNo={match?.currentRoundNo || 1}
+              timeLeft={displayTimeLeft}
+              roundDuration={roundDuration}
+              livePlayerCount={livePlayerCount}
+              maxPlayers={maxPlayers}
+              timeDelta={timeDelta}
+            />
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            {hasShield && (
+              <div className="flex items-center gap-1.5 bg-candy-mint px-3.5 py-2.5 rounded-2xl border-[3px] border-candy-ink shadow-[3px_3px_0_0_#2B2D42] text-candy-ink font-display font-black text-xs animate-pulse">
+                <CardGlyph
+                  variant="shield"
+                  size={18}
+                  className="text-candy-ink"
+                />
+                <span>KHIÊN HOẠT ĐỘNG</span>
+              </div>
+            )}
+            {scoreMultiplier && (
+              <div className="flex items-center gap-1.5 bg-candy-yellow px-3.5 py-2.5 rounded-2xl border-[3px] border-candy-ink shadow-[3px_3px_0_0_#2B2D42] text-candy-ink font-display font-black text-xs animate-bounce">
+                <CardGlyph
+                  variant="doubleScore"
+                  size={18}
+                  className="text-candy-ink"
+                />
+                <span>x{scoreMultiplier} ĐIỂM</span>
+              </div>
+            )}
+            {hasSecondChance && (
+              <div className="flex items-center gap-1.5 bg-candy-pink px-3.5 py-2.5 rounded-2xl border-[3px] border-candy-ink shadow-[3px_3px_0_0_#2B2D42] text-candy-ink font-display font-black text-xs">
+                <CardGlyph
+                  variant="secondChance"
+                  size={18}
+                  className="text-candy-ink"
+                />
+                <span>CƠ HỘI 2</span>
+              </div>
+            )}
+            {cardState.classId && (
+              <div className="flex items-center gap-2 bg-white px-4 py-3 rounded-2xl border-[3px] border-candy-ink shadow-[3px_3px_0_0_#2B2D42]">
+                <span className="text-xs font-bold text-candy-ink/70">
+                  CLASS:
+                </span>
+                <ClassBadge classId={cardState.classId} variant="strong" />
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* Layout Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -133,6 +505,13 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
               hasCurrentQuestion={hasCurrentQuestion}
               questionText={questionText}
               roundCompleted={roundCompleted}
+              hasAnswered={
+                activePendingAnswer !== null || activeAnswerResult !== null
+              }
+              isFoggy={isFoggy}
+              isDelayRender={isDelayRender}
+              isSemanticFlipped={isSemanticFlipped}
+              hintPartial={hintPartial}
             />
 
             <AnswerPanel
@@ -143,17 +522,66 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
               onSelect={handleSelectAnswer}
               disabled={
                 roundCompleted ||
-                activePendingAnswer !== null ||
-                activeAnswerResult !== null ||
+                (!isObserving &&
+                  !hasSecondChance &&
+                  (activePendingAnswer !== null ||
+                    activeAnswerResult !== null)) ||
                 !match?.id ||
                 match?.currentRoundNo <= 0
               }
+              disabledOptionCodes={disabledOptionCodes}
+              isOptionLocked={isOptionLocked}
+              fakeFlaggedIndexes={fakeFlaggedIndexes}
             />
+
+            {/* Phase 2: Player's Card Hand */}
+            {!isObserving && cardState.hand.length > 0 && (
+              <div className="bg-white/80 backdrop-blur-sm rounded-2xl border-[3px] border-candy-ink p-4 shadow-[4px_4px_0_0_#2B2D42] space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black uppercase text-candy-ink tracking-wider flex items-center gap-1.5">
+                    <CardGlyph
+                      variant="cards"
+                      size={16}
+                      className="text-candy-ink"
+                    />
+                    THẺ BÀI ĐANG CÓ ({cardState.hand.length})
+                  </span>
+                  <span className="text-[11px] text-candy-ink/60">
+                    Bấm để kích hoạt trong lượt này
+                  </span>
+                </div>
+                <CardHand
+                  hand={cardState.hand}
+                  playedCardIds={cardState.playedCardIds}
+                  classId={cardState.classId}
+                  onPickCard={(cardId) => {
+                    setPickingTargetCardId(cardId);
+                  }}
+                  disabled={roundCompleted || isObserving}
+                  burningCardId={burningCardId}
+                />
+              </div>
+            )}
           </div>
 
           {/* Sidebar Panel: Live Feed & Eliminators */}
           <div className="lg:col-span-1 space-y-6">
-            <OpponentsSidebar players={match?.players ?? []} userId={userId} />
+            {/* Professor Exam Supervisor Widget */}
+            <ProfessorHudWidget
+              timeLeft={displayTimeLeft}
+              hasAnswered={
+                activePendingAnswer !== null || activeAnswerResult !== null
+              }
+              isCorrect={activeAnswerResult?.isCorrect ?? null}
+              isEliminated={isEliminated}
+            />
+
+            <OpponentsSidebar
+              players={
+                match?.players?.length ? match.players : (room?.players ?? [])
+              }
+              userId={userId}
+            />
 
             <AntiHackNote />
 

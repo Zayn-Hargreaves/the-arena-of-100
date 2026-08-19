@@ -12,6 +12,7 @@ export interface CardHandProps {
   classId: ClassId | null;
   onPickCard: (cardId: CardId) => void;
   disabled?: boolean;
+  burningCardId?: CardId | null;
   className?: string;
 }
 
@@ -19,20 +20,13 @@ export interface CardHandProps {
 // shown-but-greyed. Used in the match UI beside the question
 // card so the player can pick a card at any moment during the
 // answer window.
-//
-// Performance: `playedSet` and `classFiltered` are memoised
-// on the inputs that actually change (`hand`, `playedCardIds`,
-// `classId`). Without the memo the parent re-render (e.g. on
-// every answer timer tick) would re-allocate the `Set` and
-// re-run the `filter` for every card on every tick — at 100
-// players × 3 cards per render × 1HZ timer = 300 alloc/free
-// per second otherwise.
 export function CardHand({
   hand,
   playedCardIds,
   classId,
   onPickCard,
   disabled,
+  burningCardId = null,
   className,
 }: CardHandProps) {
   const t = useTranslations("Cards");
@@ -64,13 +58,15 @@ export function CardHand({
     >
       {classFiltered.map((cardId) => {
         const spent = playedSet.has(cardId);
+        const isBurning = burningCardId === cardId;
         return (
           <CardTile
             key={cardId}
             cardId={cardId}
             variant={spent ? "spent" : "default"}
-            onClick={spent ? undefined : () => onPickCard(cardId)}
-            disabled={disabled || spent}
+            onClick={spent || isBurning ? undefined : () => onPickCard(cardId)}
+            disabled={disabled || spent || isBurning}
+            isBurning={isBurning}
             className="w-44"
           />
         );

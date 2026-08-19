@@ -54,6 +54,12 @@ export function useGameRoundState({
   const [revealedCorrectAnswer, setRevealedCorrectAnswer] = useState<
     string | null
   >(null);
+
+  const effectiveSelectedAnswer =
+    selectedAnswer ??
+    activePendingAnswer?.answer ??
+    activeAnswerResult?.submittedAnswer ??
+    null;
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const roundResultRevealRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -84,62 +90,100 @@ export function useGameRoundState({
     }
   }, []);
 
-  useEffect(() => {
-    if (!activePendingAnswer) return;
-    setSelectedAnswer(activePendingAnswer.answer);
-  }, [activePendingAnswer]);
+  const lastTrackedRoundRef = useRef<number | null>(null);
 
+  // When round changes to a new active round, reset selectedAnswer, roundCompleted and revealedCorrectAnswer
   useEffect(() => {
-    if (activePendingAnswer) return;
-    if (activeAnswerResult?.isCorrect !== undefined) return;
-    setSelectedAnswer(null);
-  }, [activePendingAnswer, activeAnswerResult]);
+    if (match?.status === MatchStatus.ROUND_ACTIVE) {
+      if (
+        activeRoundNo !== undefined &&
+        activeRoundNo !== lastTrackedRoundRef.current
+      ) {
+        lastTrackedRoundRef.current = activeRoundNo;
+        setRoundCompleted(false);
+        setRevealedCorrectAnswer(null);
+        setSelectedAnswer(
+          activePendingAnswer?.answer ??
+            activeAnswerResult?.submittedAnswer ??
+            null,
+        );
+      }
+    }
+  }, [
+    match?.status,
+    activeRoundNo,
+    activePendingAnswer?.answer,
+    activeAnswerResult?.submittedAnswer,
+  ]);
 
   const calculateTimeLeft = useCallback(() => {
     if (!match?.roundEndTime) return roundDuration;
     return Math.max(0, Math.floor((match.roundEndTime - Date.now()) / 1000));
   }, [match?.roundEndTime, roundDuration]);
 
+  // Countdown timer: runs whenever status is ROUND_ACTIVE
   useEffect(() => {
-    if (roundCompleted) return;
+    if (match?.status !== MatchStatus.ROUND_ACTIVE || roundCompleted) {
+      clearCountdownTimer();
+      return;
+    }
     clearCountdownTimer();
     setTimeLeft(calculateTimeLeft());
     intervalRef.current = setInterval(() => {
       setTimeLeft(calculateTimeLeft());
     }, 1000);
     return clearCountdownTimer;
-  }, [calculateTimeLeft, roundCompleted, clearCountdownTimer]);
+  }, [
+    calculateTimeLeft,
+    match?.status,
+    roundCompleted,
+    activeRoundNo,
+    clearCountdownTimer,
+  ]);
 
   const isRoundResultPhase =
     match?.status === MatchStatus.ROUND_RESULT && match.roundEndTime === null;
+
   useEffect(() => {
     if (!isRoundResultPhase) return;
 
-    clearTimers();
+    clearCountdownTimer();
     setRoundCompleted(true);
-    roundResultRevealRef.current = setTimeout(() => {
-      roundResultContinueRef.current = setTimeout(() => {
-        setTimeLeft(roundDuration);
-        setSelectedAnswer(null);
-        setRoundCompleted(false);
-        setRevealedCorrectAnswer(null);
-      }, 3000);
-    }, 1000);
-
-    return clearTimers;
-  }, [isRoundResultPhase, activeRoundNo, clearTimers, roundDuration]);
+  }, [isRoundResultPhase, clearCountdownTimer]);
 
   useEffect(() => {
-    if (!isRoundResultPhase || !activeAnswerResult?.correctAnswer) return;
+    if (!isRoundResultPhase) {
+      setRevealedCorrectAnswer(null);
+      return;
+    }
+
     const answerCodes = ["A", "B", "C", "D"];
-    const rawAnswer = activeAnswerResult.correctAnswer;
-    const matchedIndex = options.indexOf(rawAnswer);
-    setRevealedCorrectAnswer(
-      answerCodes.includes(rawAnswer) || matchedIndex < 0
-        ? rawAnswer
-        : (answerCodes[matchedIndex] ?? rawAnswer),
-    );
-  }, [isRoundResultPhase, activeAnswerResult, options]);
+    const rawAnswer = activeAnswerResult?.correctAnswer?.trim();
+
+    if (rawAnswer) {
+      if (answerCodes.includes(rawAnswer.toUpperCase())) {
+        setRevealedCorrectAnswer(rawAnswer.toUpperCase());
+        return;
+      }
+      const matchedIndex = options.findIndex(
+        (opt) => opt.trim().toLowerCase() === rawAnswer.toLowerCase(),
+      );
+      if (matchedIndex >= 0 && answerCodes[matchedIndex]) {
+        setRevealedCorrectAnswer(answerCodes[matchedIndex]);
+        return;
+      }
+    }
+
+    // Fallback: if server confirmed user's answer is correct, we know the correct answer code
+    if (activeAnswerResult?.isCorrect && effectiveSelectedAnswer) {
+      setRevealedCorrectAnswer(effectiveSelectedAnswer);
+    }
+  }, [
+    isRoundResultPhase,
+    activeAnswerResult,
+    options,
+    effectiveSelectedAnswer,
+  ]);
 
   useEffect(() => clearTimers, [clearTimers]);
 
@@ -149,14 +193,16 @@ export function useGameRoundState({
         roundCompleted ||
         activePendingAnswer ||
         activeAnswerResult ||
-        isSpectator ||
         !match?.id ||
         match.currentRoundNo <= 0
       ) {
         return;
       }
-      const submissionId = submitAnswer(match.id, match.currentRoundNo, option);
-      if (submissionId) setSelectedAnswer(option);
+      setSelectedAnswer(option);
+      if (isSpectator) {
+        return;
+      }
+      submitAnswer(match.id, match.currentRoundNo, option);
     },
     [
       roundCompleted,
@@ -172,14 +218,42 @@ export function useGameRoundState({
   const getTileVariant = useCallback(
     (answerCode: string) => {
       if (!roundCompleted) {
-        return selectedAnswer === answerCode ? "selected" : "default";
+        if (effectiveSelectedAnswer === answerCode) {
+          return "selected";
+        }
+        if (
+          effectiveSelectedAnswer !== null ||
+          activePendingAnswer !== null ||
+          activeAnswerResult !== null
+        ) {
+          return "disabled";
+        }
+        return "default";
       }
-      if (revealedCorrectAnswer && answerCode === revealedCorrectAnswer) {
+
+      // During round results:
+      const isThisCorrect =
+        (revealedCorrectAnswer && answerCode === revealedCorrectAnswer) ||
+        (activeAnswerResult?.isCorrect &&
+          answerCode === effectiveSelectedAnswer);
+
+      if (isThisCorrect) {
         return "correct";
       }
-      return answerCode === selectedAnswer ? "incorrect" : "disabled";
+
+      if (answerCode === effectiveSelectedAnswer) {
+        return "incorrect";
+      }
+
+      return "disabled";
     },
-    [roundCompleted, revealedCorrectAnswer, selectedAnswer],
+    [
+      roundCompleted,
+      revealedCorrectAnswer,
+      effectiveSelectedAnswer,
+      activePendingAnswer,
+      activeAnswerResult,
+    ],
   );
 
   return {

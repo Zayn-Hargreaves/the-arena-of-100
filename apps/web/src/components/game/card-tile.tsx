@@ -16,6 +16,7 @@ export interface CardTileProps {
   cosmeticVariant?: CardVariantKey;
   onClick?: () => void;
   disabled?: boolean;
+  isBurning?: boolean;
   className?: string;
 }
 
@@ -53,16 +54,20 @@ const COSMETIC_VARIANT_STYLES: Record<
   GOLD: "ring-2 ring-amber-400 shadow-[0_0_12px_2px_rgba(251,191,36,0.5)]",
 };
 
+import { CardGlyph, getGlyphForCardId } from "./card-glyphs";
+
 export function CardTile({
   cardId,
   variant = "default",
   cosmeticVariant = "DEFAULT",
   onClick,
   disabled,
+  isBurning = false,
   className,
 }: CardTileProps) {
   const def = getCardDefinition(cardId);
   const t = useTranslations("Cards");
+  const glyph = getGlyphForCardId(cardId);
   // Phase 3 — localize the card name + description from the i18n
   // catalog. Falls back to the canonical English name (def.name) when
   // a translation key is missing — keeps untranslated locales from
@@ -76,33 +81,58 @@ export function CardTile({
   return (
     <button
       type="button"
+      data-sfx="card_play"
       onClick={onClick}
-      disabled={disabled}
+      disabled={disabled || isBurning}
       data-card-id={cardId}
       data-tier={def.tier}
       data-class={def.classId}
       data-cosmetic-variant={cosmeticVariant}
       className={cn(
-        "rounded-lg border-2 p-3 text-left shadow-[3px_3px_0_0_#2B2D42] transition-all",
+        "rounded-lg border-2 p-3 text-left shadow-[3px_3px_0_0_#2B2D42] transition-all relative overflow-hidden",
         TIER_STYLES[def.tier],
         VARIANT_STYLES[variant],
         COSMETIC_VARIANT_STYLES[cosmeticVariant],
-        disabled && "cursor-not-allowed",
+        (disabled || isBurning) && "cursor-not-allowed",
+        isBurning && "animate-shake border-candy-orange",
         className,
       )}
     >
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-bold">{localizedName}</span>
+      {/* Burn Vanish Overlay (CB-3) */}
+      {isBurning && (
+        <div className="absolute inset-0 z-20 bg-candy-orange/95 backdrop-blur-xs flex items-center justify-center gap-1.5 text-white font-display font-black text-xs animate-pulse">
+          <CardGlyph
+            variant="burn"
+            size={18}
+            className="text-candy-yellow animate-bounce"
+          />
+          <span>BỊ THIÊU HỦY!</span>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <CardGlyph
+            variant={glyph}
+            size={18}
+            className={cn(
+              def.classId === "ATTACK" ? "text-candy-red" : "text-candy-blue",
+            )}
+          />
+          <span className="text-sm font-bold truncate">{localizedName}</span>
+        </div>
         <span
           className={cn(
-            "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
+            "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase shrink-0",
             TIER_LABEL_CLASS[def.tier],
           )}
         >
           {t(`tiers.${def.tier}`)}
         </span>
       </div>
-      <p className="mt-1 text-xs text-candy-ink/70">{localizedDescription}</p>
+      <p className="mt-1 text-xs text-candy-ink/70 line-clamp-2">
+        {localizedDescription}
+      </p>
     </button>
   );
 }

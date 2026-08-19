@@ -31,11 +31,16 @@ describe("TopicVotingOverlay", () => {
     vi.useRealTimers();
   });
 
-  it("renders candidates and voting header", () => {
+  it("renders candidates, percentages, and top danger indicators", () => {
     render(<TopicVotingOverlay />);
     expect(screen.getByText("SCIENCE")).toBeInTheDocument();
     expect(screen.getByText("HISTORY")).toBeInTheDocument();
     expect(screen.getByText("TECH")).toBeInTheDocument();
+    // SCIENCE has 2/3 votes = 67%, HISTORY has 1/3 = 33%
+    expect(screen.getByText("(67%)")).toBeInTheDocument();
+    expect(screen.getByText("(33%)")).toBeInTheDocument();
+    // Top 2 dangerous topics should display topDanger badge
+    expect(screen.getAllByText("topDanger").length).toBe(2);
   });
 
   it("calls voteBanTopic when a topic card is clicked", () => {

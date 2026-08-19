@@ -2,7 +2,7 @@
 
 import React from "react";
 import { useTranslations } from "next-intl";
-import { Swords } from "lucide-react";
+import { MiniGlyph } from "@/components/ui/mini-glyph";
 import { Avatar } from "@/components/ui/avatar";
 import { AvatarFrame } from "@/components/ui/avatar-frame";
 import { AnimatedSprite } from "@/components/ui/animated-sprite";
@@ -72,7 +72,10 @@ export const OpponentsSidebar: React.FC<OpponentsSidebarProps> = ({
   return (
     <div className="p-5 rounded-3xl border-[3.5px] border-candy-ink bg-white shadow-[5px_5px_0_0_#2B2D42] space-y-4">
       <h3 className="font-display font-black text-sm text-candy-ink uppercase tracking-wider flex items-center gap-2 border-b-[3px] border-candy-ink pb-2">
-        <Swords className="w-4 h-4 text-candy-red stroke-[2.5]" />
+        <MiniGlyph
+          variant="swords"
+          className="w-4 h-4 text-candy-red stroke-[2.5]"
+        />
         {t("opponentsTitle")}
       </h3>
 
@@ -109,7 +112,9 @@ export const OpponentsSidebar: React.FC<OpponentsSidebarProps> = ({
                       {avatarDetail.isAnimated && avatarDetail.spritesheet ? (
                         <AnimatedSprite
                           src={avatarDetail.spritesheet}
-                          scale={1.8}
+                          width="28px"
+                          height="28px"
+                          scale={0.16}
                           row={0}
                           speed={120}
                         />
