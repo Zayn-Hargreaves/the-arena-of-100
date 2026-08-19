@@ -6,11 +6,15 @@ import {
   type JoinMode,
   type RoomType,
   type SnapshotPayload,
+  type CardId,
+  type ClassId,
+  type CardEffectEvent,
 } from "@arena/shared";
 import type { Socket } from "socket.io-client";
 
 export interface AuthResponse {
   accessToken: string;
+  guestSecret?: string;
   user: {
     id: string;
     username: string;
@@ -24,6 +28,8 @@ export interface Player {
   status: PlayerStatus;
   score: number;
   isOnline: boolean;
+  avatarUrl?: string | null;
+  classId?: ClassId | null;
 }
 
 export interface Room {
@@ -59,6 +65,7 @@ export interface LastAnswerResult {
   isCorrect?: boolean;
   responseTimeMs?: number;
   correctAnswer?: string;
+  submittedAnswer?: string;
 }
 
 export interface PendingAnswer {
@@ -98,7 +105,37 @@ export interface MatchmakingState {
   playersInQueue: number;
   matchedRoomCode: string | null;
   matchedRoomId: string | null;
+  matchedMatchId: string | null;
 }
+
+export interface CardOfferState {
+  matchId: string;
+  roundNo: number;
+  offeredCardIds: readonly [CardId, CardId, CardId];
+  offerSeqNo: number;
+  seedUsed: string;
+  expiresAt: number;
+}
+
+export interface CardState {
+  classId: ClassId | null;
+  hand: CardId[];
+  playedCardIds: CardId[];
+  currentOffer: CardOfferState | null;
+  lastResolvedEffect: CardEffectEvent | null;
+  pendingNextRoundEffects: CardEffectEvent[];
+  activeRoundEffects: CardEffectEvent[];
+}
+
+export const INITIAL_CARD_STATE: CardState = {
+  classId: null,
+  hand: [],
+  playedCardIds: [],
+  currentOffer: null,
+  lastResolvedEffect: null,
+  pendingNextRoundEffects: [],
+  activeRoundEffects: [],
+};
 
 export interface SocketState extends ConnectionState {
   socket: Socket | null;
@@ -106,6 +143,7 @@ export interface SocketState extends ConnectionState {
   match: Match | null;
   topicVoting: TopicVotingState | null;
   matchmaking: MatchmakingState;
+  cardState: CardState;
   lastAnswerResult: LastAnswerResult | null;
   pendingAnswer: PendingAnswer | null;
   remainingCount: number | null;
@@ -143,6 +181,13 @@ export interface SocketState extends ConnectionState {
   leaveMatchmaking: () => void;
   clearMatchmakingMatched: () => void;
   voteBanTopic: (matchId: string, topic: string) => void;
+  pickCard: (cardId: CardId, offerSeqNo: number) => void;
+  playCard: (
+    cardId: CardId,
+    offerSeqNo: number,
+    targetPlayerId?: string,
+  ) => void;
+  dismissCardOffer: () => void;
   submitAnswer: (
     matchId: string,
     roundNo: number,

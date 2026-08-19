@@ -54,7 +54,23 @@ function parseErrorPayload(payload: unknown): string | undefined {
     return payload.trim() || undefined;
   }
   if (payload && typeof payload === "object") {
-    return parseMessageValue((payload as { message?: unknown }).message);
+    const obj = payload as {
+      message?: unknown;
+      error?: { message?: unknown; code?: unknown };
+      code?: unknown;
+    };
+    const fromMessage = parseMessageValue(obj.message);
+    if (fromMessage) return fromMessage;
+    if (obj.error) {
+      const fromNested = parseMessageValue(obj.error.message);
+      if (fromNested) return fromNested;
+      if (typeof obj.error.code === "string" && obj.error.code.trim()) {
+        return obj.error.code.trim();
+      }
+    }
+    if (typeof obj.code === "string" && obj.code.trim()) {
+      return obj.code.trim();
+    }
   }
   return undefined;
 }
@@ -78,7 +94,17 @@ async function parseError(response: Response) {
  */
 async function parseJsonOrThrow<T>(response: Response): Promise<T> {
   try {
-    return (await response.json()) as T;
+    const raw = (await response.json()) as unknown;
+    if (
+      raw &&
+      typeof raw === "object" &&
+      "success" in raw &&
+      (raw as { success?: unknown }).success === true &&
+      "data" in raw
+    ) {
+      return (raw as { data: T }).data;
+    }
+    return raw as T;
   } catch (e) {
     throw new JsonParseError(
       e instanceof Error ? e.message : "Failed to parse response",

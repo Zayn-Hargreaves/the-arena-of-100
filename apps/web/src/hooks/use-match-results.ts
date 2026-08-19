@@ -1,9 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
+import type { AvatarSeed } from "@arena/shared";
 import { API_URL } from "@/lib/api";
+import { findAvatarBySeed } from "@/lib/avatars";
 
 export interface MatchResultApiResponse {
   winnerId?: string | null;
+  status?: string;
+  rounds?: Array<{ id?: string; roundNo?: number }>;
+  answers?: Array<{
+    userId?: string;
+    roundId?: string;
+    isCorrect?: boolean;
+    responseTimeMs?: number;
+  }>;
   players?: Array<{
     userId?: string;
     score?: number;
@@ -12,7 +22,7 @@ export interface MatchResultApiResponse {
     eloBefore?: number | null;
     eloAfter?: number | null;
     eloDelta?: number | null;
-    user?: { id?: string; username?: string; elo?: number };
+    user?: { id?: string; username?: string; avatar?: string; elo?: number };
   }>;
 }
 
@@ -42,6 +52,7 @@ export interface PerformanceViewModel {
   eliminatedRound?: number | null;
   eloDelta?: number | null;
   eloAfter?: number | null;
+  isWinner: boolean;
 }
 
 function buildRequestSignal(
@@ -92,7 +103,7 @@ export async function fetchResult(
   data: MatchResultApiResponse | null;
   wasTimeout: boolean;
 }> {
-  const endpoint = `${API_URL}/matches/${encodeURIComponent(matchId)}`;
+  const endpoint = `${API_URL}/api/v1/matches/${encodeURIComponent(matchId)}`;
   const request = buildRequestSignal(signal, 10_000);
   try {
     const response = await fetch(endpoint, {
@@ -107,7 +118,16 @@ export async function fetchResult(
     if (request.signal.aborted) {
       return { response: null, data: null, wasTimeout: request.wasTimeout() };
     }
-    const data = (await response.json()) as MatchResultApiResponse;
+    const rawJson = (await response.json()) as
+      | MatchResultApiResponse
+      | { data?: MatchResultApiResponse; success?: boolean };
+    const data =
+      rawJson &&
+      typeof rawJson === "object" &&
+      "data" in rawJson &&
+      rawJson.data
+        ? (rawJson.data as MatchResultApiResponse)
+        : (rawJson as MatchResultApiResponse);
     return { response, data, wasTimeout: false };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
@@ -192,6 +212,56 @@ export function useMatchResults(matchId: string, userId: string | null) {
       })),
     [payload?.players],
   );
+
+  const getPlayerEliminatedRound = useCallback(
+    (playerId: string) => {
+      const playerAnswers = (payload?.answers ?? []).filter(
+        (a) => a.userId === playerId,
+      );
+      const wrongAnswer = playerAnswers.find((a) => !a.isCorrect);
+      if (wrongAnswer && payload?.rounds) {
+        const roundIdx = payload.rounds.findIndex(
+          (r) => r.id === wrongAnswer.roundId,
+        );
+        if (roundIdx !== -1) {
+          return payload.rounds[roundIdx]?.roundNo ?? roundIdx + 1;
+        }
+      }
+      // If winner or never eliminated
+      if (payload?.winnerId && payload.winnerId === playerId) {
+        return (payload?.rounds?.length ?? 1) + 1;
+      }
+      return 0;
+    },
+    [payload?.answers, payload?.rounds, payload?.winnerId],
+  );
+
+  const sortedPlayers = useMemo(
+    () =>
+      [...players].sort((a, b) => {
+        // 1. Winner is always first
+        const aIsWinner = Boolean(
+          payload?.winnerId && payload.winnerId === a.id,
+        );
+        const bIsWinner = Boolean(
+          payload?.winnerId && payload.winnerId === b.id,
+        );
+        if (aIsWinner && !bIsWinner) return -1;
+        if (!aIsWinner && bIsWinner) return 1;
+
+        // 2. Higher survived/elimination round
+        const aRound = getPlayerEliminatedRound(a.id);
+        const bRound = getPlayerEliminatedRound(b.id);
+        if (bRound !== aRound) return bRound - aRound;
+
+        // 3. Higher score
+        if (b.score !== a.score) return b.score - a.score;
+
+        return a.id.localeCompare(b.id);
+      }),
+    [players, payload?.winnerId, getPlayerEliminatedRound],
+  );
+
   const playerById = useMemo(
     () => new Map(players.map((p) => [p.id, p])),
     [players],
@@ -200,12 +270,20 @@ export function useMatchResults(matchId: string, userId: string | null) {
   const playerRankById = useMemo(
     () =>
       new Map(
-        (payload?.players ?? []).map((p) => [
-          p.userId ?? p.user?.id ?? "",
-          p.rank ?? p.placement ?? null,
-        ]),
+        (payload?.players ?? []).map((p) => {
+          const id = p.userId ?? p.user?.id ?? "";
+          if (p.placement !== undefined && p.placement !== null) {
+            return [id, p.placement];
+          }
+          if (p.rank !== undefined && p.rank !== null) {
+            return [id, p.rank];
+          }
+          const computedRank =
+            sortedPlayers.findIndex((sp) => sp.id === id) + 1;
+          return [id, computedRank > 0 ? computedRank : null];
+        }),
       ),
-    [payload?.players],
+    [payload?.players, sortedPlayers],
   );
 
   const rawPlayerById = useMemo(
@@ -216,53 +294,192 @@ export function useMatchResults(matchId: string, userId: string | null) {
     [payload?.players],
   );
 
+  const getPlayerMetrics = useCallback(
+    (playerId: string) => {
+      const playerAnswers = (payload?.answers ?? []).filter(
+        (a) => a.userId === playerId,
+      );
+      const totalAnswers = playerAnswers.length;
+      const correctAnswers = playerAnswers.filter((a) => a.isCorrect).length;
+      const accuracy =
+        totalAnswers > 0
+          ? `${Math.round((correctAnswers / totalAnswers) * 100)}%`
+          : "--";
+      const totalTimeMs = playerAnswers.reduce(
+        (acc, a) => acc + (a.responseTimeMs ?? 0),
+        0,
+      );
+      const avgSpeed =
+        totalAnswers > 0
+          ? `${(totalTimeMs / totalAnswers / 1000).toFixed(1)}s`
+          : "--";
+
+      const wrongAnswer = playerAnswers.find((a) => !a.isCorrect);
+      let eliminatedRoundNo: number | null = null;
+      if (wrongAnswer && payload?.rounds) {
+        const roundIdx = payload.rounds.findIndex(
+          (r) => r.id === wrongAnswer.roundId,
+        );
+        if (roundIdx !== -1) {
+          eliminatedRoundNo = payload.rounds[roundIdx]?.roundNo ?? roundIdx + 1;
+        }
+      }
+
+      return {
+        accuracy,
+        avgSpeed,
+        correctAnswers,
+        totalAnswers,
+        eliminatedRoundNo,
+      };
+    },
+    [payload?.answers, payload?.rounds],
+  );
+
   const winner = useMemo<WinnerViewModel>(() => {
     const winnerId = payload?.winnerId ?? null;
-    const winnerFromServer = winnerId ? playerById.get(winnerId) : undefined;
-    // Only honor a server-provided winnerId that resolves to a known
-    // player. A missing `payload.winnerId` (incomplete payload, race
-    // with the finalization broadcast) or an unmatched id leaves the
-    // view-model in the "updating" placeholder state — never infer a
-    // champion from the first player in payload.players, which would fabricate a winner
-    // the server has not declared.
+    const winnerFromServer = winnerId ? playerById.get(winnerId) : null;
+    const rawWinner = winnerId ? rawPlayerById.get(winnerId) : null;
+    const winnerAvatarSeed =
+      (rawWinner?.user?.avatar as AvatarSeed) || "jellyfrog";
+    const winnerAvatarOpt = findAvatarBySeed(winnerAvatarSeed);
+    const winnerSpritesheet =
+      winnerAvatarOpt?.spritesheet ||
+      "/arena_of_100/jellyfrog_spritesheet.webp";
+    const totalRounds = payload?.rounds?.length ?? 1;
+
     if (!winnerFromServer) {
       return {
-        name: t("updating"),
-        spritesheet: "/arena_of_100/jellyfrog_spritesheet.webp",
+        name: payload?.winnerId
+          ? t("guestPlayer")
+          : payload?.status === "FINISHED"
+            ? t("noWinner")
+            : t("updating"),
+        spritesheet: winnerSpritesheet,
         isAnimated: true,
         totalScore: 0,
         averageSpeed: "--",
         accuracy: "--",
-        survivedRounds: "--",
+        survivedRounds: `${Math.max(1, totalRounds)}`,
       };
     }
+    const metrics = getPlayerMetrics(winnerFromServer.id);
+    const score = winnerFromServer.score ?? 0;
     return {
-      name: winnerFromServer.name ?? t("updating"),
-      spritesheet: "/arena_of_100/jellyfrog_spritesheet.webp",
+      name:
+        winnerFromServer.name ??
+        (payload?.winnerId ? t("guestPlayer") : t("updating")),
+      spritesheet: winnerSpritesheet,
       isAnimated: true,
-      totalScore: winnerFromServer.score ?? 0,
-      averageSpeed: "--",
-      accuracy: "--",
-      survivedRounds: "--",
+      totalScore: score,
+      averageSpeed: metrics.avgSpeed,
+      accuracy: metrics.accuracy,
+      survivedRounds: `${Math.max(1, totalRounds)}`,
     };
-  }, [playerById, payload?.winnerId, t]);
+  }, [
+    playerById,
+    rawPlayerById,
+    payload?.winnerId,
+    payload?.status,
+    payload?.rounds,
+    getPlayerMetrics,
+    t,
+  ]);
 
   const yourPerformance = useMemo<PerformanceViewModel>(() => {
-    const currentPlayer = userId ? playerById.get(userId) : undefined;
-    const rawPlayer = userId ? rawPlayerById.get(userId) : undefined;
+    let effectiveUserId = userId;
+    if (!effectiveUserId && typeof window !== "undefined") {
+      try {
+        const storedUserId = localStorage.getItem("userId");
+        if (storedUserId && playerById.has(storedUserId)) {
+          effectiveUserId = storedUserId;
+        } else {
+          const storedCallsign = localStorage.getItem("callsign");
+          if (storedCallsign) {
+            const matchedPlayer = players.find(
+              (p) => p.name?.toLowerCase() === storedCallsign.toLowerCase(),
+            );
+            if (matchedPlayer) {
+              effectiveUserId = matchedPlayer.id;
+            }
+          }
+        }
+      } catch {
+        // ignore localStorage access errors
+      }
+    }
+
+    // Never invent identity from "first non-bot" / first leaderboard row —
+    // that misattributes another player's rank/score/ELO as "you".
+    const currentPlayer = effectiveUserId
+      ? playerById.get(effectiveUserId)
+      : undefined;
+    const rawPlayer = currentPlayer
+      ? rawPlayerById.get(currentPlayer.id)
+      : undefined;
+    const isWinner = Boolean(
+      payload?.winnerId &&
+      currentPlayer?.id &&
+      payload.winnerId === currentPlayer.id,
+    );
+
+    let rank: number | null = null;
+    if (currentPlayer) {
+      const serverRank = playerRankById.get(currentPlayer.id);
+      if (serverRank !== undefined && serverRank !== null) {
+        rank = serverRank;
+      } else if (isWinner) {
+        rank = 1;
+      } else {
+        const idx = sortedPlayers.findIndex((p) => p.id === currentPlayer.id);
+        rank =
+          idx >= 0
+            ? payload?.winnerId
+              ? idx + 1 > 1
+                ? idx + 1
+                : 2
+              : idx + 1
+            : null;
+      }
+    }
+
+    const score = currentPlayer?.score ?? 0;
+    const metrics = currentPlayer
+      ? getPlayerMetrics(currentPlayer.id)
+      : { accuracy: "--", avgSpeed: "--", eliminatedRoundNo: null };
+
+    const isEliminated =
+      !isWinner &&
+      (metrics.eliminatedRoundNo !== null ||
+        (payload?.status === "FINISHED" && !isWinner));
+    const eliminatedRound = isEliminated
+      ? (metrics.eliminatedRoundNo ?? (payload?.rounds?.length || 1))
+      : null;
+
     return {
       name: currentPlayer?.name ?? t("guestPlayer"),
-      rank: currentPlayer
-        ? (playerRankById.get(currentPlayer.id) ?? null)
-        : null,
-      score: currentPlayer?.score ?? 0,
-      speed: "--",
-      accuracy: "--",
-      eliminatedRound: null,
+      rank,
+      score,
+      speed: metrics.avgSpeed,
+      accuracy: metrics.accuracy,
+      eliminatedRound,
       eloDelta: rawPlayer?.eloDelta ?? null,
       eloAfter: rawPlayer?.eloAfter ?? null,
+      isWinner,
     };
-  }, [playerById, playerRankById, rawPlayerById, t, userId]);
+  }, [
+    playerById,
+    playerRankById,
+    rawPlayerById,
+    players,
+    sortedPlayers,
+    payload?.winnerId,
+    payload?.status,
+    payload?.rounds,
+    getPlayerMetrics,
+    t,
+    userId,
+  ]);
 
   const winnerId = payload?.winnerId ?? null;
   const opponents = winnerId

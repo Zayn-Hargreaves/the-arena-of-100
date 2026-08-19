@@ -29,11 +29,17 @@ import {
   type TopicVotingFinishedPayload,
   type MatchmakingStatusPayload,
   type MatchmakingMatchedPayload,
+  type CardResolvedBatchEvent,
   ErrorCode,
 } from "@arena/shared";
-import { API_URL } from "@/lib/api";
+import { io } from "socket.io-client";
+import { API_URL, apiFetch } from "@/lib/api";
 import { generateId } from "@/lib/id";
-import type { AuthResponse, SocketState } from "./socket-store.types";
+import {
+  INITIAL_CARD_STATE,
+  type AuthResponse,
+  type SocketState,
+} from "./socket-store.types";
 import {
   applyClearedTerminationState,
   emitIfConnected,
@@ -67,6 +73,10 @@ import {
   applyTopicVotingFinishedState,
   applyMatchmakingStatusState,
   applyMatchmakingMatchedState,
+  applyClassAssignedState,
+  applyCardOfferState,
+  applyCardPickedState,
+  applyCardResolvedState,
 } from "./socket-store.updaters";
 
 interface PendingTopicVoteCommand {
@@ -119,7 +129,9 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     playersInQueue: 0,
     matchedRoomCode: null,
     matchedRoomId: null,
+    matchedMatchId: null,
   },
+  cardState: INITIAL_CARD_STATE,
   lastAnswerResult: null,
   pendingAnswer: null,
 
@@ -135,19 +147,19 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   // Connect to WebSocket
   connect: async () => {
     const state = get();
-    // socket.connected only proves the WS handshake succeeded, not that
-    // authentication completed. On auth failure the socket can be left
-    // in a connected-but-unauthenticated state, so require the auth
-    // flag as well — otherwise AppShellLayout's retry logic (which only
-    // checks !isConnected) would be permanently bypassed.
+    // Require both transport + auth so a connected-but-unauthenticated
+    // socket does not short-circuit and leave callers without a ready session.
     if (state.socket?.connected && state.isAuthenticated) return;
-
-    const { io } = await import("socket.io-client");
+    if (state.socket) {
+      state.socket.disconnect();
+    }
 
     const newSocket = io(`${API_URL}/game`, {
       transports: ["websocket", "polling"],
       autoConnect: true,
     });
+
+    set({ socket: newSocket });
 
     // Plan D reconnect: capture match/lastSeenSeqNo across the
     // auth handshake, but defer the REQUEST_SNAPSHOT call until the
@@ -182,26 +194,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       const stateToken = get().accessToken;
       if (stateToken) {
         newSocket.emit(ClientEvent.AUTHENTICATE, { token: stateToken });
-        return;
       }
-
-      void get()
-        .refreshAccessToken()
-        .then((token) => {
-          if (!token) {
-            set({ error: "Failed to obtain access token" });
-            return;
-          }
-          newSocket.emit(ClientEvent.AUTHENTICATE, { token });
-        })
-        .catch((err: unknown) => {
-          const message =
-            err instanceof Error
-              ? err.message
-              : "Failed to refresh access token";
-          set({ error: message });
-          console.error("❌ Token refresh error:", err);
-        });
     });
 
     newSocket.on("disconnect", () => {
@@ -475,6 +468,44 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       console.log("✅ Answer result:", data);
     });
 
+    // Phase 2: Class & Card Event Listeners
+    newSocket.on(ServerEvent.CLASS_ASSIGNED, (data) => {
+      if (get().socket !== newSocket) return;
+      set((state) => applyClassAssignedState(state, data));
+      console.log("🛡️ Class assigned:", data);
+    });
+
+    newSocket.on(ServerEvent.CARD_OFFER, (data) => {
+      if (get().socket !== newSocket) return;
+      set((state) => applyCardOfferState(state, data));
+      console.log("🃏 Card offer received:", data);
+    });
+
+    newSocket.on(ServerEvent.CARD_PICKED, (data) => {
+      if (get().socket !== newSocket) return;
+      set((state) => applyCardPickedState(state, data));
+      console.log("🎴 Card picked:", data);
+    });
+
+    newSocket.on(ServerEvent.CARD_RESOLVED, (data) => {
+      if (get().socket !== newSocket) return;
+      set((state) => applyCardResolvedState(state, data));
+      console.log("✨ Card resolved:", data);
+    });
+
+    newSocket.on(
+      ServerEvent.CARD_RESOLVED_BATCH,
+      (data: CardResolvedBatchEvent) => {
+        if (get().socket !== newSocket) return;
+        if (data.effects && Array.isArray(data.effects)) {
+          for (const effect of data.effects) {
+            set((state) => applyCardResolvedState(state, effect));
+          }
+        }
+        console.log("✨ Card resolved batch:", data);
+      },
+    );
+
     // Admin kill-switch: server has force-terminated this room (and any
     // active match in it). Clear local room/match state and surface a
     // termination flag so the lobby page can redirect + toast. We do NOT
@@ -562,8 +593,28 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       console.error("❌ Error:", data.message);
     });
 
-    set({ socket: newSocket });
+    const stateToken = get().accessToken;
+    let effectiveToken = stateToken;
+    if (!effectiveToken) {
+      try {
+        effectiveToken = await get().refreshAccessToken();
+      } catch {
+        effectiveToken = null;
+      }
+    }
 
+    if (!effectiveToken) {
+      newSocket.disconnect();
+      set({
+        socket: null,
+        isConnected: false,
+        isAuthenticated: false,
+        error: "Authentication required",
+      });
+      throw new Error("Authentication required");
+    }
+
+    newSocket.emit(ClientEvent.AUTHENTICATE, { token: effectiveToken });
     try {
       await authPromise;
     } catch (error) {
@@ -636,6 +687,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           playersInQueue: 0,
           matchedRoomCode: state.matchmaking.matchedRoomCode,
           matchedRoomId: state.matchmaking.matchedRoomId,
+          matchedMatchId: state.matchmaking.matchedMatchId,
         },
         // Plan D — reset the delta cursor alongside match/room so a
         // stale seqNo from the previous session cannot qualify for
@@ -649,9 +701,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
   refreshAccessToken: async () => {
     try {
-      const response = await fetch(`${API_URL}/auth/refresh`, {
+      const response = await apiFetch("/api/v1/auth/refresh", {
         method: "POST",
-        credentials: "include",
       });
 
       if (!response.ok) {
@@ -665,7 +716,14 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         return null;
       }
 
-      const data = (await response.json()) as AuthResponse;
+      const raw = (await response.json()) as {
+        data?: AuthResponse;
+      } & AuthResponse;
+      const data = raw.data || raw;
+
+      if (!data.user) {
+        throw new Error("Invalid authentication response");
+      }
 
       set({
         accessToken: data.accessToken,
@@ -693,30 +751,92 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
     const AUTH_TIMEOUT_MS = 5000;
 
+    let guestSecret: string | null = null;
+    let storedAvatar: string | null = null;
+    if (typeof window !== "undefined") {
+      try {
+        guestSecret =
+          localStorage.getItem(`guestSecret:${nickname.trim()}`) ||
+          localStorage.getItem("guestSecret");
+        storedAvatar = localStorage.getItem("avatarSeed");
+      } catch {
+        // ignore storage error
+      }
+    }
+
     let token: string;
     try {
-      const response = await fetch(`${API_URL}/auth/guest`, {
+      const response = await apiFetch("/api/v1/auth/guest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ username: nickname }),
+        body: JSON.stringify({
+          username: nickname,
+          guestSecret: guestSecret || undefined,
+          avatar: storedAvatar || undefined,
+        }),
       });
 
       if (!response.ok) {
         let errorMessage = "Authentication failed";
         try {
-          const errorData = (await response.json()) as { message?: string };
-          if (errorData.message) errorMessage = errorData.message;
+          const errorData = (await response.json()) as {
+            message?: string | { code?: string; message?: string };
+            error?: {
+              message?: string | { code?: string; message?: string };
+              code?: string;
+            };
+            code?: string;
+          };
+          const nested =
+            errorData.error?.message ?? errorData.message ?? errorData.error;
+          if (typeof nested === "string" && nested.trim()) {
+            errorMessage = nested;
+          } else if (nested && typeof nested === "object") {
+            const nestedMsg =
+              typeof nested.message === "string"
+                ? nested.message
+                : typeof nested.code === "string"
+                  ? nested.code
+                  : null;
+            errorMessage = nestedMsg || errorData.code || errorMessage;
+          } else if (errorData.code) {
+            errorMessage = errorData.code;
+          }
         } catch {
           // Ignore JSON parse failure
         }
         throw new Error(errorMessage);
       }
 
-      const data = (await response.json()) as AuthResponse;
+      const raw = (await response.json()) as {
+        data?: AuthResponse;
+      } & AuthResponse;
+      const data = raw.data || raw;
+
+      if (!data.user) {
+        throw new Error("Invalid authentication response");
+      }
+
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem("userId", data.user.id);
+          localStorage.setItem("callsign", data.user.username);
+          if (data.guestSecret) {
+            localStorage.setItem("guestSecret", data.guestSecret);
+            localStorage.setItem(
+              `guestSecret:${data.user.username}`,
+              data.guestSecret,
+            );
+          }
+        } catch {
+          // ignore storage error
+        }
+      }
 
       set({
         accessToken: data.accessToken,
+        userId: data.user.id,
+        username: data.user.username,
         userRole: data.user.role,
       });
       token = data.accessToken;
@@ -814,6 +934,17 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   leaveRoom: (roomId: string) => {
     const { socket } = get();
     emitIfConnected(socket, ClientEvent.LEAVE_ROOM, { roomId });
+    set({
+      room: null,
+      match: null,
+      cardState: INITIAL_CARD_STATE,
+      topicVoting: null,
+      lastAnswerResult: null,
+      pendingAnswer: null,
+      remainingCount: null,
+      isEliminated: false,
+      eliminationReason: null,
+    });
   },
 
   // Start Match
@@ -822,13 +953,23 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     emitIfConnected(socket, ClientEvent.START_MATCH, { roomId });
   },
 
-  // Matchmaking
   joinMatchmaking: (category?: string) => {
     const socket = get().socket;
     if (!socket?.connected) {
       set({ error: "Socket is not connected" });
       return;
     }
+    set({
+      room: null,
+      match: null,
+      cardState: INITIAL_CARD_STATE,
+      topicVoting: null,
+      lastAnswerResult: null,
+      pendingAnswer: null,
+      remainingCount: null,
+      isEliminated: false,
+      eliminationReason: null,
+    });
     emitIfConnected(socket, ClientEvent.JOIN_MATCHMAKING, {
       category: category && category !== "ALL" ? category : undefined,
     });
@@ -840,6 +981,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       emitIfConnected(socket, ClientEvent.LEAVE_MATCHMAKING, {});
     }
     set((state) => ({
+      cardState: INITIAL_CARD_STATE,
       matchmaking: {
         ...state.matchmaking,
         isQueued: false,
@@ -849,6 +991,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         playersInQueue: 0,
         matchedRoomCode: null,
         matchedRoomId: null,
+        matchedMatchId: null,
       },
     }));
   },
@@ -859,6 +1002,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         ...state.matchmaking,
         matchedRoomCode: null,
         matchedRoomId: null,
+        matchedMatchId: null,
       },
     }));
   },
@@ -907,6 +1051,75 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       topic,
       commandId,
     });
+  },
+
+  // Phase 2: Card Actions
+  pickCard: (cardId, offerSeqNo) => {
+    const socket = get().socket;
+    const matchId = get().match?.id;
+    if (!socket || !matchId) return;
+
+    // Optimistically dismiss offer and put in hand
+    set((state) => ({
+      cardState: {
+        ...state.cardState,
+        hand: state.cardState.hand.includes(cardId)
+          ? state.cardState.hand
+          : [...state.cardState.hand, cardId],
+        currentOffer: null,
+      },
+    }));
+
+    emitIfConnected(socket, ClientEvent.CARD_PICK, {
+      matchId,
+      cardId,
+      offerSeqNo,
+      commandId: generateId(),
+    });
+  },
+
+  playCard: (cardId, offerSeqNo, targetPlayerId) => {
+    const socket = get().socket;
+    const matchId = get().match?.id;
+    if (!socket || !matchId) return;
+
+    // Optimistically mark as played
+    set((state) => ({
+      cardState: {
+        ...state.cardState,
+        playedCardIds: state.cardState.playedCardIds.includes(cardId)
+          ? state.cardState.playedCardIds
+          : [...state.cardState.playedCardIds, cardId],
+      },
+    }));
+
+    emitIfConnected(
+      socket,
+      ClientEvent.CARD_PLAY,
+      targetPlayerId
+        ? {
+            matchId,
+            cardId,
+            offerSeqNo,
+            targetPlayerId,
+            commandId: generateId(),
+          }
+        : {
+            matchId,
+            cardId,
+            offerSeqNo,
+            commandId: generateId(),
+          },
+    );
+  },
+
+  dismissCardOffer: () => {
+    set((state) => ({
+      cardState: {
+        ...state.cardState,
+        currentOffer: null,
+      },
+    }));
   },
 
   // Submit Answer

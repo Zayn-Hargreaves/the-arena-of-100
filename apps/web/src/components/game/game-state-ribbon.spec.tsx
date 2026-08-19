@@ -64,4 +64,32 @@ describe("GameStateRibbon", () => {
     >;
     expect(tFn).toHaveBeenCalledWith("roundLabel", { number: 3 });
   });
+
+  it("renders positive and negative time delta badges", () => {
+    const { rerender } = render(
+      <GameStateRibbon
+        roundNo={3}
+        timeLeft={12}
+        roundDuration={15}
+        livePlayerCount={7}
+        maxPlayers={100}
+        timeDelta={{ deltaSeconds: 5, key: 1 }}
+      />,
+    );
+
+    expect(screen.getByText("+5s")).toBeInTheDocument();
+
+    rerender(
+      <GameStateRibbon
+        roundNo={3}
+        timeLeft={7}
+        roundDuration={15}
+        livePlayerCount={7}
+        maxPlayers={100}
+        timeDelta={{ deltaSeconds: -5, key: 2 }}
+      />,
+    );
+
+    expect(screen.getByText("-5s")).toBeInTheDocument();
+  });
 });

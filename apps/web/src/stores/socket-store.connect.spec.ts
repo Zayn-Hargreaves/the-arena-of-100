@@ -950,6 +950,7 @@ describe("socket-store connect heartbeat ownership", () => {
           playersInQueue: 0,
           matchedRoomCode: null,
           matchedRoomId: null,
+          matchedMatchId: null,
         },
       });
 

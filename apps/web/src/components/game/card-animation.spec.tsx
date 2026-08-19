@@ -79,4 +79,21 @@ describe("CardAnimation — TEMPORARY completion timer", () => {
     });
     expect(onComplete).not.toHaveBeenCalled();
   });
+
+  it("renders card name, target info, and pop-art glyph without emoji", () => {
+    const { container } = render(
+      <CardAnimation
+        event={makeTempEvent(5000)}
+        userId="p1"
+        players={[
+          { id: "p1", name: "Alice" },
+          { id: "p2", name: "Bob" },
+        ]}
+      />,
+    );
+
+    expect(container.querySelector("svg")).toBeInTheDocument();
+    expect(container.textContent).toContain("50:50");
+    expect(container.textContent).toContain("Bob");
+  });
 });

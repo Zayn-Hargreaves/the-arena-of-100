@@ -163,17 +163,37 @@ export function TopicVotingOverlay() {
 
   const bannedTopics = topicVoting?.bannedTopics;
   const activeTopics = topicVoting?.activeTopics;
+  const candidateTopics = topicVoting?.candidateTopics;
+  const voteCounts = topicVoting?.voteCounts;
+  const totalVotes = topicVoting?.totalVotes ?? 0;
+
   const bannedSet = useMemo(() => new Set(bannedTopics ?? []), [bannedTopics]);
   const activeSet = useMemo(() => new Set(activeTopics ?? []), [activeTopics]);
+
+  // Determine top 2 most voted topics when voting is ongoing
+  const topBannedCandidates = useMemo(() => {
+    if (
+      !candidateTopics ||
+      candidateTopics.length === 0 ||
+      totalVotes === 0 ||
+      !voteCounts
+    ) {
+      return new Set<string>();
+    }
+    const counts = voteCounts;
+    const sorted = [...candidateTopics]
+      .filter((t) => (counts[t] ?? 0) > 0)
+      .sort((a, b) => (counts[b] ?? 0) - (counts[a] ?? 0));
+    return new Set(sorted.slice(0, 2));
+  }, [candidateTopics, voteCounts, totalVotes]);
 
   if (!isOpen || !topicVoting) return null;
 
   const {
-    candidateTopics,
-    voteCounts,
+    candidateTopics: renderCandidateTopics,
+    voteCounts: renderVoteCounts,
     myVotedTopic,
     isFinished,
-    totalVotes,
     matchId,
   } = topicVoting;
 
@@ -190,7 +210,7 @@ export function TopicVotingOverlay() {
         tabIndex={-1}
         aria-modal="true"
         aria-labelledby="topic-voting-title"
-        className="relative w-full max-w-4xl p-6 md:p-8 bg-slate-900/90 border border-slate-700/60 rounded-2xl shadow-2xl shadow-rose-950/20 overflow-hidden text-slate-100 flex flex-col items-center animate-scale-in"
+        className="relative w-full max-w-4xl max-h-[90dvh] overflow-y-auto p-6 md:p-8 bg-slate-900/95 border border-slate-700/60 rounded-2xl shadow-2xl shadow-rose-950/20 text-slate-100 flex flex-col items-center animate-scale-in scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent"
       >
         {/* Header Glow */}
         <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-96 h-32 bg-rose-500/20 blur-3xl pointer-events-none" />
@@ -225,16 +245,19 @@ export function TopicVotingOverlay() {
 
         {/* Candidates Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 w-full mb-6">
-          {candidateTopics.map((topic) => {
+          {renderCandidateTopics.map((topic) => {
             const meta = TOPIC_METADATA[topic] || {
               icon: BookOpen,
               color: "from-slate-800 to-slate-900 border-slate-700",
             };
             const Icon = meta.icon;
-            const votes = voteCounts[topic] || 0;
+            const votes = renderVoteCounts[topic] || 0;
             const isSelected = myVotedTopic === topic;
             const isBanned = bannedSet.has(topic);
             const isActive = activeSet.has(topic);
+            const isTopDanger = !isFinished && topBannedCandidates.has(topic);
+            const votePercent =
+              totalVotes > 0 ? Math.round((votes / totalVotes) * 100) : 0;
             const topicLabel = t.has(topic) ? t(topic) : topic;
 
             return (
@@ -244,12 +267,14 @@ export function TopicVotingOverlay() {
                 onClick={() => handleVote(topic)}
                 disabled={isFinished}
                 aria-pressed={isSelected}
-                className={`relative text-left w-full p-5 rounded-xl border transition-all duration-200 select-none overflow-hidden flex flex-col justify-between min-h-[140px] bg-gradient-to-br ${
+                className={`relative text-left w-full p-5 rounded-xl border transition-all duration-200 select-none overflow-hidden flex flex-col justify-between min-h-[150px] bg-gradient-to-br ${
                   meta.color
                 } ${isFinished ? "cursor-default" : "cursor-pointer"} ${
                   isSelected
                     ? "ring-2 ring-rose-500 border-rose-500 shadow-lg shadow-rose-950/40 transform scale-[1.02]"
-                    : "hover:border-slate-500/50 hover:scale-[1.01]"
+                    : isTopDanger
+                      ? "border-amber-500/50 hover:border-amber-400/80 hover:scale-[1.01]"
+                      : "hover:border-slate-500/50 hover:scale-[1.01]"
                 } ${isBanned ? "opacity-60 grayscale" : ""}`}
               >
                 {/* Card Header */}
@@ -265,18 +290,44 @@ export function TopicVotingOverlay() {
                     </div>
                   </div>
 
-                  {isSelected && (
+                  {isSelected ? (
                     <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/20 border border-rose-500/40 text-[10px] font-bold text-rose-300">
                       <CheckCircle2 className="w-3 h-3" />
                       {t("voted")}
                     </span>
-                  )}
+                  ) : isTopDanger ? (
+                    <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-[10px] font-bold text-amber-300">
+                      <Flame className="w-3 h-3 text-amber-400" />
+                      {t("topDanger")}
+                    </span>
+                  ) : null}
                 </div>
 
+                {/* Progress Bar (Visible during voting when votes exist) */}
+                {!isFinished && totalVotes > 0 && (
+                  <div className="w-full bg-slate-950/60 rounded-full h-1.5 overflow-hidden my-3 border border-slate-800/80">
+                    <div
+                      className={`h-full transition-all duration-300 ease-out rounded-full ${
+                        isTopDanger
+                          ? "bg-gradient-to-r from-rose-500 to-amber-400"
+                          : "bg-rose-500/70"
+                      }`}
+                      style={{
+                        width: `${Math.min(100, Math.max(votePercent, votes > 0 ? 5 : 0))}%`,
+                      }}
+                    />
+                  </div>
+                )}
+
                 {/* Vote Count / Status Bar */}
-                <div className="mt-4 pt-3 border-t border-slate-700/40 flex items-center justify-between">
+                <div className="mt-2 pt-2 border-t border-slate-700/40 flex items-center justify-between">
                   <span className="text-xs font-mono text-slate-300">
                     {votes} {t("votesCount", { count: votes })}
+                    {totalVotes > 0 && !isFinished && (
+                      <span className="text-slate-400 font-sans ml-1 text-[11px]">
+                        ({votePercent}%)
+                      </span>
+                    )}
                   </span>
 
                   {!isFinished && (

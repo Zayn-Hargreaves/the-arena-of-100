@@ -109,6 +109,7 @@ vi.mock("@/components/game", () => ({
   LeaveMatchModal: (p: { onConfirm: () => void }) => (
     <button data-testid="confirm-leave" onClick={p.onConfirm} />
   ),
+  TopicVotingOverlay: () => <div data-testid="topic-voting-overlay" />,
 }));
 
 import GamePage from "./page";
