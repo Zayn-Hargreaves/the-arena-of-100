@@ -272,5 +272,39 @@ describe("elo-engine", () => {
       expect(result[0]!.userId).toBe("user-a");
       expect(result[1]!.userId).toBe("user-z");
     });
+
+    it("ranks winner 1st place even if another player has a higher score", () => {
+      const input = [
+        {
+          userId: "pEliminated",
+          score: 1500,
+          avgResponseMs: 400,
+          survivedRounds: 11,
+        },
+        {
+          userId: "pWinner",
+          score: 1200,
+          avgResponseMs: 600,
+          survivedRounds: 12,
+        },
+      ];
+      const result = assignPlacements(input, "pWinner");
+      expect(result[0]!.userId).toBe("pWinner");
+      expect(result[0]!.placement).toBe(1);
+      expect(result[1]!.userId).toBe("pEliminated");
+      expect(result[1]!.placement).toBe(2);
+    });
+
+    it("ranks players by survived rounds before scores", () => {
+      const input = [
+        { userId: "pRound3High", score: 800, survivedRounds: 3 },
+        { userId: "pRound5Low", score: 500, survivedRounds: 5 },
+      ];
+      const result = assignPlacements(input);
+      expect(result[0]!.userId).toBe("pRound5Low");
+      expect(result[0]!.placement).toBe(1);
+      expect(result[1]!.userId).toBe("pRound3High");
+      expect(result[1]!.placement).toBe(2);
+    });
   });
 });

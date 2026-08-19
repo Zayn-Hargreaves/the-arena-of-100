@@ -57,4 +57,6 @@ export enum ErrorCode {
   // Topic voting error codes
   TOPIC_VOTING_CLOSED = "TOPIC_VOTING_CLOSED",
   INVALID_TOPIC = "INVALID_TOPIC",
+  // Guest authentication — username already claimed with different secret
+  USERNAME_TAKEN = "USERNAME_TAKEN",
 }

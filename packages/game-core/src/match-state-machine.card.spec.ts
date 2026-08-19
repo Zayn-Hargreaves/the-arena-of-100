@@ -172,6 +172,18 @@ describe("pickOffer — milestone card offer", () => {
       b.pickOffer("p1", 5, "off-det"),
     );
   });
+
+  it("excludes previously picked/played cards from subsequent milestone offers", () => {
+    const machine = makeMachine();
+    machine.classAssignment(["p1"], "seed-class");
+    const offer1 = machine.pickOffer("p1", 5, "seed-offer-1");
+    const pickedCard = offer1[0]!;
+    machine.pickCard("p1", pickedCard, 1);
+
+    // Next milestone offer at Round 12
+    const offer2 = machine.pickOffer("p1", 12, "seed-offer-2");
+    expect(offer2).not.toContain(pickedCard);
+  });
 });
 
 describe("pickCard — spending an offered card", () => {

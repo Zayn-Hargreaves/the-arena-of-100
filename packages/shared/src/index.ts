@@ -133,6 +133,7 @@ export const ERROR_MESSAGE_KEYS: Record<ErrorCode, string> = {
   [ErrorCode.INVALID_COMMAND_ID]: "Cards.errors.invalidCommandId",
   [ErrorCode.TOPIC_VOTING_CLOSED]: "Errors.TOPIC_VOTING_CLOSED",
   [ErrorCode.INVALID_TOPIC]: "Errors.INVALID_TOPIC",
+  [ErrorCode.USERNAME_TAKEN]: "Errors.USERNAME_TAKEN",
 };
 
 // Backwards-compatible alias — callers still see ERROR_MESSAGES

@@ -114,18 +114,47 @@ export function calculateMultiplayerElo(
 }
 
 /**
- * Assigns 1-based standard placement to players based on their scores.
- * Higher score = better placement (1st, 2nd, etc.).
- * Ties broken deterministically by avgResponseMs (lower is faster/better) then userId.
+ * Assigns 1-based standard placement to players based on Battle Royale survival rules:
+ * 1. Winner is always 1st place (Quán Quân).
+ * 2. Higher survived rounds / later elimination round = better placement.
+ * 3. Tied on round: Higher score = better placement.
+ * 4. Ties broken deterministically by avgResponseMs (faster is better) then userId.
  */
 export function assignPlacements<
-  T extends { userId: string; score: number; avgResponseMs?: number },
->(players: T[]): Array<T & { placement: number }> {
+  T extends {
+    userId: string;
+    score: number;
+    avgResponseMs?: number;
+    survivedRounds?: number;
+    eliminatedInRound?: number | null;
+    isWinner?: boolean;
+  },
+>(players: T[], winnerId?: string | null): Array<T & { placement: number }> {
   const sorted = [...players].sort((a, b) => {
+    // 1. Winner always takes 1st place
+    const aIsWinner = Boolean(
+      a.isWinner || (winnerId && a.userId === winnerId),
+    );
+    const bIsWinner = Boolean(
+      b.isWinner || (winnerId && b.userId === winnerId),
+    );
+    if (aIsWinner && !bIsWinner) return -1;
+    if (!aIsWinner && bIsWinner) return 1;
+
+    // 2. Survived rounds (Battle Royale survival order)
+    const aRounds = a.survivedRounds ?? a.eliminatedInRound ?? 0;
+    const bRounds = b.survivedRounds ?? b.eliminatedInRound ?? 0;
+    if (bRounds !== aRounds) return bRounds - aRounds;
+
+    // 3. Higher score
     if (b.score !== a.score) return b.score - a.score;
+
+    // 4. Response time (faster is better)
     const aSpeed = a.avgResponseMs ?? Number.POSITIVE_INFINITY;
     const bSpeed = b.avgResponseMs ?? Number.POSITIVE_INFINITY;
     if (aSpeed !== bSpeed) return aSpeed - bSpeed;
+
+    // 5. Deterministic tie-break
     return a.userId.localeCompare(b.userId);
   });
 

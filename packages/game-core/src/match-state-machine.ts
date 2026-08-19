@@ -17,12 +17,14 @@ import {
   GAME_CONFIG,
   ErrorCode,
   RoomError,
+  getClassPool,
 } from "@arena/shared";
 import { computeRoundScore } from "./scoring";
 import { resolveTieBreak } from "./tie-break";
 import { serializeMatch, deserializeMatch } from "./match-state.codec";
 import {
   eliminationsForRound,
+  isAnswerMatch,
   UNAVAILABLE,
   type RoundStartingPlayers,
 } from "./round-elimination";
@@ -362,7 +364,11 @@ export class MatchStateMachine {
     const roundWithAnswer = this.currentRound as RoundRuntimeState & {
       correctAnswer: string;
     };
-    const isCorrect = answer === roundWithAnswer.correctAnswer;
+    const isCorrect = isAnswerMatch(
+      answer,
+      roundWithAnswer.correctAnswer,
+      this.currentRound.question?.options,
+    );
 
     // M1 fix: clamp responseTimeMs to a non-negative value. A
     // negative response would come from server clock skew (NTP
@@ -959,7 +965,14 @@ export class MatchStateMachine {
     if (!classId) {
       throw new RoomError(ErrorCode.PLAYER_NOT_IN_ROOM);
     }
-    const { cards } = sampleOffer(classId, seedUsed);
+    const fullPool = getClassPool(classId);
+    const picked = this.playerPickedCards.get(playerId) ?? new Set<CardId>();
+    const played = this.getPlayedCards(playerId);
+    const excluded = new Set<CardId>([...picked, ...played]);
+    const availablePool = fullPool.filter((id) => !excluded.has(id));
+    const customPool = availablePool.length >= 3 ? availablePool : undefined;
+
+    const { cards } = sampleOffer(classId, seedUsed, customPool);
     if (cards.length !== 3) {
       throw new Error(
         `card-engine invariant: expected 3 cards, got ${cards.length}`,
