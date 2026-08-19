@@ -146,7 +146,25 @@ export async function GET(req: NextRequest): Promise<Response> {
             minWidth: 240,
           }}
         >
-          <div style={{ display: "flex", fontSize: 96 }}>🔥</div>
+          <svg
+            viewBox="0 0 32 32"
+            width={84}
+            height={84}
+            fill="none"
+            style={{ display: "flex" }}
+          >
+            <path
+              d="M16 2C19 6 26 10 26 18C26 24 21.5 28 16 28C10.5 28 6 24 6 18C6 13 10 9 12 7C12 9 13.5 11 15 11C13.5 8.5 14 5.5 16 2Z"
+              fill="#FF4370"
+              stroke="#2B2D42"
+              strokeWidth="2.5"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M16 14C18 16 20 18 20 21C20 23.5 18 25 16 25C14 25 12 23.5 12 21C12 19 14 17 16 14Z"
+              fill="#FFD000"
+            />
+          </svg>
           <div
             style={{
               display: "flex",
