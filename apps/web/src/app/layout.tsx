@@ -41,7 +41,10 @@ export default async function RootLayout({
       lang={locale}
       className={`${displayFont.variable} ${sansFont.variable} ${handFont.variable} ${monoFont.variable}`}
     >
-      <body className="min-h-screen bg-background antialiased font-sans">
+      <body
+        className="min-h-screen bg-background antialiased font-sans"
+        suppressHydrationWarning
+      >
         {children}
       </body>
     </html>

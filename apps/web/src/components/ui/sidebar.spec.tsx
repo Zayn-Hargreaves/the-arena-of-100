@@ -46,16 +46,16 @@ describe("Sidebar — desktop", () => {
     expect(screen.getByText("OF 100")).toBeInTheDocument();
   });
 
-  it("renders all enabled nav items with translated labels", () => {
+  it("renders all enabled player nav items with translated labels", () => {
     render(<Sidebar nickname="Alice" />);
-    // nav.daily, nav.createRoom, nav.rankings, nav.settings, nav.profile, nav.admin
-    // (nav.arena is disabled, so the element is not rendered.)
+    // nav.daily, nav.createRoom, nav.rankings, nav.settings, nav.profile
+    // (nav.arena is disabled; nav.admin is hidden for non-admin.)
     expect(screen.getByText("nav.daily")).toBeInTheDocument();
     expect(screen.getByText("nav.createRoom")).toBeInTheDocument();
     expect(screen.getByText("nav.rankings")).toBeInTheDocument();
     expect(screen.getByText("nav.settings")).toBeInTheDocument();
     expect(screen.getByText("nav.profile")).toBeInTheDocument();
-    expect(screen.getByText("nav.admin")).toBeInTheDocument();
+    expect(screen.queryByText("nav.admin")).not.toBeInTheDocument();
   });
 
   it("does NOT render the disabled 'arena' nav item", () => {
@@ -278,10 +278,11 @@ describe("Sidebar — mobile", () => {
     try {
       render(<Sidebar nickname="Alice" />);
       await user.click(screen.getByRole("button", { name: "Open menu" }));
-      const dialog = screen.getByRole("dialog", {
-        name: "Mobile navigation menu",
-      });
-      const closeButton = within(dialog).getByRole("button", {
+      expect(
+        screen.getByRole("dialog", { name: "Mobile navigation menu" }),
+      ).toBeInTheDocument();
+
+      const closeButton = screen.getByRole("button", {
         name: "Close menu",
       });
       await user.click(closeButton);

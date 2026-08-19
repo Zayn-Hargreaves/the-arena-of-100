@@ -109,7 +109,12 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         {!isLoading && LeftIcon && (
           <LeftIcon className={iconSizeClasses[size ?? "md"]} />
         )}
-        <span className={isLoading ? "opacity-0" : "opacity-100"}>
+        <span
+          className={cn(
+            "inline-flex items-center justify-center gap-2.5",
+            isLoading ? "opacity-0" : "opacity-100",
+          )}
+        >
           {children}
         </span>
         {!isLoading && RightIcon && (

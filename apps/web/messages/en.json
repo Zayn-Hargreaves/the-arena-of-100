@@ -1,18 +1,73 @@
 {
   "common": {
-    "skipToMainContent": "Skip to main content"
+    "skipToMainContent": "Skip to main content",
+    "language": "Language",
+    "vietnamese": "Tiếng Việt",
+    "english": "English"
+  },
+  "policies": {
+    "termsTitle": "Terms of Battle",
+    "termsSubtitle": "Official rules and codes of honor for the 100-player arena.",
+    "antiCheatTitle": "Anti-Cheat Policy",
+    "antiCheatSubtitle": "Zero tolerance for unfair play. Server-authoritative fair gaming.",
+    "close": "Understood",
+    "terms": {
+      "section1Title": "1. Battle Royale Format",
+      "section1Desc": "100 players compete in real-time speed quiz rounds. One wrong answer or timeout results in instant elimination. The last player standing claims ultimate glory.",
+      "section2Title": "2. Guest Identity & Fair Play",
+      "section2Desc": "Guest login allows rapid match entry. Offensive, hateful, or abusive callsigns are strictly forbidden and subject to instant blacklisting.",
+      "section3Title": "3. Server-Authoritative Scoring",
+      "section3Desc": "All question timers, round sync, and tie-breakers are validated by the central server. Millisecond response times determine top positions in case of equal scores.",
+      "section4Title": "4. Cards & Class Mechanics",
+      "section4Desc": "Cards, offensive abilities, and defensive shields must be executed in accordance with class cooldowns. Misuse or desync exploits are automatically rejected."
+    },
+    "antiCheat": {
+      "section1Title": "1. Server-Authoritative Engine",
+      "section1Desc": "All question payloads, correct answers, and countdown states are calculated server-side with NestJS and Redis. The client never holds answer keys.",
+      "section2Title": "2. Bot & Macro Detection",
+      "section2Desc": "Heuristic latency tracking, automated click-pattern analysis, and input frequency monitors immediately detect non-human automated response scripts.",
+      "section3Title": "3. Prohibited Third-Party Tools",
+      "section3Desc": "Use of memory scanners, browser extension injection, WebSocket packet tampering, or screen-reading OCR bots is strictly prohibited.",
+      "section4Title": "4. Instant Disqualification",
+      "section4Desc": "Any confirmed cheating attempt triggers immediate expulsion from the match, nullification of leaderboard ratings, and permanent IP/device ban."
+    }
   },
   "HomePage": {
     "subtitle": "Battle Royale Quiz",
+    "brand": "ARENA 100",
+    "brandFull": "ARENA OF 100",
+    "taglineBadge": "WILD • NO BRAIN",
+    "onlineCount": "{count} PLAYERS ONLINE",
+    "heroTitle": "THE BRAINLESS ARENA",
+    "heroSubtitle": "Get it wrong and you are out!",
+    "guestLogin": "GUEST LOGIN OK",
     "enterNickname": "Enter Battle Nickname",
-    "nicknamePlaceholder": "e.g., GLITCH_RUNNER",
+    "nicknameLabel": "BATTLE NICKNAME",
+    "nicknamePlaceholder": "Type your nickname here...",
+    "socketSynced": "Socket synchronized",
+    "enterArena": "ENTER THE ARENA",
     "quickMatch": "Quick Match",
-    "createRoom": "Create Room",
-    "joinRoom": "Join Room",
+    "createRoom": "CREATE ROOM",
+    "joinRoom": "JOIN ROOM",
     "roomCode": "Match Room Code",
     "roomCodePlaceholder": "ROOM CODE",
     "rankings": "Rankings",
     "settings": "Settings",
+    "dailyChallenge": "Daily Challenge",
+    "howToPlay": "Rules & Guide",
+    "dailyBadge": "DAILY QUEST",
+    "dailyCardTitle": "Today's Daily Challenge",
+    "professorSupervisorLabel": "Professor Attendance Desk",
+    "dailyCardDesc": "Answer 5 daily questions, build your streak, and unlock exclusive card variants!",
+    "playDaily": "PLAY DAILY CHALLENGE",
+    "dailyResetIn": "Resets in",
+    "dailyStreakLabel": "Current Streak",
+    "rulesTitle": "100-Player Royale Mechanics",
+    "rulesDesc": "100 players enter, 1 survives. Use Class Passives and Tactical Cards to eliminate opponents.",
+    "viewRankingsDesc": "Check out the top contenders dominating the Arena!",
+    "footerCopyright": "© 2026 CYBER_ARENA. THE BRAINLESS BATTLE ROYALE!",
+    "terms": "Terms of Battle",
+    "antiCheat": "Anti-Cheat Policy",
     "alerts": {
       "enterNickname": "Please enter a Nickname before joining the battle!",
       "enterNicknameCreate": "Please enter a Nickname before creating a room!",
@@ -49,6 +104,7 @@
     "INTERNAL_ERROR": "An internal error occurred. Please try again!",
     "TOPIC_VOTING_CLOSED": "Topic voting has closed!",
     "INVALID_TOPIC": "Invalid topic for voting!",
+    "USERNAME_TAKEN": "This nickname is already in use on another device! Please choose a different nickname.",
     "UNKNOWN_ERROR": "An unknown error occurred. Please try again!"
   },
   "admin": {
@@ -75,7 +131,22 @@
       "title": "ACCESS DENIED",
       "consoleDescription": "You do not have administrative clearance to operate this terminal.",
       "auditDescription": "You do not have administrative clearance to view the audit log.",
-      "returnHome": "Return to Deck"
+      "returnHome": "Return to Deck",
+      "loginButton": "ADMIN LOGIN"
+    },
+    "login": {
+      "title": "ADMINISTRATOR LOGIN",
+      "subtitle": "Secure authentication reserved for developers and system operators",
+      "usernameLabel": "ADMIN USERNAME (OPTIONAL)",
+      "usernamePlaceholder": "admin",
+      "passwordLabel": "ADMIN PASSWORD",
+      "passwordPlaceholder": "Enter admin secret password...",
+      "submit": "AUTHENTICATE TERMINAL",
+      "submitting": "AUTHENTICATING...",
+      "backToHome": "Return to Deck",
+      "devHint": "Default development password: arena100admin",
+      "success": "Admin authentication successful!",
+      "error": "Invalid admin credentials."
     },
     "units": {
       "mb": "MB",
@@ -192,13 +263,15 @@
     "timeRemaining": "TIME REMAINING:"
   },
   "Game": {
+    "professorSupervisorLabel": "Professor Supervisor Desk",
     "matchingTitle": "Live Match in Progress",
     "roundLabel": "ROUND {number}",
     "roundComplexity": "Round Complexity",
     "roundLevelExtreme": "Level: Extreme",
     "remainingLabel": "Remaining",
-    "rulesHeader": "BATTLE RULES // SYSTEM QUESTION",
+    "rulesHeader": "RULES // QUESTION",
     "lockedAnswer": "ANSWER LOCKED",
+    "answerSubmitted": "ANSWER SUBMITTED",
     "waiting": "WAITING...",
     "fallbackQuestion": "Tie-breaker rule: when two players answer the same question correctly, who survives the next round?",
     "loadingQuestion": "Loading next question...",
@@ -210,14 +283,18 @@
     "antiHackDetails": "Response time is recorded by the server and compared against ping deviation to ensure absolute fairness.",
     "eliminatedOverlay": {
       "title": "YOU HAVE BEEN ELIMINATED!",
-      "subtitle": "Watching the best players...",
+      "subtitle": "You can continue spectating the match or leave the room.",
       "reasonWrong": "Wrong answer",
       "reasonTimeout": "Ran out of time",
-      "reasonAfk": "Away from keyboard"
+      "reasonAfk": "Away from keyboard",
+      "spectateButton": "SPECTATE",
+      "leaveButton": "LEAVE MATCH"
     },
     "spectatorMode": {
       "title": "SPECTATOR MODE",
-      "subtitle": "You have been eliminated. Watch the remaining players to see who will be the champion!"
+      "subtitle": "You have been eliminated. Watch the remaining players to see who will be the champion!",
+      "observingBadge": "Observing Only",
+      "practiceHint": "Spectator mode: You can select an answer to test your knowledge (no score counted)."
     },
     "leaveMatchButton": "LEAVE MATCH",
     "matchFinishedOverlay": {
@@ -244,6 +321,7 @@
       "voted": "VOTED",
       "votesCount": "{count, plural, =0 {votes} one {vote} other {votes}}",
       "bannedTopicsHeader": "TOPIC BAN RESULTS",
+      "topDanger": "Top Ban",
       "startingMatch": "Preparing match...",
       "GENERAL": "General Knowledge",
       "SCIENCE": "Science & Nature",
@@ -257,12 +335,20 @@
       "CULTURE": "Culture & Arts"
     }
   },
+  "LeaveMatchModal": {
+    "title": "Leave match?",
+    "description": "Are you sure you want to leave the ongoing match?",
+    "warning": "You will be counted as eliminated and lose rating points (ELO) for this match.",
+    "closeLabel": "Close",
+    "cancel": "Cancel",
+    "confirm": "Leave Match"
+  },
 
   "Result": {
     "reportLabel": "POST-MATCH REPORT",
     "title": "ARENA RESULTS",
     "matchId": "MATCH ID: {matchId}",
-    "championBadge": "ARENA CHAMPION",
+    "championBadge": "CHAMPION",
     "championDescription": "{opponents, plural, =0 {Became the arena's sole champion without facing an opponent!} one {Defeated # opponent to become the arena's sole champion!} other {Defeated # opponents to become the arena's sole champion!}}",
     "metrics": {
       "score": "Score",
@@ -278,7 +364,8 @@
       "roundValue": "Round {round}",
       "accuracy": "Accuracy",
       "reactionSpeed": "Reaction Speed",
-      "elo": "ELO Change"
+      "elo": "ELO Change",
+      "eliminated": "Eliminated"
     },
     "actions": {
       "rematch": "Start a New Match",
@@ -302,7 +389,8 @@
     "fallbacks": {
       "unknownPlayer": "Unknown Player",
       "updating": "Updating...",
-      "guestPlayer": "Guest Player"
+      "guestPlayer": "Guest Player",
+      "noWinner": "No Winner"
     }
   },
   "rank": {
@@ -320,6 +408,14 @@
   },
   "profile": {
     "registeredToday": "REGISTERED: TODAY",
+    "hero": {
+      "fighterPass": "FIGHTER PASS",
+      "editAvatar": "CHANGE AVATAR",
+      "copyUid": "COPY",
+      "copied": "COPIED!",
+      "eloPoints": "ELO POINTS",
+      "tierProgress": "RANK PROGRESS"
+    },
     "stats": {
       "title": "SURVIVAL STATS",
       "elo": "ELO RATING",
@@ -343,6 +439,7 @@
       "players": "PLAYERS",
       "duration": "DURATION",
       "empty": "No recent battle history yet — join your first match!",
+      "playNow": "ENTER THE ARENA",
       "loadMore": "LOAD MORE"
     },
     "status": {
@@ -362,6 +459,8 @@
     },
     "classStats": {
       "title": "CLASS · STREAK · CARDS",
+      "versus": "ATTACK vs DEFENSE",
+      "winRate": "Win rate",
       "streak": "CURRENT STREAK",
       "streakHint": "Daily Challenge wins in a row",
       "cardsPlayed": "CARDS PLAYED",
@@ -400,7 +499,7 @@
     "accuracyShort": "Accuracy",
     "empty": "No leaderboard data yet.",
     "cardsThisWeek": "Cards played this week",
-    "cardsLabel": "{count, plural, one {🃏 # card} other {🃏 # cards}}",
+    "cardsLabel": "{count, plural, one {# card} other {# cards}}",
     "cardsTier": {
       "COMMON": "Common card tier — light runner",
       "RARE": "Rare card tier — active player",
@@ -413,12 +512,32 @@
     }
   },
   "settings": {
-    "title": "SYSTEM SETTINGS",
-    "subtitle": "Customize audio, graphics, and control shortcuts for your arena",
+    "title": "ARENA SETTINGS",
+    "subtitle": "Customize your audio, sprite avatar, visuals, and battle controls",
+    "tabs": {
+      "profile": "Profile & Avatar",
+      "sound": "Audio & Music",
+      "graphics": "Visuals & FX",
+      "controls": "Battle Controls",
+      "system": "System & Data"
+    },
+    "profile": {
+      "callsignLabel": "BATTLE CALLSIGN",
+      "callsignPlaceholder": "Enter callsign...",
+      "callsignHint": "This name appears on the global leaderboard and during 100-player matches.",
+      "saveCallsign": "SAVE CALLSIGN",
+      "callsignSaved": "Battle callsign saved!",
+      "avatarShowcase": "Active Sprite Avatar",
+      "avatarGallery": "Sprite Roster",
+      "chooseTip": "Click any avatar below to switch your character instantly"
+    },
     "sound": {
-      "title": "Sound Settings",
+      "title": "Audio Settings",
       "sfx": "Sound Effects (SFX)",
+      "sfxDesc": "Chimes, button clicks, and gameplay interaction sounds",
+      "testSfx": "Test SFX",
       "bgm": "Background Music (BGM)",
+      "bgmDesc": "Lobby atmosphere and high-energy battle music",
       "on": "ON",
       "off": "OFF"
     },
@@ -430,27 +549,45 @@
       "dismiss": "Off"
     },
     "controls": {
-      "title": "Control Shortcuts",
-      "quickAnswersTitle": "Shortcut Answers",
-      "quickAnswersDesc": "Press keys 1, 2, 3, 4 corresponding to options A, B, C, D",
+      "title": "Battle Controls",
+      "quickAnswersTitle": "Quick Keys 1-2-3-4",
+      "quickAnswersDesc": "Press keys 1, 2, 3, 4 on your keyboard for options A, B, C, D",
+      "key1": "Option A",
+      "key2": "Option B",
+      "key3": "Option C",
+      "key4": "Option D",
+      "autoFocusTitle": "Auto-Focus Question",
+      "autoFocusDesc": "Automatically scroll and focus on the answer panel when a round begins",
       "enabled": "ENABLED",
       "disabled": "DISABLED"
     },
     "graphics": {
-      "title": "Graphics Settings (UI/UX)",
-      "glowTitle": "Neon Glow Intensity",
-      "intensityNormal": "Normal",
-      "intensityHigh": "High",
-      "intensityExtreme": "Extreme",
-      "scanlines": "CRT Scanlines",
-      "particles": "Tech Grids",
+      "title": "Visuals & Effects",
+      "subtitle": "Optimize visual effects and animations for your device",
+      "confettiTitle": "Celebration Confetti",
+      "confettiDesc": "Display colorful confetti particles on combo streaks and victory",
+      "reduceMotionTitle": "Reduce Motion Mode",
+      "reduceMotionDesc": "Minimize intense shakes and screen animations for smoother battery-saving gameplay",
+      "hapticsTitle": "Touch Haptic Feedback",
+      "hapticsDesc": "Gentle haptic vibration when tapping answers on supported mobile devices",
       "on": "ON",
-      "off": "OFF",
-      "show": "SHOW",
-      "hide": "HIDE"
+      "off": "OFF"
     },
-    "saveButton": "Save Customization",
-    "saveSuccess": "Configuration settings saved to browser storage!",
+    "system": {
+      "title": "System & Data",
+      "languageTitle": "Display Language",
+      "languageDesc": "Select your preferred language for the Arena interface",
+      "resetTitle": "Reset to Default Settings",
+      "resetDesc": "Restore all audio, visual, and control configurations to default values",
+      "resetBtn": "Restore Defaults",
+      "resetSuccess": "All settings restored to defaults!",
+      "clearCacheTitle": "Clear Local Cache",
+      "clearCacheDesc": "Purge cached browser data if you experience connection or rendering glitches",
+      "clearCacheBtn": "Clear Cache",
+      "clearCacheSuccess": "Local browser cache cleared successfully!"
+    },
+    "saveButton": "Save Settings",
+    "saveSuccess": "Settings saved to browser storage!",
     "avatar": {
       "title": "AVATAR",
       "subtitle": "Choose the character that represents you in the arena.",
@@ -510,7 +647,27 @@
       "you": "YOU",
       "host": "HOST",
       "ready": "READY",
-      "offline": "Offline"
+      "offline": "Offline",
+      "waitingSlot": "Waiting for opponent...",
+      "inviteSlot": "Invite friends to battle",
+      "playerRoster": "WARRIORS READY"
+    },
+    "roomCodeCard": {
+      "label": "ROOM CODE",
+      "copyCode": "Copy code",
+      "copyLink": "Copy invite link",
+      "copiedCode": "Room code copied!",
+      "copiedLink": "Invite link copied!",
+      "shareHint": "Send link or room code to friends to join the arena!"
+    },
+    "matchInfo": {
+      "title": "ARENA RULES",
+      "modeLabel": "Mode",
+      "modeValue": "100-Player Battle Royale",
+      "timeLabel": "Time",
+      "timeValue": "10s / question",
+      "ruleLabel": "Rules",
+      "ruleValue": "1 wrong answer = Eliminated"
     },
     "page": {
       "opponentsCount": "Current opponents",
@@ -578,8 +735,20 @@
     "alreadyDone": "You've already completed today's challenge.",
     "progressLabel": "Daily Challenge progress",
     "speedBonus": {
-      "none": "No bonus",
-      "awarded": "Completed in {ms}ms"
+      "none": "No speed bonus",
+      "awarded": "Completed in {seconds}s"
+    },
+    "rewards": {
+      "title": "Streak Rewards",
+      "subtitle": "Reach daily milestones to unlock exclusive card variants",
+      "neonTier": "7-Day Streak: Neon Variant",
+      "goldTier": "14-Day Streak: Golden Variant",
+      "unlocked": "Unlocked",
+      "inProgress": "{current}/{target} days"
+    },
+    "sharePreview": {
+      "title": "Share Card Preview",
+      "description": "Copy your daily score card and challenge your friends!"
     },
     "share": {
       "result": "Share your result",
@@ -599,8 +768,11 @@
     },
     "leaderboard": {
       "title": "Today's Leaderboard",
+      "topBanner": "Top Players Today",
       "error": "Leaderboard unavailable.",
       "empty": "No scores yet today — be the first.",
+      "cardsThisWeek": "Cards played this week",
+      "cardsLabel": "{count, plural, one {# card} other {# cards}}",
       "cardsTier": {
         "COMMON": "Common card tier — light runner",
         "RARE": "Rare card tier — active player",
@@ -756,5 +928,25 @@
     "playersInQueue": "Players searching:",
     "playerCount": "{count} players",
     "cancelSearch": "CANCEL SEARCH"
+  },
+  "Professor": {
+    "name": "Professor BigBrain",
+    "supervisorTitle": "EXAM SUPERVISOR",
+    "supervisorLabel": "Professor Supervisor Desk",
+    "attendanceDesk": "ATTENDANCE DESK",
+    "instructionsLabel": "SUPERVISOR'S REMARKS:",
+    "rulesLabel": "EXAM REGULATIONS",
+    "roastLabel": "PROFESSOR'S REMARKS:",
+    "evalLabel": "EXAM SUPERVISOR EVALUATION:",
+    "pokeAttendanceTitle": "Click to hear teacher's advice!",
+    "pokeRulesTitle": "Click to hear exam regulations!",
+    "pokeGameTitle": "Click to hear teacher's hint!",
+    "closeDialogue": "Close dialogue",
+    "grades": {
+      "valedictorian": "VALEDICTORIAN (A+)",
+      "honor": "HONOR ROLL (A)",
+      "remedial": "NEEDS IMPROVEMENT (F)",
+      "eliminated": "GRADE F: ELIMINATED"
+    }
   }
 }
