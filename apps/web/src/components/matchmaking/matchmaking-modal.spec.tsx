@@ -7,6 +7,7 @@ import { MatchmakingModal } from "./matchmaking-modal";
 const mockPush = vi.fn();
 const mockLeaveMatchmaking = vi.fn();
 const mockClearMatchmakingMatched = vi.fn();
+const mockJoinRoom = vi.fn().mockResolvedValue(undefined);
 
 let mockSocketStore = {
   matchmaking: {
@@ -17,9 +18,11 @@ let mockSocketStore = {
     playersInQueue: 0,
     matchedRoomCode: null as string | null,
     matchedRoomId: null as string | null,
+    matchedMatchId: null as string | null,
   },
   leaveMatchmaking: mockLeaveMatchmaking,
   clearMatchmakingMatched: mockClearMatchmakingMatched,
+  joinRoom: mockJoinRoom,
 };
 
 vi.mock("@/i18n/routing", () => ({
@@ -51,6 +54,7 @@ vi.mock("next-intl", async () => {
   };
   return {
     ...actual,
+    useLocale: vi.fn(() => "vi"),
     useTranslations: vi.fn((_ns?: string) =>
       vi.fn((key: string, params?: Record<string, string | number>): string => {
         let msg = viMessages[key] ?? key;
@@ -83,9 +87,11 @@ describe("MatchmakingModal", () => {
         playersInQueue: 0,
         matchedRoomCode: null,
         matchedRoomId: null,
+        matchedMatchId: null,
       },
       leaveMatchmaking: mockLeaveMatchmaking,
       clearMatchmakingMatched: mockClearMatchmakingMatched,
+      joinRoom: mockJoinRoom,
     };
   });
 
@@ -249,15 +255,31 @@ describe("MatchmakingModal", () => {
   it("auto redirects on match found after timer", async () => {
     vi.useFakeTimers();
     mockSocketStore.matchmaking.matchedRoomCode = "ROOM999";
+    mockSocketStore.matchmaking.matchedMatchId = null;
 
     render(<MatchmakingModal />);
 
     act(() => {
-      vi.advanceTimersByTime(1250);
+      vi.advanceTimersByTime(650);
     });
 
     expect(mockClearMatchmakingMatched).toHaveBeenCalledTimes(1);
     expect(mockPush).toHaveBeenCalledWith("/lobby/ROOM999");
+  });
+
+  it("auto redirects directly to /game when matchedMatchId is present", async () => {
+    vi.useFakeTimers();
+    mockSocketStore.matchmaking.matchedRoomCode = "ROOM999";
+    mockSocketStore.matchmaking.matchedMatchId = "match_123";
+
+    render(<MatchmakingModal />);
+
+    act(() => {
+      vi.advanceTimersByTime(650);
+    });
+
+    expect(mockClearMatchmakingMatched).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith("/game/match_123");
   });
 
   it("triggers leaveMatchmaking when close button and bottom cancel button are clicked", () => {

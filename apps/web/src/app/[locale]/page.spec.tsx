@@ -20,7 +20,9 @@ let mockSocketStore = {
 vi.mock("@/i18n/routing", () => ({
   useRouter: () => ({
     push: mockPush,
+    replace: vi.fn(),
   }),
+  usePathname: () => "/",
   Link: ({
     children,
     href,
@@ -61,6 +63,7 @@ vi.mock("canvas-confetti", () => ({
 
 vi.mock("next-intl", () => ({
   useTranslations: () => (key: string) => key,
+  useLocale: () => "en",
 }));
 
 describe("HomePage - runAuthFlow", () => {
@@ -91,7 +94,7 @@ describe("HomePage - runAuthFlow", () => {
 
     render(<HomePage />);
 
-    const nicknameInput = screen.getByPlaceholderText(/gõ tên vô tri vào đây/i);
+    const nicknameInput = screen.getByPlaceholderText(/nicknamePlaceholder/i);
     fireEvent.change(nicknameInput, { target: { value: "Warrior99" } });
 
     const form = nicknameInput.closest("form")!;
@@ -118,7 +121,7 @@ describe("HomePage - runAuthFlow", () => {
 
     render(<HomePage />);
 
-    const nicknameInput = screen.getByPlaceholderText(/gõ tên vô tri vào đây/i);
+    const nicknameInput = screen.getByPlaceholderText(/nicknamePlaceholder/i);
     fireEvent.change(nicknameInput, { target: { value: "AsyncPlayer" } });
 
     const form = nicknameInput.closest("form")!;
@@ -141,7 +144,7 @@ describe("HomePage - runAuthFlow", () => {
 
     render(<HomePage />);
 
-    const nicknameInput = screen.getByPlaceholderText(/gõ tên vô tri vào đây/i);
+    const nicknameInput = screen.getByPlaceholderText(/nicknamePlaceholder/i);
     fireEvent.change(nicknameInput, { target: { value: "PlayerFail" } });
 
     const form = nicknameInput.closest("form")!;
@@ -161,7 +164,7 @@ describe("HomePage - runAuthFlow", () => {
   it("prompts to enter nickname if submitted empty", () => {
     render(<HomePage />);
 
-    const nicknameInput = screen.getByPlaceholderText(/gõ tên vô tri vào đây/i);
+    const nicknameInput = screen.getByPlaceholderText(/nicknamePlaceholder/i);
     const form = nicknameInput.closest("form")!;
     fireEvent.submit(form);
 
