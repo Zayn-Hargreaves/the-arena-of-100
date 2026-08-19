@@ -127,3 +127,134 @@ export function CrossGlyph({ className, size = 16 }: Readonly<GlyphProps>) {
     </>,
   );
 }
+
+/**
+ * Playing cards "stamp" — tilted stacked cards silhouette matching the
+ * project's candy-brutalist theme.
+ */
+export function CardsGlyph({ className, size = 14 }: Readonly<GlyphProps>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={STROKE}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      {/* Background card tilt */}
+      <rect
+        x="6"
+        y="3"
+        width="13"
+        height="17"
+        rx="2"
+        transform="rotate(10 12.5 11.5)"
+        stroke="currentColor"
+        strokeWidth={STROKE}
+        fill="none"
+        opacity="0.4"
+      />
+      {/* Foreground card */}
+      <rect
+        x="4"
+        y="4"
+        width="13"
+        height="17"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth={STROKE}
+        fill="currentColor"
+        fillOpacity="0.12"
+      />
+      {/* Center diamond symbol */}
+      <path
+        d="M10.5 10L12.5 12.5L10.5 15L8.5 12.5Z"
+        fill={COLORS.candyYellow}
+        stroke="none"
+      />
+    </svg>
+  );
+}
+
+/**
+ * Gold Trophy Cup — arcade championship icon for leaderboard headers
+ */
+export function TrophyGlyph({ className, size = 18 }: Readonly<GlyphProps>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={STROKE}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      {/* Left handle */}
+      <path d="M5 6H3a2 2 0 0 0-2 2v1a4 4 0 0 0 4 4h1" />
+      {/* Right handle */}
+      <path d="M19 6h2a2 2 0 0 1 2 2v1a4 4 0 0 1-4 4h-1" />
+      {/* Trophy Bowl */}
+      <path
+        d="M5 4h14v6a7 7 0 0 1-14 0V4Z"
+        fill={COLORS.candyYellow}
+        stroke="currentColor"
+        strokeWidth={STROKE}
+      />
+      {/* Stem */}
+      <path d="M12 17v3" stroke="currentColor" strokeWidth={STROKE} />
+      {/* Base */}
+      <path d="M7 21h10" stroke="currentColor" strokeWidth={STROKE} />
+    </svg>
+  );
+}
+
+/**
+ * Micro Crown for #1 rank badge — crisp 3-point geometry optimized for small badge scale
+ */
+export function RankOneCrownGlyph({
+  className,
+  size = 16,
+}: Readonly<GlyphProps>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={STROKE}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path
+        d="M3 17.5L5 6L9.5 11.5L12 4.5L14.5 11.5L19 6L21 17.5H3Z"
+        fill={COLORS.candyYellow}
+        stroke="currentColor"
+        strokeWidth={STROKE}
+        strokeLinejoin="round"
+      />
+      <rect
+        x="3"
+        y="17.5"
+        width="18"
+        height="3"
+        rx="1"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeWidth="1"
+      />
+      <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}

@@ -26,12 +26,12 @@ describe("getDailyToday", () => {
 
   it("hits /daily/today without an auth header when anonymous", async () => {
     await getDailyToday();
-    expect(apiGetJson).toHaveBeenCalledWith("/daily/today", undefined);
+    expect(apiGetJson).toHaveBeenCalledWith("/api/v1/daily/today", undefined);
   });
 
   it("forwards the auth token when provided", async () => {
     await getDailyToday("tok-123");
-    expect(apiGetJson).toHaveBeenCalledWith("/daily/today", "tok-123");
+    expect(apiGetJson).toHaveBeenCalledWith("/api/v1/daily/today", "tok-123");
   });
 });
 
@@ -49,7 +49,7 @@ describe("submitDaily", () => {
     const result = await submitDaily(body, "tok-xyz");
 
     expect(apiSendJson).toHaveBeenCalledWith(
-      "/daily/submit",
+      "/api/v1/daily/submit",
       "POST",
       body,
       "tok-xyz",
@@ -61,7 +61,7 @@ describe("submitDaily", () => {
     const body = { sessionToken: "sess", answers: [] };
     await submitDaily(body, "tok-xyz");
     expect(apiSendJson).toHaveBeenCalledWith(
-      "/daily/submit",
+      "/api/v1/daily/submit",
       "POST",
       body,
       "tok-xyz",
@@ -77,31 +77,35 @@ describe("getDailyLeaderboard", () => {
 
   it("uses the bare /daily/leaderboard path when no filters are provided", async () => {
     await getDailyLeaderboard();
-    expect(apiGetJson).toHaveBeenCalledWith("/daily/leaderboard");
+    expect(apiGetJson).toHaveBeenCalledWith("/api/v1/daily/leaderboard");
   });
 
   it("appends only the provided dateKey to the querystring", async () => {
     await getDailyLeaderboard({ dateKey: "2026-08-08" });
     expect(apiGetJson).toHaveBeenCalledWith(
-      "/daily/leaderboard?dateKey=2026-08-08",
+      "/api/v1/daily/leaderboard?dateKey=2026-08-08",
     );
   });
 
   it("appends only the provided limit when dateKey is omitted", async () => {
     await getDailyLeaderboard({ limit: 25 });
-    expect(apiGetJson).toHaveBeenCalledWith("/daily/leaderboard?limit=25");
+    expect(apiGetJson).toHaveBeenCalledWith(
+      "/api/v1/daily/leaderboard?limit=25",
+    );
   });
 
   it("preserves the order dateKey then limit in the querystring", async () => {
     await getDailyLeaderboard({ dateKey: "2026-08-08", limit: 10 });
     expect(apiGetJson).toHaveBeenCalledWith(
-      "/daily/leaderboard?dateKey=2026-08-08&limit=10",
+      "/api/v1/daily/leaderboard?dateKey=2026-08-08&limit=10",
     );
   });
 
   it("treats empty / whitespace dateKey as absent", async () => {
     await getDailyLeaderboard({ dateKey: "   ", limit: 5 });
-    expect(apiGetJson).toHaveBeenCalledWith("/daily/leaderboard?limit=5");
+    expect(apiGetJson).toHaveBeenCalledWith(
+      "/api/v1/daily/leaderboard?limit=5",
+    );
   });
 
   it.each([
@@ -117,7 +121,7 @@ describe("getDailyLeaderboard", () => {
     // dropped client-side so the server falls back to its own default
     // instead of rejecting the whole request.
     await getDailyLeaderboard({ limit });
-    expect(apiGetJson).toHaveBeenCalledWith("/daily/leaderboard");
+    expect(apiGetJson).toHaveBeenCalledWith("/api/v1/daily/leaderboard");
   });
 
   it.each([
@@ -126,7 +130,7 @@ describe("getDailyLeaderboard", () => {
   ])("keeps a limit at %s", async (_label, limit) => {
     await getDailyLeaderboard({ limit });
     expect(apiGetJson).toHaveBeenCalledWith(
-      `/daily/leaderboard?limit=${limit}`,
+      `/api/v1/daily/leaderboard?limit=${limit}`,
     );
   });
 });

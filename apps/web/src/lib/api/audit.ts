@@ -48,6 +48,8 @@ export async function getAuditEvents(
   token?: string,
 ): Promise<AuditEventsResponse> {
   const query = buildAuditQuery(params);
-  const path = query ? `/admin/audit-events?${query}` : "/admin/audit-events";
+  const path = query
+    ? `/api/v1/admin/audit-events?${query}`
+    : "/api/v1/admin/audit-events";
   return apiGetJson<AuditEventsResponse>(path, token);
 }
