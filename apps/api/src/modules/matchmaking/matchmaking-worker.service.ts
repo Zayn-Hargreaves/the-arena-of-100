@@ -332,11 +332,28 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      // 4. Notify human clients via WebSocket
+      // 4. Join human player sockets to the room channel
+      for (const player of successfulPlayers) {
+        if (typeof this.server.in === "function") {
+          try {
+            this.server.in(player.socketId).socketsJoin(`room:${room.id}`);
+          } catch {
+            // Ignore if adapter does not support socketsJoin synchronously
+          }
+        }
+      }
+
+      // 5. Trigger game loop launch
+      const match = await this.gameLoopService.forceStartRoomMatch(
+        room.id,
+        this.server,
+      );
+
+      // 6. Notify human clients via WebSocket
       const payload: MatchmakingMatchedPayload = {
         roomId: room.id,
         roomCode: room.code,
-        matchId: null,
+        matchId: match?.id ?? null,
       };
 
       for (const player of successfulPlayers) {
@@ -346,11 +363,8 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
       }
 
       this.logger.log(
-        `Match formed for room ${room.code} with ${successfulPlayers.length} real players. Starting match loop...`,
+        `Match formed for room ${room.code} with ${successfulPlayers.length} real players (matchId=${match?.id}). Starting match loop...`,
       );
-
-      // 5. Trigger game loop launch
-      await this.gameLoopService.forceStartRoomMatch(room.id, this.server);
     } catch (error) {
       this.logger.error(
         `Failed to complete post-creation launch for room ${room.id}`,
