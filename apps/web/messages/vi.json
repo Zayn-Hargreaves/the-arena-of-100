@@ -1,18 +1,73 @@
 {
   "common": {
-    "skipToMainContent": "Chuyển đến nội dung chính"
+    "skipToMainContent": "Chuyển đến nội dung chính",
+    "language": "Ngôn ngữ",
+    "vietnamese": "Tiếng Việt",
+    "english": "English"
+  },
+  "policies": {
+    "termsTitle": "Điều Khoản Đấu Võ",
+    "termsSubtitle": "Quy tắc chính thức và tôn chỉ danh dự trong đấu trường 100 chiến binh.",
+    "antiCheatTitle": "Khai Trừ Gian Lận",
+    "antiCheatSubtitle": "Không khoan nhượng với hack/cheat. Đảm bảo công bằng tuyệt đối bằng Server-Authoritative.",
+    "close": "Đã Hiểu",
+    "terms": {
+      "section1Title": "1. Thể Thức Battle Royale Vô Tri",
+      "section1Desc": "100 người chơi tranh tài theo thời gian thực. Trả lời sai hoặc quá thời gian quy định sẽ bị loại ngay lập tức. Chiến binh sống sót cuối cùng là người chiến thắng duy nhất.",
+      "section2Title": "2. Tài Khoản Khách & Tôn Trọng",
+      "section2Desc": "Cho phép vào nhanh không cần đăng ký phức tạp. Nghiêm cấm đặt biệt danh khiêu dâm, xúc phạm, phân biệt đối xử hoặc vi phạm thuần phong mỹ tục.",
+      "section3Title": "3. Tính Điểm & Đồng Bộ Máy Chủ",
+      "section3Desc": "Mọi phép tính thời gian, điểm thưởng chuỗi và thứ hạng đều được xác thực bởi máy chủ trung tâm. Thời gian phản hồi tính theo mili-giây để phân định thắng thua.",
+      "section4Title": "4. Cơ Chế Thẻ Bài & Phân Lớp",
+      "section4Desc": "Việc sử dụng thẻ bài tấn công, phòng thủ hay hiệu ứng diện rộng phải tuân thủ đúng thời gian hồi chiêu. Mọi hành vi spam gói tin sẽ bị hủy bỏ tự động."
+    },
+    "antiCheat": {
+      "section1Title": "1. Kiểm Soát Phía Máy Chủ (Server-Authoritative)",
+      "section1Desc": "Toàn bộ câu hỏi, đáp án đúng và trạng thái đồng hồ đều được lưu trữ và kiểm tra tại Backend. Client không bao giờ nắm giữ đáp án trước khi kết thúc round.",
+      "section2Title": "2. Nhận Diện Bot & Script Tự Động",
+      "section2Desc": "Hệ thống giám sát độ trễ mạng, phân tích mẫu click và tần suất phản hồi bất thường để phát hiện các đoạn mã tự động hoặc auto-click.",
+      "section3Title": "3. Cấm Tuyệt Đối Công Cụ Gian Lận",
+      "section3Desc": "Nghiêm cấm can thiệp bộ nhớ trình duyệt, sử dụng extension hack, chỉnh sửa gói tin WebSocket hoặc dùng tool OCR quét màn hình tìm đáp án.",
+      "section4Title": "4. Hình Thức Xử Lý Vi Phạm",
+      "section4Desc": "Bất kỳ dấu hiệu gian lận nào sẽ bị truất quyền thi đấu ngay lập tức, tước bỏ xếp hạng và đưa vào danh sách đen (Blacklist IP/Thiết bị/Phiên đấu)."
+    }
   },
   "HomePage": {
     "subtitle": "Đấu Trường Trí Tuệ Sinh Tử",
+    "brand": "ARENA 100",
+    "brandFull": "ARENA OF 100",
+    "taglineBadge": "LỐ LĂNG • VÔ TRI",
+    "onlineCount": "{count} CON NGHÈO ĐANG ONLINE",
+    "heroTitle": "ĐẤU TRƯỜNG VÔ TRI",
+    "heroSubtitle": "Ai sai người đó bay màu!",
+    "guestLogin": "GUEST LOGIN OK",
     "enterNickname": "Nhập Biệt Danh Chiến Đấu",
-    "nicknamePlaceholder": "VÍ DỤ: GLITCH_RUNNER",
+    "nicknameLabel": "BIỆT DANH GIANG HỒ",
+    "nicknamePlaceholder": "Gõ tên vô tri vào đây...",
+    "socketSynced": "Đã đồng bộ socket",
+    "enterArena": "VÀO ĐẤU TRƯỜNG",
     "quickMatch": "Tìm Trận Nhanh",
-    "createRoom": "Tạo Phòng",
-    "joinRoom": "Vào Phòng",
+    "createRoom": "TẠO PHÒNG RIÊNG",
+    "joinRoom": "VÀO PHÒNG",
     "roomCode": "Mã Phòng Đấu",
     "roomCodePlaceholder": "MÃ PHÒNG",
     "rankings": "Xếp Hạng",
     "settings": "Cài Đặt",
+    "dailyChallenge": "Thử Thách Ngày",
+    "howToPlay": "Luật & Hướng Dẫn",
+    "dailyBadge": "THỬ THÁCH HÔM NAY",
+    "dailyCardTitle": "Thử Thách Hàng Ngày",
+    "professorSupervisorLabel": "Bàn Giám Sát Điểm Danh Của Giáo Sư",
+    "dailyCardDesc": "Trả lời 5 câu hỏi mỗi ngày, giữ chuỗi thắng và mở khóa biến thể thẻ bài hiếm!",
+    "playDaily": "CHƠI THỬ THÁCH NGÀY",
+    "dailyResetIn": "Làm mới sau",
+    "dailyStreakLabel": "Chuỗi Thắng",
+    "rulesTitle": "Cơ Chế Sinh Tồn 100 Người",
+    "rulesDesc": "100 người cùng đấu, 1 kẻ sống sót. Dùng Kỹ Năng Hệ & Thẻ Bài để outplay đối thủ.",
+    "viewRankingsDesc": "Xem ai đang thống trị Đấu Trường 100!",
+    "footerCopyright": "© 2026 CYBER_ARENA. GAME VÔ TRI KHÔNG DÙNG NÃO!",
+    "terms": "Điều khoản Đấu võ",
+    "antiCheat": "Khai trừ Gian lận",
     "alerts": {
       "enterNickname": "Vui lòng nhập Biệt danh trước khi tham chiến!",
       "enterNicknameCreate": "Vui lòng nhập Biệt danh trước khi tạo phòng!",
@@ -49,6 +104,7 @@
     "INTERNAL_ERROR": "Đã xảy ra lỗi hệ thống. Vui lòng thử lại!",
     "TOPIC_VOTING_CLOSED": "Bình chọn chủ đề đã kết thúc!",
     "INVALID_TOPIC": "Chủ đề bình chọn không hợp lệ!",
+    "USERNAME_TAKEN": "Biệt danh này đã có người sử dụng trên thiết bị khác! Vui lòng chọn biệt danh khác.",
     "UNKNOWN_ERROR": "Đã xảy ra lỗi không xác định. Vui lòng thử lại!"
   },
   "admin": {
@@ -75,7 +131,22 @@
       "title": "TRUY CẬP BỊ TỪ CHỐI",
       "consoleDescription": "Bạn không có quyền quản trị để vận hành terminal này.",
       "auditDescription": "Bạn không có quyền quản trị để xem nhật ký kiểm toán.",
-      "returnHome": "Về trang chính"
+      "returnHome": "Về trang chính",
+      "loginButton": "ĐĂNG NHẬP ADMIN"
+    },
+    "login": {
+      "title": "ĐĂNG NHẬP QUẢN TRỊ VIÊN",
+      "subtitle": "Xác thực bảo mật dành riêng cho nhà phát triển và ban điều hành",
+      "usernameLabel": "TÊN QUẢN TRỊ (TÙY CHỌN)",
+      "usernamePlaceholder": "admin",
+      "passwordLabel": "MẬT KHẨU QUẢN TRỊ",
+      "passwordPlaceholder": "Nhập mật khẩu quản trị...",
+      "submit": "ĐĂNG NHẬP HỆ THỐNG",
+      "submitting": "ĐANG XÁC THỰC...",
+      "backToHome": "Về trang chính",
+      "devHint": "Mật khẩu dev mặc định: arena100admin",
+      "success": "Đăng nhập Quản trị viên thành công!",
+      "error": "Mật khẩu quản trị không chính xác."
     },
     "units": {
       "mb": "MB",
@@ -192,13 +263,15 @@
     "timeRemaining": "HẾT GIỜ SAU:"
   },
   "Game": {
+    "professorSupervisorLabel": "Bàn Giám Sát Của Giáo Sư",
     "matchingTitle": "Trận Đấu Đang Diễn Ra",
     "roundLabel": "VÒNG {number}",
     "roundComplexity": "Độ Phức Tạp Vòng",
     "roundLevelExtreme": "Cấp độ: Cực Hạn",
     "remainingLabel": "Còn Lại",
-    "rulesHeader": "QUY TẮC PHÒNG ĐẤU // CÂU HỎI HỆ THỐNG",
+    "rulesHeader": "QUY TẮC // CÂU HỎI",
     "lockedAnswer": "ĐÃ KHÓA ĐÁP ÁN",
+    "answerSubmitted": "ĐÃ CHỌN ĐÁP ÁN",
     "waiting": "ĐANG ĐỢI...",
     "fallbackQuestion": "Quy tắc tie-break: khi hai người cùng trả lời đúng một câu, ai sống sót qua vòng tiếp theo?",
     "loadingQuestion": "Đang tải câu hỏi tiếp theo...",
@@ -210,14 +283,18 @@
     "antiHackDetails": "Thời gian phản hồi được máy chủ ghi nhận và so sánh độ lệch ping để đảm bảo tính công bằng tuyệt đối.",
     "eliminatedOverlay": {
       "title": "BẠN ĐÃ BỊ LOẠI!",
-      "subtitle": "Đang theo dõi những người chơi xuất sắc nhất...",
+      "subtitle": "Bạn có thể tiếp tục theo dõi diễn biến trận đấu hoặc rời phòng.",
       "reasonWrong": "Trả lời sai",
       "reasonTimeout": "Hết giờ",
-      "reasonAfk": "Vắng mặt"
+      "reasonAfk": "Vắng mặt",
+      "spectateButton": "THEO DÕI",
+      "leaveButton": "RỜI TRẬN ĐẤU"
     },
     "spectatorMode": {
       "title": "CHẾ ĐỘ KHÁN GIẢ",
-      "subtitle": "Bạn đã bị loại. Hãy theo dõi những người chơi còn lại để xem ai sẽ là quán quân!"
+      "subtitle": "Bạn đã bị loại. Hãy theo dõi những người chơi còn lại để xem ai sẽ là quán quân!",
+      "observingBadge": "Chỉ quan sát",
+      "practiceHint": "Chế độ khán giả: Bạn có thể chọn đáp án để tự kiểm tra (không tính điểm)."
     },
     "leaveMatchButton": "RỜI TRẬN ĐẤU",
     "matchFinishedOverlay": {
@@ -244,6 +321,7 @@
       "voted": "ĐÃ CHỌN",
       "votesCount": "{count, plural, =0 {phiếu} one {phiếu} other {phiếu}}",
       "bannedTopicsHeader": "KẾT QUẢ CẤM CHỦ ĐỀ",
+      "topDanger": "Top bị cấm",
       "startingMatch": "Đang chuẩn bị vào trận đấu...",
       "GENERAL": "Kiến Thức Chung",
       "SCIENCE": "Khoa Học & Tự Nhiên",
@@ -257,12 +335,20 @@
       "CULTURE": "Văn Hóa & Nghệ Thuật"
     }
   },
+  "LeaveMatchModal": {
+    "title": "Rời trận đấu?",
+    "description": "Bạn có chắc chắn muốn rời trận đấu đang diễn ra?",
+    "warning": "Bạn sẽ bị xử thua và mất điểm xếp hạng (ELO) cho trận đấu này.",
+    "closeLabel": "Đóng",
+    "cancel": "Hủy",
+    "confirm": "Rời trận"
+  },
 
   "Result": {
     "reportLabel": "BẢN BÁO CÁO SAU TRẬN ĐẤU",
     "title": "KẾT QUẢ ĐẤU TRƯỜNG",
     "matchId": "MÃ TRẬN: {matchId}",
-    "championBadge": "QUÁN QUÂN ĐẤU TRƯỜNG",
+    "championBadge": "QUÁN QUÂN",
     "championDescription": "{opponents, plural, =0 {Đã trở thành quán quân duy nhất của đấu trường mà không phải đối đầu đối thủ nào!} one {Đã đánh bại # đối thủ khác để giành ngôi vị quán quân duy nhất!} other {Đã đánh bại # đối thủ khác để giành ngôi vị quán quân duy nhất!}}",
     "metrics": {
       "score": "Điểm Số",
@@ -278,7 +364,8 @@
       "roundValue": "Vòng {round}",
       "accuracy": "Độ Chính Xác",
       "reactionSpeed": "Tốc Độ Phản Xạ",
-      "elo": "Biến Động ELO"
+      "elo": "Biến Động ELO",
+      "eliminated": "Bị Loại"
     },
     "actions": {
       "rematch": "Tái Đấu Trận Mới",
@@ -302,7 +389,8 @@
     "fallbacks": {
       "unknownPlayer": "Người Chơi Không Xác Định",
       "updating": "Đang cập nhật...",
-      "guestPlayer": "Người Chơi Khách"
+      "guestPlayer": "Người Chơi Khách",
+      "noWinner": "Không Có Quán Quân"
     }
   },
   "rank": {
@@ -320,6 +408,14 @@
   },
   "profile": {
     "registeredToday": "ĐĂNG KÝ: HÔM NAY",
+    "hero": {
+      "fighterPass": "THẺ CHIẾN BINH",
+      "editAvatar": "ĐỔI LINH THÚ",
+      "copyUid": "SAO CHÉP",
+      "copied": "ĐÃ CHÉP!",
+      "eloPoints": "ĐIỂM ELO",
+      "tierProgress": "TIẾN TRÌNH HẠNG"
+    },
     "stats": {
       "title": "CHỈ SỐ SINH TỒN",
       "elo": "ĐIỂM ELO",
@@ -343,6 +439,7 @@
       "players": "NGƯỜI CHƠI",
       "duration": "THỜI LƯỢNG",
       "empty": "Chưa có lịch sử thi đấu — hãy tham gia trận đầu tiên!",
+      "playNow": "THAM GIA CHIẾN TRƯỜNG",
       "loadMore": "TẢI THÊM"
     },
     "status": {
@@ -362,6 +459,8 @@
     },
     "classStats": {
       "title": "LỚP · CHUỖI · LÁ BÀI",
+      "versus": "ĐỐI KHÁNG CÔNG vs THỦ",
+      "winRate": "Tỷ lệ thắng",
       "streak": "CHUỖI THẮNG HIỆN TẠI",
       "streakHint": "Số ngày Daily Challenge thắng liên tiếp",
       "cardsPlayed": "SỐ LÁ BÀI ĐÃ CHƠI",
@@ -400,7 +499,7 @@
     "accuracyShort": "Chính xác",
     "empty": "Chưa có dữ liệu xếp hạng.",
     "cardsThisWeek": "Lá bài đã chơi trong tuần",
-    "cardsLabel": "{count, plural, one {🃏 # lá bài} other {🃏 # lá bài}}",
+    "cardsLabel": "{count, plural, one {# lá bài} other {# lá bài}}",
     "cardsTier": {
       "COMMON": "Hạng thường — người chơi nhẹ",
       "RARE": "Hạng hiếm — người chơi tích cực",
@@ -413,37 +512,75 @@
     }
   },
   "settings": {
-    "title": "CẤU HÌNH HỆ THỐNG",
-    "subtitle": "Tinh chỉnh âm thanh, đồ họa và phím tắt điều khiển đấu trường của bạn",
+    "title": "CẤU HÌNH ĐẤU TRƯỜNG",
+    "subtitle": "Tinh chỉnh âm thanh, linh thú đại diện, hiệu ứng và trải nghiệm thi đấu của bạn",
+    "tabs": {
+      "profile": "Hồ Sơ & Linh Thú",
+      "sound": "Âm Thanh & Nhạc",
+      "graphics": "Hiệu Ứng & Visual",
+      "controls": "Phím Tắt Điều Khiển",
+      "system": "Hệ Thống & Dữ Liệu"
+    },
+    "profile": {
+      "callsignLabel": "BIỆT DANH THI ĐẤU (CALLSIGN)",
+      "callsignPlaceholder": "Nhập biệt danh...",
+      "callsignHint": "Tên này sẽ hiển thị trong bảng xếp hạng và các trận đấu sinh tồn 100 người.",
+      "saveCallsign": "LƯU BIỆT DANH",
+      "callsignSaved": "Đã lưu biệt danh thi đấu!",
+      "avatarShowcase": "Linh Thú Đang Chọn",
+      "avatarGallery": "Bộ Sưu Tập Linh Thú",
+      "chooseTip": "Nhấp vào một linh thú bên dưới để đổi đại diện ngay lập tức"
+    },
     "sound": {
       "title": "Cài Đặt Âm Thanh",
-      "sfx": "Hiệu Ứng (SFX)",
+      "sfx": "Hiệu Ứng Âm Thanh (SFX)",
+      "sfxDesc": "Tiếng chuông, nút bấm và âm thanh tương tác trong trận đấu",
+      "testSfx": "Thử Âm",
       "bgm": "Nhạc Nền (BGM)",
+      "bgmDesc": "Nhạc không khí sôi động trong phòng chờ và sàn đấu",
       "on": "BẬT",
       "off": "TẮT"
     },
     "controls": {
       "title": "Phím Tắt Điều Khiển",
-      "quickAnswersTitle": "Trả Lời Bằng Phím Tắt",
-      "quickAnswersDesc": "Bấm phím 1, 2, 3, 4 tương ứng đáp án A, B, C, D",
+      "quickAnswersTitle": "Trả Lời Nhanh 1-2-3-4",
+      "quickAnswersDesc": "Nhấn các phím số 1, 2, 3, 4 trên bàn phím tương ứng với 4 đáp án A, B, C, D",
+      "key1": "Đáp Án A",
+      "key2": "Đáp Án B",
+      "key3": "Đáp Án C",
+      "key4": "Đáp Án D",
+      "autoFocusTitle": "Tự Động Cuộn Đến Câu Hỏi",
+      "autoFocusDesc": "Tự động tập trung khung nhìn vào vùng câu hỏi khi vòng mới bắt đầu",
       "enabled": "KÍCH HOẠT",
       "disabled": "VÔ HIỆU"
     },
     "graphics": {
-      "title": "Cài Đặt Đồ Họa (UI/UX)",
-      "glowTitle": "Cường Độ Neon Glow",
-      "intensityNormal": "Cơ bản",
-      "intensityHigh": "Đặc trưng",
-      "intensityExtreme": "Cực hạn",
-      "scanlines": "Đường Quét CRT (Scanlines)",
-      "particles": "Lưới Không Gian (Tech Grids)",
+      "title": "Trải Nghiệm & Hiệu Ứng",
+      "subtitle": "Tối ưu hóa chuyển động và hiệu ứng đồ họa theo cấu hình thiết bị của bạn",
+      "confettiTitle": "Pháo Hoa Ăn Mừng (Confetti)",
+      "confettiDesc": "Bắn pháo hoa rực rỡ khi trả lời đúng chuỗi combo và chiến thắng",
+      "reduceMotionTitle": "Chế Độ Giảm Chuyển Động",
+      "reduceMotionDesc": "Giảm bớt hoạt ảnh rung lắc phức tạp, mượt mà và tiết kiệm pin",
+      "hapticsTitle": "Rung Phản Hồi Chạm (Haptics)",
+      "hapticsDesc": "Rung phản hồi nhẹ khi chạm chọn đáp án trên thiết bị cảm ứng",
       "on": "BẬT",
-      "off": "TẮT",
-      "show": "BẬT",
-      "hide": "ẨN"
+      "off": "TẮT"
     },
-    "saveButton": "Lưu Tùy Chỉnh",
-    "saveSuccess": "Đã lưu các tùy chỉnh cấu hình vào bộ nhớ đệm browser!",
+    "system": {
+      "title": "Hệ Thống & Dữ Liệu",
+      "languageTitle": "Ngôn Ngữ Giao Diện",
+      "languageDesc": "Chọn ngôn ngữ hiển thị trong toàn bộ Đấu Trường 100",
+      "resetTitle": "Khôi Phục Cài Đặt Gốc",
+      "resetDesc": "Đưa toàn bộ âm thanh, đồ họa và phím tắt về thiết lập mặc định",
+      "resetBtn": "Khôi Phục Mặc Định",
+      "resetSuccess": "Đã khôi phục cài đặt mặc định thành công!",
+      "clearCacheTitle": "Dọn Dẹp Bộ Nhớ Đệm",
+      "clearCacheDesc": "Xoá cache trình duyệt cục bộ nếu gặp sự cố kết nối hoặc giao diện",
+      "clearCacheBtn": "Xoá Bộ Nhớ Đệm",
+      "clearCacheSuccess": "Đã dọn dẹp bộ nhớ đệm thành công!"
+    },
+    "saveButton": "Lưu Cài Đặt",
+    "saveSuccess": "Đã lưu cài đặt vào bộ nhớ trình duyệt!",
     "avatar": {
       "title": "HÌNH ĐẠI DIỆN",
       "subtitle": "Chọn nhân vật đại diện cho bạn trong đấu trường.",
@@ -503,7 +640,27 @@
       "you": "BẠN",
       "host": "HOST",
       "ready": "ĐÃ SẴN SÀNG",
-      "offline": "Mất kết nối"
+      "offline": "Mất kết nối",
+      "waitingSlot": "Đang chờ đối thủ...",
+      "inviteSlot": "Mời bạn bè tham chiến",
+      "playerRoster": "CHIẾN BINH SẴN SÀNG"
+    },
+    "roomCodeCard": {
+      "label": "MÃ PHÒNG ĐẤU",
+      "copyCode": "Sao chép mã",
+      "copyLink": "Sao chép liên kết mời",
+      "copiedCode": "Đã chép mã phòng!",
+      "copiedLink": "Đã chép liên kết mời!",
+      "shareHint": "Gửi liên kết hoặc mã phòng cho bạn bè để cùng tham gia đấu trường!"
+    },
+    "matchInfo": {
+      "title": "QUY TẮC ĐẤU TRƯỜNG",
+      "modeLabel": "Chế độ",
+      "modeValue": "Sinh Tử 100 Người",
+      "timeLabel": "Thời gian",
+      "timeValue": "10s / câu hỏi",
+      "ruleLabel": "Luật chơi",
+      "ruleValue": "Sai 1 câu = Loại ngay"
     },
     "page": {
       "opponentsCount": "Đối thủ hiện tại",
@@ -571,8 +728,20 @@
     "alreadyDone": "Bạn đã hoàn thành thử thách hôm nay rồi.",
     "progressLabel": "Tiến trình Thử Thách Hằng Ngày",
     "speedBonus": {
-      "none": "Không có thưởng",
-      "awarded": "Hoàn thành trong {ms}ms"
+      "none": "Không có thưởng tốc độ",
+      "awarded": "Hoàn thành trong {seconds}s"
+    },
+    "rewards": {
+      "title": "Phần Thưởng Chuỗi Thắng",
+      "subtitle": "Đạt mốc chuỗi ngày để mở khóa biến thể thẻ bài đặc biệt",
+      "neonTier": "Chuỗi 7 ngày: Biến thể Neon",
+      "goldTier": "Chuỗi 14 ngày: Biến thể Vàng (Gold)",
+      "unlocked": "Đã mở khóa",
+      "inProgress": "{current}/{target} ngày"
+    },
+    "sharePreview": {
+      "title": "Xem Trước Thẻ Chia Sẻ",
+      "description": "Sao chép bảng kết quả hằng ngày để khoe và thách đấu bạn bè!"
     },
     "share": {
       "result": "Chia sẻ kết quả",
@@ -592,8 +761,11 @@
     },
     "leaderboard": {
       "title": "Bảng Xếp Hạng Hôm Nay",
+      "topBanner": "Top Cao Thủ Hôm Nay",
       "error": "Không tải được bảng xếp hạng.",
       "empty": "Hôm nay chưa có điểm — hãy là người đầu tiên.",
+      "cardsThisWeek": "Lá bài đã chơi trong tuần",
+      "cardsLabel": "{count, plural, one {# lá bài} other {# lá bài}}",
       "cardsTier": {
         "COMMON": "Hạng thường — người chơi nhẹ",
         "RARE": "Hạng hiếm — người chơi tích cực",
@@ -749,5 +921,25 @@
     "playersInQueue": "Người đang tìm trận:",
     "playerCount": "{count} người",
     "cancelSearch": "HỦY TÌM TRẬN"
+  },
+  "Professor": {
+    "name": "Giáo Sư Não To",
+    "supervisorTitle": "GIÁM THỊ COI THI",
+    "supervisorLabel": "Bàn Giám Sát Của Giáo Sư",
+    "attendanceDesk": "BÀN ĐIỂM DANH",
+    "instructionsLabel": "LỜI DẶN CỦA GIÁM THỊ:",
+    "rulesLabel": "QUY CHẾ PHÒNG THI",
+    "roastLabel": "LỜI PHÊ CỦA GIÁO SƯ:",
+    "evalLabel": "LỜI PHÊ CỦA GIÁO SƯ GIÁM THỊ:",
+    "pokeAttendanceTitle": "Nhấp để nghe thầy giáo căn dặn!",
+    "pokeRulesTitle": "Nhấp để nghe thầy giáo phổ biến quy chế!",
+    "pokeGameTitle": "Nhấp để nghe thầy giáo nhắc bài!",
+    "closeDialogue": "Đóng lời thoại",
+    "grades": {
+      "valedictorian": "THỦ KHOA (A+)",
+      "honor": "HỌC SINH GIỎI (A)",
+      "remedial": "CẦN CỐ GẮNG (F)",
+      "eliminated": "ĐIỂM F: BỊ LOẠI"
+    }
   }
 }

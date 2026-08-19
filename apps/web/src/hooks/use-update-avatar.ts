@@ -11,13 +11,17 @@ export function useUpdateAvatar() {
   const accessToken = useSocketStore((state) => state.accessToken);
 
   return useMutation({
-    mutationFn: (avatar: AvatarSeed) =>
-      apiSendJson<UserSummary>(
+    mutationFn: async (avatar: AvatarSeed) => {
+      if (!accessToken) {
+        throw new Error("Authentication required to update avatar");
+      }
+      return apiSendJson<UserSummary>(
         "/api/v1/users/me/avatar",
         "PATCH",
         { avatar },
-        accessToken ?? undefined,
-      ),
+        accessToken,
+      );
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["profile"] });
       queryClient.invalidateQueries({
