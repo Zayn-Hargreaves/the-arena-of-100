@@ -12,6 +12,7 @@ import {
   type LeaderboardQuery,
   type LeaderboardResponse,
 } from "./dto";
+import { getLeaderboardCacheKey } from "./leaderboard-cache.helper";
 
 const FINISHED = "FINISHED";
 
@@ -60,7 +61,7 @@ export class RankingsService {
   }
 
   private cacheKey(period: string, limit: number): string {
-    return `leaderboard:v2:${period}:limit=${limit}`;
+    return getLeaderboardCacheKey(period, limit);
   }
 
   private async safeGetCache(

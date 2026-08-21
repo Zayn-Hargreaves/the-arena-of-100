@@ -276,28 +276,46 @@ export function emitClassAssigned(
   });
 }
 
-export function emitCardOffer(
-  server: Server,
-  playerId: string,
-  roomId: string,
-  matchId: string,
-  roundNo: number,
-  offeredCardIds: readonly [CardId, CardId, CardId],
-  offerSeqNo: number,
-  seedUsed: string,
-) {
-  // Emit to both player private channel and room channel (with playerId filtering)
+export interface CardOfferEmitContext {
+  server: Server;
+  playerId: string;
+  roomId: string;
+  matchId: string;
+  roundNo: number;
+  offeredCardIds: readonly [CardId, CardId, CardId];
+  offerSeqNo: number;
+  seedUsed: string;
+}
+
+export function emitCardOffer(ctx: CardOfferEmitContext): void {
+  const {
+    server,
+    playerId,
+    roomId,
+    matchId,
+    roundNo,
+    offeredCardIds,
+    offerSeqNo,
+    seedUsed,
+  } = ctx;
+
+  // Emit full payload (including offeredCardIds and seedUsed) to player private channel
   const playerChannel = getPlayerChannel(playerId);
-  const payload = {
+  server.to(playerChannel).emit(ServerEvent.CARD_OFFER, {
     matchId,
     roundNo,
     playerId,
     offeredCardIds,
     offerSeqNo,
     seedUsed,
-  };
-  server.to(playerChannel).emit(ServerEvent.CARD_OFFER, payload);
-  // Also emit to room channel so spectators/clients connected directly see it
+  });
+
+  // Emit reduced public payload to room channel (excluding sensitive offeredCardIds and seedUsed)
   const roomChannel = getRoomChannel(roomId);
-  server.to(roomChannel).emit(ServerEvent.CARD_OFFER, payload);
+  server.to(roomChannel).emit(ServerEvent.CARD_OFFER, {
+    matchId,
+    roundNo,
+    playerId,
+    offerSeqNo,
+  });
 }

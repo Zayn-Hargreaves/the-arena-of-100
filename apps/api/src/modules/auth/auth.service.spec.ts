@@ -316,14 +316,14 @@ describe("AuthService.guestLogin", () => {
   it("ignores client-supplied guestSecret when creating a new user", async () => {
     const { service, prisma } = buildServiceWithPrisma();
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
-    vi.mocked(prisma.user.create).mockImplementation(async ({ data }) => {
+    vi.mocked(prisma.user.create).mockImplementation((async ({ data }: any) => {
       return {
         id: "u-1",
         username: "new_player",
         guestId: data.guestId,
         role: Role.GUEST,
       } as never;
-    });
+    }) as any);
 
     const result = await service.guestLogin(
       "new_player",
@@ -780,11 +780,38 @@ describe("AuthService.adminLogin", () => {
     expect(prisma.user.findUnique).not.toHaveBeenCalled();
   });
 
-  it("rejects missing ADMIN_PASSWORD", async () => {
-    const { service } = buildAdminService({ ADMIN_PASSWORD: "" });
-    await expect(service.adminLogin("anything")).rejects.toThrow(
+  it("rejects missing or short ADMIN_PASSWORD (< 12 chars)", async () => {
+    const { service: serviceEmpty } = buildAdminService({ ADMIN_PASSWORD: "" });
+    await expect(serviceEmpty.adminLogin("anything")).rejects.toThrow(
       UnauthorizedException,
     );
+
+    const { service: serviceShort } = buildAdminService({
+      ADMIN_PASSWORD: "short-pass",
+    });
+    await expect(serviceShort.adminLogin("short-pass")).rejects.toThrow(
+      UnauthorizedException,
+    );
+  });
+
+  it("logs in successfully when admin user already exists without creating user", async () => {
+    const { service, prisma } = buildAdminService();
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      id: "admin-existing",
+      username: "admin",
+      guestId: "gid",
+      role: Role.ADMIN,
+    } as never);
+
+    const result = await service.adminLogin("strong-admin-password");
+
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { username: "admin" },
+    });
+    expect(prisma.user.create).not.toHaveBeenCalled();
+    expect(result.user.id).toBe("admin-existing");
+    expect(result.user.role).toBe(Role.ADMIN);
+    expect(result.user.username).toBe("admin");
   });
 
   it("rejects default password outside development/test", async () => {
@@ -795,6 +822,21 @@ describe("AuthService.adminLogin", () => {
     await expect(service.adminLogin("arena100admin")).rejects.toThrow(
       UnauthorizedException,
     );
+    const { service: serviceEnvExample } = buildAdminService({
+      NODE_ENV: "production",
+      ADMIN_PASSWORD: "change-me-admin-password",
+    });
+    await expect(
+      serviceEnvExample.adminLogin("change-me-admin-password"),
+    ).rejects.toThrow(UnauthorizedException);
+
+    const { service: serviceLegacyDefault } = buildAdminService({
+      NODE_ENV: "production",
+      ADMIN_PASSWORD: "arena100admin",
+    });
+    await expect(
+      serviceLegacyDefault.adminLogin("arena100admin"),
+    ).rejects.toThrow(UnauthorizedException);
   });
 });
 

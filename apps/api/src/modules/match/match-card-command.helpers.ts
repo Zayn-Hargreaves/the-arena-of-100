@@ -154,8 +154,9 @@ export function emitCardResolved(
     matchId,
     roundNo: payload.roundNo,
     targetRoundNo:
-      payload.targetRoundNo ??
-      (typeof payload.roundNo === "number" ? payload.roundNo + 1 : undefined),
+      typeof payload.targetRoundNo === "number"
+        ? payload.targetRoundNo
+        : undefined,
     cardId: payload.cardId as string,
     offerSeqNo: payload.offerSeqNo,
     playedByPlayerId: payload.playedByPlayerId as string,

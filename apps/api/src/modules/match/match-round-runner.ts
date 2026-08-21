@@ -8,6 +8,8 @@ import {
   RoomError,
   ErrorCode,
   getCardDefinition,
+  type CardId,
+  type ClassId,
 } from "@arena/shared";
 import { MatchService, type PersistOutcome } from "./match.service";
 import { MatchOwnershipService } from "./match-ownership.service";
@@ -26,7 +28,7 @@ import {
   emitClassAssigned,
   emitCardOffer,
 } from "./game-loop.events";
-import { isMilestoneRound } from "./card-validator";
+import { isMilestoneRound, isAttackCard } from "./card-validator";
 import { emitCardResolved } from "./match-card-command.helpers";
 
 import { recoverRoundEnd, type RoundEndContext } from "./match-round-recovery";
@@ -670,8 +672,9 @@ export class MatchRoundRunner {
     );
 
     // Phase 2: Milestone Card Offers (Round 5, 12, 20)
+    let botOfferSeqNos = new Map<string, number>();
     if (isMilestoneRound(state.currentRoundNo)) {
-      this.triggerMilestoneCardOffers(
+      botOfferSeqNos = await this.triggerMilestoneCardOffers(
         matchId,
         roomId,
         server,
@@ -681,42 +684,71 @@ export class MatchRoundRunner {
     }
 
     // 7. Schedule simulated bot answers if any bot players are active
-    await this.scheduleBotAnswers(matchId, roomId, server, stateMachine, {
-      id: question.id,
-      correctAnswer: question.correctAnswer,
-      options: question.options,
-      difficulty: question.difficulty,
-    });
+    await this.scheduleBotAnswers(
+      matchId,
+      roomId,
+      server,
+      stateMachine,
+      {
+        id: question.id,
+        correctAnswer: question.correctAnswer,
+        options: question.options,
+        difficulty: question.difficulty,
+      },
+      botOfferSeqNos,
+    );
   }
 
   /**
    * Phase 2: Milestone Card Offer (Q5, 12, 20).
    * Renders 3 card candidates per surviving player according to class-specific sampling.
    */
-  private triggerMilestoneCardOffers(
+  private async triggerMilestoneCardOffers(
     matchId: string,
     roomId: string,
     server: Server,
     stateMachine: MatchStateMachine,
     roundNo: number,
-  ): void {
+  ): Promise<Map<string, number>> {
+    const botOfferSeqNos = new Map<string, number>();
+    if (!(await this.ownership.assertOwnership(matchId))) {
+      return botOfferSeqNos;
+    }
+
     const state = stateMachine.getState();
     const survivingPlayerIds = state.survivingPlayerIds;
+    const serialized = stateMachine.serialize();
+
+    let classAssignmentEvent: {
+      assignments: Array<{ playerId: string; classId: ClassId }>;
+      seedUsed: string;
+    } | null = null;
 
     // Ensure classes are assigned if not already
-    const playerClasses = (
-      stateMachine as unknown as { playerClasses?: Map<string, unknown> }
-    ).playerClasses;
-    if (!playerClasses || playerClasses.size === 0) {
+    if (!stateMachine.hasClassAssignments()) {
       const allPlayerIds = Array.from(state.players.keys());
-      const classSeed = `${matchId}:class:${Date.now()}`;
+      const classSeed = `${matchId}:class`;
       const assignments = stateMachine.classAssignment(allPlayerIds, classSeed);
-      emitClassAssigned(server, roomId, matchId, assignments, classSeed);
+      classAssignmentEvent = { assignments, seedUsed: classSeed };
     }
+
+    let botIds: Set<string>;
+    try {
+      botIds = await this.matchService.getBotPlayerIds(matchId);
+    } catch {
+      botIds = new Set();
+    }
+
+    const cardOffersToEmit: Array<{
+      playerId: string;
+      offeredCards: readonly [CardId, CardId, CardId];
+      offerSeqNo: number;
+      offerSeed: string;
+    }> = [];
 
     for (const playerId of survivingPlayerIds) {
       try {
-        const offerSeed = `${matchId}:offer:r${roundNo}:${playerId}:${Date.now()}`;
+        const offerSeed = `${matchId}:offer:r${roundNo}:${playerId}`;
         const offeredCards = stateMachine.pickOffer(
           playerId,
           roundNo,
@@ -731,23 +763,28 @@ export class MatchRoundRunner {
               typeof e.payload === "object" &&
               e.payload !== null &&
               "playerId" in e.payload &&
-              (e.payload as { playerId: string }).playerId === playerId,
+              (e.payload as { playerId: string }).playerId === playerId &&
+              "roundNo" in e.payload &&
+              (e.payload as { roundNo: number }).roundNo === roundNo,
           );
-        const offerSeqNo = offerEvent?.seqNo ?? 0;
+        if (!offerEvent) {
+          continue;
+        }
+        const offerSeqNo = offerEvent.seqNo;
 
-        emitCardOffer(
-          server,
+        if (botIds.has(playerId)) {
+          botOfferSeqNos.set(playerId, offerSeqNo);
+        }
+
+        cardOffersToEmit.push({
           playerId,
-          roomId,
-          matchId,
-          roundNo,
           offeredCards,
           offerSeqNo,
           offerSeed,
-        );
+        });
 
         // Phase 2 / Bot AI: If the player is a bot, auto-pick one offered card
-        if (playerId.startsWith("bot_") && offeredCards.length > 0) {
+        if (botIds.has(playerId) && offeredCards.length > 0) {
           const chosenCard =
             offeredCards[Math.floor(Math.random() * offeredCards.length)];
           try {
@@ -764,6 +801,41 @@ export class MatchRoundRunner {
         );
       }
     }
+
+    const outcome = await this.matchService.persistStateMachine(matchId);
+    if (outcome !== "APPLIED") {
+      this.logger.warn(
+        `triggerMilestoneCardOffers: persistStateMachine returned ${outcome} for ${matchId}, restoring state and skipping broadcasts`,
+      );
+      this.matchService.evictStateMachine(matchId);
+      const canonical = MatchStateMachine.deserialize(serialized);
+      Object.assign(stateMachine, canonical);
+      return new Map();
+    }
+
+    if (classAssignmentEvent) {
+      emitClassAssigned(
+        server,
+        roomId,
+        matchId,
+        classAssignmentEvent.assignments,
+        classAssignmentEvent.seedUsed,
+      );
+    }
+
+    for (const offer of cardOffersToEmit) {
+      emitCardOffer({
+        server,
+        playerId: offer.playerId,
+        roomId,
+        matchId,
+        roundNo,
+        offeredCardIds: offer.offeredCards,
+        offerSeqNo: offer.offerSeqNo,
+        seedUsed: offer.offerSeed,
+      });
+    }
+    return botOfferSeqNos;
   }
 
   /**
@@ -780,6 +852,7 @@ export class MatchRoundRunner {
       options: string[];
       difficulty?: string;
     },
+    botOfferSeqNos?: Map<string, number>,
   ): Promise<void> {
     const state = stateMachine.getState();
     let botIds: Set<string>;
@@ -806,6 +879,7 @@ export class MatchRoundRunner {
       stateMachine,
       botPlayerIds,
       question,
+      botOfferSeqNos,
     );
 
     const simulations = simulateBotAnswers(question, botPlayerIds);
@@ -827,22 +901,21 @@ export class MatchRoundRunner {
             if (now >= round.endsAt) return;
 
             const serialized = sm.serialize();
-            const serverTimestamp = Math.min(now, round.endsAt);
             const result = sm.submitAnswer(
               sim.userId,
               sim.answer,
-              serverTimestamp,
-              sim.submissionId,
+              sim.responseTimeMs,
             );
+
             const outcome =
               await this.matchService.persistStateMachine(matchId);
             if (outcome !== "APPLIED") {
-              this.matchService.evictStateMachine(matchId);
-              const canonical = MatchStateMachine.deserialize(serialized);
-              Object.assign(sm, canonical);
               this.logger.warn(
                 `bot submission callback: persistStateMachine returned ${outcome} for match ${matchId} bot ${sim.userId}`,
               );
+              this.matchService.evictStateMachine(matchId);
+              const canonical = MatchStateMachine.deserialize(serialized);
+              Object.assign(sm, canonical);
               return;
             }
 
@@ -885,6 +958,7 @@ export class MatchRoundRunner {
       options: string[];
       difficulty?: string;
     },
+    botOfferSeqNos?: Map<string, number>,
   ): void {
     const state = stateMachine.getState();
     const survivingPlayerIds = state.survivingPlayerIds;
@@ -900,7 +974,7 @@ export class MatchRoundRunner {
 
         // 100% probability that bot casts a spell when holding a card (Testing mode)
         const cardId =
-          playableCards[Math.floor(Math.random() * playableCards.length)];
+          playableCards[Math.floor(Math.random() * playableCards.length)]!;
         const cardDef = getCardDefinition(cardId);
 
         // Fast cast delay between 800ms and 2500ms so effects appear right away
@@ -924,11 +998,11 @@ export class MatchRoundRunner {
               const currentSurviving = sm.getState().survivingPlayerIds;
               let targetPlayerIds: string[];
 
-              if (cardDef.classId === "ATTACK") {
+              if (isAttackCard(cardId)) {
                 const enemies = currentSurviving.filter((id) => id !== botId);
                 if (enemies.length === 0) return;
                 const chosenTarget =
-                  enemies[Math.floor(Math.random() * enemies.length)];
+                  enemies[Math.floor(Math.random() * enemies.length)]!;
                 targetPlayerIds = [chosenTarget];
               } else {
                 targetPlayerIds = [botId];
@@ -946,22 +1020,29 @@ export class MatchRoundRunner {
                 },
               );
 
-              const serverTimestamp = Math.min(now, round.endsAt);
-              const durationMs = (effect as { durationMs?: number }).durationMs;
-              const resolution =
-                durationMs !== undefined ? "TEMPORARY" : "MUTATION";
-              const expiresAtServer =
-                resolution === "TEMPORARY"
-                  ? serverTimestamp + (durationMs ?? 0)
-                  : null;
-              const remainingMs =
-                resolution === "TEMPORARY" ? (durationMs ?? null) : null;
+              const offerSeqNo =
+                botOfferSeqNos?.get(botId) ??
+                (() => {
+                  const eventLog = sm.getEventLog();
+                  const offerEvent = [...eventLog]
+                    .reverse()
+                    .find(
+                      (e) =>
+                        e.type === "CARD_OFFER" &&
+                        typeof e.payload === "object" &&
+                        e.payload !== null &&
+                        "playerId" in e.payload &&
+                        (e.payload as { playerId: string }).playerId === botId,
+                    );
+                  return offerEvent?.seqNo ?? 1;
+                })();
 
+              const serverTimestamp = Math.min(now, round.endsAt);
               const serialized = sm.serialize();
-              const seqNo = sm.playCard(
+              const playResult = sm.playCard(
                 botId,
                 cardId,
-                1,
+                offerSeqNo,
                 effect,
                 targetPlayerIds,
                 serverTimestamp,
@@ -970,24 +1051,36 @@ export class MatchRoundRunner {
               const outcome =
                 await this.matchService.persistStateMachine(matchId);
               if (outcome !== "APPLIED") {
+                this.logger.warn(
+                  `bot card play callback: persistStateMachine returned ${outcome} for match ${matchId} bot ${botId}`,
+                );
                 this.matchService.evictStateMachine(matchId);
                 const canonical = MatchStateMachine.deserialize(serialized);
                 Object.assign(sm, canonical);
                 return;
               }
 
+              const targetRoundNo =
+                effect.kind === "SHIELD"
+                  ? effect.expiresAtRound
+                  : round.roundNo;
+
               emitCardResolved(this.logger, server, roomId, {
-                seqNo,
+                seqNo: playResult.seqNo,
                 matchId,
                 roundNo: round.roundNo,
+                targetRoundNo,
                 cardId,
-                offerSeqNo: 1,
+                offerSeqNo,
                 playedByPlayerId: botId,
                 targetPlayerIds,
-                resolution,
+                resolution:
+                  playResult.expiresAtServer === null
+                    ? "MUTATION"
+                    : "TEMPORARY",
                 serverTimestamp,
-                expiresAtServer,
-                remainingMs,
+                expiresAtServer: playResult.expiresAtServer,
+                remainingMs: playResult.remainingMs,
                 effect,
               });
             } catch (playErr) {

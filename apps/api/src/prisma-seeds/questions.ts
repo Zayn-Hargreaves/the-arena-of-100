@@ -1799,7 +1799,7 @@ export const questionSeeds: Question[] = [
   {
     content:
       "Tìm hai số nguyên dương biết tổng của chúng bằng 100 và hiệu của chúng bằng 20?",
-    options: ["60 và 40", "70 và 30", "55 và 45", "80 and 20"],
+    options: ["60 và 40", "70 và 30", "55 và 45", "80 và 20"],
     correctAnswer: "60 và 40",
     difficulty: "MEDIUM",
     category: "LOGIC",
@@ -2110,11 +2110,9 @@ export function normalizeString(str: string): string {
  * @throws Error if correctAnswer is not in options
  */
 function validateQuestion(question: Question): void {
-  // Check that correctAnswer is one of the options
-  if (!question.options.includes(question.correctAnswer)) {
-    throw new Error(
-      `Invalid question: "${question.content}". Correct answer "${question.correctAnswer}" is not in options: [${question.options.join(", ")}]`,
-    );
+  // Reject empty question content
+  if (!question.content || normalizeString(question.content).length === 0) {
+    throw new Error(`Invalid question: Question content cannot be empty.`);
   }
 
   // Ensure 4 options
@@ -2124,8 +2122,25 @@ function validateQuestion(question: Question): void {
     );
   }
 
-  // Ensure no duplicate options
-  const uniqueOptions = new Set(question.options);
+  // Reject empty options
+  for (const option of question.options) {
+    if (!option || normalizeString(option).length === 0) {
+      throw new Error(
+        `Invalid question: "${question.content}". Option cannot be empty.`,
+      );
+    }
+  }
+
+  // Check that correctAnswer is one of the options
+  if (!question.options.includes(question.correctAnswer)) {
+    throw new Error(
+      `Invalid question: "${question.content}". Correct answer "${question.correctAnswer}" is not in options: [${question.options.join(", ")}]`,
+    );
+  }
+
+  // Ensure no duplicate options (after normalization)
+  const normalizedOptions = question.options.map((opt) => normalizeString(opt));
+  const uniqueOptions = new Set(normalizedOptions);
   if (uniqueOptions.size !== question.options.length) {
     throw new Error(
       `Invalid question: "${question.content}". Options contain duplicates: [${question.options.join(", ")}]`,

@@ -50,4 +50,34 @@ describe("Questions Seed Validation - Tags", () => {
       validateQuestions([questionWithDuplicateTagsSpaces]),
     ).toThrowError(/Duplicate tags \["http"\] found in question/);
   });
+
+  it("should throw error when question content is empty", () => {
+    const questionWithEmptyContent: Question = {
+      ...baseValidQuestion,
+      content: "   ",
+    };
+    expect(() => validateQuestions([questionWithEmptyContent])).toThrowError(
+      /Question content cannot be empty/,
+    );
+  });
+
+  it("should throw error when an option is empty", () => {
+    const questionWithEmptyOption: Question = {
+      ...baseValidQuestion,
+      options: ["Hà Nội", "Hồ Chí Minh", "  ", "Huế"],
+    };
+    expect(() => validateQuestions([questionWithEmptyOption])).toThrowError(
+      /Option cannot be empty/,
+    );
+  });
+
+  it("should throw error when options contain duplicates after normalization", () => {
+    const questionWithDupOptions: Question = {
+      ...baseValidQuestion,
+      options: ["Hà Nội", "Hồ Chí Minh", "hà nội", "Huế"],
+    };
+    expect(() => validateQuestions([questionWithDupOptions])).toThrowError(
+      /Options contain duplicates/,
+    );
+  });
 });

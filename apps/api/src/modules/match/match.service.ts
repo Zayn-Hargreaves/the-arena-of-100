@@ -92,7 +92,9 @@ function restoreMatchDates<T>(data: T): T {
 export type MatchWithDetails = Prisma.MatchGetPayload<{
   include: {
     players: {
-      include: { user: { select: { id: true; username: true } } };
+      include: {
+        user: { select: { id: true; username: true; avatar: true } };
+      };
     };
     rounds: true;
     answers: {

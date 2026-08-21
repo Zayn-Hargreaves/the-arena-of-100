@@ -951,6 +951,11 @@ export class MatchStateMachine {
     return assignments;
   }
 
+  // Returns true if player classes have been assigned in this match.
+  hasClassAssignments(): boolean {
+    return this.playerClasses.size > 0;
+  }
+
   // `pickOffer` — milestone card offer (Q5/12/20). Runs the
   // canonical sampling (spec §3.3) + emits a `CARD_OFFER` event
   // + populates the player's hand. The 3-tuple size is

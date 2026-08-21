@@ -46,11 +46,30 @@ async function bootstrap() {
     },
   });
 
+  const rawCorsOrigin = process.env.CORS_ORIGIN;
+  const configuredOrigins = rawCorsOrigin
+    ? rawCorsOrigin
+        .split(",")
+        .map((o) => o.trim())
+        .filter((o) => o.length > 0)
+    : [];
+
+  let corsOrigins: string[];
+  if (configuredOrigins.length > 0) {
+    corsOrigins = configuredOrigins;
+  } else {
+    if (process.env.NODE_ENV === "production") {
+      Logger.warn(
+        "CORS_ORIGIN is missing or empty in production; falling back to localhost",
+        "Bootstrap",
+      );
+    }
+    corsOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
+  }
+
   // Enable CORS
   app.enableCors({
-    origin: process.env.CORS_ORIGIN
-      ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim())
-      : ["http://localhost:3000", "http://127.0.0.1:3000"],
+    origin: corsOrigins,
     methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
     allowedHeaders: [
       "Content-Type",

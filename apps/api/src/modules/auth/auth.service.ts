@@ -16,8 +16,21 @@ import ms from "ms";
 import { nanoid } from "nanoid";
 import { Prisma, Role } from "@prisma/client";
 import { sanitizeNickname, baseNormalize } from "../../common/moderation";
+import crypto from "crypto";
+import { invalidateLeaderboardCache } from "../rankings/leaderboard-cache.helper";
 
 const FIXED_ADMIN_USERNAME = "admin";
+
+const REJECTED_ADMIN_PASSWORDS = new Set([
+  "arena100admin",
+  "change-me-admin-password",
+]);
+
+function constantTimeCompare(a: string, b: string): boolean {
+  const hashA = crypto.createHash("sha256").update(a).digest();
+  const hashB = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(hashA, hashB);
+}
 
 export interface TokenPayload {
   userId: string;
@@ -173,19 +186,7 @@ export class AuthService {
   }
 
   private async invalidateLeaderboardCache(): Promise<void> {
-    const limits = [10, 25, 50, 100];
-    const periods = ["weekly", "all"];
-    const promises: Promise<void>[] = [];
-    for (const period of periods) {
-      for (const limit of limits) {
-        promises.push(
-          this.redis
-            .del(`leaderboard:v2:${period}:limit=${limit}`)
-            .catch(() => undefined),
-        );
-      }
-    }
-    await Promise.all(promises);
+    await invalidateLeaderboardCache(this.redis, this.logger);
   }
 
   // Admin Login — fixed identity "admin" only; never promote arbitrary users.
@@ -204,13 +205,13 @@ export class AuthService {
     if (
       nodeEnv !== "development" &&
       nodeEnv !== "test" &&
-      adminPassword === "arena100admin"
+      REJECTED_ADMIN_PASSWORDS.has(adminPassword)
     ) {
       this.logger.error("ADMIN_PASSWORD must not use the default value");
       throw new UnauthorizedException("Invalid admin credentials");
     }
 
-    if (!password || password !== adminPassword) {
+    if (!password || !constantTimeCompare(password, adminPassword)) {
       throw new UnauthorizedException("Invalid admin credentials");
     }
 
@@ -219,15 +220,30 @@ export class AuthService {
     });
 
     if (!adminUser) {
-      adminUser = await this.prisma.user.create({
-        data: {
-          username: FIXED_ADMIN_USERNAME,
-          guestId: nanoid(12),
-          role: Role.ADMIN,
-        },
-      });
-      this.logger.log(`Created admin user: ${FIXED_ADMIN_USERNAME}`);
-    } else if (adminUser.role !== Role.ADMIN) {
+      try {
+        adminUser = await this.prisma.user.create({
+          data: {
+            username: FIXED_ADMIN_USERNAME,
+            guestId: nanoid(12),
+            role: Role.ADMIN,
+          },
+        });
+        this.logger.log(`Created admin user: ${FIXED_ADMIN_USERNAME}`);
+      } catch (error: unknown) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002"
+        ) {
+          adminUser = await this.prisma.user.findUnique({
+            where: { username: FIXED_ADMIN_USERNAME },
+          });
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    if (!adminUser || adminUser.role !== Role.ADMIN) {
       // Never promote a non-admin account that happens to be named "admin".
       throw new UnauthorizedException("Invalid admin credentials");
     }

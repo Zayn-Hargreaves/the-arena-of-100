@@ -713,6 +713,35 @@ describe("MatchService", () => {
       );
     });
 
+    it("returns cached match from Redis on cache hit for ROUND_ACTIVE match, strips answers to empty array, and skips Prisma findUnique", async () => {
+      const cachedLiveMatch = {
+        id: "m-active",
+        roomId: "r1",
+        status: "ROUND_ACTIVE",
+        players: [],
+        rounds: [],
+        answers: [
+          {
+            userId: "u1",
+            isCorrect: true,
+            responseTimeMs: 50,
+            roundId: "r1",
+          },
+        ],
+      };
+      vi.mocked(redis.mget).mockResolvedValue([
+        JSON.stringify({ gen: "1", data: cachedLiveMatch }),
+        "1",
+      ]);
+
+      const result = await service.getMatch("m-active");
+
+      expect(result.id).toBe("m-active");
+      expect(result.status).toBe("ROUND_ACTIVE");
+      expect(result.answers).toEqual([]);
+      expect(prisma.match.findUnique).not.toHaveBeenCalled();
+    });
+
     it("returns cached match from Redis on cache hit without calling Prisma", async () => {
       const startedAt = new Date("2026-08-14T09:50:00.000Z");
       const endedAt = new Date("2026-08-14T10:00:00.000Z");
