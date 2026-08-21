@@ -21,8 +21,10 @@ export interface AudioSettings {
   sfxVolume: number; // 0..100
   bgmEnabled: boolean;
   bgmVolume: number; // 0..100
+  soundConsent: boolean;
 }
 
+export const AUDIO_PROMPT_KEY = "arena-audio-prompted-v2";
 const STORAGE_KEY = "arena-settings";
 const DEFAULT_BGM_TRACK = "/audio/bgm-battle.mp3";
 
@@ -31,11 +33,47 @@ const defaultSettings: AudioSettings = {
   sfxVolume: 80,
   bgmEnabled: true,
   bgmVolume: 60,
+  soundConsent: false,
 };
 
 let cachedSettings: AudioSettings | null = null;
 let sharedAudioCtx: AudioContext | null = null;
 let bgmAudioElement: HTMLAudioElement | null = null;
+
+function clampVolume(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.min(100, value));
+  }
+  return fallback;
+}
+
+/**
+ * Validates and normalizes raw settings into a strict AudioSettings object.
+ */
+export function normalizeAudioSettings(raw: unknown): AudioSettings {
+  if (!raw || typeof raw !== "object") {
+    return { ...defaultSettings };
+  }
+
+  const record = raw as Record<string, unknown>;
+
+  return {
+    sfxEnabled:
+      typeof record.sfxEnabled === "boolean"
+        ? record.sfxEnabled
+        : defaultSettings.sfxEnabled,
+    sfxVolume: clampVolume(record.sfxVolume, defaultSettings.sfxVolume),
+    bgmEnabled:
+      typeof record.bgmEnabled === "boolean"
+        ? record.bgmEnabled
+        : defaultSettings.bgmEnabled,
+    bgmVolume: clampVolume(record.bgmVolume, defaultSettings.bgmVolume),
+    soundConsent:
+      typeof record.soundConsent === "boolean"
+        ? record.soundConsent
+        : defaultSettings.soundConsent,
+  };
+}
 
 /**
  * Returns audio context instance, reusing existing or creating a new one on user interaction
@@ -73,19 +111,8 @@ export function getAudioSettings(): AudioSettings {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw);
-      cachedSettings = {
-        sfxEnabled: parsed.sfxEnabled ?? defaultSettings.sfxEnabled,
-        sfxVolume:
-          typeof parsed.sfxVolume === "number"
-            ? parsed.sfxVolume
-            : defaultSettings.sfxVolume,
-        bgmEnabled: parsed.bgmEnabled ?? defaultSettings.bgmEnabled,
-        bgmVolume:
-          typeof parsed.bgmVolume === "number"
-            ? parsed.bgmVolume
-            : defaultSettings.bgmVolume,
-      };
+      const parsed: unknown = JSON.parse(raw);
+      cachedSettings = normalizeAudioSettings(parsed);
       return cachedSettings;
     }
   } catch {
@@ -103,25 +130,28 @@ export function updateAudioSettings(
   partial: Partial<AudioSettings>,
 ): AudioSettings {
   const current = getAudioSettings();
-  const updated: AudioSettings = {
+  const merged: AudioSettings = normalizeAudioSettings({
     ...current,
     ...partial,
-  };
+  });
 
   if (typeof window !== "undefined") {
     try {
       const existingRaw = window.localStorage.getItem(STORAGE_KEY);
-      const existing = existingRaw ? JSON.parse(existingRaw) : {};
-      const merged = { ...existing, ...updated };
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+      const existing: unknown = existingRaw ? JSON.parse(existingRaw) : {};
+      const payload =
+        typeof existing === "object" && existing !== null
+          ? { ...existing, ...merged }
+          : { ...merged };
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch (err) {
       console.warn("Failed to persist audio settings:", err);
     }
   }
 
-  cachedSettings = updated;
+  cachedSettings = merged;
   syncBgmWithSettings();
-  return updated;
+  return merged;
 }
 
 /**
@@ -154,11 +184,17 @@ export function startBgm(trackUrl: string = DEFAULT_BGM_TRACK): void {
     (Math.max(0, Math.min(100, settings.bgmVolume)) / 100) * 0.4;
   bgmAudioElement.volume = settings.bgmEnabled ? normalizedVol : 0;
 
-  if (settings.bgmEnabled) {
+  if (settings.soundConsent && settings.bgmEnabled && settings.bgmVolume > 0) {
     bgmAudioElement.play().catch(() => {
       // Browsers may block autoplay before first user interaction
       const resumeOnGesture = () => {
-        if (bgmAudioElement && getAudioSettings().bgmEnabled) {
+        const currentSettings = getAudioSettings();
+        if (
+          bgmAudioElement &&
+          currentSettings.soundConsent &&
+          currentSettings.bgmEnabled &&
+          currentSettings.bgmVolume > 0
+        ) {
           bgmAudioElement.play().catch(() => {});
         }
         window.removeEventListener("pointerdown", resumeOnGesture);
@@ -167,6 +203,8 @@ export function startBgm(trackUrl: string = DEFAULT_BGM_TRACK): void {
       window.addEventListener("pointerdown", resumeOnGesture, { once: true });
       window.addEventListener("keydown", resumeOnGesture, { once: true });
     });
+  } else {
+    bgmAudioElement.pause();
   }
 }
 
@@ -183,7 +221,7 @@ export function syncBgmWithSettings(): void {
   const normalizedVol =
     (Math.max(0, Math.min(100, settings.bgmVolume)) / 100) * 0.4;
 
-  if (settings.bgmEnabled && settings.bgmVolume > 0) {
+  if (settings.soundConsent && settings.bgmEnabled && settings.bgmVolume > 0) {
     bgmAudioElement.volume = normalizedVol;
     if (bgmAudioElement.paused) {
       bgmAudioElement.play().catch(() => {});
@@ -213,7 +251,7 @@ export function playSfx(
   customVolumePercent?: number,
 ): void {
   const settings = getAudioSettings();
-  if (!settings.sfxEnabled) return;
+  if (!settings.soundConsent || !settings.sfxEnabled) return;
 
   const volume =
     customVolumePercent !== undefined
@@ -224,14 +262,14 @@ export function playSfx(
   const ctx = getAudioContext();
   if (!ctx) return;
 
-  const masterGain = ctx.createGain();
-  const normalizedVol = (Math.max(0, Math.min(100, volume)) / 100) * 0.2;
-  masterGain.gain.setValueAtTime(normalizedVol, ctx.currentTime);
-  masterGain.connect(ctx.destination);
-
-  const now = ctx.currentTime;
-
   try {
+    const masterGain = ctx.createGain();
+    const normalizedVol = (Math.max(0, Math.min(100, volume)) / 100) * 0.2;
+    masterGain.gain.setValueAtTime(normalizedVol, ctx.currentTime);
+    masterGain.connect(ctx.destination);
+
+    const now = ctx.currentTime;
+
     switch (type) {
       case "click": {
         // Crisp arcade click pop

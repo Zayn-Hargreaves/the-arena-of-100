@@ -14,7 +14,12 @@ export function SfxProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     function handleGlobalInteraction() {
       const settings = getAudioSettings();
-      if (settings.bgmEnabled && !isBgmPlaying()) {
+      if (
+        settings.soundConsent &&
+        settings.bgmEnabled &&
+        settings.bgmVolume > 0 &&
+        !isBgmPlaying()
+      ) {
         startBgm();
       }
     }
