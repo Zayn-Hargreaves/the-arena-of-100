@@ -970,9 +970,8 @@ export class MatchStateMachine {
     const played = this.getPlayedCards(playerId);
     const excluded = new Set<CardId>([...picked, ...played]);
     const availablePool = fullPool.filter((id) => !excluded.has(id));
-    const customPool = availablePool.length >= 3 ? availablePool : undefined;
 
-    const { cards } = sampleOffer(classId, seedUsed, customPool);
+    const { cards } = sampleOffer(classId, seedUsed, availablePool);
     if (cards.length !== 3) {
       throw new Error(
         `card-engine invariant: expected 3 cards, got ${cards.length}`,

@@ -177,12 +177,47 @@ describe("pickOffer — milestone card offer", () => {
     const machine = makeMachine();
     machine.classAssignment(["p1"], "seed-class");
     const offer1 = machine.pickOffer("p1", 5, "seed-offer-1");
+    const offerSeqNo = machine
+      .getEventLog()
+      .find((e) => e.type === "CARD_OFFER")!.seqNo;
     const pickedCard = offer1[0]!;
-    machine.pickCard("p1", pickedCard, 1);
+    machine.pickCard("p1", pickedCard, offerSeqNo);
+    const effect: CardEffect = {
+      kind: "TIMER_MODIFY",
+      deltaMs: -5000,
+      targetCount: 1,
+    };
+    machine.playCard("p1", pickedCard, offerSeqNo, effect, ["p2"], 1000);
 
     // Next milestone offer at Round 12
     const offer2 = machine.pickOffer("p1", 12, "seed-offer-2");
     expect(offer2).not.toContain(pickedCard);
+  });
+
+  it("throws invariant error if availablePool has fewer than 3 cards", () => {
+    const machine = makeMachine();
+    machine.classAssignment(["p1"], "seed-exhaust");
+    const effect: CardEffect = {
+      kind: "TIMER_MODIFY",
+      deltaMs: -5000,
+      targetCount: 1,
+    };
+    // Play 7 cards so only 2 remain in the 9-card class pool
+    const classCards = [
+      "CB-1",
+      "CB-2",
+      "CB-3",
+      "CB-4",
+      "CB-5",
+      "CB-6",
+      "CB-7",
+    ] as CardId[];
+    for (const cardId of classCards) {
+      machine.playCard("p1", cardId, 1, effect, ["p2"], 1000);
+    }
+    expect(() => machine.pickOffer("p1", 20, "seed-insufficient")).toThrow(
+      /card-engine invariant: expected 3 cards, got 1/,
+    );
   });
 });
 

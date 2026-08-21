@@ -130,14 +130,19 @@ export function assignPlacements<
     isWinner?: boolean;
   },
 >(players: T[], winnerId?: string | null): Array<T & { placement: number }> {
+  const hasValidWinnerId = Boolean(
+    winnerId && players.some((p) => p.userId === winnerId),
+  );
+  const effectiveWinnerId = hasValidWinnerId ? winnerId : null;
+
   const sorted = [...players].sort((a, b) => {
     // 1. Winner always takes 1st place
-    const aIsWinner = Boolean(
-      a.isWinner || (winnerId && a.userId === winnerId),
-    );
-    const bIsWinner = Boolean(
-      b.isWinner || (winnerId && b.userId === winnerId),
-    );
+    const aIsWinner = effectiveWinnerId
+      ? a.userId === effectiveWinnerId
+      : Boolean(a.isWinner);
+    const bIsWinner = effectiveWinnerId
+      ? b.userId === effectiveWinnerId
+      : Boolean(b.isWinner);
     if (aIsWinner && !bIsWinner) return -1;
     if (!aIsWinner && bIsWinner) return 1;
 

@@ -279,16 +279,40 @@ describe("elo-engine", () => {
           userId: "pEliminated",
           score: 1500,
           avgResponseMs: 400,
-          survivedRounds: 11,
+          survivedRounds: 12,
         },
         {
           userId: "pWinner",
           score: 1200,
           avgResponseMs: 600,
-          survivedRounds: 12,
+          survivedRounds: 11,
         },
       ];
       const result = assignPlacements(input, "pWinner");
+      expect(result[0]!.userId).toBe("pWinner");
+      expect(result[0]!.placement).toBe(1);
+      expect(result[1]!.userId).toBe("pEliminated");
+      expect(result[1]!.placement).toBe(2);
+    });
+
+    it("ranks winner 1st place when marked only via isWinner property", () => {
+      const input = [
+        { userId: "pEliminated", score: 1500, survivedRounds: 12 },
+        { userId: "pWinner", score: 1200, survivedRounds: 11, isWinner: true },
+      ];
+      const result = assignPlacements(input);
+      expect(result[0]!.userId).toBe("pWinner");
+      expect(result[0]!.placement).toBe(1);
+      expect(result[1]!.userId).toBe("pEliminated");
+      expect(result[1]!.placement).toBe(2);
+    });
+
+    it("falls back to isWinner property when winnerId does not match any player", () => {
+      const input = [
+        { userId: "pEliminated", score: 1500, survivedRounds: 12 },
+        { userId: "pWinner", score: 1200, survivedRounds: 11, isWinner: true },
+      ];
+      const result = assignPlacements(input, "unknown-winner-id");
       expect(result[0]!.userId).toBe("pWinner");
       expect(result[0]!.placement).toBe(1);
       expect(result[1]!.userId).toBe("pEliminated");
