@@ -904,7 +904,8 @@ export class MatchRoundRunner {
             const result = sm.submitAnswer(
               sim.userId,
               sim.answer,
-              sim.responseTimeMs,
+              now,
+              sim.submissionId,
             );
 
             const outcome =

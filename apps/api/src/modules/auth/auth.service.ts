@@ -21,10 +21,14 @@ import { invalidateLeaderboardCache } from "../rankings/leaderboard-cache.helper
 
 const FIXED_ADMIN_USERNAME = "admin";
 
-const REJECTED_ADMIN_PASSWORDS = new Set([
+const REJECTED_ADMIN_PASSWORDS: ReadonlySet<string> = new Set([
   "arena100admin",
   "change-me-admin-password",
 ]);
+
+export function isRejectedAdminPassword(password: string): boolean {
+  return REJECTED_ADMIN_PASSWORDS.has(password);
+}
 
 function constantTimeCompare(a: string, b: string): boolean {
   const hashA = crypto.createHash("sha256").update(a).digest();
@@ -205,7 +209,7 @@ export class AuthService {
     if (
       nodeEnv !== "development" &&
       nodeEnv !== "test" &&
-      REJECTED_ADMIN_PASSWORDS.has(adminPassword)
+      isRejectedAdminPassword(adminPassword)
     ) {
       this.logger.error("ADMIN_PASSWORD must not use the default value");
       throw new UnauthorizedException("Invalid admin credentials");

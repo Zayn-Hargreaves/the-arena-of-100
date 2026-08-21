@@ -4,7 +4,13 @@ import { RedisService } from "../redis/redis.service";
 export const LEADERBOARD_CACHE_PERIODS = ["weekly", "all"] as const;
 export const LEADERBOARD_CACHE_LIMITS = [10, 25, 50, 100] as const;
 
-export function getLeaderboardCacheKey(period: string, limit: number): string {
+export type LeaderboardCachePeriod = (typeof LEADERBOARD_CACHE_PERIODS)[number];
+export type LeaderboardCacheLimit = (typeof LEADERBOARD_CACHE_LIMITS)[number];
+
+export function getLeaderboardCacheKey(
+  period: LeaderboardCachePeriod,
+  limit: LeaderboardCacheLimit,
+): string {
   return `leaderboard:v2:${period}:limit=${limit}`;
 }
 

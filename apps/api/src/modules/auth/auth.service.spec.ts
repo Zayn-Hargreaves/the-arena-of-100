@@ -6,10 +6,16 @@ import {
   AuthService,
   ACCESS_TOKEN_TYP,
   DAILY_SESSION_TYP,
+  isRejectedAdminPassword,
 } from "./auth.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { Prisma, Role } from "@prisma/client";
+
+const EXPECTED_REJECTED_ADMIN_PASSWORDS = [
+  "arena100admin",
+  "change-me-admin-password",
+] as const;
 
 type ServiceInternals = {
   parseExpiresInToSeconds: (value: string) => number;
@@ -814,29 +820,25 @@ describe("AuthService.adminLogin", () => {
     expect(result.user.username).toBe("admin");
   });
 
-  it("rejects default password outside development/test", async () => {
-    const { service } = buildAdminService({
-      NODE_ENV: "production",
-      ADMIN_PASSWORD: "arena100admin",
-    });
-    await expect(service.adminLogin("arena100admin")).rejects.toThrow(
-      UnauthorizedException,
+  it("contains all expected rejected admin passwords in the denylist", () => {
+    for (const password of EXPECTED_REJECTED_ADMIN_PASSWORDS) {
+      expect(isRejectedAdminPassword(password)).toBe(true);
+    }
+    expect(isRejectedAdminPassword("a-secure-custom-admin-password-1234")).toBe(
+      false,
     );
-    const { service: serviceEnvExample } = buildAdminService({
-      NODE_ENV: "production",
-      ADMIN_PASSWORD: "change-me-admin-password",
-    });
-    await expect(
-      serviceEnvExample.adminLogin("change-me-admin-password"),
-    ).rejects.toThrow(UnauthorizedException);
+  });
 
-    const { service: serviceLegacyDefault } = buildAdminService({
-      NODE_ENV: "production",
-      ADMIN_PASSWORD: "arena100admin",
-    });
-    await expect(
-      serviceLegacyDefault.adminLogin("arena100admin"),
-    ).rejects.toThrow(UnauthorizedException);
+  it("rejects default password outside development/test", async () => {
+    for (const password of EXPECTED_REJECTED_ADMIN_PASSWORDS) {
+      const { service } = buildAdminService({
+        NODE_ENV: "production",
+        ADMIN_PASSWORD: password,
+      });
+      await expect(service.adminLogin(password)).rejects.toThrow(
+        UnauthorizedException,
+      );
+    }
   });
 });
 
