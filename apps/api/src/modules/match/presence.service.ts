@@ -17,6 +17,7 @@ import {
 import {
   ServerEvent,
   RoomStatus,
+  BOT_GUEST_ID_PREFIX,
   type RoomPlayerLeftPayload,
 } from "@arena/shared";
 import { GameLoopService, type FinishResult } from "./game-loop.service";
@@ -225,7 +226,7 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
     // Exclude bot players from presence sweep: bots are simulated on-server and do not maintain socket heartbeats
     const humanPlayers = room.players.filter(
       (rp: { user?: { guestId?: string | null } | null }) =>
-        !rp.user?.guestId?.startsWith("bot_"),
+        !rp.user?.guestId?.startsWith(BOT_GUEST_ID_PREFIX),
     );
 
     // Check all human players' presence in parallel (single round-trip per player

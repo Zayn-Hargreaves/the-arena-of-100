@@ -312,7 +312,7 @@ export function emitCardOffer(ctx: CardOfferEmitContext): void {
 
   // Emit reduced public payload to room channel (excluding sensitive offeredCardIds and seedUsed)
   const roomChannel = getRoomChannel(roomId);
-  server.to(roomChannel).emit(ServerEvent.CARD_OFFER, {
+  server.to(roomChannel).except(playerChannel).emit(ServerEvent.CARD_OFFER, {
     matchId,
     roundNo,
     playerId,

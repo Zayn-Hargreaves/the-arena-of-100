@@ -561,8 +561,7 @@ export const questionSeeds: Question[] = [
       "Mã lỗi HTTP 404 có nghĩa là 'Not Found' - tài nguyên được yêu cầu không được tìm thấy trên máy chủ.",
   },
   {
-    content:
-      "Hệ điều hành Android được phát triển ban đầu và sở hữu bởi tập đoàn nào?",
+    content: "Công ty nào đã mua lại Android Inc. vào năm 2005?",
     options: ["Google", "Apple", "Microsoft", "Samsung"],
     correctAnswer: "Google",
     difficulty: "EASY",
@@ -709,14 +708,14 @@ export const questionSeeds: Question[] = [
   },
   {
     content:
-      "Theo quy chuẩn tính toán nhị phân máy tính, 1 Gigabyte (GB) bằng bao nhiêu Megabyte (MB)?",
-    options: ["1024 MB", "1000 MB", "512 MB", "2048 MB"],
-    correctAnswer: "1024 MB",
+      "Theo quy chuẩn tính toán nhị phân máy tính, 1 Gibibyte (GiB) bằng bao nhiêu Mebibyte (MiB)?",
+    options: ["1024 MiB", "1000 MiB", "512 MiB", "2048 MiB"],
+    correctAnswer: "1024 MiB",
     difficulty: "EASY",
     category: "TECHNOLOGY",
     tags: ["dung lượng", "máy tính"],
     explanation:
-      "Trong hệ nhị phân (lũy thừa cơ số 2), 1 GB = 2^10 MB = 1024 MB.",
+      "Trong hệ nhị phân (lũy thừa cơ số 2), 1 GiB = 2^10 MiB = 1024 MiB.",
   },
   {
     content:

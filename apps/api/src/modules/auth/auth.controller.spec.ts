@@ -22,6 +22,7 @@ describe("AuthController", () => {
   beforeEach(() => {
     const mockAuthService = {
       guestLogin: vi.fn(),
+      adminLogin: vi.fn(),
       refreshAccessToken: vi.fn(),
       logout: vi.fn(),
       getAccessTokenTtlSeconds: vi.fn().mockReturnValue(3600),
@@ -83,6 +84,55 @@ describe("AuthController", () => {
         guestLoginDto.guestSecret,
         undefined,
       );
+    });
+  });
+
+  describe("adminLogin", () => {
+    const adminLoginDto = {
+      password: "strong-admin-password",
+    };
+    const reply = { header: vi.fn() } as unknown as {
+      header: (name: string, value: string[]) => void;
+    };
+
+    it("should login admin user successfully and return body without guestSecret", async () => {
+      const adminAuthResult: AuthResult = {
+        accessToken: "admin-access-token-123",
+        refreshToken: "admin-refresh-token-456",
+        guestSecret: "guest-secret-that-must-be-omitted",
+        user: {
+          id: "admin-id-1",
+          username: "admin",
+          role: Role.ADMIN,
+        },
+      };
+      vi.mocked(service.adminLogin).mockResolvedValue(adminAuthResult);
+
+      const result = await controller.adminLogin(adminLoginDto, reply as never);
+
+      expect(service.adminLogin).toHaveBeenCalledWith(adminLoginDto.password);
+      expect(result).toEqual({
+        accessToken: adminAuthResult.accessToken,
+        user: adminAuthResult.user,
+      });
+      expect(result).not.toHaveProperty("guestSecret");
+      expect(reply.header).toHaveBeenCalledWith(
+        "Set-Cookie",
+        expect.arrayContaining([
+          expect.stringContaining("arena_access_token="),
+          expect.stringContaining("arena_refresh_token="),
+        ]),
+      );
+    });
+
+    it("should handle admin login errors", async () => {
+      const error = new UnauthorizedException("Invalid admin credentials");
+      vi.mocked(service.adminLogin).mockRejectedValue(error);
+
+      await expect(
+        controller.adminLogin(adminLoginDto, reply as never),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(service.adminLogin).toHaveBeenCalledWith(adminLoginDto.password);
     });
   });
 

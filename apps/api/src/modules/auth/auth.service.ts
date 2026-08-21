@@ -166,7 +166,7 @@ export class AuthService {
         });
       }
       const trimmedSecret = guestSecret?.trim();
-      if (!trimmedSecret || user.guestId !== trimmedSecret) {
+      if (!trimmedSecret || !constantTimeCompare(user.guestId, trimmedSecret)) {
         throw new UnauthorizedException({
           code: ErrorCode.USERNAME_TAKEN,
           message: ErrorCode.USERNAME_TAKEN,
@@ -196,7 +196,7 @@ export class AuthService {
   // Admin Login — fixed identity "admin" only; never promote arbitrary users.
   async adminLogin(password: string): Promise<AuthResult> {
     const adminPassword = this.configService.get<string>("ADMIN_PASSWORD");
-    const nodeEnv = this.configService.get<string>("NODE_ENV", "development");
+    const nodeEnv = this.configService.get<string>("NODE_ENV");
 
     if (!adminPassword || adminPassword.length < 12) {
       this.logger.error(

@@ -48,6 +48,7 @@ import { ClusterService } from "../modules/cluster/cluster.service";
 import { MatchmakingWorkerService } from "../modules/matchmaking/matchmaking-worker.service";
 import { WsValidationPipe } from "../common/pipes/ws-validation.pipe";
 import { WsExceptionFilter } from "../common/filters/ws-exception.filter";
+import { resolveCorsOrigins } from "../common/cors";
 
 // Per-event validation pipe instances. Each one is a thin wrapper around
 // the corresponding Zod schema. Cached at module level so a single
@@ -92,7 +93,7 @@ const HeartbeatPayloadPipe = new WsValidationPipe<HeartbeatPayload>(
 
 @WebSocketGateway({
   cors: {
-    origin: process.env.CORS_ORIGIN || "http://localhost:3000",
+    origin: resolveCorsOrigins(process.env.CORS_ORIGIN),
     credentials: true,
   },
   namespace: "/game",

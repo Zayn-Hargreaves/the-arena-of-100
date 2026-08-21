@@ -30,6 +30,7 @@ import {
 } from "./game-loop.events";
 import { isMilestoneRound, isAttackCard } from "./card-validator";
 import { emitCardResolved } from "./match-card-command.helpers";
+import { makeCardResolveRng } from "./match-card-targeting";
 
 import { recoverRoundEnd, type RoundEndContext } from "./match-round-recovery";
 import {
@@ -754,23 +755,7 @@ export class MatchRoundRunner {
           roundNo,
           offerSeed,
         );
-        const eventLog = stateMachine.getEventLog();
-        const offerEvent = [...eventLog]
-          .reverse()
-          .find(
-            (e) =>
-              e.type === "CARD_OFFER" &&
-              typeof e.payload === "object" &&
-              e.payload !== null &&
-              "playerId" in e.payload &&
-              (e.payload as { playerId: string }).playerId === playerId &&
-              "roundNo" in e.payload &&
-              (e.payload as { roundNo: number }).roundNo === roundNo,
-          );
-        if (!offerEvent) {
-          continue;
-        }
-        const offerSeqNo = offerEvent.seqNo;
+        const offerSeqNo = stateMachine.getHeadSeqNo();
 
         if (botIds.has(playerId)) {
           botOfferSeqNos.set(playerId, offerSeqNo);
@@ -967,9 +952,12 @@ export class MatchRoundRunner {
 
     for (const botId of botPlayerIds) {
       try {
-        const hand = stateMachine.getHand(botId);
+        const offerSeqNo = botOfferSeqNos?.get(botId);
+        if (offerSeqNo === undefined) continue;
+
+        const picked = stateMachine.getPickedCards(botId);
         const played = stateMachine.getPlayedCards(botId);
-        const playableCards = hand.filter((c) => !played.has(c));
+        const playableCards = Array.from(picked).filter((c) => !played.has(c));
 
         if (playableCards.length === 0) continue;
 
@@ -1012,7 +1000,13 @@ export class MatchRoundRunner {
               const effect = resolveCardEffect(
                 cardId,
                 cardDef.effectTemplate,
-                Math.random,
+                makeCardResolveRng(
+                  matchId,
+                  botId,
+                  round.roundNo,
+                  offerSeqNo,
+                  cardId,
+                ),
                 {
                   targetHand: sm.getHand(targetPlayerIds[0]!),
                   options: question.options,
@@ -1020,23 +1014,6 @@ export class MatchRoundRunner {
                   currentRoundNo: round.roundNo,
                 },
               );
-
-              const offerSeqNo =
-                botOfferSeqNos?.get(botId) ??
-                (() => {
-                  const eventLog = sm.getEventLog();
-                  const offerEvent = [...eventLog]
-                    .reverse()
-                    .find(
-                      (e) =>
-                        e.type === "CARD_OFFER" &&
-                        typeof e.payload === "object" &&
-                        e.payload !== null &&
-                        "playerId" in e.payload &&
-                        (e.payload as { playerId: string }).playerId === botId,
-                    );
-                  return offerEvent?.seqNo ?? 1;
-                })();
 
               const serverTimestamp = Math.min(now, round.endsAt);
               const serialized = sm.serialize();

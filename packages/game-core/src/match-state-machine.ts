@@ -1078,6 +1078,12 @@ export class MatchStateMachine {
       : 0;
     const remainingMs = isTemporary ? expiresAtServer - serverNow : 0;
 
+    const currentRoundNo = this.currentRound?.roundNo ?? 0;
+    const targetRoundNo =
+      resolvedEffect.kind === "SHIELD"
+        ? resolvedEffect.expiresAtRound
+        : currentRoundNo;
+
     // `logEvent` returns the allocated seqNo — we mirror it into
     // the payload here (the only call site that exposes seqNo on
     // the payload itself; rehydrate reducers / replay log readers
@@ -1087,7 +1093,8 @@ export class MatchStateMachine {
     const payload: Record<string, unknown> = {
       seqNo,
       matchId: this.state.id,
-      roundNo: this.currentRound?.roundNo ?? 0,
+      roundNo: currentRoundNo,
+      targetRoundNo,
       cardId,
       offerSeqNo,
       playedByPlayerId,

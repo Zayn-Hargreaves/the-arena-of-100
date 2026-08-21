@@ -17,6 +17,7 @@ import {
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import helmet from "@fastify/helmet";
 import { RedisIoAdapter } from "./adapters/redis-io.adapter";
+import { resolveCorsOrigins } from "./common/cors";
 
 const APP_CLOSE_TIMEOUT_MS = 10000;
 
@@ -46,26 +47,7 @@ async function bootstrap() {
     },
   });
 
-  const rawCorsOrigin = process.env.CORS_ORIGIN;
-  const configuredOrigins = rawCorsOrigin
-    ? rawCorsOrigin
-        .split(",")
-        .map((o) => o.trim())
-        .filter((o) => o.length > 0)
-    : [];
-
-  let corsOrigins: string[];
-  if (configuredOrigins.length > 0) {
-    corsOrigins = configuredOrigins;
-  } else {
-    if (process.env.NODE_ENV === "production") {
-      Logger.warn(
-        "CORS_ORIGIN is missing or empty in production; falling back to localhost",
-        "Bootstrap",
-      );
-    }
-    corsOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
-  }
+  const corsOrigins = resolveCorsOrigins(process.env.CORS_ORIGIN);
 
   // Enable CORS
   app.enableCors({

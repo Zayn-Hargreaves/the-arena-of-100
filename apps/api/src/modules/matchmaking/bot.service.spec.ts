@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { BotService } from "./bot.service";
 import type { PrismaService } from "../prisma/prisma.service";
-import { MATCHMAKING_CONFIG } from "@arena/shared";
+import { MATCHMAKING_CONFIG, BOT_GUEST_ID_PREFIX } from "@arena/shared";
 
 describe("BotService", () => {
   let service: BotService;
@@ -13,10 +13,15 @@ describe("BotService", () => {
         findMany: vi
           .fn()
           .mockResolvedValue([
-            { id: "b1", username: "Bot_1", guestId: "bot_1", elo: 1200 },
+            {
+              id: "b1",
+              username: "Bot_1",
+              guestId: `${BOT_GUEST_ID_PREFIX}1`,
+              elo: 1200,
+            },
           ]),
         create: vi.fn().mockImplementation(({ data }) => ({
-          id: `bot_${Math.random()}`,
+          id: `${BOT_GUEST_ID_PREFIX}${Math.random()}`,
           ...data,
         })),
       },
@@ -34,22 +39,29 @@ describe("BotService", () => {
 
   it("uses guestId as create key and excludes non-bot users", async () => {
     mockPrisma.user.findMany.mockResolvedValueOnce([
-      { id: "b1", username: "Bot_1", guestId: "bot_123", elo: 1200 },
+      {
+        id: "b1",
+        username: "Bot_1",
+        guestId: `${BOT_GUEST_ID_PREFIX}123`,
+        elo: 1200,
+      },
     ]);
 
     const bots = await service.ensureBotUsers(2);
     expect(mockPrisma.user.findMany).toHaveBeenCalledWith({
-      where: { guestId: { startsWith: "bot_" } },
+      where: { guestId: { startsWith: BOT_GUEST_ID_PREFIX } },
       take: 2,
     });
     expect(mockPrisma.user.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          guestId: expect.stringMatching(/^bot_/),
+          guestId: expect.stringMatching(new RegExp(`^${BOT_GUEST_ID_PREFIX}`)),
         }),
       }),
     );
-    expect(bots.every((b) => b.guestId?.startsWith("bot_"))).toBe(true);
+    expect(bots.every((b) => b.guestId?.startsWith(BOT_GUEST_ID_PREFIX))).toBe(
+      true,
+    );
   });
 
   it("handles username collision by retrying with a different username", async () => {

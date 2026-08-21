@@ -26,6 +26,7 @@ import {
   PlayerStatus,
   ErrorCode,
   DEFAULT_ELO,
+  BOT_GUEST_ID_PREFIX,
   type CardEffectEvent,
   type ClassAssignedEvent,
   type PlayerInfo,
@@ -265,7 +266,7 @@ export class MatchService implements OnModuleDestroy {
       where: {
         matchId,
         user: {
-          guestId: { startsWith: "bot_" },
+          guestId: { startsWith: BOT_GUEST_ID_PREFIX },
         },
       },
       select: { userId: true },

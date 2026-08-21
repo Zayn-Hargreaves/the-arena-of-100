@@ -46,6 +46,8 @@ export const GAME_CONFIG = {
   ] as const satisfies readonly QuestionCategory[],
 } as const;
 
+export const BOT_GUEST_ID_PREFIX = "bot_";
+
 export const MATCHMAKING_CONFIG = {
   TICK_INTERVAL_MS: 2_000,
   MAX_WAIT_TIME_MS: 60_000,

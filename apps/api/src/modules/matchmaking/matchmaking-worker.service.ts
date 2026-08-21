@@ -13,6 +13,7 @@ import {
   ErrorCode,
   GAME_CONFIG,
   MATCHMAKING_CONFIG,
+  RoomStatus,
   ServerEvent,
   type MatchmakingMatchedPayload,
   type MatchmakingStatusPayload,
@@ -334,36 +335,79 @@ export class MatchmakingWorkerService implements OnModuleInit, OnModuleDestroy {
 
       // 4. Join human player sockets to the room channel
       for (const player of successfulPlayers) {
-        if (typeof this.server.in === "function") {
+        if (typeof this.server?.in === "function") {
           try {
-            this.server.in(player.socketId).socketsJoin(`room:${room.id}`);
-          } catch {
-            // Ignore if adapter does not support socketsJoin synchronously
+            await this.server
+              .in(player.socketId)
+              .socketsJoin(`room:${room.id}`);
+          } catch (joinErr) {
+            this.logger.error(
+              `Failed to join socket ${player.socketId} to room ${room.id}`,
+              joinErr,
+            );
+            for (const p of successfulPlayers) {
+              await this.failPlayerAndRequeue(room.id, p);
+            }
+            try {
+              await this.roomService.updateRoomStatus(
+                room.id,
+                RoomStatus.FINISHED,
+              );
+            } catch (closeErr) {
+              this.logger.warn(
+                `Failed to close room ${room.id} after socket join failure`,
+                closeErr,
+              );
+            }
+            return;
           }
         }
       }
 
       // 5. Trigger game loop launch
-      const match = await this.gameLoopService.forceStartRoomMatch(
-        room.id,
-        this.server,
-      );
+      let match: { id: string } | null = null;
+      try {
+        match = await this.gameLoopService.forceStartRoomMatch(
+          room.id,
+          this.server,
+        );
+      } catch (launchErr) {
+        this.logger.error(
+          `Failed to forceStartRoomMatch for matched room ${room.id}`,
+          launchErr,
+        );
+      }
+
+      if (!match) {
+        for (const player of successfulPlayers) {
+          await this.failPlayerAndRequeue(room.id, player);
+        }
+        try {
+          await this.roomService.updateRoomStatus(room.id, RoomStatus.FINISHED);
+        } catch (closeErr) {
+          this.logger.warn(
+            `Failed to close room ${room.id} after match start failure`,
+            closeErr,
+          );
+        }
+        return;
+      }
 
       // 6. Notify human clients via WebSocket
       const payload: MatchmakingMatchedPayload = {
         roomId: room.id,
         roomCode: room.code,
-        matchId: match?.id ?? null,
+        matchId: match.id,
       };
 
       for (const player of successfulPlayers) {
         this.server
-          .to(player.socketId)
+          ?.to(player.socketId)
           .emit(ServerEvent.MATCHMAKING_MATCHED, payload);
       }
 
       this.logger.log(
-        `Match formed for room ${room.code} with ${successfulPlayers.length} real players (matchId=${match?.id}). Starting match loop...`,
+        `Match formed for room ${room.code} with ${successfulPlayers.length} real players (matchId=${match.id}). Starting match loop...`,
       );
     } catch (error) {
       this.logger.error(
