@@ -4,6 +4,11 @@
 
 import { Injectable, UnauthorizedException, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import {
+  DEFAULT_AVATAR_SEED,
+  ErrorCode,
+  isValidAvatarSeed,
+} from "@arena/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import * as jwt from "jsonwebtoken";
@@ -11,6 +16,25 @@ import ms from "ms";
 import { nanoid } from "nanoid";
 import { Prisma, Role } from "@prisma/client";
 import { sanitizeNickname, baseNormalize } from "../../common/moderation";
+import crypto from "crypto";
+import { invalidateLeaderboardCache } from "../rankings/leaderboard-cache.helper";
+
+const FIXED_ADMIN_USERNAME = "admin";
+
+const REJECTED_ADMIN_PASSWORDS: ReadonlySet<string> = new Set([
+  "arena100admin",
+  "change-me-admin-password",
+]);
+
+export function isRejectedAdminPassword(password: string): boolean {
+  return REJECTED_ADMIN_PASSWORDS.has(password);
+}
+
+function constantTimeCompare(a: string, b: string): boolean {
+  const hashA = crypto.createHash("sha256").update(a).digest();
+  const hashB = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(hashA, hashB);
+}
 
 export interface TokenPayload {
   userId: string;
@@ -39,6 +63,7 @@ function normalizeReservedUsername(value: string): string {
 export interface AuthResult {
   accessToken: string;
   refreshToken: string;
+  guestSecret?: string;
   user: {
     id: string;
     username: string;
@@ -73,8 +98,12 @@ export class AuthService {
     ); // 7 days
   }
 
-  // Guest Login (no password, just username)
-  async guestLogin(username: string): Promise<AuthResult> {
+  // Guest Login (no password, username + optional persistent guest secret + optional avatar)
+  async guestLogin(
+    username: string,
+    guestSecret?: string,
+    avatar?: string,
+  ): Promise<AuthResult> {
     const safeUsername = sanitizeNickname(username);
     if (safeUsername === null) {
       throw new UnauthorizedException("Invalid guest username");
@@ -87,15 +116,24 @@ export class AuthService {
       where: { username: safeUsername },
     });
 
+    let isNewUser = false;
+
     if (!user) {
+      // Always server-generate guest secrets — never accept client-chosen values.
+      const assignedGuestSecret = nanoid(24);
+      const chosenAvatar =
+        avatar && isValidAvatarSeed(avatar) ? avatar : DEFAULT_AVATAR_SEED;
+
       try {
         user = await this.prisma.user.create({
           data: {
             username: safeUsername,
-            guestId: nanoid(12),
+            guestId: assignedGuestSecret,
+            avatar: chosenAvatar,
             role: Role.GUEST, // Always create new users as GUEST
           },
         });
+        isNewUser = true;
         this.logger.log(
           `New guest user created: ${safeUsername} with role ${user.role}`,
         );
@@ -107,6 +145,7 @@ export class AuthService {
           user = await this.prisma.user.findUnique({
             where: { username: safeUsername },
           });
+          isNewUser = false;
         } else {
           throw error;
         }
@@ -117,7 +156,107 @@ export class AuthService {
       throw new UnauthorizedException("Cannot use reserved username");
     }
 
-    return this.generateTokens(user.id, user.username, user.role);
+    if (!isNewUser) {
+      // Existing user: require matching guest secret. Legacy rows without
+      // guestId cannot be claimed (would allow account takeover).
+      if (!user.guestId) {
+        throw new UnauthorizedException({
+          code: ErrorCode.USERNAME_TAKEN,
+          message: ErrorCode.USERNAME_TAKEN,
+        });
+      }
+      const trimmedSecret = guestSecret?.trim();
+      if (!trimmedSecret || !constantTimeCompare(user.guestId, trimmedSecret)) {
+        throw new UnauthorizedException({
+          code: ErrorCode.USERNAME_TAKEN,
+          message: ErrorCode.USERNAME_TAKEN,
+        });
+      }
+
+      if (avatar && isValidAvatarSeed(avatar) && user.avatar !== avatar) {
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: { avatar },
+        });
+        await this.invalidateLeaderboardCache();
+      }
+    }
+
+    const tokens = await this.generateTokens(user.id, user.username, user.role);
+    return {
+      ...tokens,
+      guestSecret: user.guestId ?? undefined,
+    };
+  }
+
+  private async invalidateLeaderboardCache(): Promise<void> {
+    await invalidateLeaderboardCache(this.redis, this.logger);
+  }
+
+  // Admin Login — fixed identity "admin" only; never promote arbitrary users.
+  async adminLogin(password: string): Promise<AuthResult> {
+    const adminPassword = this.configService.get<string>("ADMIN_PASSWORD");
+    const nodeEnv = this.configService.get<string>("NODE_ENV");
+
+    if (!adminPassword || adminPassword.length < 12) {
+      this.logger.error(
+        "ADMIN_PASSWORD is missing or shorter than 12 characters",
+      );
+      throw new UnauthorizedException("Invalid admin credentials");
+    }
+
+    // Reject well-known defaults outside local development.
+    if (
+      nodeEnv !== "development" &&
+      nodeEnv !== "test" &&
+      isRejectedAdminPassword(adminPassword)
+    ) {
+      this.logger.error("ADMIN_PASSWORD must not use the default value");
+      throw new UnauthorizedException("Invalid admin credentials");
+    }
+
+    if (!password || !constantTimeCompare(password, adminPassword)) {
+      throw new UnauthorizedException("Invalid admin credentials");
+    }
+
+    let adminUser = await this.prisma.user.findUnique({
+      where: { username: FIXED_ADMIN_USERNAME },
+    });
+
+    if (!adminUser) {
+      try {
+        adminUser = await this.prisma.user.create({
+          data: {
+            username: FIXED_ADMIN_USERNAME,
+            guestId: nanoid(12),
+            role: Role.ADMIN,
+          },
+        });
+        this.logger.log(`Created admin user: ${FIXED_ADMIN_USERNAME}`);
+      } catch (error: unknown) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002"
+        ) {
+          adminUser = await this.prisma.user.findUnique({
+            where: { username: FIXED_ADMIN_USERNAME },
+          });
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    if (!adminUser || adminUser.role !== Role.ADMIN) {
+      // Never promote a non-admin account that happens to be named "admin".
+      throw new UnauthorizedException("Invalid admin credentials");
+    }
+
+    return this.generateTokens(
+      adminUser.id,
+      adminUser.username,
+      adminUser.role,
+    );
   }
 
   // Generate JWT tokens

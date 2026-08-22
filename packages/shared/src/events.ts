@@ -329,6 +329,7 @@ export type TemporaryEffectKind =
 export type MutationEffect = {
   readonly matchId: string;
   readonly roundNo: number;
+  readonly targetRoundNo?: number;
   readonly cardId: CardId;
   readonly offerSeqNo: number;
   readonly playedByPlayerId: string;
@@ -348,6 +349,7 @@ export type MutationEffect = {
 export type TemporaryEffect = {
   readonly matchId: string;
   readonly roundNo: number;
+  readonly targetRoundNo?: number;
   readonly cardId: CardId;
   readonly offerSeqNo: number;
   readonly playedByPlayerId: string;

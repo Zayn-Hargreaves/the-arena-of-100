@@ -463,10 +463,14 @@ export async function applyCardPlayCommand(
     return "RETRY";
   }
 
+  const targetRoundNo =
+    resolved.kind === "SHIELD" ? resolved.expiresAtRound : currentRoundNo;
+
   emitCardResolved(context.logger, server, stateMachine.getState().roomId, {
     seqNo: result.seqNo,
     matchId: env.matchId,
     roundNo: currentRoundNo,
+    targetRoundNo,
     cardId: validated.cardId,
     offerSeqNo: env.body.offerSeqNo,
     playedByPlayerId: userId,

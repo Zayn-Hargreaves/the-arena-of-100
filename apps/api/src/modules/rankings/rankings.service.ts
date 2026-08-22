@@ -12,6 +12,11 @@ import {
   type LeaderboardQuery,
   type LeaderboardResponse,
 } from "./dto";
+import {
+  getLeaderboardCacheKey,
+  type LeaderboardCachePeriod,
+  type LeaderboardCacheLimit,
+} from "./leaderboard-cache.helper";
 
 const FINISHED = "FINISHED";
 
@@ -41,7 +46,10 @@ export class RankingsService {
   // GET /rankings/leaderboard
   // Cache-aside: try Redis first, compute from DB on miss, write-through best-effort.
   async getLeaderboard(query: LeaderboardQuery): Promise<LeaderboardResponse> {
-    const key = this.cacheKey(query.period, query.limit);
+    const key = this.cacheKey(
+      query.period as LeaderboardCachePeriod,
+      query.limit as LeaderboardCacheLimit,
+    );
 
     const cached = await this.safeGetCache(key);
     if (cached) {
@@ -59,8 +67,11 @@ export class RankingsService {
     return { ...payload, cached: false };
   }
 
-  private cacheKey(period: string, limit: number): string {
-    return `leaderboard:v2:${period}:limit=${limit}`;
+  private cacheKey(
+    period: LeaderboardCachePeriod,
+    limit: LeaderboardCacheLimit,
+  ): string {
+    return getLeaderboardCacheKey(period, limit);
   }
 
   private async safeGetCache(

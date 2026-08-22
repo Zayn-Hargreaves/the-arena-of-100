@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { ApiProperty } from "@nestjs/swagger";
 import { CACHE_TTL } from "../../../common/config/cache-ttl";
+import {
+  LEADERBOARD_CACHE_LIMITS,
+  type LeaderboardCacheLimit,
+} from "../leaderboard-cache.helper";
 
 export const leaderboardPeriodSchema = z.enum(["weekly", "all"]);
 export type LeaderboardPeriod = z.infer<typeof leaderboardPeriodSchema>;
@@ -18,10 +22,15 @@ export const leaderboardQuerySchema = z.object({
   limit: z.coerce
     .number()
     .int()
-    .min(1)
-    .max(100)
+    .refine(
+      (val): val is LeaderboardCacheLimit =>
+        (LEADERBOARD_CACHE_LIMITS as readonly number[]).includes(val),
+      {
+        message: `Limit must be one of: ${LEADERBOARD_CACHE_LIMITS.join(", ")}`,
+      },
+    )
     .default(50)
-    .describe("Number of top players to return (1-100, default 50)"),
+    .describe("Number of top players to return (10, 25, 50, 100, default 50)"),
 });
 
 export type LeaderboardQuery = z.infer<typeof leaderboardQuerySchema>;
@@ -36,11 +45,10 @@ export class LeaderboardQueryDto implements LeaderboardQuery {
   period!: LeaderboardPeriod;
 
   @ApiProperty({
+    enum: LEADERBOARD_CACHE_LIMITS,
     required: false,
     default: 50,
-    minimum: 1,
-    maximum: 100,
-    description: "Number of top players to return (1-100)",
+    description: "Number of top players to return (10, 25, 50, 100)",
   })
-  limit!: number;
+  limit!: LeaderboardCacheLimit;
 }

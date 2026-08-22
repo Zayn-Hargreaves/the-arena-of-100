@@ -46,7 +46,11 @@ export * from "./elo";
 // Game Constants (defined in its own file so schemas.ts can
 // import GAME_CONFIG.MAX_ROUNDS without creating a circular
 // dependency through the index barrel).
-export { GAME_CONFIG, MATCHMAKING_CONFIG } from "./game-config";
+export {
+  GAME_CONFIG,
+  MATCHMAKING_CONFIG,
+  BOT_GUEST_ID_PREFIX,
+} from "./game-config";
 // Daily Challenge Constants (own file for the same reason as
 // game-config: the API's Zod DTOs import it directly).
 export { DAILY_QUESTION_COUNT } from "./daily-config";
@@ -133,6 +137,7 @@ export const ERROR_MESSAGE_KEYS: Record<ErrorCode, string> = {
   [ErrorCode.INVALID_COMMAND_ID]: "Cards.errors.invalidCommandId",
   [ErrorCode.TOPIC_VOTING_CLOSED]: "Errors.TOPIC_VOTING_CLOSED",
   [ErrorCode.INVALID_TOPIC]: "Errors.INVALID_TOPIC",
+  [ErrorCode.USERNAME_TAKEN]: "Errors.USERNAME_TAKEN",
 };
 
 // Backwards-compatible alias — callers still see ERROR_MESSAGES

@@ -4,7 +4,12 @@
 
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { AVATAR_SEEDS, MATCHMAKING_CONFIG, DEFAULT_ELO } from "@arena/shared";
+import {
+  AVATAR_SEEDS,
+  MATCHMAKING_CONFIG,
+  DEFAULT_ELO,
+  BOT_GUEST_ID_PREFIX,
+} from "@arena/shared";
 import { nanoid } from "nanoid";
 
 export interface BotAnswerSimulation {
@@ -74,7 +79,7 @@ export class BotService {
     // Query existing bot accounts
     const existingBots = await this.prisma.user.findMany({
       where: {
-        guestId: { startsWith: "bot_" },
+        guestId: { startsWith: BOT_GUEST_ID_PREFIX },
       },
       take: count,
     });
@@ -89,7 +94,7 @@ export class BotService {
         BOT_NAME_SUFFIXES[Math.floor(Math.random() * BOT_NAME_SUFFIXES.length)];
       const randomNum = Math.floor(Math.random() * 900) + 100;
       let username = `${prefix}_${suffix}_${randomNum}`;
-      const guestId = `bot_${nanoid(12)}`;
+      const guestId = `${BOT_GUEST_ID_PREFIX}${nanoid(12)}`;
       const avatar =
         AVATAR_SEEDS[Math.floor(Math.random() * AVATAR_SEEDS.length)];
 

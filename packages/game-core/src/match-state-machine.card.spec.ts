@@ -113,6 +113,17 @@ describe("classAssignment — server-side random per-match", () => {
     const result = m.classAssignment(["p1", "ghost"], "seed-D");
     expect(result.length).toBe(2);
   });
+
+  it("hasClassAssignments returns false initially and true after assignment or deserialization", () => {
+    const m = makeMachine();
+    expect(m.hasClassAssignments()).toBe(false);
+    m.classAssignment(["p1", "p2"], "seed-E");
+    expect(m.hasClassAssignments()).toBe(true);
+
+    const serialized = m.serialize();
+    const restored = MatchStateMachine.deserialize(serialized);
+    expect(restored.hasClassAssignments()).toBe(true);
+  });
 });
 
 describe("pickOffer — milestone card offer", () => {
@@ -170,6 +181,53 @@ describe("pickOffer — milestone card offer", () => {
     b.classAssignment(["p1"], "det-1");
     expect(a.pickOffer("p1", 5, "off-det")).toEqual(
       b.pickOffer("p1", 5, "off-det"),
+    );
+  });
+
+  it("excludes previously picked/played cards from subsequent milestone offers", () => {
+    const machine = makeMachine();
+    machine.classAssignment(["p1"], "seed-class");
+    const offer1 = machine.pickOffer("p1", 5, "seed-offer-1");
+    const offerSeqNo = machine
+      .getEventLog()
+      .find((e) => e.type === "CARD_OFFER")!.seqNo;
+    const pickedCard = offer1[0]!;
+    machine.pickCard("p1", pickedCard, offerSeqNo);
+    const effect: CardEffect = {
+      kind: "TIMER_MODIFY",
+      deltaMs: -5000,
+      targetCount: 1,
+    };
+    machine.playCard("p1", pickedCard, offerSeqNo, effect, ["p2"], 1000);
+
+    // Next milestone offer at Round 12
+    const offer2 = machine.pickOffer("p1", 12, "seed-offer-2");
+    expect(offer2).not.toContain(pickedCard);
+  });
+
+  it("throws invariant error if availablePool has fewer than 3 cards", () => {
+    const machine = makeMachine();
+    machine.classAssignment(["p1"], "seed-exhaust");
+    const effect: CardEffect = {
+      kind: "TIMER_MODIFY",
+      deltaMs: -5000,
+      targetCount: 1,
+    };
+    // Play 7 cards so only 2 remain in the 9-card class pool
+    const classCards = [
+      "CB-1",
+      "CB-2",
+      "CB-3",
+      "CB-4",
+      "CB-5",
+      "CB-6",
+      "CB-7",
+    ] as CardId[];
+    for (const cardId of classCards) {
+      machine.playCard("p1", cardId, 1, effect, ["p2"], 1000);
+    }
+    expect(() => machine.pickOffer("p1", 20, "seed-insufficient")).toThrow(
+      /card-engine invariant: expected 3 cards, got 1/,
     );
   });
 });

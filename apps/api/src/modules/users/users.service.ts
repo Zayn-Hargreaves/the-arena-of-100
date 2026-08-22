@@ -6,9 +6,13 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  Logger,
+  Optional,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { RedisService } from "../redis/redis.service";
+import { invalidateLeaderboardCache } from "../rankings/leaderboard-cache.helper";
 import { MatchStatus, getRankTier, type AvatarSeed } from "@arena/shared";
 import type {
   HistoryItem,
@@ -99,7 +103,12 @@ function getHistoryItemStatus(
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(UsersService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly redis?: RedisService,
+  ) {}
 
   // GET /users/me/stats
   // Aggregates from MatchPlayer, Match, Answer — only FINISHED matches.
@@ -295,10 +304,15 @@ export class UsersService {
       data: { avatar },
       select: { id: true, username: true, avatar: true, role: true, elo: true },
     });
+    await this.invalidateLeaderboardCache();
     return {
       ...user,
       rankTier: getRankTier(user.elo),
     };
+  }
+
+  private async invalidateLeaderboardCache(): Promise<void> {
+    await invalidateLeaderboardCache(this.redis, this.logger);
   }
 
   // ============================================================

@@ -6,10 +6,16 @@ import {
   AuthService,
   ACCESS_TOKEN_TYP,
   DAILY_SESSION_TYP,
+  isRejectedAdminPassword,
 } from "./auth.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { Prisma, Role } from "@prisma/client";
+
+const EXPECTED_REJECTED_ADMIN_PASSWORDS = [
+  "arena100admin",
+  "change-me-admin-password",
+] as const;
 
 type ServiceInternals = {
   parseExpiresInToSeconds: (value: string) => number;
@@ -154,6 +160,7 @@ describe("AuthService.guestLogin", () => {
       user: {
         findUnique: vi.fn(),
         create: vi.fn(),
+        update: vi.fn(),
       },
     } as unknown as PrismaService;
     const redisService = {
@@ -169,13 +176,13 @@ describe("AuthService.guestLogin", () => {
     vi.clearAllMocks();
   });
 
-  it("creates a new user with role GUEST when username does not exist", async () => {
+  it("creates a new user with role GUEST and guestSecret when username does not exist", async () => {
     const { service, prisma, redis } = buildServiceWithPrisma();
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
     vi.mocked(prisma.user.create).mockResolvedValueOnce({
       id: "u-1",
       username: "guest_player",
-      guestId: "gid",
+      guestId: "generated-secret-12345",
       role: Role.GUEST,
     } as never);
 
@@ -185,6 +192,7 @@ describe("AuthService.guestLogin", () => {
       data: expect.objectContaining({
         username: "guest_player",
         role: Role.GUEST,
+        guestId: expect.any(String),
       }),
     });
     expect(redis.set).toHaveBeenCalledTimes(1);
@@ -193,6 +201,7 @@ describe("AuthService.guestLogin", () => {
       username: "guest_player",
       role: Role.GUEST,
     });
+    expect(result.guestSecret).toBe("generated-secret-12345");
     expect(result.accessToken).toBeTruthy();
     expect(result.refreshToken).toBeTruthy();
   });
@@ -218,7 +227,7 @@ describe("AuthService.guestLogin", () => {
     expect(result.user.username).toBe("bad****");
   });
 
-  it("re-reads an existing guest user when create hits a unique race", async () => {
+  it("re-reads an existing guest user when create hits a unique race with matching secret", async () => {
     const { service, prisma, redis } = buildServiceWithPrisma();
     const raceError = Object.assign(
       Object.create(Prisma.PrismaClientKnownRequestError.prototype),
@@ -229,31 +238,144 @@ describe("AuthService.guestLogin", () => {
       .mockResolvedValueOnce({
         id: "u-existing",
         username: "regular_user",
-        guestId: "gid",
+        guestId: "gid-123456",
         role: Role.GUEST,
       } as never);
     vi.mocked(prisma.user.create).mockRejectedValueOnce(raceError as never);
 
-    const result = await service.guestLogin("regular_user");
+    const result = await service.guestLogin("regular_user", "gid-123456");
 
     expect(prisma.user.findUnique).toHaveBeenCalledTimes(2);
     expect(redis.set).toHaveBeenCalledTimes(1);
     expect(result.user.role).toBe(Role.GUEST);
+    expect(result.guestSecret).toBe("gid-123456");
   });
 
-  it("returns existing guest user without creating a new record", async () => {
+  it("returns existing guest user when guestSecret matches", async () => {
     const { service, prisma, redis } = buildServiceWithPrisma();
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
       id: "u-existing",
       username: "regular_user",
-      guestId: "gid",
+      guestId: "gid-123456",
       role: Role.GUEST,
     } as never);
 
-    const result = await service.guestLogin("regular_user");
+    const result = await service.guestLogin("regular_user", "gid-123456");
 
     expect(prisma.user.create).not.toHaveBeenCalled();
     expect(redis.set).toHaveBeenCalledTimes(1);
+    expect(result.user.role).toBe(Role.GUEST);
+    expect(result.guestSecret).toBe("gid-123456");
+  });
+
+  it("rejects login when username is taken and guestSecret does not match", async () => {
+    const { service, prisma, redis } = buildServiceWithPrisma();
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      id: "u-existing",
+      username: "regular_user",
+      guestId: "real-secret-123456",
+      role: Role.GUEST,
+    } as never);
+
+    await expect(
+      service.guestLogin("regular_user", "wrong-secret-654321"),
+    ).rejects.toThrow("USERNAME_TAKEN");
+
+    expect(prisma.user.create).not.toHaveBeenCalled();
+    expect(redis.set).not.toHaveBeenCalled();
+  });
+
+  it("rejects login when username is taken and guestSecret is omitted", async () => {
+    const { service, prisma, redis } = buildServiceWithPrisma();
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      id: "u-existing",
+      username: "regular_user",
+      guestId: "real-secret-123456",
+      role: Role.GUEST,
+    } as never);
+
+    await expect(service.guestLogin("regular_user")).rejects.toThrow(
+      "USERNAME_TAKEN",
+    );
+
+    expect(prisma.user.create).not.toHaveBeenCalled();
+    expect(redis.set).not.toHaveBeenCalled();
+  });
+
+  it("rejects legacy guest user without guestId (no claim/backfill)", async () => {
+    const { service, prisma, redis } = buildServiceWithPrisma();
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      id: "u-legacy",
+      username: "legacy_user",
+      guestId: null,
+      role: Role.GUEST,
+    } as never);
+
+    await expect(
+      service.guestLogin("legacy_user", "any-secret-12345"),
+    ).rejects.toThrow(UnauthorizedException);
+
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(redis.set).not.toHaveBeenCalled();
+  });
+
+  it("ignores client-supplied guestSecret when creating a new user", async () => {
+    const { service, prisma } = buildServiceWithPrisma();
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
+    vi.mocked(prisma.user.create).mockImplementation((async ({
+      data,
+    }: Prisma.UserCreateArgs) => {
+      return {
+        id: "u-1",
+        username: "new_player",
+        guestId: data.guestId ?? null,
+        role: Role.GUEST,
+      } as never;
+    }) as never);
+
+    const result = await service.guestLogin(
+      "new_player",
+      "client-chosen-secret",
+    );
+
+    expect(prisma.user.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        username: "new_player",
+        guestId: expect.not.stringMatching(/^client-chosen-secret$/),
+      }),
+    });
+    expect(result.guestSecret).toBeTruthy();
+    expect(result.guestSecret).not.toBe("client-chosen-secret");
+  });
+
+  it("updates avatar and invalidates leaderboard cache for existing user with valid new avatar", async () => {
+    const { service, prisma, redis } = buildServiceWithPrisma();
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      id: "u-existing",
+      username: "regular_user",
+      guestId: "gid-123456",
+      role: Role.GUEST,
+      avatar: "dario",
+    } as never);
+    vi.mocked(prisma.user.update).mockResolvedValueOnce({
+      id: "u-existing",
+      username: "regular_user",
+      guestId: "gid-123456",
+      role: Role.GUEST,
+      avatar: "dentist",
+    } as never);
+
+    const result = await service.guestLogin(
+      "regular_user",
+      "gid-123456",
+      "dentist",
+    );
+
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: "u-existing" },
+      data: { avatar: "dentist" },
+    });
+    expect(redis.del).toHaveBeenCalled();
     expect(result.user.role).toBe(Role.GUEST);
   });
 
@@ -609,6 +731,183 @@ describe("AuthService.getRefreshTokenTtlSeconds", () => {
   it("returns the configured refresh TTL in seconds", () => {
     const service = buildService("1h");
     expect(service.getRefreshTokenTtlSeconds()).toBe(604800);
+  });
+});
+
+describe("AuthService.adminLogin", () => {
+  function buildAdminService(config: Record<string, string | number> = {}) {
+    const configValues: Record<string, string | number> = {
+      JWT_SECRET: "test-secret",
+      JWT_EXPIRES_IN: "1h",
+      REFRESH_EXPIRES_IN: 604800,
+      NODE_ENV: "test",
+      ADMIN_PASSWORD: "strong-admin-password",
+      ...config,
+    };
+    const configService = {
+      get: vi.fn((key: string, fallback?: string | number) => {
+        return key in configValues ? configValues[key] : fallback;
+      }),
+    } as unknown as ConfigService;
+    const prismaService = {
+      user: {
+        findUnique: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+      },
+    } as unknown as PrismaService;
+    const redisService = {
+      set: vi.fn().mockResolvedValue(undefined),
+      get: vi.fn().mockResolvedValue(null),
+      del: vi.fn().mockResolvedValue(undefined),
+    } as unknown as RedisService;
+    return {
+      service: new AuthService(prismaService, redisService, configService),
+      prisma: prismaService,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("creates the fixed admin user when missing", async () => {
+    const { service, prisma } = buildAdminService();
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
+    vi.mocked(prisma.user.create).mockResolvedValueOnce({
+      id: "admin-1",
+      username: "admin",
+      guestId: "gid",
+      role: Role.ADMIN,
+    } as never);
+
+    const result = await service.adminLogin("strong-admin-password");
+
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { username: "admin" },
+    });
+    expect(prisma.user.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        username: "admin",
+        role: Role.ADMIN,
+      }),
+    });
+    expect(result.user.role).toBe(Role.ADMIN);
+    expect(result.user.username).toBe("admin");
+  });
+
+  it("never promotes a non-admin user named admin", async () => {
+    const { service, prisma } = buildAdminService();
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      id: "u-guest",
+      username: "admin",
+      guestId: "gid",
+      role: Role.GUEST,
+    } as never);
+
+    await expect(service.adminLogin("strong-admin-password")).rejects.toThrow(
+      UnauthorizedException,
+    );
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects wrong password", async () => {
+    const { service, prisma } = buildAdminService();
+    await expect(service.adminLogin("wrong")).rejects.toThrow(
+      UnauthorizedException,
+    );
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("rejects missing or short ADMIN_PASSWORD (< 12 chars)", async () => {
+    const { service: serviceEmpty } = buildAdminService({ ADMIN_PASSWORD: "" });
+    await expect(serviceEmpty.adminLogin("anything")).rejects.toThrow(
+      UnauthorizedException,
+    );
+
+    const { service: serviceShort } = buildAdminService({
+      ADMIN_PASSWORD: "short-pass",
+    });
+    await expect(serviceShort.adminLogin("short-pass")).rejects.toThrow(
+      UnauthorizedException,
+    );
+  });
+
+  it("logs in successfully when admin user already exists without creating user", async () => {
+    const { service, prisma } = buildAdminService();
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+      id: "admin-existing",
+      username: "admin",
+      guestId: "gid",
+      role: Role.ADMIN,
+    } as never);
+
+    const result = await service.adminLogin("strong-admin-password");
+
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { username: "admin" },
+    });
+    expect(prisma.user.create).not.toHaveBeenCalled();
+    expect(result.user.id).toBe("admin-existing");
+    expect(result.user.role).toBe(Role.ADMIN);
+    expect(result.user.username).toBe("admin");
+  });
+
+  it("contains all expected rejected admin passwords in the denylist", () => {
+    for (const password of EXPECTED_REJECTED_ADMIN_PASSWORDS) {
+      expect(isRejectedAdminPassword(password)).toBe(true);
+    }
+    expect(isRejectedAdminPassword("a-secure-custom-admin-password-1234")).toBe(
+      false,
+    );
+  });
+
+  it("rejects default password outside development/test", async () => {
+    for (const password of EXPECTED_REJECTED_ADMIN_PASSWORDS) {
+      const { service } = buildAdminService({
+        NODE_ENV: "production",
+        ADMIN_PASSWORD: password,
+      });
+      await expect(service.adminLogin(password)).rejects.toThrow(
+        UnauthorizedException,
+      );
+    }
+  });
+
+  it("handles Prisma P2002 on admin create and re-reads the existing admin user", async () => {
+    const { service, prisma } = buildAdminService();
+    const p2002Error = Object.assign(
+      Object.create(Prisma.PrismaClientKnownRequestError.prototype),
+      { code: "P2002" },
+    );
+    vi.mocked(prisma.user.findUnique)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: "admin-created-in-race",
+        username: "admin",
+        guestId: "gid",
+        role: Role.ADMIN,
+      } as never);
+    vi.mocked(prisma.user.create).mockRejectedValueOnce(p2002Error as never);
+
+    const result = await service.adminLogin("strong-admin-password");
+
+    expect(prisma.user.findUnique).toHaveBeenCalledTimes(2);
+    expect(prisma.user.create).toHaveBeenCalled();
+    expect(result.user.id).toBe("admin-created-in-race");
+    expect(result.user.role).toBe(Role.ADMIN);
+  });
+
+  it("rejects default password when NODE_ENV is unset or unconfigured", async () => {
+    for (const password of EXPECTED_REJECTED_ADMIN_PASSWORDS) {
+      const { service } = buildAdminService({
+        NODE_ENV: undefined as unknown as string,
+        ADMIN_PASSWORD: password,
+      });
+      await expect(service.adminLogin(password)).rejects.toThrow(
+        UnauthorizedException,
+      );
+    }
   });
 });
 

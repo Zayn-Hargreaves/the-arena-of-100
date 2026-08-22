@@ -2177,4 +2177,83 @@ describe("MatchStateMachine phase deadlines (B1b)", () => {
     expect(machine.getState().phaseEndsAt).toBeNull();
     expect(machine.getState().roundResultStartedAt).toBeNull();
   });
+
+  describe("Answer matching with option letters and content", () => {
+    it("accepts letter codes (A, B, C, D) when question has full text options", () => {
+      const machine = new MatchStateMachine(
+        "m-letters",
+        "r-letters",
+        makePlayers(),
+      );
+      machine.transition(MatchStatus.COUNTDOWN);
+      machine.transition(MatchStatus.ROUND_ACTIVE);
+      machine.startRound({
+        id: "q-404",
+        content: "HTTP status code 404 có ý nghĩa gì?",
+        options: ["Server Error", "Unauthorized", "Not Found", "Forbidden"],
+        correctAnswer: "Not Found",
+      });
+
+      // p1 submits "C" (which maps to "Not Found")
+      const ans1 = machine.submitAnswer("p1", "C", Date.now());
+      expect(ans1.isCorrect).toBe(true);
+
+      // p2 submits "A" (which maps to "Server Error" - incorrect)
+      const ans2 = machine.submitAnswer("p2", "A", Date.now());
+      expect(ans2.isCorrect).toBe(false);
+
+      machine.transition(MatchStatus.ROUND_EVALUATING);
+      const evalResult = machine.evaluateRound();
+      expect(evalResult.survivingIds).toEqual(["p1"]);
+      expect(evalResult.eliminatedIds).toEqual(["p2"]);
+    });
+
+    it("accepts full text options when question correctAnswer is full text", () => {
+      const machine = new MatchStateMachine(
+        "m-fulltext",
+        "r-fulltext",
+        makePlayers(),
+      );
+      machine.transition(MatchStatus.COUNTDOWN);
+      machine.transition(MatchStatus.ROUND_ACTIVE);
+      machine.startRound({
+        id: "q-hanoi",
+        content: "Thủ đô của Việt Nam là gì?",
+        options: ["Hà Nội", "Hồ Chí Minh", "Đà Nẵng", "Huế"],
+        correctAnswer: "Hà Nội",
+      });
+
+      const ans = machine.submitAnswer("p1", "Hà Nội", Date.now());
+      expect(ans.isCorrect).toBe(true);
+    });
+
+    it("accepts full text answer when question correctAnswer is a letter code (reverse mapping)", () => {
+      const machine = new MatchStateMachine(
+        "m-rev-letters",
+        "r-rev-letters",
+        makePlayers(),
+      );
+      machine.transition(MatchStatus.COUNTDOWN);
+      machine.transition(MatchStatus.ROUND_ACTIVE);
+      machine.startRound({
+        id: "q-404-rev",
+        content: "HTTP status code 404 có ý nghĩa gì?",
+        options: ["Server Error", "Unauthorized", "Not Found", "Forbidden"],
+        correctAnswer: "C",
+      });
+
+      // p1 submits "Not Found" (which maps to option C)
+      const ans1 = machine.submitAnswer("p1", "Not Found", Date.now());
+      expect(ans1.isCorrect).toBe(true);
+
+      // p2 submits "Server Error" (which maps to option A - incorrect)
+      const ans2 = machine.submitAnswer("p2", "Server Error", Date.now());
+      expect(ans2.isCorrect).toBe(false);
+
+      machine.transition(MatchStatus.ROUND_EVALUATING);
+      const evalResult = machine.evaluateRound();
+      expect(evalResult.survivingIds).toEqual(["p1"]);
+      expect(evalResult.eliminatedIds).toEqual(["p2"]);
+    });
+  });
 });
