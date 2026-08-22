@@ -121,7 +121,7 @@ export interface CardState {
   classId: ClassId | null;
   hand: CardId[];
   playedCardIds: CardId[];
-  offerSeqNoByCardId: Record<string, number>;
+  offerSeqNoByCardId: Partial<Record<CardId, number>>;
   currentOffer: CardOfferState | null;
   lastResolvedEffect: CardEffectEvent | null;
   pendingNextRoundEffects: CardEffectEvent[];
@@ -145,7 +145,7 @@ export const INITIAL_CARD_STATE: Readonly<CardState> = Object.freeze({
   classId: null,
   hand: Object.freeze([]) as unknown as CardId[],
   playedCardIds: Object.freeze([]) as unknown as CardId[],
-  offerSeqNoByCardId: Object.freeze({}) as Record<string, number>,
+  offerSeqNoByCardId: Object.freeze({}),
   currentOffer: null,
   lastResolvedEffect: null,
   pendingNextRoundEffects: Object.freeze([]) as unknown as CardEffectEvent[],

@@ -4,6 +4,7 @@ import { resolveCardEffect } from "@arena/game-core";
 import {
   ClientEvent,
   ErrorCode,
+  MatchStatus,
   PlayerStatus,
   RoomError,
   ServerEvent,
@@ -328,10 +329,31 @@ export async function applyCardPlayCommand(
     return "DUPLICATE_SUBMISSION";
   }
 
+  if (stateMachine.getPlayedCards(userId).has(env.body.cardId as CardId)) {
+    return handleDuplicatePlayRecovery(context, env, server);
+  }
+
+  const currentRound = stateMachine.getCurrentRound();
+  if (
+    state.status !== MatchStatus.ROUND_ACTIVE ||
+    !currentRound ||
+    currentRound.status !== "ACTIVE"
+  ) {
+    emitPlayerCommandError(
+      context.logger,
+      server,
+      userId,
+      ClientEvent.CARD_PLAY,
+      env.body.commandId,
+      new RoomError(ErrorCode.ROUND_NOT_ACTIVE),
+    );
+    return "DUPLICATE_SUBMISSION";
+  }
+
   const pickedCards = Array.from(stateMachine.getPickedCards(userId));
   const offeredCardIds =
     stateMachine.getCardOfferForPlayer(userId, env.body.offerSeqNo) ?? [];
-  const currentRoundNo = stateMachine.getCurrentRound()?.roundNo ?? 0;
+  const currentRoundNo = currentRound.roundNo;
   let validated;
   try {
     validated = validateCardCommand({
@@ -343,6 +365,8 @@ export async function applyCardPlayCommand(
       playedCardIds: stateMachine.getPlayedCards(userId),
       pickedCards,
       actingPlayerId: userId,
+      matchStatus: state.status,
+      roundStatus: currentRound.status,
     });
   } catch (error) {
     context.logger.warn(

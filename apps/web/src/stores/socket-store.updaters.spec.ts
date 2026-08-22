@@ -2783,5 +2783,36 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         PlayerStatus.ELIMINATED,
       );
     });
+
+    it("applyRoundEndedState preserves isEliminated and eliminationReason when userId is absent from updatedMatch.players", () => {
+      const state = makeState({
+        userId: "p_local",
+        isEliminated: true,
+        eliminationReason: "WRONG_ANSWER",
+        match: {
+          id: "m1",
+          status: MatchStatus.ROUND_ACTIVE,
+          currentRoundNo: 2,
+          players: [], // empty roster snapshot
+          currentQuestion: null,
+          roundEndTime: null,
+        },
+      });
+
+      const res = applyRoundEndedState(
+        state,
+        {
+          matchId: "m1",
+          roundNo: 2,
+          correctAnswer: "B",
+          survivingPlayerIds: ["p1"],
+          eliminatedPlayerIds: [],
+        },
+        null,
+      );
+
+      expect(res.isEliminated).toBe(true);
+      expect(res.eliminationReason).toBe("WRONG_ANSWER");
+    });
   });
 });

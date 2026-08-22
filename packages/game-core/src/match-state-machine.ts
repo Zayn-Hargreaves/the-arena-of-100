@@ -1088,6 +1088,14 @@ export class MatchStateMachine {
     expiresAtServer: number | null;
     remainingMs: number | null;
   } {
+    if (
+      this.state.status !== MatchStatus.ROUND_ACTIVE ||
+      !this.currentRound ||
+      this.currentRound.status !== "ACTIVE"
+    ) {
+      throw new RoomError(ErrorCode.ROUND_NOT_ACTIVE);
+    }
+
     const isTemporary = isTemporaryEffectKind(resolvedEffect.kind);
     const expiresAtServer = isTemporary
       ? serverNow + getDurationMs(resolvedEffect)
@@ -1151,7 +1159,7 @@ export class MatchStateMachine {
       this.secondChancePlayers.add(playedByPlayerId);
       this.logEvent("SECOND_CHANCE_GRANTED", {
         playerId: playedByPlayerId,
-        roundNo: this.currentRound?.roundNo ?? 0,
+        roundNo: this.currentRound.roundNo,
       });
     }
 
@@ -1160,7 +1168,7 @@ export class MatchStateMachine {
     // only resolutions with `targetPlayerIds.length > 1` do,
     // matching the spec's `AOE_CAP_PER_ROUND` rule (spec §3.3).
     if (targetPlayerIds.length > 1) {
-      const roundNo = this.currentRound?.roundNo ?? 0;
+      const roundNo = this.currentRound.roundNo;
       const current = this.aoeCountByRound.get(roundNo) ?? 0;
       this.aoeCountByRound.set(roundNo, current + 1);
     }
@@ -1383,9 +1391,6 @@ export class MatchStateMachine {
         persistedDurationMs: getDurationMs(payload.effect as CardEffect),
       });
       this.activeEffects.set(playedBy, list);
-    }
-    if ((payload.effect as CardEffect)?.kind === "SECOND_CHANCE") {
-      this.secondChancePlayers.add(playedBy);
     }
     const targets = (payload.targetPlayerIds ?? []) as string[];
     if (targets.length > 1) {

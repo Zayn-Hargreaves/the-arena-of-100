@@ -1300,31 +1300,35 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   // Submit Answer
 
   submitAnswer: (matchId: string, roundNo: number, answer: string) => {
-    const { socket, pendingAnswer, cardState, userId } = get();
+    const { socket, pendingAnswer, lastAnswerResult, cardState, userId } =
+      get();
     if (!socket?.connected) return null;
 
     const hasExistingSubmission =
-      pendingAnswer?.matchId === matchId && pendingAnswer.roundNo === roundNo;
+      (pendingAnswer?.matchId === matchId &&
+        pendingAnswer.roundNo === roundNo) ||
+      (lastAnswerResult?.matchId === matchId &&
+        lastAnswerResult.roundNo === roundNo);
 
     const currentUserId = userId;
-    const hasSecondChancePermission =
-      Boolean(currentUserId) &&
-      Boolean(
-        currentUserId &&
-        (cardState.activeRoundEffects?.some(
-          (e) =>
-            (e.playedByPlayerId === currentUserId ||
-              e.targetPlayerIds?.includes(currentUserId)) &&
-            e.effect.kind === "SECOND_CHANCE",
-        ) ||
+    const hasSecondChancePermission = currentUserId
+      ? Boolean(
+          cardState.activeRoundEffects?.some(
+            (e) =>
+              (e.playedByPlayerId === currentUserId ||
+                e.targetPlayerIds?.includes(currentUserId)) &&
+              e.effect.kind === "SECOND_CHANCE" &&
+              (e.targetRoundNo ?? e.roundNo) === roundNo,
+          ) ||
           ((cardState.lastResolvedEffect?.playedByPlayerId === currentUserId ||
             cardState.lastResolvedEffect?.targetPlayerIds?.includes(
               currentUserId,
             )) &&
             cardState.lastResolvedEffect?.effect.kind === "SECOND_CHANCE" &&
             (cardState.lastResolvedEffect.targetRoundNo ??
-              cardState.lastResolvedEffect.roundNo) === roundNo)),
-      );
+              cardState.lastResolvedEffect.roundNo) === roundNo),
+        )
+      : false;
 
     if (hasExistingSubmission && !hasSecondChancePermission) {
       return null;

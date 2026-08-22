@@ -14,6 +14,13 @@ export interface CardAnimationProps {
   className?: string;
 }
 
+/**
+ * Duration in milliseconds for displaying MUTATION card effect animations.
+ * Also determines when onComplete is called and clears cardState.lastResolvedEffect
+ * via clearResolvedCardEffect.
+ */
+export const MUTATION_ANIMATION_DURATION_MS = 2500;
+
 // `CardAnimation` — fires a rich, localized Pop-Art notification banner when a
 // `CARD_RESOLVED` event lands. TEMPORARY effects linger for the
 // effect duration (driven by `remainingMs`). MUTATION effects
@@ -33,7 +40,10 @@ export function CardAnimation({
     if (!event) return;
     mountedAtRef.current = Date.now();
     if (event.resolution === "MUTATION") {
-      const timer = setTimeout(() => onComplete?.(), 2500);
+      const timer = setTimeout(
+        () => onComplete?.(),
+        MUTATION_ANIMATION_DURATION_MS,
+      );
       return () => clearTimeout(timer);
     }
     // TEMPORARY: run a 1Hz tick so the countdown updates and

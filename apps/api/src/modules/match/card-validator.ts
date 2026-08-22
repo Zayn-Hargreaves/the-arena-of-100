@@ -12,12 +12,14 @@
 
 import {
   ErrorCode,
+  MatchStatus,
   RoomError,
   AOE_CAP_PER_ROUND,
   COMMAND_ID_MAX_LENGTH,
   MILESTONE_ROUNDS,
   type CardId,
   type CardEffectTemplate,
+  type RoundState,
   getCardDefinition,
   hasCardDefinition,
 } from "@arena/shared";
@@ -182,10 +184,21 @@ export function validateCardCommand(args: {
   playedCardIds: ReadonlySet<CardId>;
   pickedCards: readonly CardId[];
   actingPlayerId?: string;
+  matchStatus?: MatchStatus;
+  roundStatus?: RoundState["status"];
 }): {
   cardId: CardId;
   template: CardEffectTemplate;
 } {
+  if (
+    args.matchStatus !== undefined &&
+    args.matchStatus !== MatchStatus.ROUND_ACTIVE
+  ) {
+    throw new RoomError(ErrorCode.ROUND_NOT_ACTIVE);
+  }
+  if (args.roundStatus !== undefined && args.roundStatus !== "ACTIVE") {
+    throw new RoomError(ErrorCode.ROUND_NOT_ACTIVE);
+  }
   assertCardId(args.cardId);
   const cardId = args.cardId as CardId;
   // The picked-card set is the pick-specific data the validator

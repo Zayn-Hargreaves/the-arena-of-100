@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, use, useMemo, useCallback } from "react";
+import React, { useState, useEffect, use, useMemo, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import {
@@ -32,6 +32,60 @@ import { INITIAL_CARD_STATE } from "@/stores/socket-store.types";
 // "remaining / total" denominator in the header. GAME_CONFIG.MAX_PLAYERS
 // is only the fallback when room capacity is not available.
 import { GAME_CONFIG, type CardId } from "@arena/shared";
+
+interface TimedEffectLike {
+  cardId?: CardId;
+  offerSeqNo?: number;
+  sourceSeqNo?: number;
+  expiresAtServer?: number | null;
+  effect?: {
+    kind: string;
+    durationMs?: number;
+    delayMs?: number;
+  };
+}
+
+function useTimedEffectFlag(
+  effect: TimedEffectLike | null | undefined,
+  fallbackDuration: number | undefined,
+  currentRoundNo: number,
+): boolean {
+  const [active, setActive] = useState(false);
+  const sourceSeqNo = effect
+    ? (effect.sourceSeqNo ??
+      (effect.cardId !== undefined || effect.offerSeqNo !== undefined
+        ? `${effect.cardId}-${effect.offerSeqNo}`
+        : effect))
+    : null;
+
+  useEffect(() => {
+    if (effect) {
+      const fallback = fallbackDuration ?? 0;
+      const remaining =
+        effect.expiresAtServer != null
+          ? Math.max(0, effect.expiresAtServer - Date.now())
+          : fallback;
+      if (remaining <= 0) {
+        setActive(false);
+        return undefined;
+      }
+      setActive(true);
+      const timer = setTimeout(() => setActive(false), remaining);
+      return () => clearTimeout(timer);
+    } else {
+      setActive(false);
+      return undefined;
+    }
+  }, [
+    currentRoundNo,
+    sourceSeqNo,
+    effect,
+    effect?.expiresAtServer,
+    fallbackDuration,
+  ]);
+
+  return active;
+}
 
 interface GamePageProps {
   params: Promise<{ matchId: string; locale?: string }>;
@@ -219,194 +273,101 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
 
   const displayTimeLeft = Math.max(0, timeLeft + timeOffsetSeconds);
 
-  // Dynamic active timers for temporary effects that expire after durationMs/delayMs
-  const [activeLocked, setActiveLocked] = useState(false);
-  const [activeFoggy, setActiveFoggy] = useState(false);
-  const [activeDelayRender, setActiveDelayRender] = useState(false);
-  const [activeSemanticFlip, setActiveSemanticFlip] = useState(false);
-  const [activeFake, setActiveFake] = useState(false);
-
   // 1. OPTION_LOCK: auto-unlocks after remaining server time or durationMs
   const lockEff = useMemo(
-    () => myRoundEffects.find((e) => e.effect.kind === "OPTION_LOCK"),
+    () => myRoundEffects.find((e) => e.effect.kind === "OPTION_LOCK") ?? null,
     [myRoundEffects],
   );
-  const lockSourceSeqNo = lockEff
-    ? ((lockEff as { sourceSeqNo?: number }).sourceSeqNo ??
-      `${lockEff.cardId}-${lockEff.offerSeqNo}`)
-    : null;
-
-  React.useEffect(() => {
-    if (lockEff && lockEff.effect.kind === "OPTION_LOCK") {
-      const fallback = lockEff.effect.durationMs;
-      const remaining =
-        lockEff.expiresAtServer != null
-          ? Math.max(0, lockEff.expiresAtServer - Date.now())
-          : fallback;
-      if (remaining <= 0) {
-        setActiveLocked(false);
-        return undefined;
-      }
-      setActiveLocked(true);
-      const timer = setTimeout(() => setActiveLocked(false), remaining);
-      return () => clearTimeout(timer);
-    } else {
-      setActiveLocked(false);
-      return undefined;
-    }
-  }, [currentRoundNo, lockSourceSeqNo]);
+  const isOptionLocked = useTimedEffectFlag(
+    lockEff,
+    lockEff?.effect.kind === "OPTION_LOCK"
+      ? lockEff.effect.durationMs
+      : undefined,
+    currentRoundNo,
+  );
 
   // 2. VISUAL_OVERLAY (Brain Fog): auto-clears after remaining server time or durationMs
   const fogEff = useMemo(
-    () => myRoundEffects.find((e) => e.effect.kind === "VISUAL_OVERLAY"),
+    () =>
+      myRoundEffects.find((e) => e.effect.kind === "VISUAL_OVERLAY") ?? null,
     [myRoundEffects],
   );
-  const fogSourceSeqNo = fogEff
-    ? ((fogEff as { sourceSeqNo?: number }).sourceSeqNo ??
-      `${fogEff.cardId}-${fogEff.offerSeqNo}`)
-    : null;
-
-  React.useEffect(() => {
-    if (fogEff && fogEff.effect.kind === "VISUAL_OVERLAY") {
-      const fallback = fogEff.effect.durationMs;
-      const remaining =
-        fogEff.expiresAtServer != null
-          ? Math.max(0, fogEff.expiresAtServer - Date.now())
-          : fallback;
-      if (remaining <= 0) {
-        setActiveFoggy(false);
-        return undefined;
-      }
-      setActiveFoggy(true);
-      const timer = setTimeout(() => setActiveFoggy(false), remaining);
-      return () => clearTimeout(timer);
-    } else {
-      setActiveFoggy(false);
-      return undefined;
-    }
-  }, [currentRoundNo, fogSourceSeqNo]);
+  const isFoggy = useTimedEffectFlag(
+    fogEff,
+    fogEff?.effect.kind === "VISUAL_OVERLAY"
+      ? fogEff.effect.durationMs
+      : undefined,
+    currentRoundNo,
+  );
 
   // 3. DELAY_RENDER: reveals after remaining server time or delayMs
   const delayEff = useMemo(
-    () => myRoundEffects.find((e) => e.effect.kind === "DELAY_RENDER"),
+    () => myRoundEffects.find((e) => e.effect.kind === "DELAY_RENDER") ?? null,
     [myRoundEffects],
   );
-  const delaySourceSeqNo = delayEff
-    ? ((delayEff as { sourceSeqNo?: number }).sourceSeqNo ??
-      `${delayEff.cardId}-${delayEff.offerSeqNo}`)
-    : null;
-
-  React.useEffect(() => {
-    if (delayEff && delayEff.effect.kind === "DELAY_RENDER") {
-      const fallback = delayEff.effect.delayMs;
-      const remaining =
-        delayEff.expiresAtServer != null
-          ? Math.max(0, delayEff.expiresAtServer - Date.now())
-          : fallback;
-      if (remaining <= 0) {
-        setActiveDelayRender(false);
-        return undefined;
-      }
-      setActiveDelayRender(true);
-      const timer = setTimeout(() => setActiveDelayRender(false), remaining);
-      return () => clearTimeout(timer);
-    } else {
-      setActiveDelayRender(false);
-      return undefined;
-    }
-  }, [currentRoundNo, delaySourceSeqNo]);
+  const isDelayRender = useTimedEffectFlag(
+    delayEff,
+    delayEff?.effect.kind === "DELAY_RENDER"
+      ? delayEff.effect.delayMs
+      : undefined,
+    currentRoundNo,
+  );
 
   // 4. SEMANTIC_FLIP: resets after remaining server time or durationMs
   const flipEff = useMemo(
-    () => myRoundEffects.find((e) => e.effect.kind === "SEMANTIC_FLIP"),
+    () => myRoundEffects.find((e) => e.effect.kind === "SEMANTIC_FLIP") ?? null,
     [myRoundEffects],
   );
-  const flipSourceSeqNo = flipEff
-    ? ((flipEff as { sourceSeqNo?: number }).sourceSeqNo ??
-      `${flipEff.cardId}-${flipEff.offerSeqNo}`)
-    : null;
-
-  React.useEffect(() => {
-    if (flipEff && flipEff.effect.kind === "SEMANTIC_FLIP") {
-      const fallback = flipEff.effect.durationMs;
-      const remaining =
-        flipEff.expiresAtServer != null
-          ? Math.max(0, flipEff.expiresAtServer - Date.now())
-          : fallback;
-      if (remaining <= 0) {
-        setActiveSemanticFlip(false);
-        return undefined;
-      }
-      setActiveSemanticFlip(true);
-      const timer = setTimeout(() => setActiveSemanticFlip(false), remaining);
-      return () => clearTimeout(timer);
-    } else {
-      setActiveSemanticFlip(false);
-      return undefined;
-    }
-  }, [currentRoundNo, flipSourceSeqNo]);
+  const isSemanticFlipped = useTimedEffectFlag(
+    flipEff,
+    flipEff?.effect.kind === "SEMANTIC_FLIP"
+      ? flipEff.effect.durationMs
+      : undefined,
+    currentRoundNo,
+  );
 
   // 5. OPTION_FAKE: auto-clears after remaining server time or durationMs
   const fakeEff = useMemo(
     () =>
-      myRoundEffects.find((e) => e.effect.kind === "OPTION_FAKE") ||
-      (isTargetOfActiveEffect &&
-      activeEffect?.effect.kind === "OPTION_FAKE" &&
-      (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
-        ? activeEffect
-        : null),
+      (myRoundEffects.find((e) => e.effect.kind === "OPTION_FAKE") ||
+        (isTargetOfActiveEffect &&
+        activeEffect?.effect.kind === "OPTION_FAKE" &&
+        (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
+          ? activeEffect
+          : null)) ??
+      null,
     [myRoundEffects, isTargetOfActiveEffect, activeEffect, currentRoundNo],
   );
-  const fakeSourceSeqNo = fakeEff
-    ? ((fakeEff as { sourceSeqNo?: number }).sourceSeqNo ??
-      `${fakeEff.cardId}-${fakeEff.offerSeqNo}`)
-    : null;
-
-  React.useEffect(() => {
-    if (fakeEff && fakeEff.effect.kind === "OPTION_FAKE") {
-      const fallback = fakeEff.effect.durationMs;
-      const remaining =
-        fakeEff.expiresAtServer != null
-          ? Math.max(0, fakeEff.expiresAtServer - Date.now())
-          : fallback;
-      if (remaining <= 0) {
-        setActiveFake(false);
-        return undefined;
-      }
-      setActiveFake(true);
-      const timer = setTimeout(() => setActiveFake(false), remaining);
-      return () => clearTimeout(timer);
-    } else {
-      setActiveFake(false);
-      return undefined;
-    }
-  }, [currentRoundNo, fakeSourceSeqNo]);
-
-  const isFoggy = activeFoggy;
-  const isDelayRender = activeDelayRender;
-  const isSemanticFlipped = activeSemanticFlip;
-  const isOptionLocked = activeLocked;
+  const activeFake = useTimedEffectFlag(
+    fakeEff,
+    fakeEff?.effect.kind === "OPTION_FAKE"
+      ? fakeEff.effect.durationMs
+      : undefined,
+    currentRoundNo,
+  );
 
   const hintPartial = useMemo(() => {
     const eff =
-      myRoundEffects.find((e) => e.effect.kind === "HINT_REVEAL") ||
-      (isTargetOfActiveEffect &&
-      activeEffect?.effect.kind === "HINT_REVEAL" &&
-      (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
-        ? activeEffect
-        : null);
+      (myRoundEffects.find((e) => e.effect.kind === "HINT_REVEAL") ||
+        (isTargetOfActiveEffect &&
+        activeEffect?.effect.kind === "HINT_REVEAL" &&
+        (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
+          ? activeEffect
+          : null)) ??
+      null;
     return eff?.effect.kind === "HINT_REVEAL" ? eff.effect.partial : null;
   }, [myRoundEffects, isTargetOfActiveEffect, activeEffect, currentRoundNo]);
 
   const disabledOptionCodes = useMemo(() => {
     const eff =
-      myRoundEffects.find((e) => e.effect.kind === "OPTION_DISABLE") ||
-      (userId &&
-      activeEffect?.playedByPlayerId === userId &&
-      activeEffect?.effect.kind === "OPTION_DISABLE" &&
-      (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
-        ? activeEffect
-        : null);
+      (myRoundEffects.find((e) => e.effect.kind === "OPTION_DISABLE") ||
+        (userId &&
+        activeEffect?.playedByPlayerId === userId &&
+        activeEffect?.effect.kind === "OPTION_DISABLE" &&
+        (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
+          ? activeEffect
+          : null)) ??
+      null;
     if (eff && eff.effect.kind === "OPTION_DISABLE" && eff.effect.indexes) {
       const CODES = ["A", "B", "C", "D"];
       return eff.effect.indexes
@@ -425,12 +386,13 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
 
   const burningCardId = useMemo(() => {
     const eff =
-      myRoundEffects.find((e) => e.effect.kind === "HAND_DESTROY") ||
-      (isTargetOfActiveEffect &&
-      activeEffect?.effect.kind === "HAND_DESTROY" &&
-      (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
-        ? activeEffect
-        : null);
+      (myRoundEffects.find((e) => e.effect.kind === "HAND_DESTROY") ||
+        (isTargetOfActiveEffect &&
+        activeEffect?.effect.kind === "HAND_DESTROY" &&
+        (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
+          ? activeEffect
+          : null)) ??
+      null;
     return eff?.effect.kind === "HAND_DESTROY"
       ? ((eff.effect.destroyedCardIds?.[0] as CardId) ?? null)
       : null;
@@ -449,15 +411,16 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
 
   const scoreMultiplier = useMemo(() => {
     const eff =
-      myRoundEffects.find(
+      (myRoundEffects.find(
         (e) => e.playedByPlayerId === userId && e.effect.kind === "SCORE_MULT",
       ) ||
-      (userId &&
-      activeEffect?.playedByPlayerId === userId &&
-      activeEffect?.effect.kind === "SCORE_MULT" &&
-      (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
-        ? activeEffect
-        : null);
+        (userId &&
+        activeEffect?.playedByPlayerId === userId &&
+        activeEffect?.effect.kind === "SCORE_MULT" &&
+        (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
+          ? activeEffect
+          : null)) ??
+      null;
     return eff?.effect.kind === "SCORE_MULT" ? eff.effect.factor : null;
   }, [myRoundEffects, userId, activeEffect, currentRoundNo]);
 
@@ -490,6 +453,7 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
           roundNo={cardState.currentOffer!.roundNo}
           offeredCardIds={cardState.currentOffer!.offeredCardIds}
           offerSeqNo={cardState.currentOffer!.offerSeqNo}
+          expiresAt={cardState.currentOffer!.expiresAt}
           onPickCard={(cardId, offerSeqNo) => {
             pickCard(cardId, offerSeqNo);
           }}

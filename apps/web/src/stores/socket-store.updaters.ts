@@ -419,23 +419,33 @@ export function applyRoundEndedState(
       ? data.survivingCount
       : (data.survivingPlayerIds?.length ?? null);
 
+  const updatedMatch = currentMatch
+    ? {
+        ...currentMatch,
+        id: data.matchId,
+        players: updatedPlayers,
+        status: MatchStatus.ROUND_RESULT,
+        roundEndTime: null,
+      }
+    : {
+        id: data.matchId,
+        status: MatchStatus.ROUND_RESULT,
+        currentRoundNo: data.roundNo,
+        players: updatedPlayers,
+        currentQuestion: null,
+        roundEndTime: null,
+      };
+
+  const selfEliminated = computeIsEliminated(
+    state.userId,
+    updatedMatch,
+    state.isEliminated,
+  );
+
   return {
-    match: currentMatch
-      ? {
-          ...currentMatch,
-          id: data.matchId,
-          players: updatedPlayers,
-          status: MatchStatus.ROUND_RESULT,
-          roundEndTime: null,
-        }
-      : {
-          id: data.matchId,
-          status: MatchStatus.ROUND_RESULT,
-          currentRoundNo: data.roundNo,
-          players: updatedPlayers,
-          currentQuestion: null,
-          roundEndTime: null,
-        },
+    match: updatedMatch,
+    isEliminated: selfEliminated,
+    eliminationReason: selfEliminated ? state.eliminationReason : null,
     lastAnswerResult: {
       matchId: data.matchId,
       roundNo: data.roundNo,
@@ -737,10 +747,9 @@ function computeIsEliminated(
   fallback: boolean,
 ): boolean {
   if (!userId) return fallback;
-  return (
-    match.players.find((p) => p.id === userId)?.status ===
-    PlayerStatus.ELIMINATED
-  );
+  const player = match.players.find((p) => p.id === userId);
+  if (!player) return fallback;
+  return player.status === PlayerStatus.ELIMINATED;
 }
 
 // Plan D — delta replay. Fold an EVENT_BATCH onto the current match,

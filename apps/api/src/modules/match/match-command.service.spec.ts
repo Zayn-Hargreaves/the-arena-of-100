@@ -2082,9 +2082,11 @@ describe("MatchCommandService (B4a)", () => {
     it("recoverDuplicatePlayEvent re-broadcasts the canonical CARD_RESOLVED when metadata matches", async () => {
       const { sm } = makePickOfferSm({
         offeredCardIds: ["CB-1", "CB-2", "CB-3"],
+        roundActive: true,
       });
       sm.pickCard("p1", "CB-1", 1);
       matchService.getStateMachine.mockResolvedValue(sm);
+      ownership.currentFence.mockReturnValue(OWNER);
 
       // Pre-seed a CARD_RESOLVED with the same eventId/commandId so the
       // subsequent redelivery can locate it.
@@ -2124,6 +2126,7 @@ describe("MatchCommandService (B4a)", () => {
     it("applyCardPlayAuthoritative recovers + ACKs when validateCardCommand rejects a persisted card", async () => {
       const { sm: smWithPlayed } = makePickOfferSm({
         offeredCardIds: ["CB-1", "CB-2", "CB-3"],
+        roundActive: true,
       });
       smWithPlayed.pickCard("p1", "CB-1", 1);
       // Pre-stamp a CARD_RESOLVED so findCanonicalCardResolved can match.
@@ -2137,6 +2140,7 @@ describe("MatchCommandService (B4a)", () => {
         { eventId: "evt-play-1", commandId: "cmd-play-1" },
       );
       matchService.getStateMachine.mockResolvedValue(smWithPlayed);
+      ownership.currentFence.mockReturnValue(OWNER);
 
       const recorder = makeMockServer();
 
@@ -2160,6 +2164,7 @@ describe("MatchCommandService (B4a)", () => {
     it("recoverDuplicatePlayEvent emits an error when canonical metadata does not match", async () => {
       const { sm } = makePickOfferSm({
         offeredCardIds: ["CB-1", "CB-2", "CB-3"],
+        roundActive: true,
       });
       sm.pickCard("p1", "CB-1", 1);
       sm.playCard(
@@ -2173,6 +2178,7 @@ describe("MatchCommandService (B4a)", () => {
       );
       matchService.getStateMachine.mockResolvedValue(sm);
       redis.sismember.mockResolvedValue(true);
+      ownership.currentFence.mockReturnValue(OWNER);
       const recorder = makeMockServer();
 
       const outcome = await applyPlayAuthoritative(
@@ -2822,9 +2828,10 @@ describe("MatchCommandService (B4a)", () => {
       );
     });
 
-    it("APPLIED: sadd failure after broadcast is non-fatal", async () => {
+    it("APPLIED: sadd failure after broadcast is non-fatal; resubmission after round deactivation recovers duplicate", async () => {
       const { sm, offerSeqNo } = pickOfferSmForPlay({ pickedCardId: "CB-1" });
       matchService.getStateMachine.mockResolvedValue(sm);
+      ownership.currentFence.mockReturnValue(OWNER);
       redis.sadd.mockRejectedValueOnce(new Error("sadd boom"));
       const recorder = makeMockServer();
 
@@ -2837,6 +2844,24 @@ describe("MatchCommandService (B4a)", () => {
 
       expect(outcome).toBe("APPLIED");
       expect(recorder.callsByEvent(ServerEvent.CARD_RESOLVED).length).toBe(2);
+
+      // Submit answer for p1 so they survive round evaluation
+      sm.submitAnswer("p1", "A", 100);
+      sm.evaluateRound();
+
+      // Resubmission of the same command
+      const redeliveryRecorder = makeMockServer();
+      const redeliveryOutcome = await applyPlayAuthoritative(
+        service,
+        playEnv("evt-sadd", "cmd-sadd", offerSeqNo),
+        OWNER,
+        redeliveryRecorder.server,
+      );
+
+      expect(redeliveryOutcome).toBe("DUPLICATE_EVENT");
+      expect(
+        redeliveryRecorder.callsByEvent(ServerEvent.CARD_RESOLVED).length,
+      ).toBe(2);
     });
 
     it("RETRY when sismember (dedup read) fails", async () => {

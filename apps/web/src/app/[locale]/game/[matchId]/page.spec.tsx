@@ -91,6 +91,7 @@ vi.mock("@/components/game", () => ({
   }) => (
     <button
       data-testid="answer-select"
+      disabled={p.disabled}
       data-spectator={String(p.isSpectator)}
       data-eliminated={String(p.isEliminated)}
       data-disabled={String(p.disabled)}

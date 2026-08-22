@@ -186,6 +186,7 @@ describe("pickOffer — milestone card offer", () => {
 
   it("excludes previously picked/played cards from subsequent milestone offers", () => {
     const machine = makeMachine();
+    makeActiveRound(machine);
     machine.classAssignment(["p1"], "seed-class");
     const offer1 = machine.pickOffer("p1", 5, "seed-offer-1");
     const offerSeqNo = machine
@@ -207,6 +208,7 @@ describe("pickOffer — milestone card offer", () => {
 
   it("throws invariant error if availablePool has fewer than 3 cards", () => {
     const machine = makeMachine();
+    makeActiveRound(machine);
     machine.classAssignment(["p1"], "seed-exhaust");
     const effect: CardEffect = {
       kind: "TIMER_MODIFY",
@@ -288,8 +290,56 @@ describe("pickCard — spending an offered card", () => {
 });
 
 describe("playCard — card effect resolution", () => {
+  it("rejects playCard if match status is not ROUND_ACTIVE or currentRound is not ACTIVE", () => {
+    const m = makeMachine();
+    m.classAssignment(["p1"], "mut-seed");
+    const cards = m.pickOffer("p1", 5, "mut-1");
+    const card = cards[0]!;
+    m.pickCard("p1", card, 1);
+    expect(() =>
+      m.playCard(
+        "p1",
+        card,
+        1,
+        { kind: "TIMER_MODIFY", deltaMs: -1000, targetCount: 1 },
+        ["p2"],
+        1000,
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        code: ErrorCode.ROUND_NOT_ACTIVE,
+      }),
+    );
+
+    const m2 = makeMachine();
+    makeActiveRound(m2);
+    m2.classAssignment(["p1"], "mut-seed-2");
+    const cards2 = m2.pickOffer("p1", 5, "mut-2");
+    const card2 = cards2[0]!;
+    m2.pickCard("p1", card2, 1);
+    m2.evaluateRound();
+    expect(m2.getState().status).toBe(MatchStatus.ROUND_ACTIVE);
+    expect(m2.getCurrentRound()?.status).toBe("COMPLETED");
+
+    expect(() =>
+      m2.playCard(
+        "p1",
+        card2,
+        1,
+        { kind: "TIMER_MODIFY", deltaMs: -1000, targetCount: 1 },
+        ["p2"],
+        1000,
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        code: ErrorCode.ROUND_NOT_ACTIVE,
+      }),
+    );
+  });
+
   it("emits a CARD_RESOLVED event with MUTATION resolution and no expiry", () => {
     const m = makeMachine();
+    makeActiveRound(m);
     m.classAssignment(["p1"], "mut-seed");
     const cards = m.pickOffer("p1", 5, "mut-1");
     // Pick an Offensive (CB-*) card for the MUTATION test.
@@ -320,6 +370,7 @@ describe("playCard — card effect resolution", () => {
 
   it("emits a TEMPORARY CARD_RESOLVED with expiresAtServer = serverNow + durationMs", () => {
     const m = makeMachine();
+    makeActiveRound(m);
     m.classAssignment(["p1"], "tmp-seed");
     const cards = m.pickOffer("p1", 5, "tmp-1");
     // Pick a Defensive (TN-*) card for the TEMPORARY OPTION_DISABLE test.
@@ -345,6 +396,7 @@ describe("playCard — card effect resolution", () => {
 
   it("stamps canonical eventId + commandId on the CARD_RESOLVED payload when supplied", () => {
     const m = makeMachine();
+    makeActiveRound(m);
     m.classAssignment(["p1"], "stamp-seed");
     const cards = m.pickOffer("p1", 5, "stamp-1");
     const attackCard = cards.filter((c) => c.startsWith("CB-"))[0]!;
@@ -366,6 +418,7 @@ describe("playCard — card effect resolution", () => {
 
   it("TEMPORARY effects are tracked per-player in activeEffects", () => {
     const m = makeMachine();
+    makeActiveRound(m);
     m.classAssignment(["p1"], "ae-seed");
     const cards = m.pickOffer("p1", 5, "ae-1");
     const defenseCard = cards.find((c) => c.startsWith("TN-")) ?? cards[0]!;
@@ -389,6 +442,7 @@ describe("playCard — card effect resolution", () => {
 
   it("expired TEMPORARY effects are excluded from the snapshot", () => {
     const m = makeMachine();
+    makeActiveRound(m);
     m.classAssignment(["p1"], "exp-seed");
     const cards = m.pickOffer("p1", 5, "exp-1");
     const defenseCard = cards.find((c) => c.startsWith("TN-")) ?? cards[0]!;
@@ -407,6 +461,7 @@ describe("playCard — card effect resolution", () => {
 
   it("MUTATION effects are NOT added to activeEffects", () => {
     const m = makeMachine();
+    makeActiveRound(m);
     m.classAssignment(["p1"], "mt-seed");
     const cards = m.pickOffer("p1", 5, "mt-1");
     const attackCard = cards.find((c) => c.startsWith("CB-")) ?? cards[0]!;
@@ -422,6 +477,7 @@ describe("playCard — card effect resolution", () => {
 
   it("remainingMs is recomputed from serverNow — never persists stale value", () => {
     const m = makeMachine();
+    makeActiveRound(m);
     m.classAssignment(["p1"], "ck-seed");
     const cards = m.pickOffer("p1", 5, "ck-1");
     const defenseCard = cards.find((c) => c.startsWith("TN-")) ?? cards[0]!;
@@ -445,6 +501,7 @@ describe("playCard — card effect resolution", () => {
 describe("Phase 2 — rehydrate card state from event log", () => {
   it("deserialize rebuilds playerClasses / playerHands / activeEffects from the log", () => {
     const m1 = makeMachine();
+    makeActiveRound(m1);
     m1.classAssignment(["p1", "p2"], "rehydrate-seed");
     const cards = m1.pickOffer("p1", 5, "rh-1");
     const defenseCard = cards.find((c) => c.startsWith("TN-")) ?? cards[0]!;
@@ -531,6 +588,7 @@ describe("Phase 2 — cached state mirrors the event log", () => {
 
   it("getPlayedCards mirrors CARD_RESOLVED events for one player", () => {
     const m = makeMachine();
+    makeActiveRound(m);
     m.classAssignment(["p1"], "pp2-seed");
     const cards = m.pickOffer("p1", 5, "pp2-1");
     const attackCard = cards.filter((c) => c.startsWith("CB-"))[0]!;
@@ -556,6 +614,7 @@ describe("Phase 2 — cached state mirrors the event log", () => {
 
   it("getAoeCountForRound tracks CARD_RESOLVED AOE-shaped events", () => {
     const m = makeMachine();
+    makeActiveRound(m);
     m.classAssignment(["p1"], "aoe-seed");
     const cards = m.pickOffer("p1", 5, "aoe-1");
     const attackCard = cards.filter((c) => c.startsWith("CB-"))[0]!;
@@ -566,11 +625,12 @@ describe("Phase 2 — cached state mirrors the event log", () => {
       targetCount: 3,
     };
     m.playCard("p1", attackCard, 1, effect, ["p1", "p2", "p3"], 1000);
-    expect(m.getAoeCountForRound(0)).toBe(1); // currentRound.roundNo = 0
+    expect(m.getAoeCountForRound(1)).toBe(1); // currentRound.roundNo = 1
   });
 
   it("getAoeCountForRound does NOT count single-target resolutions", () => {
     const m = makeMachine();
+    makeActiveRound(m);
     m.classAssignment(["p1"], "single-seed");
     const cards = m.pickOffer("p1", 5, "single-1");
     const attackCard = cards.filter((c) => c.startsWith("CB-"))[0]!;
@@ -581,11 +641,12 @@ describe("Phase 2 — cached state mirrors the event log", () => {
       targetCount: 1,
     };
     m.playCard("p1", attackCard, 1, effect, ["p2"], 1000);
-    expect(m.getAoeCountForRound(0)).toBe(0); // single-target, not AOE
+    expect(m.getAoeCountForRound(1)).toBe(0); // single-target, not AOE
   });
 
   it("cached state survives serialize/deserialize round-trip", () => {
     const m1 = makeMachine();
+    makeActiveRound(m1);
     // Use the same seed for classAssignment + pickOffer so p1
     // deterministically ends up in the ATTACK class — the
     // round-trip persistence test only cares about state
@@ -607,8 +668,8 @@ describe("Phase 2 — cached state mirrors the event log", () => {
 
     // played: p1 played `attackCard`
     expect(m2.getPlayedCards("p1").has(attackCard)).toBe(true);
-    // AOE: 1 AOE-shaped resolution in round 0
-    expect(m2.getAoeCountForRound(0)).toBe(1);
+    // AOE: 1 AOE-shaped resolution in round 1
+    expect(m2.getAoeCountForRound(1)).toBe(1);
   });
 
   it("forEachEvent iterates without cloning (equality of payload references)", () => {
@@ -628,6 +689,7 @@ describe("Phase 2 — cached state mirrors the event log", () => {
 describe("CARD_RESOLVED event payload freeze", () => {
   it("freezes nested targetPlayerIds and effect arrays in the persisted payload", () => {
     const m = makeMachine();
+    makeActiveRound(m);
     m.classAssignment(["p1"], "freeze-seed");
     const cards = m.pickOffer("p1", 5, "freeze-1");
     const attackCard = cards.filter((c) => c.startsWith("CB-"))[0]!;
@@ -657,6 +719,7 @@ describe("CARD_RESOLVED event payload freeze", () => {
 
   it("rejects mutation of the persisted payload via the live event log", () => {
     const m = makeMachine();
+    makeActiveRound(m);
     m.classAssignment(["p1"], "freeze-mut");
     const cards = m.pickOffer("p1", 5, "freeze-mut-1");
     const attackCard = cards.filter((c) => c.startsWith("CB-"))[0]!;
@@ -753,6 +816,7 @@ describe("playCard — seqNo drift guard", () => {
   // `logEvent` with a wrapper that returns a different seqNo.
   it("throws when logEvent returns a seqNo that disagrees with the payload stamp", () => {
     const m = makeMachine();
+    makeActiveRound(m);
     m.classAssignment(["p1"], "drift-seed");
     const cards = m.pickOffer("p1", 5, "drift-1");
     const card = cards[0]!;
@@ -827,7 +891,9 @@ describe("SECOND_CHANCE lifecycle and rehydration", () => {
     // An invalid retry attempt after round ends should fail without consuming second chance
     const round = m.getCurrentRound()!;
     expect(() => m.submitAnswer("p1", "B", round.endsAt + 1000)).toThrow(
-      RoomError,
+      expect.objectContaining({
+        code: ErrorCode.ANSWER_SUBMISSION_CLOSED,
+      }),
     );
 
     // Rehydrate before valid retry: secondChancePlayers should still have p1
@@ -871,6 +937,10 @@ describe("SECOND_CHANCE lifecycle and rehydration", () => {
     // Attempting a third answer without second chance throws ALREADY_ANSWERED
     expect(() =>
       restoredAfter.submitAnswer("p1", "C", round.startedAt + 2000),
-    ).toThrow(RoomError);
+    ).toThrow(
+      expect.objectContaining({
+        code: ErrorCode.ALREADY_ANSWERED,
+      }),
+    );
   });
 });

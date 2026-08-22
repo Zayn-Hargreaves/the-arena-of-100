@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef } from "react";
 import { useTranslations } from "next-intl";
-import { type CardId } from "@arena/shared";
+import { GAME_CONFIG, type CardId } from "@arena/shared";
 import { CardTile } from "./card-tile";
 import { cn } from "@/lib/utils";
 
@@ -13,6 +13,7 @@ export interface CardOfferOverlayProps {
   onPickCard: (cardId: CardId, offerSeqNo: number) => void;
   onDismiss?: () => void;
   durationSeconds?: number;
+  expiresAt?: number;
 }
 
 export function CardOfferOverlay({
@@ -21,10 +22,20 @@ export function CardOfferOverlay({
   offerSeqNo,
   onPickCard,
   onDismiss,
-  durationSeconds = 8,
+  durationSeconds = GAME_CONFIG.CARD_OFFER_DURATION_MS / 1000,
+  expiresAt,
 }: CardOfferOverlayProps) {
   const t = useTranslations("Cards");
-  const deadlineRef = useRef<number>(Date.now() + durationSeconds * 1000);
+  const computeInitialTimeLeft = () =>
+    Math.max(
+      0,
+      expiresAt != null
+        ? Math.ceil((expiresAt - Date.now()) / 1000)
+        : Math.ceil(durationSeconds),
+    );
+  const deadlineRef = useRef<number>(
+    expiresAt ?? Date.now() + durationSeconds * 1000,
+  );
   const selectedRef = useRef<CardId | null>(null);
   const offeredCardIdsRef = useRef(offeredCardIds);
   offeredCardIdsRef.current = offeredCardIds;
@@ -39,7 +50,7 @@ export function CardOfferOverlay({
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
 
-  const [timeLeft, setTimeLeft] = useState(durationSeconds);
+  const [timeLeft, setTimeLeft] = useState(computeInitialTimeLeft);
   const [selectedCardId, setSelectedCardId] = useState<CardId | null>(null);
 
   const handleSelect = (cardId: CardId) => {
@@ -50,11 +61,18 @@ export function CardOfferOverlay({
   };
 
   useEffect(() => {
-    deadlineRef.current = Date.now() + durationSeconds * 1000;
+    deadlineRef.current = expiresAt ?? Date.now() + durationSeconds * 1000;
     expiredRef.current = false;
     selectedRef.current = null;
     setSelectedCardId(null);
-    setTimeLeft(durationSeconds);
+    setTimeLeft(
+      Math.max(
+        0,
+        expiresAt != null
+          ? Math.ceil((expiresAt - Date.now()) / 1000)
+          : Math.ceil(durationSeconds),
+      ),
+    );
 
     const timer = setInterval(() => {
       const remaining = Math.max(
@@ -74,7 +92,7 @@ export function CardOfferOverlay({
     }, 250);
 
     return () => clearInterval(timer);
-  }, [offerSeqNo, durationSeconds]);
+  }, [offerSeqNo, durationSeconds, expiresAt]);
 
   useEffect(() => {
     previousActiveElement.current =

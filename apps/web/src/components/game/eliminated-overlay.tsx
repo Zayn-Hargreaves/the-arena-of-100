@@ -4,7 +4,10 @@ import React, { useMemo } from "react";
 import { useTranslations } from "next-intl";
 import type { EliminationReason } from "@arena/shared";
 import { ProfessorAvatar } from "@/components/character/professor-avatar";
-import { getRandomProfessorDialogue } from "@/components/character/professor-roast-engine";
+import {
+  getDeterministicProfessorDialogue,
+  type DialogueContext,
+} from "@/components/character/professor-roast-engine";
 
 import { MiniGlyph } from "@/components/ui/mini-glyph";
 
@@ -46,8 +49,15 @@ export const EliminatedOverlay: React.FC<EliminatedOverlayProps> = ({
   const reasonText = reason ? REASON_TEXT[reason] : null;
 
   const professorRoast = useMemo(() => {
-    const d = getRandomProfessorDialogue(
-      reason === "TIMEOUT" ? "game_eliminated_timeout" : "game_wrong_answer",
+    const context: DialogueContext =
+      reason === "WRONG_ANSWER"
+        ? "game_wrong_answer"
+        : reason === "TIMEOUT"
+          ? "game_eliminated_timeout"
+          : "game_eliminated";
+    const d = getDeterministicProfessorDialogue(
+      context,
+      reason ?? "eliminated",
     );
     return tProf(d.key);
   }, [reason, tProf]);

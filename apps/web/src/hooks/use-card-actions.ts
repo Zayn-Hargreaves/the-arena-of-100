@@ -26,18 +26,7 @@ export interface UseCardActionsResult {
     offerSeqNo: number,
     targetPlayerId?: string,
   ) => void;
-  newCommandId: () => string;
   isReady: boolean;
-}
-
-// 64-char-cap commandId — `crypto.randomUUID` produces 36 chars,
-// well under the boundary. The fallback keeps SSR / older
-// browsers safe.
-function makeCommandId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `cmd-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 export function useCardActions({
@@ -86,7 +75,6 @@ export function useCardActions({
   return {
     pickCard,
     playCard,
-    newCommandId: makeCommandId,
     isReady,
   };
 }
