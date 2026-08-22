@@ -341,18 +341,19 @@ describe("DailyService", () => {
     });
 
     it("reports alreadyAttempted=true when the user has submitted", async () => {
-      prisma.dailyAttempt.count.mockResolvedValue(1);
+      prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 4 });
 
       const result = await service.getToday("user-1");
 
       expect(result.alreadyAttempted).toBe(true);
+      expect(result.currentStreak).toBe(4);
     });
 
     it("skips the attempt lookup entirely for anonymous callers", async () => {
       const result = await service.getToday(undefined);
 
       expect(result.alreadyAttempted).toBe(false);
-      expect(prisma.dailyAttempt.count).not.toHaveBeenCalled();
+      expect(prisma.dailyAttempt.findUnique).not.toHaveBeenCalled();
     });
 
     it("throws 404 when no set is configured for today", async () => {

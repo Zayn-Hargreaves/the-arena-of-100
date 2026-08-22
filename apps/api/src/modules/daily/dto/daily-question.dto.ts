@@ -153,6 +153,8 @@ export class DailyTodayResponseDto implements DailyTodayResponse {
   @ApiProperty({
     example: 3,
     required: false,
+    type: "integer",
+    minimum: 0,
     description: "Current streak for authenticated user",
   })
   currentStreak?: number;

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import { MessageCard } from "@/components/ui/message-card";
@@ -739,6 +739,24 @@ export default function ProfilePage() {
   const classStatsQuery = useClassStats();
 
   const [copied, setCopied] = useState(false);
+  const [hasClipboard, setHasClipboard] = useState(false);
+  const copyTimerRef = useRef<NodeJS.Timeout | number | null>(null);
+
+  useEffect(() => {
+    setHasClipboard(
+      typeof navigator !== "undefined" &&
+        Boolean(
+          navigator.clipboard &&
+          typeof navigator.clipboard.writeText === "function",
+        ),
+    );
+    return () => {
+      if (copyTimerRef.current != null) {
+        clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const profile = statsQuery.data;
   const activeName = profile?.user.username || username || "Khách_Đấu_Thủ";
@@ -751,7 +769,13 @@ export default function ProfilePage() {
         .writeText(uid)
         .then(() => {
           setCopied(true);
-          setTimeout(() => setCopied(false), 2000);
+          if (copyTimerRef.current != null) {
+            clearTimeout(copyTimerRef.current);
+          }
+          copyTimerRef.current = setTimeout(() => {
+            setCopied(false);
+            copyTimerRef.current = null;
+          }, 2000);
         })
         .catch(() => {
           // ignore rejected clipboard writes
@@ -841,7 +865,7 @@ export default function ProfilePage() {
                 {t("registeredToday")}
               </span>
 
-              {uid && (
+              {uid && hasClipboard && (
                 <button
                   type="button"
                   onClick={handleCopyUid}

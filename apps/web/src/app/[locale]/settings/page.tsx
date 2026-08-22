@@ -320,7 +320,7 @@ export default function SettingsPage() {
       localStorage.clear();
 
       keysToKeep.forEach((k) => {
-        if (saved[k]) localStorage.setItem(k, saved[k] as string);
+        if (saved[k] !== null) localStorage.setItem(k, saved[k] as string);
       });
 
       toast({

@@ -28,6 +28,8 @@ function cardsPlayedTier(count: number): keyof typeof CARDS_PLAYED_TIERS {
   return "EPIC";
 }
 
+const MAX_VISIBLE_LEADERBOARD_ITEMS = 10;
+
 interface DailyLeaderboardProps {
   items: DailyLeaderboardItem[];
 }
@@ -49,17 +51,19 @@ export function DailyLeaderboard({ items }: Readonly<DailyLeaderboardProps>) {
     );
   }
 
+  const visibleItems = items.slice(0, MAX_VISIBLE_LEADERBOARD_ITEMS);
+
   return (
     <div className="bg-candy-cloud border-[3px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42] rounded-2xl overflow-hidden">
       <div className="bg-candy-ink text-white px-4 py-2 flex items-center justify-between text-[11px] font-mono font-black uppercase tracking-wider">
         <span>{t("leaderboard.topBanner")}</span>
         <span className="text-candy-yellow">
-          {t("leaderboard.playerCount", { count: items.length })}
+          {t("leaderboard.playerCount", { count: visibleItems.length })}
         </span>
       </div>
 
       <ol className="divide-y-[2px] divide-candy-ink/15">
-        {items.slice(0, 10).map((item) => {
+        {visibleItems.map((item) => {
           const avatar = isValidAvatarSeed(item.avatar)
             ? findAvatarBySeed(item.avatar)
             : (avatars[0] ?? null);

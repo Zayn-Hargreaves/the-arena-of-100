@@ -153,17 +153,14 @@ export class DailyService {
     let currentStreak: number | undefined;
 
     if (userId) {
-      alreadyAttempted =
-        (await this.prisma.dailyAttempt.count({
-          where: { dateKey, userId },
-        })) > 0;
+      const todayAttempt = await this.prisma.dailyAttempt.findUnique({
+        where: { dateKey_userId: { dateKey, userId } },
+        select: { streakAfter: true },
+      });
 
-      if (alreadyAttempted) {
-        const todayAttempt = await this.prisma.dailyAttempt.findUnique({
-          where: { dateKey_userId: { dateKey, userId } },
-          select: { streakAfter: true },
-        });
-        currentStreak = todayAttempt?.streakAfter ?? 0;
+      if (todayAttempt) {
+        alreadyAttempted = true;
+        currentStreak = todayAttempt.streakAfter;
       } else {
         currentStreak = await this.resolveStreakBefore(userId, dateKey);
       }
