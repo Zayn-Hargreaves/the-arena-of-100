@@ -549,4 +549,60 @@ describe("MatchmakingModal", () => {
 
     expect(mockLeaveRoom).toHaveBeenCalledWith("room_old_id");
   });
+
+  it("serializes joins by room code when matched room changes from room A to room B during an active attempt", async () => {
+    vi.useFakeTimers();
+    mockSocketStore.matchmaking.matchedRoomCode = "ROOM_A";
+    mockSocketStore.matchmaking.matchedRoomId = "room_a_id";
+
+    let resolveJoinA: () => void = () => {};
+    let resolveJoinB: () => void = () => {};
+
+    mockJoinRoom.mockImplementation((roomCode: string) => {
+      if (roomCode === "ROOM_A") {
+        return new Promise<void>((resolve) => {
+          resolveJoinA = resolve;
+        });
+      }
+      if (roomCode === "ROOM_B") {
+        return new Promise<void>((resolve) => {
+          resolveJoinB = resolve;
+        });
+      }
+      return Promise.resolve();
+    });
+
+    const { rerender } = render(<MatchmakingModal />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(mockJoinRoom).toHaveBeenCalledWith("ROOM_A");
+
+    mockSocketStore.matchmaking.matchedRoomCode = "ROOM_B";
+    mockSocketStore.matchmaking.matchedRoomId = "room_b_id";
+    rerender(<MatchmakingModal />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(mockJoinRoom).toHaveBeenCalledWith("ROOM_B");
+
+    resolveJoinA();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
+    });
+
+    expect(mockLeaveRoom).toHaveBeenCalledWith("room_a_id");
+    expect(mockClearMatchmakingMatched).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalled();
+
+    resolveJoinB();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
+    });
+
+    expect(mockClearMatchmakingMatched).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith("/lobby/ROOM_B");
+  });
 });

@@ -68,6 +68,13 @@ describe("PolicyModal", () => {
   it("calls onClose when close button is clicked", () => {
     render(<PolicyModal isOpen={true} type="terms" onClose={onClose} />);
 
+    expect(
+      screen.queryByRole("button", { name: /termsTitle/i, hidden: true }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /antiCheatTitle/i, hidden: true }),
+    ).toBeNull();
+
     const closeButtons = screen.getAllByRole("button", { name: /close/i });
     expect(closeButtons.length).toBeGreaterThanOrEqual(1);
 

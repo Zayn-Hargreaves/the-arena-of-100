@@ -75,4 +75,30 @@ describe("DailyModeCard", () => {
     render(<DailyModeCard />);
     expect(screen.queryByText(/dailyStreakLabel/i)).toBeNull();
   });
+
+  it("handles localStorage.getItem throwing SecurityError gracefully", () => {
+    const getItemSpy = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation(() => {
+        throw new DOMException("The operation is insecure.", "SecurityError");
+      });
+
+    try {
+      render(<DailyModeCard />);
+      expect(screen.getByText("dailyCardTitle")).toBeInTheDocument();
+      expect(screen.queryByText(/dailyStreakLabel/i)).toBeNull();
+    } finally {
+      getItemSpy.mockRestore();
+    }
+  });
+
+  it("ignores streak values greater than Number.MAX_SAFE_INTEGER", () => {
+    localStorage.setItem(
+      "dailyStreak",
+      (Number.MAX_SAFE_INTEGER + 1).toString(),
+    );
+    render(<DailyModeCard />);
+    expect(screen.getByText("dailyCardTitle")).toBeInTheDocument();
+    expect(screen.queryByText(/dailyStreakLabel/i)).toBeNull();
+  });
 });

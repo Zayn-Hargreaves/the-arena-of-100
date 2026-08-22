@@ -207,7 +207,12 @@ export function MatchmakingModal() {
 
   const handleJoinMatchedRoom = useCallback(
     (targetCode: string, targetMatchId?: string | null) => {
-      if (joinInFlightRef.current) return;
+      if (
+        joinInFlightRef.current &&
+        attemptedRoomCodeRef.current === targetCode
+      ) {
+        return;
+      }
       joinInFlightRef.current = true;
       const attemptId = ++joinAttemptIdRef.current;
       setJoinError(null);
