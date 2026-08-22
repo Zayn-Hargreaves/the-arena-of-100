@@ -739,18 +739,24 @@ export default function ProfilePage() {
   const classStatsQuery = useClassStats();
 
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [hasClipboard, setHasClipboard] = useState(false);
   const copyTimerRef = useRef<NodeJS.Timeout | number | null>(null);
+  const isMountedRef = useRef(true);
 
   useEffect(() => {
+    isMountedRef.current = true;
     setHasClipboard(
       typeof navigator !== "undefined" &&
-        Boolean(
+        (Boolean(
           navigator.clipboard &&
           typeof navigator.clipboard.writeText === "function",
-        ),
+        ) ||
+          (typeof document !== "undefined" &&
+            typeof document.execCommand === "function")),
     );
     return () => {
+      isMountedRef.current = false;
       if (copyTimerRef.current != null) {
         clearTimeout(copyTimerRef.current);
         copyTimerRef.current = null;
@@ -763,25 +769,89 @@ export default function ProfilePage() {
   const activeAvatar = getActiveAvatar(profile, avatars);
   const uid = profile?.user.id ?? null;
 
+  const copyWithFallback = useCallback((text: string): boolean => {
+    try {
+      if (typeof document === "undefined") return false;
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.top = "0";
+      textarea.style.left = "0";
+      textarea.style.opacity = "0";
+      textarea.style.pointerEvents = "none";
+      document.body.appendChild(textarea);
+      try {
+        textarea.focus();
+        textarea.select();
+        return document.execCommand("copy");
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    } catch {
+      return false;
+    }
+  }, []);
+
   const handleCopyUid = useCallback(() => {
-    if (uid && typeof navigator !== "undefined" && navigator.clipboard) {
+    if (!uid) return;
+
+    const onCopySuccess = () => {
+      if (!isMountedRef.current) return;
+      setCopied(true);
+      setCopyFailed(false);
+      if (copyTimerRef.current != null) {
+        clearTimeout(copyTimerRef.current);
+      }
+      copyTimerRef.current = setTimeout(() => {
+        if (!isMountedRef.current) return;
+        setCopied(false);
+        copyTimerRef.current = null;
+      }, 2000);
+    };
+
+    const onCopyFailure = () => {
+      if (!isMountedRef.current) return;
+      setCopied(false);
+      setCopyFailed(true);
+      if (copyTimerRef.current != null) {
+        clearTimeout(copyTimerRef.current);
+      }
+      copyTimerRef.current = setTimeout(() => {
+        if (!isMountedRef.current) return;
+        setCopyFailed(false);
+        copyTimerRef.current = null;
+      }, 2000);
+    };
+
+    if (
+      typeof navigator !== "undefined" &&
+      navigator.clipboard &&
+      typeof navigator.clipboard.writeText === "function"
+    ) {
       navigator.clipboard
         .writeText(uid)
         .then(() => {
-          setCopied(true);
-          if (copyTimerRef.current != null) {
-            clearTimeout(copyTimerRef.current);
-          }
-          copyTimerRef.current = setTimeout(() => {
-            setCopied(false);
-            copyTimerRef.current = null;
-          }, 2000);
+          if (!isMountedRef.current) return;
+          onCopySuccess();
         })
         .catch(() => {
-          // ignore rejected clipboard writes
+          if (!isMountedRef.current) return;
+          const fallbackSuccess = copyWithFallback(uid);
+          if (fallbackSuccess) {
+            onCopySuccess();
+          } else {
+            onCopyFailure();
+          }
         });
+    } else {
+      const fallbackSuccess = copyWithFallback(uid);
+      if (fallbackSuccess) {
+        onCopySuccess();
+      } else {
+        onCopyFailure();
+      }
     }
-  }, [uid]);
+  }, [uid, copyWithFallback]);
 
   const categoryLabels: Record<string, string> = {
     ALL: t("roomCategory.ALL"),
@@ -876,6 +946,11 @@ export default function ProfilePage() {
                     <>
                       <CheckmarkCheckSvg size={14} />
                       <span>{t("hero.copied")}</span>
+                    </>
+                  ) : copyFailed ? (
+                    <>
+                      <SkullDefeatSvg size={14} />
+                      <span>UID: {uid}</span>
                     </>
                   ) : (
                     <>

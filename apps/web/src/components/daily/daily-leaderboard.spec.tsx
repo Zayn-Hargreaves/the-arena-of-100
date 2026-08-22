@@ -1,9 +1,25 @@
 import "@testing-library/jest-dom/vitest";
 import React from "react";
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DailyLeaderboard } from "./daily-leaderboard";
 import type { DailyLeaderboardItem } from "../../types/daily";
+
+vi.mock("next-intl", async () => {
+  const actual = await vi.importActual<typeof import("next-intl")>("next-intl");
+  return {
+    ...actual,
+    useLocale: () => "en",
+    useTranslations: vi.fn((_namespace?: string) =>
+      vi.fn((key: string, params?: Record<string, string | number>): string => {
+        if (params?.count !== undefined) {
+          return `${params.count}`;
+        }
+        return key;
+      }),
+    ),
+  };
+});
 
 const items: DailyLeaderboardItem[] = [
   {
@@ -99,6 +115,9 @@ describe("DailyLeaderboard", () => {
     );
 
     render(<DailyLeaderboard items={fifteenItems} />);
+
+    expect(screen.getByText("leaderboard.topBanner")).toBeInTheDocument();
+    expect(screen.getByText("10")).toBeInTheDocument();
 
     for (let i = 1; i <= 10; i++) {
       expect(screen.getByText(`Player_${i}`)).toBeInTheDocument();

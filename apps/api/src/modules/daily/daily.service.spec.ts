@@ -345,6 +345,15 @@ describe("DailyService", () => {
 
       const result = await service.getToday("user-1");
 
+      expect(prisma.dailyAttempt.findUnique).toHaveBeenCalledWith({
+        where: {
+          dateKey_userId: {
+            dateKey: "2026-08-09",
+            userId: "user-1",
+          },
+        },
+        select: { streakAfter: true },
+      });
       expect(result.alreadyAttempted).toBe(true);
       expect(result.currentStreak).toBe(4);
     });
