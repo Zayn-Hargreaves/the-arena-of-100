@@ -18,8 +18,6 @@ import type { CardEffectEvent } from "@arena/shared";
 
 function makeTempEvent(remainingMs: number): CardEffectEvent {
   return {
-    seqNo: 1,
-    type: "CARD_RESOLVED",
     matchId: "m1",
     roundNo: 1,
     cardId: "TN-1",

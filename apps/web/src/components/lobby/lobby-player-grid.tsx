@@ -112,7 +112,9 @@ export const LobbyPlayerGrid: FC<LobbyPlayerGridProps> = ({
                 isCurrent && "border-candy-pink bg-[#FFE8EE]/40",
               )}
             >
-              {playerAvatar.isAnimated && playerAvatar.spritesheet ? (
+              {isCurrent &&
+              playerAvatar.isAnimated &&
+              playerAvatar.spritesheet ? (
                 <div className="w-full h-full flex items-center justify-center overflow-hidden">
                   <AnimatedSprite
                     src={playerAvatar.spritesheet}

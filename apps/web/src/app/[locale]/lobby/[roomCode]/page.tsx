@@ -277,6 +277,7 @@ export default function LobbyPage({ params }: Readonly<LobbyPageProps>) {
         <LobbyHeader
           roomStatus={roomStatus}
           onLeave={() => setShowLeaveModal(true)}
+          onBack={() => router.back()}
         />
 
         {/* Drop-in spectating banner: shown when the auto-join has

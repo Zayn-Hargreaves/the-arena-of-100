@@ -8,6 +8,7 @@ import { RoomStatus } from "@arena/shared";
 interface LobbyHeaderProps {
   roomStatus: RoomStatus;
   onLeave: (signal: AbortSignal) => Promise<void> | void;
+  onBack?: () => void;
   onError?: (error: unknown) => void;
 }
 
@@ -33,6 +34,7 @@ const SUB_LABEL_KEYS: Record<RoomStatus, string> = {
 export const LobbyHeader: FC<LobbyHeaderProps> = ({
   roomStatus,
   onLeave,
+  onBack,
   onError,
 }) => {
   const t = useTranslations("lobby");
@@ -48,7 +50,7 @@ export const LobbyHeader: FC<LobbyHeaderProps> = ({
   const lobbyHeading = t(HEADING_KEYS[roomStatus] ?? "heading.waiting");
   const lobbySubLabel = t(SUB_LABEL_KEYS[roomStatus] ?? "sublabel.waiting");
 
-  const handleBack = async () => {
+  const handleLeave = async () => {
     if (isLeaving) return;
     setIsLeaving(true);
     try {
@@ -70,18 +72,13 @@ export const LobbyHeader: FC<LobbyHeaderProps> = ({
       <div className="flex items-center gap-3.5">
         <button
           type="button"
-          onClick={handleBack}
+          onClick={onBack}
           disabled={isLeaving}
           aria-label={t("actions.back")}
-          aria-busy={isLeaving}
           className={`flex items-center gap-1.5 px-3.5 py-2 border-[3px] border-candy-ink bg-white text-candy-ink font-display font-black text-xs uppercase rounded-2xl hover:translate-y-[-1.5px] hover:shadow-[3px_3px_0_0_#2B2D42] active:translate-y-[1px] active:shadow-[1px_1px_0_0_#2B2D42] shadow-[2px_2px_0_0_#2B2D42] transition-all cursor-pointer outline-none disabled:opacity-60 disabled:cursor-not-allowed ${FOCUS_RING}`}
         >
-          {isLeaving ? (
-            <Loader2 className="w-4 h-4 stroke-[2.5] animate-spin" />
-          ) : (
-            <ArrowLeft className="w-4 h-4 stroke-[2.5]" />
-          )}
-          <span className="hidden xs:inline">{t("actions.back")}</span>
+          <ArrowLeft className="w-4 h-4 stroke-[2.5]" />
+          <span className="hidden sm:inline">{t("actions.back")}</span>
         </button>
 
         <div>
@@ -100,13 +97,17 @@ export const LobbyHeader: FC<LobbyHeaderProps> = ({
       {/* Leave Room Action */}
       <button
         type="button"
-        onClick={handleBack}
+        onClick={handleLeave}
         disabled={isLeaving}
         aria-label={t("actions.leave")}
         aria-busy={isLeaving}
         className={`flex items-center gap-2 px-4 py-2 border-[3px] border-candy-ink bg-candy-red/90 hover:bg-candy-red text-white font-display font-black text-xs uppercase rounded-2xl hover:translate-y-[-1.5px] hover:shadow-[3px_3px_0_0_#2B2D42] active:translate-y-[1px] active:shadow-[1px_1px_0_0_#2B2D42] shadow-[2px_2px_0_0_#2B2D42] transition-all cursor-pointer outline-none disabled:opacity-60 disabled:cursor-not-allowed shrink-0 ${FOCUS_RING}`}
       >
-        <LogOut className="w-3.5 h-3.5 stroke-[2.5]" />
+        {isLeaving ? (
+          <Loader2 className="w-3.5 h-3.5 stroke-[2.5] animate-spin" />
+        ) : (
+          <LogOut className="w-3.5 h-3.5 stroke-[2.5]" />
+        )}
         {t("actions.leave")}
       </button>
     </div>

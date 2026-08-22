@@ -129,35 +129,39 @@ export function PolicyModal({
       >
         {/* Top Header & Tab Toggle */}
         <div className="flex justify-between items-start gap-4 mb-4 shrink-0">
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => onSelectType?.("terms")}
-              className={cn(
-                "inline-flex items-center gap-2 font-display text-xs px-3.5 py-2 border-3 border-candy-ink rounded-2xl transition-all cursor-pointer",
-                isTerms
-                  ? "bg-candy-yellow text-candy-ink font-black shadow-[3px_3px_0_0_#2B2D42] -translate-y-0.5"
-                  : "bg-candy-cloud hover:bg-white text-candy-ink/70 font-bold",
-              )}
-            >
-              <ScrollSvg size={18} className="text-candy-ink" />
-              <span>{t("termsTitle")}</span>
-            </button>
+          {onSelectType ? (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => onSelectType("terms")}
+                className={cn(
+                  "inline-flex items-center gap-2 font-display text-xs px-3.5 py-2 border-3 border-candy-ink rounded-2xl transition-all cursor-pointer",
+                  isTerms
+                    ? "bg-candy-yellow text-candy-ink font-black shadow-[3px_3px_0_0_#2B2D42] -translate-y-0.5"
+                    : "bg-candy-cloud hover:bg-white text-candy-ink/70 font-bold",
+                )}
+              >
+                <ScrollSvg size={18} className="text-candy-ink" />
+                <span>{t("termsTitle")}</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => onSelectType?.("antiCheat")}
-              className={cn(
-                "inline-flex items-center gap-2 font-display text-xs px-3.5 py-2 border-3 border-candy-ink rounded-2xl transition-all cursor-pointer",
-                !isTerms
-                  ? "bg-candy-mint text-white font-black shadow-[3px_3px_0_0_#2B2D42] -translate-y-0.5"
-                  : "bg-candy-cloud hover:bg-white text-candy-ink/70 font-bold",
-              )}
-            >
-              <ShieldCheckSvg size={18} className="text-candy-ink" />
-              <span>{t("antiCheatTitle")}</span>
-            </button>
-          </div>
+              <button
+                type="button"
+                onClick={() => onSelectType("antiCheat")}
+                className={cn(
+                  "inline-flex items-center gap-2 font-display text-xs px-3.5 py-2 border-3 border-candy-ink rounded-2xl transition-all cursor-pointer",
+                  !isTerms
+                    ? "bg-candy-mint text-white font-black shadow-[3px_3px_0_0_#2B2D42] -translate-y-0.5"
+                    : "bg-candy-cloud hover:bg-white text-candy-ink/70 font-bold",
+                )}
+              >
+                <ShieldCheckSvg size={18} className="text-candy-ink" />
+                <span>{t("antiCheatTitle")}</span>
+              </button>
+            </div>
+          ) : (
+            <div />
+          )}
 
           <button
             type="button"

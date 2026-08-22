@@ -8,6 +8,7 @@ const mockPush = vi.fn();
 const mockLeaveMatchmaking = vi.fn();
 const mockClearMatchmakingMatched = vi.fn();
 const mockJoinRoom = vi.fn().mockResolvedValue(undefined);
+const mockLeaveRoom = vi.fn();
 
 let mockSocketStore = {
   matchmaking: {
@@ -19,11 +20,12 @@ let mockSocketStore = {
     matchedRoomCode: null as string | null,
     matchedRoomId: null as string | null,
   },
-  room: null as { currentMatchId?: string } | null,
+  room: null as { id?: string; currentMatchId?: string } | null,
   match: null as { id: string } | null,
   leaveMatchmaking: mockLeaveMatchmaking,
   clearMatchmakingMatched: mockClearMatchmakingMatched,
   joinRoom: mockJoinRoom,
+  leaveRoom: mockLeaveRoom,
 };
 
 vi.mock("@/i18n/routing", () => ({
@@ -101,6 +103,7 @@ describe("MatchmakingModal", () => {
       leaveMatchmaking: mockLeaveMatchmaking,
       clearMatchmakingMatched: mockClearMatchmakingMatched,
       joinRoom: mockJoinRoom,
+      leaveRoom: mockLeaveRoom,
     };
   });
 
@@ -305,6 +308,12 @@ describe("MatchmakingModal", () => {
     );
 
     const { unmount } = render(<MatchmakingModal />);
+
+    // Advance retry timer to ensure join attempt is initiated
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(mockJoinRoom).toHaveBeenCalledTimes(1);
 
     // Unmount (leave matchmaking) while join is pending
     unmount();

@@ -85,12 +85,16 @@ export default function HomePage() {
   // Synced state on mount from localStorage if it exists
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const savedName = localStorage.getItem("callsign");
-    const savedSeed = localStorage.getItem("avatarSeed");
-    if (savedName) setNickname(savedName);
-    if (savedSeed) {
-      const idx = avatars.findIndex((a) => a.seed === savedSeed);
-      if (idx !== -1) setAvatarIndex(idx);
+    try {
+      const savedName = localStorage.getItem("callsign");
+      const savedSeed = localStorage.getItem("avatarSeed");
+      if (savedName) setNickname(savedName);
+      if (savedSeed) {
+        const idx = avatars.findIndex((a) => a.seed === savedSeed);
+        if (idx !== -1) setAvatarIndex(idx);
+      }
+    } catch {
+      // Storage unavailable or SecurityError
     }
   }, []);
 

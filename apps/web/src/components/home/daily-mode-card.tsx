@@ -11,12 +11,16 @@ export function DailyModeCard() {
 
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const savedStreak = localStorage.getItem("dailyStreak");
-      if (savedStreak) {
-        const parsed = parseInt(savedStreak, 10);
-        if (!isNaN(parsed) && parsed > 0) {
-          setStreak(parsed);
+      try {
+        const savedStreak = localStorage.getItem("dailyStreak");
+        if (savedStreak) {
+          const parsed = parseInt(savedStreak, 10);
+          if (!isNaN(parsed) && parsed > 0) {
+            setStreak(parsed);
+          }
         }
+      } catch {
+        // Storage unavailable or SecurityError
       }
     }
   }, []);

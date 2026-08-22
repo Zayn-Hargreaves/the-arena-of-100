@@ -39,7 +39,7 @@
     "brandFull": "ARENA OF 100",
     "taglineBadge": "WILD • NO BRAIN",
     "onlineCount": "{count} PLAYERS ONLINE",
-    "onlineCountShort": "{count, plural, one {# ONLINE} other {# ONLINE}}",
+    "onlineCountShort": "{count} ONLINE",
     "dailySpeedQuestions": "{count, plural, one {# Speed Question} other {# Speed Questions}}",
     "dailyUnlockSkins": "Unlock Card Skins",
     "feature100Players": "{count, plural, one {# PLAYER} other {# PLAYERS}}",

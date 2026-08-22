@@ -27,8 +27,13 @@ export function MatchmakingModal() {
   const tErrors = useTranslations("Errors");
   const tProf = useTranslations("Professor");
   const router = useRouter();
-  const { matchmaking, leaveMatchmaking, clearMatchmakingMatched, joinRoom } =
-    useSocketStore();
+  const {
+    matchmaking,
+    leaveMatchmaking,
+    clearMatchmakingMatched,
+    joinRoom,
+    leaveRoom,
+  } = useSocketStore();
 
   const [displaySeconds, setDisplaySeconds] = useState(0);
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -41,6 +46,8 @@ export function MatchmakingModal() {
   routerRef.current = router;
   const joinRoomRef = useRef(joinRoom);
   joinRoomRef.current = joinRoom;
+  const leaveRoomRef = useRef(leaveRoom);
+  leaveRoomRef.current = leaveRoom;
   const clearMatchedRef = useRef(clearMatchmakingMatched);
   clearMatchedRef.current = clearMatchmakingMatched;
   const attemptedRoomCodeRef = useRef<string | null>(null);
@@ -211,6 +218,12 @@ export function MatchmakingModal() {
       return Promise.all([joinPromise, delayPromise])
         .then(() => {
           if (attemptId !== joinAttemptIdRef.current) {
+            const socketState = useSocketStore.getState();
+            const joinedRoomId =
+              socketState.room?.id ?? socketState.matchmaking.matchedRoomId;
+            if (joinedRoomId) {
+              leaveRoomRef.current?.(joinedRoomId);
+            }
             return;
           }
           const socketState = useSocketStore.getState();
@@ -340,7 +353,7 @@ export function MatchmakingModal() {
               </div>
             </div>
           ) : isMatched ? (
-            <div className="flex flex-col items-center gap-3 animate-bounce">
+            <div className="flex flex-col items-center gap-3 animate-bounce motion-reduce:animate-none">
               <ProfessorAvatar mood="proud_cheer" size="lg" />
               <h3 className="font-display font-black text-2xl text-candy-ink">
                 {t("readyToBattle")}

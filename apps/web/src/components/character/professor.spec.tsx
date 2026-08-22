@@ -10,7 +10,6 @@ import {
   PROFESSOR_DIALOGUES,
 } from "./professor-roast-engine";
 import * as roastEngine from "./professor-roast-engine";
-import { useSafeLocale } from "./use-safe-locale";
 import enMessages from "../../../messages/en.json";
 import viMessages from "../../../messages/vi.json";
 
