@@ -14,8 +14,8 @@ export function DailyModeCard() {
       try {
         const savedStreak = localStorage.getItem("dailyStreak");
         if (savedStreak) {
-          const parsed = parseInt(savedStreak, 10);
-          if (!isNaN(parsed) && parsed > 0) {
+          const parsed = Number(savedStreak);
+          if (Number.isSafeInteger(parsed) && parsed > 0) {
             setStreak(parsed);
           }
         }

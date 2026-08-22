@@ -474,4 +474,79 @@ describe("MatchmakingModal", () => {
 
     expect(mockLeaveMatchmaking).toHaveBeenCalledTimes(1);
   });
+
+  it("does not leave newly joined room when a cancelled matchmaking join completes", async () => {
+    vi.useFakeTimers();
+    mockSocketStore.matchmaking.matchedRoomCode = "ROOM_OLD";
+    mockSocketStore.matchmaking.matchedRoomId = "room_old_id";
+
+    let resolveJoin: () => void = () => {};
+    mockJoinRoom.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveJoin = resolve;
+        }),
+    );
+
+    const { unmount } = render(<MatchmakingModal />);
+
+    // Trigger auto join for ROOM_OLD
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(mockJoinRoom).toHaveBeenCalledWith("ROOM_OLD");
+
+    // User cancels / unmounts modal (invalidating attempt)
+    unmount();
+
+    // User joins a new room in the background
+    mockSocketStore.room = { id: "room_new_id", code: "ROOM_NEW" } as {
+      id?: string;
+      currentMatchId?: string;
+      code?: string;
+    };
+    mockSocketStore.matchmaking.matchedRoomCode = null;
+    mockSocketStore.matchmaking.matchedRoomId = null;
+
+    // The old join now resolves
+    resolveJoin();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
+    });
+
+    // Cleanup should leave room_old_id, NOT room_new_id
+    expect(mockLeaveRoom).not.toHaveBeenCalledWith("room_new_id");
+    expect(mockLeaveRoom).toHaveBeenCalledWith("room_old_id");
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("handles leaveRoom returning a rejecting promise during cleanup without throwing", async () => {
+    vi.useFakeTimers();
+    mockSocketStore.matchmaking.matchedRoomCode = "ROOM_OLD";
+    mockSocketStore.matchmaking.matchedRoomId = "room_old_id";
+    mockLeaveRoom.mockRejectedValueOnce(new Error("Leave failed"));
+
+    let resolveJoin: () => void = () => {};
+    mockJoinRoom.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveJoin = resolve;
+        }),
+    );
+
+    const { unmount } = render(<MatchmakingModal />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    unmount();
+
+    resolveJoin();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
+    });
+
+    expect(mockLeaveRoom).toHaveBeenCalledWith("room_old_id");
+  });
 });

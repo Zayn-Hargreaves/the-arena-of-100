@@ -133,6 +133,7 @@ export function PolicyModal({
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
+                aria-pressed={isTerms}
                 onClick={() => onSelectType("terms")}
                 className={cn(
                   "inline-flex items-center gap-2 font-display text-xs px-3.5 py-2 border-3 border-candy-ink rounded-2xl transition-all cursor-pointer",
@@ -147,6 +148,7 @@ export function PolicyModal({
 
               <button
                 type="button"
+                aria-pressed={!isTerms}
                 onClick={() => onSelectType("antiCheat")}
                 className={cn(
                   "inline-flex items-center gap-2 font-display text-xs px-3.5 py-2 border-3 border-candy-ink rounded-2xl transition-all cursor-pointer",

@@ -212,6 +212,11 @@ export function MatchmakingModal() {
       const attemptId = ++joinAttemptIdRef.current;
       setJoinError(null);
       attemptedRoomCodeRef.current = targetCode;
+      const initialMatchmaking = useSocketStore.getState().matchmaking;
+      const initialMatchedRoomId =
+        initialMatchmaking.matchedRoomCode === targetCode
+          ? initialMatchmaking.matchedRoomId
+          : null;
       const delayPromise = new Promise((resolve) => setTimeout(resolve, 500));
       const joinPromise = joinRoomRef.current(targetCode);
 
@@ -220,9 +225,15 @@ export function MatchmakingModal() {
           if (attemptId !== joinAttemptIdRef.current) {
             const socketState = useSocketStore.getState();
             const joinedRoomId =
-              socketState.room?.id ?? socketState.matchmaking.matchedRoomId;
+              (socketState.room?.code === targetCode
+                ? socketState.room.id
+                : null) ??
+              (socketState.matchmaking.matchedRoomCode === targetCode
+                ? socketState.matchmaking.matchedRoomId
+                : null) ??
+              initialMatchedRoomId;
             if (joinedRoomId) {
-              leaveRoomRef.current?.(joinedRoomId);
+              return leaveRoomRef.current?.(joinedRoomId);
             }
             return;
           }
