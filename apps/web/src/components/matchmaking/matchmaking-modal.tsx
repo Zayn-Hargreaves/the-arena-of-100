@@ -27,14 +27,8 @@ export function MatchmakingModal() {
   const tErrors = useTranslations("Errors");
   const tProf = useTranslations("Professor");
   const router = useRouter();
-  const {
-    matchmaking,
-    leaveMatchmaking,
-    clearMatchmakingMatched,
-    joinRoom,
-    room,
-    match,
-  } = useSocketStore();
+  const { matchmaking, leaveMatchmaking, clearMatchmakingMatched, joinRoom } =
+    useSocketStore();
 
   const [displaySeconds, setDisplaySeconds] = useState(0);
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -51,6 +45,24 @@ export function MatchmakingModal() {
   clearMatchedRef.current = clearMatchmakingMatched;
   const attemptedRoomCodeRef = useRef<string | null>(null);
   const joinInFlightRef = useRef(false);
+  const joinAttemptIdRef = useRef(0);
+
+  const handleLeaveMatchmaking = useCallback(() => {
+    joinAttemptIdRef.current++;
+    joinInFlightRef.current = false;
+    attemptedRoomCodeRef.current = null;
+    setJoinError(null);
+    leaveMatchmaking();
+  }, [leaveMatchmaking]);
+
+  // Invalidate any in-flight join attempts on unmount
+  useEffect(() => {
+    return () => {
+      joinAttemptIdRef.current++;
+      joinInFlightRef.current = false;
+      attemptedRoomCodeRef.current = null;
+    };
+  }, []);
 
   const isVisible = Boolean(
     matchmaking.isQueued || matchmaking.matchedRoomCode,
@@ -106,7 +118,7 @@ export function MatchmakingModal() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !isMatched) {
         e.preventDefault();
-        leaveMatchmaking();
+        handleLeaveMatchmaking();
         return;
       }
 
@@ -140,7 +152,7 @@ export function MatchmakingModal() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isVisible, isMatched, leaveMatchmaking]);
+  }, [isVisible, isMatched, handleLeaveMatchmaking]);
 
   // Local ticker for smooth second counting starting from matchmaking.elapsedSeconds
   useEffect(() => {
@@ -190,6 +202,7 @@ export function MatchmakingModal() {
     (targetCode: string, targetMatchId?: string | null) => {
       if (joinInFlightRef.current) return;
       joinInFlightRef.current = true;
+      const attemptId = ++joinAttemptIdRef.current;
       setJoinError(null);
       attemptedRoomCodeRef.current = targetCode;
       const delayPromise = new Promise((resolve) => setTimeout(resolve, 500));
@@ -197,8 +210,14 @@ export function MatchmakingModal() {
 
       return Promise.all([joinPromise, delayPromise])
         .then(() => {
+          if (attemptId !== joinAttemptIdRef.current) {
+            return;
+          }
+          const socketState = useSocketStore.getState();
           const resolvedMatchId =
-            targetMatchId ?? match?.id ?? room?.currentMatchId;
+            targetMatchId ??
+            socketState.match?.id ??
+            socketState.room?.currentMatchId;
 
           clearMatchedRef.current();
           if (resolvedMatchId) {
@@ -208,6 +227,9 @@ export function MatchmakingModal() {
           }
         })
         .catch((err) => {
+          if (attemptId !== joinAttemptIdRef.current) {
+            return;
+          }
           console.warn("Auto-joining matched room error:", err);
           attemptedRoomCodeRef.current = null;
           const errorCode =
@@ -215,10 +237,12 @@ export function MatchmakingModal() {
           setJoinError(errorCode);
         })
         .finally(() => {
-          joinInFlightRef.current = false;
+          if (attemptId === joinAttemptIdRef.current) {
+            joinInFlightRef.current = false;
+          }
         });
     },
-    [match?.id, room?.currentMatchId],
+    [],
   );
 
   // Handle match found auto-redirect
@@ -271,7 +295,7 @@ export function MatchmakingModal() {
 
           {!isMatched && (
             <button
-              onClick={leaveMatchmaking}
+              onClick={handleLeaveMatchmaking}
               aria-label={t("cancelButton")}
               className="p-1.5 rounded-xl border-2 border-candy-ink bg-candy-cloud hover:bg-candy-red hover:text-white transition-colors cursor-pointer"
               title={t("cancelButton")}
@@ -307,7 +331,7 @@ export function MatchmakingModal() {
                   type="button"
                   onClick={() => {
                     setJoinError(null);
-                    leaveMatchmaking();
+                    handleLeaveMatchmaking();
                   }}
                   className="px-4 py-2 bg-white border-2 border-candy-ink rounded-xl font-display font-black text-xs uppercase shadow-[2px_2px_0_0_#2B2D42] cursor-pointer"
                 >
@@ -378,7 +402,7 @@ export function MatchmakingModal() {
         {!isMatched && (
           <div className="mt-2">
             <button
-              onClick={leaveMatchmaking}
+              onClick={handleLeaveMatchmaking}
               aria-label={t("cancelButton")}
               className="w-full py-3 bg-white hover:bg-candy-red hover:text-white text-candy-ink border-3 border-candy-ink rounded-2xl font-display font-black text-sm uppercase shadow-[3px_3px_0_0_#2B2D42] hover:translate-y-[-1px] active:translate-y-[1px] transition-all cursor-pointer"
             >

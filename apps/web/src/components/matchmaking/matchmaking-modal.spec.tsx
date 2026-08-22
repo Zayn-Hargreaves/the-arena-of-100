@@ -32,9 +32,13 @@ vi.mock("@/i18n/routing", () => ({
   }),
 }));
 
-vi.mock("@/stores/socket-store", () => ({
-  useSocketStore: () => mockSocketStore,
-}));
+vi.mock("@/stores/socket-store", () => {
+  const hook = () => mockSocketStore;
+  hook.getState = () => mockSocketStore;
+  return {
+    useSocketStore: hook,
+  };
+});
 
 vi.mock("@/components/ui/mini-glyph", () => ({
   MiniGlyph: () => <div data-testid="mini-glyph" />,
@@ -274,7 +278,10 @@ describe("MatchmakingModal", () => {
   it("auto redirects directly to /game when match is present", async () => {
     vi.useFakeTimers();
     mockSocketStore.matchmaking.matchedRoomCode = "ROOM999";
-    mockSocketStore.match = { id: "match_123" };
+    mockSocketStore.match = null;
+    mockJoinRoom.mockImplementationOnce(async () => {
+      mockSocketStore.match = { id: "match_123" };
+    });
 
     render(<MatchmakingModal />);
 
@@ -284,6 +291,32 @@ describe("MatchmakingModal", () => {
 
     expect(mockClearMatchmakingMatched).toHaveBeenCalledTimes(1);
     expect(mockPush).toHaveBeenCalledWith("/game/match_123");
+  });
+
+  it("cancels auto redirect if leaveMatchmaking is called while retry is pending", async () => {
+    vi.useFakeTimers();
+    mockSocketStore.matchmaking.matchedRoomCode = "ROOM999";
+    let resolveRetry: () => void = () => {};
+    mockJoinRoom.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRetry = resolve;
+        }),
+    );
+
+    const { unmount } = render(<MatchmakingModal />);
+
+    // Unmount (leave matchmaking) while join is pending
+    unmount();
+
+    // Now resolve retry and advance timers
+    resolveRetry();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
+    });
+
+    expect(mockClearMatchmakingMatched).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalled();
   });
 
   it("triggers leaveMatchmaking when close button and bottom cancel button are clicked", () => {
@@ -411,5 +444,25 @@ describe("MatchmakingModal", () => {
 
     expect(mockClearMatchmakingMatched).toHaveBeenCalledTimes(1);
     expect(mockPush).toHaveBeenCalledWith("/lobby/ROOM_FAIL");
+  });
+
+  it("clears join error and calls leaveMatchmaking when canceling after join failure", async () => {
+    vi.useFakeTimers();
+    mockJoinRoom.mockRejectedValueOnce(new Error("ROOM_FULL"));
+    mockSocketStore.matchmaking.matchedRoomCode = "ROOM_FAIL";
+
+    render(<MatchmakingModal />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
+    });
+
+    expect(screen.getByText("Phòng đã đầy người chơi!")).toBeInTheDocument();
+    const cancelButton = screen.getByRole("button", { name: "Hủy tìm trận" });
+    expect(cancelButton).toBeInTheDocument();
+
+    fireEvent.click(cancelButton);
+
+    expect(mockLeaveMatchmaking).toHaveBeenCalledTimes(1);
   });
 });

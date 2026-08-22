@@ -66,7 +66,7 @@ export const ProfessorGreetingCard: React.FC<ProfessorGreetingCardProps> = ({
       <button
         type="button"
         onClick={handlePoke}
-        className="shrink-0 cursor-pointer group focus:outline-none transition-transform active:scale-95 mt-1 sm:mt-0"
+        className="shrink-0 cursor-pointer group rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-candy-pink focus-visible:ring-offset-2 transition-transform active:scale-95 mt-1 sm:mt-0"
         title={tProf("pokeAttendanceTitle")}
         aria-label={tProf("pokeAttendanceTitle")}
       >

@@ -1,6 +1,10 @@
 import React from "react";
 import { Link } from "@/i18n/routing";
-import { SparkleSmallSvg, ArrowRightSvg } from "@/components/home/home-icons";
+import {
+  SparkleSmallSvg,
+  ArrowRightSvg,
+  type IconProps,
+} from "@/components/home/home-icons";
 import { LanguageToggle } from "@/components/ui/language-toggle";
 import { cn } from "@/lib/utils";
 
@@ -11,7 +15,7 @@ export interface PolicySection {
 }
 
 export interface PolicyPageLayoutProps {
-  badgeIcon: React.ComponentType<{ size?: number; className?: string }>;
+  badgeIcon: React.ComponentType<IconProps>;
   badgeLabel: string;
   badgeClassName?: string;
   title: string;

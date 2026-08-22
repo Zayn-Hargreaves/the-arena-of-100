@@ -161,7 +161,7 @@ export const LobbyPlayerGrid: FC<LobbyPlayerGridProps> = ({
                     {t("host")}
                   </span>
                 )}
-                {!isCurrent && !isPlayerHost && (
+                {!isCurrent && !isPlayerHost && player.status === "ready" && (
                   <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-candy-mint">
                     <UserCheck className="w-3 h-3 stroke-[2.5]" />
                     {t("ready")}

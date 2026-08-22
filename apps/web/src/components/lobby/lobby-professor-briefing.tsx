@@ -52,7 +52,7 @@ export const LobbyProfessorBriefing: React.FC<LobbyProfessorBriefingProps> = ({
       <button
         type="button"
         onClick={handlePoke}
-        className="shrink-0 cursor-pointer focus:outline-none transition-transform active:scale-95"
+        className="shrink-0 cursor-pointer rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-candy-pink focus-visible:ring-offset-2 transition-transform active:scale-95"
         title={tProf("pokeRulesTitle")}
         aria-label={tProf("pokeRulesTitle")}
       >

@@ -1,9 +1,19 @@
 import React from "react";
 import { cn } from "@/lib/utils";
 
-interface IconProps extends React.SVGProps<SVGSVGElement> {
+export interface IconProps extends React.SVGProps<SVGSVGElement> {
   className?: string;
   size?: number;
+}
+
+function getGradientId(
+  prefix: string,
+  explicitId?: string,
+  instanceId?: string,
+): string {
+  if (explicitId) return `${prefix}-${explicitId}`;
+  if (instanceId) return `${prefix}-${instanceId}`;
+  return prefix;
 }
 
 /**
@@ -12,8 +22,13 @@ interface IconProps extends React.SVGProps<SVGSVGElement> {
 export function CandySvg({
   className,
   size = 64,
+  id,
   ...props
 }: Readonly<IconProps>) {
+  const autoId = React.useId();
+  const pinkGradId = getGradientId("candyPinkGrad", id, autoId);
+  const yellowGradId = getGradientId("candyYellowGrad", id, autoId);
+
   return (
     <svg
       viewBox="0 0 64 64"
@@ -23,14 +38,15 @@ export function CandySvg({
       xmlns="http://www.w3.org/2000/svg"
       className={cn("drop-shadow-[3px_3px_0_#2B2D42]", className)}
       aria-hidden="true"
+      id={id}
       {...props}
     >
       <defs>
-        <linearGradient id="candyPinkGrad" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={pinkGradId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#FF94B4" />
           <stop offset="100%" stopColor="#FF4370" />
         </linearGradient>
-        <linearGradient id="candyYellowGrad" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={yellowGradId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#FFF275" />
           <stop offset="100%" stopColor="#FFAA00" />
         </linearGradient>
@@ -38,7 +54,7 @@ export function CandySvg({
       {/* Left Wrapper Twist */}
       <path
         d="M8 20L20 28L8 36L12 28L8 20Z"
-        fill="url(#candyYellowGrad)"
+        fill={`url(#${yellowGradId})`}
         stroke="#2B2D42"
         strokeWidth="3.5"
         strokeLinejoin="round"
@@ -46,7 +62,7 @@ export function CandySvg({
       {/* Right Wrapper Twist */}
       <path
         d="M56 20L44 28L56 36L52 28L56 20Z"
-        fill="url(#candyYellowGrad)"
+        fill={`url(#${yellowGradId})`}
         stroke="#2B2D42"
         strokeWidth="3.5"
         strokeLinejoin="round"
@@ -58,7 +74,7 @@ export function CandySvg({
         width="32"
         height="24"
         rx="12"
-        fill="url(#candyPinkGrad)"
+        fill={`url(#${pinkGradId})`}
         stroke="#2B2D42"
         strokeWidth="3.5"
       />
@@ -87,8 +103,13 @@ export function CandySvg({
 export function DonutSvg({
   className,
   size = 64,
+  id,
   ...props
 }: Readonly<IconProps>) {
+  const autoId = React.useId();
+  const doughGradId = getGradientId("donutDough", id, autoId);
+  const frostingGradId = getGradientId("donutFrosting", id, autoId);
+
   return (
     <svg
       viewBox="0 0 64 64"
@@ -98,14 +119,15 @@ export function DonutSvg({
       xmlns="http://www.w3.org/2000/svg"
       className={cn("drop-shadow-[3px_3px_0_#2B2D42]", className)}
       aria-hidden="true"
+      id={id}
       {...props}
     >
       <defs>
-        <linearGradient id="donutDough" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={doughGradId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#FFD382" />
           <stop offset="100%" stopColor="#E59830" />
         </linearGradient>
-        <linearGradient id="donutFrosting" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={frostingGradId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#FF9EC0" />
           <stop offset="100%" stopColor="#FF5588" />
         </linearGradient>
@@ -115,14 +137,14 @@ export function DonutSvg({
         cx="32"
         cy="32"
         r="24"
-        fill="url(#donutDough)"
+        fill={`url(#${doughGradId})`}
         stroke="#2B2D42"
         strokeWidth="3.5"
       />
       {/* Pink Frosting */}
       <path
         d="M32 10C44 10 54 20 54 32C54 35 50 37 47 35C44 33 42 36 41 39C40 42 36 43 34 41C31 39 28 43 25 43C22 43 20 40 18 41C15 42 12 39 12 36C10 33 10 32 10 32C10 20 20 10 32 10Z"
-        fill="url(#donutFrosting)"
+        fill={`url(#${frostingGradId})`}
         stroke="#2B2D42"
         strokeWidth="3"
         strokeLinejoin="round"
@@ -177,8 +199,12 @@ export function DonutSvg({
 export function StarSvg({
   className,
   size = 64,
+  id,
   ...props
 }: Readonly<IconProps>) {
+  const autoId = React.useId();
+  const starGradId = getGradientId("starGrad", id, autoId);
+
   return (
     <svg
       viewBox="0 0 64 64"
@@ -188,17 +214,18 @@ export function StarSvg({
       xmlns="http://www.w3.org/2000/svg"
       className={cn("drop-shadow-[3px_3px_0_#2B2D42]", className)}
       aria-hidden="true"
+      id={id}
       {...props}
     >
       <defs>
-        <linearGradient id="starGrad" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={starGradId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#FFF275" />
           <stop offset="100%" stopColor="#FFAA00" />
         </linearGradient>
       </defs>
       <path
         d="M32 6L39.5 22.5L57 24.5L44 36.5L47.5 54L32 45L16.5 54L20 36.5L7 24.5L24.5 22.5L32 6Z"
-        fill="url(#starGrad)"
+        fill={`url(#${starGradId})`}
         stroke="#2B2D42"
         strokeWidth="3.5"
         strokeLinejoin="round"
@@ -214,8 +241,12 @@ export function StarSvg({
 export function BalloonSvg({
   className,
   size = 64,
+  id,
   ...props
 }: Readonly<IconProps>) {
+  const autoId = React.useId();
+  const balloonGradId = getGradientId("balloonGrad", id, autoId);
+
   return (
     <svg
       viewBox="0 0 64 64"
@@ -225,10 +256,11 @@ export function BalloonSvg({
       xmlns="http://www.w3.org/2000/svg"
       className={cn("drop-shadow-[3px_3px_0_#2B2D42]", className)}
       aria-hidden="true"
+      id={id}
       {...props}
     >
       <defs>
-        <linearGradient id="balloonGrad" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={balloonGradId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#FF85A2" />
           <stop offset="100%" stopColor="#EF476F" />
         </linearGradient>
@@ -250,7 +282,7 @@ export function BalloonSvg({
         cy="26"
         rx="20"
         ry="22"
-        fill="url(#balloonGrad)"
+        fill={`url(#${balloonGradId})`}
         stroke="#2B2D42"
         strokeWidth="3.5"
       />
@@ -302,8 +334,14 @@ export function SparkleSvg({
 export function CrownSvg({
   className,
   size = 64,
+  id,
   ...props
 }: Readonly<IconProps>) {
+  const autoId = React.useId();
+  const crownGoldId = getGradientId("crownGold", id, autoId);
+  const gemRedId = getGradientId("gemRed", id, autoId);
+  const gemCyanId = getGradientId("gemCyan", id, autoId);
+
   return (
     <svg
       viewBox="0 0 64 64"
@@ -313,19 +351,20 @@ export function CrownSvg({
       xmlns="http://www.w3.org/2000/svg"
       className={cn("drop-shadow-[3px_3px_0_#2B2D42]", className)}
       aria-hidden="true"
+      id={id}
       {...props}
     >
       <defs>
-        <linearGradient id="crownGold" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={crownGoldId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#FFF47D" />
           <stop offset="35%" stopColor="#FFD000" />
           <stop offset="100%" stopColor="#FF9000" />
         </linearGradient>
-        <linearGradient id="gemRed" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={gemRedId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#FF85A2" />
           <stop offset="100%" stopColor="#E60039" />
         </linearGradient>
-        <linearGradient id="gemCyan" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={gemCyanId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#80FFDB" />
           <stop offset="100%" stopColor="#00B4D8" />
         </linearGradient>
@@ -334,7 +373,7 @@ export function CrownSvg({
       {/* Main Crown Geometry */}
       <path
         d="M8 48L6 20L20 32L32 10L44 32L58 20L56 48H8Z"
-        fill="url(#crownGold)"
+        fill={`url(#${crownGoldId})`}
         stroke="#2B2D42"
         strokeWidth="3.5"
         strokeLinejoin="round"
@@ -357,7 +396,7 @@ export function CrownSvg({
         cx="6"
         cy="19"
         r="4"
-        fill="url(#gemRed)"
+        fill={`url(#${gemRedId})`}
         stroke="#2B2D42"
         strokeWidth="2.5"
       />
@@ -365,7 +404,7 @@ export function CrownSvg({
         cx="32"
         cy="9"
         r="5"
-        fill="url(#gemCyan)"
+        fill={`url(#${gemCyanId})`}
         stroke="#2B2D42"
         strokeWidth="2.5"
       />
@@ -373,7 +412,7 @@ export function CrownSvg({
         cx="58"
         cy="19"
         r="4"
-        fill="url(#gemRed)"
+        fill={`url(#${gemRedId})`}
         stroke="#2B2D42"
         strokeWidth="2.5"
       />
@@ -383,7 +422,7 @@ export function CrownSvg({
         cx="20"
         cy="49"
         r="2.5"
-        fill="url(#gemCyan)"
+        fill={`url(#${gemCyanId})`}
         stroke="#2B2D42"
         strokeWidth="1.5"
       />
@@ -399,7 +438,7 @@ export function CrownSvg({
         cx="44"
         cy="49"
         r="2.5"
-        fill="url(#gemCyan)"
+        fill={`url(#${gemCyanId})`}
         stroke="#2B2D42"
         strokeWidth="1.5"
       />
@@ -422,8 +461,13 @@ export function CrownSvg({
 export function FlameSvg({
   className,
   size = 24,
+  id,
   ...props
 }: Readonly<IconProps>) {
+  const autoId = React.useId();
+  const flameOuterId = getGradientId("flameOuter", id, autoId);
+  const flameInnerId = getGradientId("flameInner", id, autoId);
+
   return (
     <svg
       viewBox="0 0 32 32"
@@ -433,15 +477,16 @@ export function FlameSvg({
       xmlns="http://www.w3.org/2000/svg"
       className={className}
       aria-hidden="true"
+      id={id}
       {...props}
     >
       <defs>
-        <linearGradient id="flameOuter" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={flameOuterId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#FF4D4D" />
           <stop offset="50%" stopColor="#FF7A00" />
           <stop offset="100%" stopColor="#FFB800" />
         </linearGradient>
-        <linearGradient id="flameInner" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={flameInnerId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#FFF777" />
           <stop offset="100%" stopColor="#FFD000" />
         </linearGradient>
@@ -450,7 +495,7 @@ export function FlameSvg({
       {/* Outer Fire Body */}
       <path
         d="M16 2C19 6 26 10 26 18C26 24 21.5 28 16 28C10.5 28 6 24 6 18C6 13 10 9 12 7C12 9 13.5 11 15 11C13.5 8.5 14 5.5 16 2Z"
-        fill="url(#flameOuter)"
+        fill={`url(#${flameOuterId})`}
         stroke="#2B2D42"
         strokeWidth="2.5"
         strokeLinejoin="round"
@@ -459,7 +504,7 @@ export function FlameSvg({
       {/* Inner Core Flame */}
       <path
         d="M16 14C18 16 20 18 20 21C20 23.5 18 25 16 25C14 25 12 23.5 12 21C12 19 14 17 16 14Z"
-        fill="url(#flameInner)"
+        fill={`url(#${flameInnerId})`}
       />
 
       {/* Gloss Dot */}
@@ -474,8 +519,12 @@ export function FlameSvg({
 export function GamepadSvg({
   className,
   size = 24,
+  id,
   ...props
 }: Readonly<IconProps>) {
+  const autoId = React.useId();
+  const padGradId = getGradientId("padGrad", id, autoId);
+
   return (
     <svg
       viewBox="0 0 32 32"
@@ -485,10 +534,11 @@ export function GamepadSvg({
       xmlns="http://www.w3.org/2000/svg"
       className={className}
       aria-hidden="true"
+      id={id}
       {...props}
     >
       <defs>
-        <linearGradient id="padGrad" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={padGradId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#FFFDF6" />
           <stop offset="100%" stopColor="#EAE5D9" />
         </linearGradient>
@@ -499,7 +549,7 @@ export function GamepadSvg({
         width="26"
         height="18"
         rx="8"
-        fill="url(#padGrad)"
+        fill={`url(#${padGradId})`}
         stroke="#2B2D42"
         strokeWidth="2.8"
       />
@@ -583,8 +633,13 @@ export function SmileySvg({
 export function BombSvg({
   className,
   size = 24,
+  id,
   ...props
 }: Readonly<IconProps>) {
+  const autoId = React.useId();
+  const bombBodyId = getGradientId("bombBody", id, autoId);
+  const fuseSparkId = getGradientId("fuseSpark", id, autoId);
+
   return (
     <svg
       viewBox="0 0 32 32"
@@ -594,15 +649,16 @@ export function BombSvg({
       xmlns="http://www.w3.org/2000/svg"
       className={className}
       aria-hidden="true"
+      id={id}
       {...props}
     >
       <defs>
-        <linearGradient id="bombBody" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={bombBodyId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#4A4E69" />
           <stop offset="50%" stopColor="#22223B" />
           <stop offset="100%" stopColor="#1E1F30" />
         </linearGradient>
-        <linearGradient id="fuseSpark" x1="0" y1="0" x2="1" y2="1">
+        <linearGradient id={fuseSparkId} x1="0" y1="0" x2="1" y2="1">
           <stop offset="0%" stopColor="#FFF275" />
           <stop offset="100%" stopColor="#FF4D4D" />
         </linearGradient>
@@ -611,7 +667,7 @@ export function BombSvg({
       {/* Burning Spark at tip */}
       <path
         d="M24 3L25.5 6L28.5 7.5L25.5 9L24 12L22.5 9L19.5 7.5L22.5 6L24 3Z"
-        fill="url(#fuseSpark)"
+        fill={`url(#${fuseSparkId})`}
       />
       <circle cx="24" cy="7.5" r="1.5" fill="#FFFFFF" />
 
@@ -640,7 +696,7 @@ export function BombSvg({
         cx="16"
         cy="20"
         r="10"
-        fill="url(#bombBody)"
+        fill={`url(#${bombBodyId})`}
         stroke="#2B2D42"
         strokeWidth="2.5"
       />
@@ -750,8 +806,12 @@ export function ArrowRightSvg({
 export function ZapSvg({
   className,
   size = 16,
+  id,
   ...props
 }: Readonly<IconProps>) {
+  const autoId = React.useId();
+  const zapGradId = getGradientId("zapGrad", id, autoId);
+
   return (
     <svg
       viewBox="0 0 24 24"
@@ -761,17 +821,18 @@ export function ZapSvg({
       xmlns="http://www.w3.org/2000/svg"
       className={className}
       aria-hidden="true"
+      id={id}
       {...props}
     >
       <defs>
-        <linearGradient id="zapGrad" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={zapGradId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#FFF566" />
           <stop offset="100%" stopColor="#FF9900" />
         </linearGradient>
       </defs>
       <polygon
         points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"
-        fill="url(#zapGrad)"
+        fill={`url(#${zapGradId})`}
         stroke="#2B2D42"
         strokeWidth="2.5"
         strokeLinejoin="round"
@@ -786,8 +847,12 @@ export function ZapSvg({
 export function ShieldCheckSvg({
   className,
   size = 24,
+  id,
   ...props
 }: Readonly<IconProps>) {
+  const autoId = React.useId();
+  const shieldGradId = getGradientId("shieldGrad", id, autoId);
+
   return (
     <svg
       viewBox="0 0 24 24"
@@ -797,17 +862,18 @@ export function ShieldCheckSvg({
       xmlns="http://www.w3.org/2000/svg"
       className={className}
       aria-hidden="true"
+      id={id}
       {...props}
     >
       <defs>
-        <linearGradient id="shieldGrad" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={shieldGradId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#6EE7B7" />
           <stop offset="100%" stopColor="#059669" />
         </linearGradient>
       </defs>
       <path
         d="M12 2L4 5V11C4 16.5 7.5 21 12 22C16.5 21 20 16.5 20 11V5L12 2Z"
-        fill="url(#shieldGrad)"
+        fill={`url(#${shieldGradId})`}
         stroke="#2B2D42"
         strokeWidth="2.2"
         strokeLinejoin="round"
@@ -829,8 +895,12 @@ export function ShieldCheckSvg({
 export function SettingsGearSvg({
   className,
   size = 22,
+  id,
   ...props
 }: Readonly<IconProps>) {
+  const autoId = React.useId();
+  const gearGradId = getGradientId("gearGrad", id, autoId);
+
   return (
     <svg
       viewBox="0 0 32 32"
@@ -840,10 +910,11 @@ export function SettingsGearSvg({
       xmlns="http://www.w3.org/2000/svg"
       className={className}
       aria-hidden="true"
+      id={id}
       {...props}
     >
       <defs>
-        <linearGradient id="gearGrad" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={gearGradId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#FFF475" />
           <stop offset="50%" stopColor="#FFC800" />
           <stop offset="100%" stopColor="#FF8800" />
@@ -853,7 +924,7 @@ export function SettingsGearSvg({
       {/* 3D Gear Body with 6 prominent teeth */}
       <path
         d="M13.5 2H18.5L19.5 6.2C20.7 6.7 21.8 7.3 22.8 8.1L26.8 6.4L29.8 10.4L27 13.7C27.2 14.5 27.3 15.2 27.3 16C27.3 16.8 27.2 17.5 27 18.3L29.8 21.6L26.8 25.6L22.8 23.9C21.8 24.7 20.7 25.3 19.5 25.8L18.5 30H13.5L12.5 25.8C11.3 25.3 10.2 24.7 9.2 23.9L5.2 25.6L2.2 21.6L5 18.3C4.8 17.5 4.7 16.8 4.7 16C4.7 15.2 4.8 14.5 5 13.7L2.2 10.4L5.2 6.4L9.2 8.1C10.2 7.3 11.3 6.7 12.5 6.2L13.5 2Z"
-        fill="url(#gearGrad)"
+        fill={`url(#${gearGradId})`}
         stroke="#2B2D42"
         strokeWidth="2.6"
         strokeLinejoin="round"
@@ -890,8 +961,14 @@ export function SettingsGearSvg({
 export function SwordsSvg({
   className,
   size = 24,
+  id,
   ...props
 }: Readonly<IconProps>) {
+  const autoId = React.useId();
+  const bladeLightId = getGradientId("bladeLight", id, autoId);
+  const bladeDarkId = getGradientId("bladeDark", id, autoId);
+  const goldHiltId = getGradientId("goldHilt", id, autoId);
+
   return (
     <svg
       viewBox="0 0 32 32"
@@ -901,21 +978,22 @@ export function SwordsSvg({
       xmlns="http://www.w3.org/2000/svg"
       className={className}
       aria-hidden="true"
+      id={id}
       {...props}
     >
       <defs>
         {/* Blade Highlight Side (Left) */}
-        <linearGradient id="bladeLight" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={bladeLightId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#FFFFFF" />
           <stop offset="100%" stopColor="#E2E8F0" />
         </linearGradient>
         {/* Blade Shade Side (Right) */}
-        <linearGradient id="bladeDark" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={bladeDarkId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#CBD5E1" />
           <stop offset="100%" stopColor="#94A3B8" />
         </linearGradient>
         {/* Golden Crossguard & Pommel */}
-        <linearGradient id="goldHilt" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={goldHiltId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#FFF566" />
           <stop offset="50%" stopColor="#FFC800" />
           <stop offset="100%" stopColor="#FF9000" />
@@ -927,7 +1005,7 @@ export function SwordsSvg({
         {/* Blade Outline & Fill */}
         <path
           d="M0 -14L-2.8 -10L-2.8 2.5L2.8 2.5L2.8 -10L0 -14Z"
-          fill="url(#bladeDark)"
+          fill={`url(#${bladeDarkId})`}
           stroke="#2B2D42"
           strokeWidth="2"
           strokeLinejoin="round"
@@ -935,13 +1013,13 @@ export function SwordsSvg({
         {/* Blade Left Light Bevel */}
         <path
           d="M0 -13.5L-2 -9.5L-2 2.5L0 2.5L0 -13.5Z"
-          fill="url(#bladeLight)"
+          fill={`url(#${bladeLightId})`}
         />
 
         {/* Golden Curved Crossguard */}
         <path
           d="M-6.5 2C-6.5 0.8 6.5 0.8 6.5 2L5.5 5.5C2 4.5 -2 4.5 -5.5 5.5L-6.5 2Z"
-          fill="url(#goldHilt)"
+          fill={`url(#${goldHiltId})`}
           stroke="#2B2D42"
           strokeWidth="1.8"
           strokeLinejoin="round"
@@ -966,7 +1044,7 @@ export function SwordsSvg({
           cx="0"
           cy="12"
           r="2.2"
-          fill="url(#goldHilt)"
+          fill={`url(#${goldHiltId})`}
           stroke="#2B2D42"
           strokeWidth="1.6"
         />
@@ -977,7 +1055,7 @@ export function SwordsSvg({
         {/* Blade Outline & Fill */}
         <path
           d="M0 -14L-2.8 -10L-2.8 2.5L2.8 2.5L2.8 -10L0 -14Z"
-          fill="url(#bladeDark)"
+          fill={`url(#${bladeDarkId})`}
           stroke="#2B2D42"
           strokeWidth="2"
           strokeLinejoin="round"
@@ -985,13 +1063,13 @@ export function SwordsSvg({
         {/* Blade Left Light Bevel */}
         <path
           d="M0 -13.5L-2 -9.5L-2 2.5L0 2.5L0 -13.5Z"
-          fill="url(#bladeLight)"
+          fill={`url(#${bladeLightId})`}
         />
 
         {/* Golden Curved Crossguard */}
         <path
           d="M-6.5 2C-6.5 0.8 6.5 0.8 6.5 2L5.5 5.5C2 4.5 -2 4.5 -5.5 5.5L-6.5 2Z"
-          fill="url(#goldHilt)"
+          fill={`url(#${goldHiltId})`}
           stroke="#2B2D42"
           strokeWidth="1.8"
           strokeLinejoin="round"
@@ -1016,7 +1094,7 @@ export function SwordsSvg({
           cx="0"
           cy="12"
           r="2.2"
-          fill="url(#goldHilt)"
+          fill={`url(#${goldHiltId})`}
           stroke="#2B2D42"
           strokeWidth="1.6"
         />

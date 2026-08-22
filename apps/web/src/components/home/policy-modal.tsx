@@ -35,9 +35,12 @@ export function PolicyModal({
   useEffect(() => {
     if (!isOpen) return;
 
+    let previousOverflow = "";
     if (typeof document !== "undefined") {
       previouslyFocusedRef.current =
         (document.activeElement as HTMLElement | null) ?? null;
+      previousOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
     }
 
     if (dialogRef.current) {
@@ -76,7 +79,10 @@ export function PolicyModal({
             lastElement.focus();
           }
         } else {
-          if (document.activeElement === lastElement) {
+          if (
+            document.activeElement === lastElement ||
+            document.activeElement === dialogRef.current
+          ) {
             e.preventDefault();
             firstElement.focus();
           }
@@ -86,6 +92,9 @@ export function PolicyModal({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => {
+      if (typeof document !== "undefined") {
+        document.body.style.overflow = previousOverflow;
+      }
       window.removeEventListener("keydown", handleKeyDown);
       const prevElement = previouslyFocusedRef.current;
       if (
@@ -184,7 +193,12 @@ export function PolicyModal({
         </div>
 
         {/* Scrollable Policy Content */}
-        <div className="overflow-y-auto space-y-4 pr-1 flex-1 text-candy-ink">
+        <div
+          tabIndex={0}
+          role="region"
+          aria-label={isTerms ? t("termsTitle") : t("antiCheatTitle")}
+          className="overflow-y-auto space-y-4 pr-1 flex-1 text-candy-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-candy-pink rounded-xl"
+        >
           {isTerms ? (
             <>
               {/* Section 1 */}

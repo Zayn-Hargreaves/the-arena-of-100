@@ -121,7 +121,7 @@ describe("HomePage - runAuthFlow", () => {
     expect(mockApiSendJson).toHaveBeenCalledWith(
       "/api/v1/users/me/avatar",
       "PATCH",
-      expect.any(Object),
+      { avatar: expect.any(String) },
       "mock-token",
     );
     expect(mockJoinMatchmaking).toHaveBeenCalled();
@@ -157,7 +157,7 @@ describe("HomePage - runAuthFlow", () => {
       expect(mockApiSendJson).toHaveBeenCalledWith(
         "/api/v1/users/me/avatar",
         "PATCH",
-        expect.any(Object),
+        { avatar: expect.any(String) },
         "mock-token",
       );
       expect(mockJoinMatchmaking).toHaveBeenCalled();
@@ -204,6 +204,53 @@ describe("HomePage - runAuthFlow", () => {
 
     expect(mockApiSendJson).not.toHaveBeenCalled();
     expect(mockJoinMatchmaking).not.toHaveBeenCalled();
+  });
+
+  it("shows error toast if syncAvatarOnServer fails, leaves previous local avatar unchanged, and does not proceed with action", async () => {
+    localStorage.setItem("callsign", "PreviousPlayer");
+    localStorage.setItem("avatarSeed", "prev-seed");
+    localStorage.setItem("avatarName", "Previous Avatar");
+
+    mockApiSendJson.mockRejectedValueOnce(new Error("INTERNAL_ERROR"));
+
+    render(<HomePage />);
+
+    const nicknameInput = screen.getByPlaceholderText(/nicknamePlaceholder/i);
+    fireEvent.change(nicknameInput, { target: { value: "SyncFailPlayer" } });
+
+    const form = nicknameInput.closest("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          variant: "error",
+        }),
+      );
+    });
+
+    expect(mockApiSendJson).toHaveBeenCalled();
+    expect(mockJoinMatchmaking).not.toHaveBeenCalled();
+    expect(localStorage.getItem("callsign")).toBe("PreviousPlayer");
+    expect(localStorage.getItem("avatarSeed")).toBe("prev-seed");
+    expect(localStorage.getItem("avatarName")).toBe("Previous Avatar");
+  });
+
+  it("saves avatar to localStorage after successful sync and proceeds with action", async () => {
+    render(<HomePage />);
+
+    const nicknameInput = screen.getByPlaceholderText(/nicknamePlaceholder/i);
+    fireEvent.change(nicknameInput, { target: { value: "SuccessPlayer" } });
+
+    const form = nicknameInput.closest("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockJoinMatchmaking).toHaveBeenCalled();
+    });
+
+    expect(localStorage.getItem("callsign")).toBe("SuccessPlayer");
+    expect(localStorage.getItem("avatarSeed")).toBeTruthy();
   });
 
   it("prompts to enter nickname if submitted empty", () => {

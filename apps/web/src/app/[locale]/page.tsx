@@ -135,16 +135,12 @@ export default function HomePage() {
   const syncAvatarOnServer = async (opt: AvatarOption) => {
     const token = useSocketStore.getState().accessToken;
     if (token) {
-      try {
-        await apiSendJson(
-          "/api/v1/users/me/avatar",
-          "PATCH",
-          { avatar: opt.seed },
-          token,
-        );
-      } catch (err) {
-        console.error("Failed to sync avatar:", err);
-      }
+      await apiSendJson(
+        "/api/v1/users/me/avatar",
+        "PATCH",
+        { avatar: opt.seed },
+        token,
+      );
     }
   };
 
@@ -170,7 +166,17 @@ export default function HomePage() {
 
       if (authenticated) {
         const avatarToSync = activeAvatar ?? avatars[avatarIndex];
-        await syncAvatarOnServer(avatarToSync);
+        try {
+          await syncAvatarOnServer(avatarToSync);
+        } catch (err) {
+          console.error("Failed to sync avatar:", err);
+          toast({
+            variant: "error",
+            description: getAuthErrorMessage(err),
+          });
+          return;
+        }
+        saveAvatarToLocalStorage(nickname.trim(), avatarToSync);
         try {
           await action();
         } catch (err) {
@@ -240,7 +246,6 @@ export default function HomePage() {
     }
 
     const activeAvatar = avatars[avatarIndex];
-    saveAvatarToLocalStorage(nickname.trim(), activeAvatar);
 
     // Trigger confetti from screen coordinates of submit button
     const target = e.currentTarget as HTMLFormElement;
@@ -264,7 +269,6 @@ export default function HomePage() {
       return;
     }
     const activeAvatar = avatars[avatarIndex];
-    saveAvatarToLocalStorage(nickname.trim(), activeAvatar);
     void runAuthFlow(() => {
       router.push("/room/create");
     }, activeAvatar);
@@ -281,7 +285,6 @@ export default function HomePage() {
       return;
     }
     const activeAvatar = avatars[avatarIndex];
-    saveAvatarToLocalStorage(nickname.trim(), activeAvatar);
     void runAuthFlow(() => {
       router.push(`/lobby/${roomCode.trim().toUpperCase()}`);
     }, activeAvatar);
