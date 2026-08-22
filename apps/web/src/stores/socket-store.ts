@@ -30,14 +30,17 @@ import {
   type MatchmakingStatusPayload,
   type MatchmakingMatchedPayload,
   type CardResolvedBatchEvent,
+  type CardId,
   ErrorCode,
 } from "@arena/shared";
 import { io } from "socket.io-client";
 import { API_URL, apiFetch } from "@/lib/api";
+import { parseErrorPayload } from "@/lib/api-client";
 import { generateId } from "@/lib/id";
 import {
-  INITIAL_CARD_STATE,
+  createInitialCardState,
   type AuthResponse,
+  type CardOfferState,
   type SocketState,
 } from "./socket-store.types";
 import {
@@ -85,11 +88,31 @@ interface PendingTopicVoteCommand {
   topic: string;
 }
 
+type PendingCardCommand =
+  | {
+      type: "PICK";
+      commandId: string;
+      matchId: string;
+      cardId: CardId;
+      offerSeqNo: number;
+      addedToHand: boolean;
+      previousOffer: CardOfferState | null;
+    }
+  | {
+      type: "PLAY";
+      commandId: string;
+      matchId: string;
+      cardId: CardId;
+      offerSeqNo: number;
+      addedToPlayed: boolean;
+    };
+
 const pendingTopicVoteCommandsByMatch = new Map<
   string,
   PendingTopicVoteCommand[]
 >();
 const confirmedTopicVoteBaselineByMatch = new Map<string, string | null>();
+const pendingCardCommands = new Map<string, PendingCardCommand>();
 
 function clearTopicVoteState(matchId?: string) {
   if (matchId) {
@@ -98,6 +121,18 @@ function clearTopicVoteState(matchId?: string) {
   } else {
     pendingTopicVoteCommandsByMatch.clear();
     confirmedTopicVoteBaselineByMatch.clear();
+  }
+}
+
+function clearCardCommandState(matchId?: string) {
+  if (matchId) {
+    for (const [cmdId, cmd] of pendingCardCommands.entries()) {
+      if (cmd.matchId === matchId) {
+        pendingCardCommands.delete(cmdId);
+      }
+    }
+  } else {
+    pendingCardCommands.clear();
   }
 }
 
@@ -131,7 +166,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     matchedRoomId: null,
     matchedMatchId: null,
   },
-  cardState: INITIAL_CARD_STATE,
+  cardState: createInitialCardState(),
   lastAnswerResult: null,
   pendingAnswer: null,
 
@@ -354,6 +389,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
     newSocket.on(ServerEvent.MATCH_STARTING, (data) => {
       if (get().socket !== newSocket) return;
+      clearCardCommandState();
       set((state) => applyMatchStartingState(state, data));
       console.log("⚔️ Match starting:", data);
     });
@@ -483,12 +519,36 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
     newSocket.on(ServerEvent.CARD_PICKED, (data) => {
       if (get().socket !== newSocket) return;
+      if (data.playerId === get().userId) {
+        for (const [cmdId, cmd] of pendingCardCommands.entries()) {
+          if (
+            cmd.type === "PICK" &&
+            cmd.matchId === data.matchId &&
+            cmd.cardId === data.selectedCardId
+          ) {
+            pendingCardCommands.delete(cmdId);
+            break;
+          }
+        }
+      }
       set((state) => applyCardPickedState(state, data));
       console.log("🎴 Card picked:", data);
     });
 
     newSocket.on(ServerEvent.CARD_RESOLVED, (data) => {
       if (get().socket !== newSocket) return;
+      if (data.playedByPlayerId === get().userId) {
+        for (const [cmdId, cmd] of pendingCardCommands.entries()) {
+          if (
+            cmd.type === "PLAY" &&
+            cmd.matchId === data.matchId &&
+            cmd.cardId === data.cardId
+          ) {
+            pendingCardCommands.delete(cmdId);
+            break;
+          }
+        }
+      }
       set((state) => applyCardResolvedState(state, data));
       console.log("✨ Card resolved:", data);
     });
@@ -498,9 +558,29 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       (data: CardResolvedBatchEvent) => {
         if (get().socket !== newSocket) return;
         if (data.effects && Array.isArray(data.effects)) {
+          const currentUserId = get().userId;
           for (const effect of data.effects) {
-            set((state) => applyCardResolvedState(state, effect));
+            if (effect.playedByPlayerId === currentUserId) {
+              for (const [cmdId, cmd] of pendingCardCommands.entries()) {
+                if (
+                  cmd.type === "PLAY" &&
+                  cmd.matchId === effect.matchId &&
+                  cmd.cardId === effect.cardId
+                ) {
+                  pendingCardCommands.delete(cmdId);
+                  break;
+                }
+              }
+            }
           }
+          set((state) => {
+            let currentState = state;
+            for (const effect of data.effects) {
+              const partial = applyCardResolvedState(currentState, effect);
+              currentState = { ...currentState, ...partial };
+            }
+            return currentState;
+          });
         }
         console.log("✨ Card resolved batch:", data);
       },
@@ -515,6 +595,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     // the spectator/ELIMINATED UI would persist on reconnect/join.
     newSocket.on(ServerEvent.ROOM_TERMINATED, (data: RoomTerminatedPayload) => {
       if (get().socket !== newSocket) return;
+      clearCardCommandState();
       set(applyRoomTerminatedState(data));
       console.warn("🛑 Room terminated by server:", data);
     });
@@ -529,6 +610,45 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         submissionId === pendingAnswer.submissionId
       ) {
         set({ pendingAnswer: null });
+      }
+      if (
+        (data.failedEvent === ClientEvent.CARD_PICK ||
+          data.failedEvent === ClientEvent.CARD_PLAY) &&
+        data.commandId
+      ) {
+        const pending = pendingCardCommands.get(data.commandId);
+        if (pending) {
+          pendingCardCommands.delete(data.commandId);
+          const currentMatchId = get().room?.currentMatchId ?? get().match?.id;
+          if (currentMatchId === pending.matchId) {
+            if (pending.type === "PICK") {
+              set((state) => ({
+                cardState: {
+                  ...state.cardState,
+                  hand: pending.addedToHand
+                    ? state.cardState.hand.filter((id) => id !== pending.cardId)
+                    : state.cardState.hand,
+                  currentOffer:
+                    state.cardState.currentOffer ??
+                    (pending.previousOffer?.matchId === currentMatchId
+                      ? pending.previousOffer
+                      : null),
+                },
+              }));
+            } else if (pending.type === "PLAY") {
+              set((state) => ({
+                cardState: {
+                  ...state.cardState,
+                  playedCardIds: pending.addedToPlayed
+                    ? state.cardState.playedCardIds.filter(
+                        (id) => id !== pending.cardId,
+                      )
+                    : state.cardState.playedCardIds,
+                },
+              }));
+            }
+          }
+        }
       }
       if (data.failedEvent === ClientEvent.VOTE_BAN_TOPIC && data.commandId) {
         let failedCmd: PendingTopicVoteCommand | null = null;
@@ -661,6 +781,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     }
     if (socket) {
       clearTopicVoteState();
+      clearCardCommandState();
       socket.disconnect();
       set((state) => ({
         socket: null,
@@ -755,9 +876,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     let storedAvatar: string | null = null;
     if (typeof window !== "undefined") {
       try {
-        guestSecret =
-          localStorage.getItem(`guestSecret:${nickname.trim()}`) ||
-          localStorage.getItem("guestSecret");
+        guestSecret = localStorage.getItem(`guestSecret:${nickname.trim()}`);
         storedAvatar = localStorage.getItem("avatarSeed");
       } catch {
         // ignore storage error
@@ -779,28 +898,10 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       if (!response.ok) {
         let errorMessage = "Authentication failed";
         try {
-          const errorData = (await response.json()) as {
-            message?: string | { code?: string; message?: string };
-            error?: {
-              message?: string | { code?: string; message?: string };
-              code?: string;
-            };
-            code?: string;
-          };
-          const nested =
-            errorData.error?.message ?? errorData.message ?? errorData.error;
-          if (typeof nested === "string" && nested.trim()) {
-            errorMessage = nested;
-          } else if (nested && typeof nested === "object") {
-            const nestedMsg =
-              typeof nested.message === "string"
-                ? nested.message
-                : typeof nested.code === "string"
-                  ? nested.code
-                  : null;
-            errorMessage = nestedMsg || errorData.code || errorMessage;
-          } else if (errorData.code) {
-            errorMessage = errorData.code;
+          const errorData = await response.json();
+          const parsed = parseErrorPayload(errorData);
+          if (parsed) {
+            errorMessage = parsed;
           }
         } catch {
           // Ignore JSON parse failure
@@ -822,7 +923,6 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           localStorage.setItem("userId", data.user.id);
           localStorage.setItem("callsign", data.user.username);
           if (data.guestSecret) {
-            localStorage.setItem("guestSecret", data.guestSecret);
             localStorage.setItem(
               `guestSecret:${data.user.username}`,
               data.guestSecret,
@@ -933,11 +1033,12 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   // Leave Room
   leaveRoom: (roomId: string) => {
     const { socket } = get();
+    clearCardCommandState();
     emitIfConnected(socket, ClientEvent.LEAVE_ROOM, { roomId });
     set({
       room: null,
       match: null,
-      cardState: INITIAL_CARD_STATE,
+      cardState: createInitialCardState(),
       topicVoting: null,
       lastAnswerResult: null,
       pendingAnswer: null,
@@ -959,10 +1060,11 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       set({ error: "Socket is not connected" });
       return;
     }
+    clearCardCommandState();
     set({
       room: null,
       match: null,
-      cardState: INITIAL_CARD_STATE,
+      cardState: createInitialCardState(),
       topicVoting: null,
       lastAnswerResult: null,
       pendingAnswer: null,
@@ -981,7 +1083,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       emitIfConnected(socket, ClientEvent.LEAVE_MATCHMAKING, {});
     }
     set((state) => ({
-      cardState: INITIAL_CARD_STATE,
+      cardState: createInitialCardState(),
       matchmaking: {
         ...state.matchmaking,
         isQueued: false,
@@ -1059,6 +1161,21 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     const matchId = get().match?.id;
     if (!socket || !matchId) return;
 
+    const commandId = generateId();
+    const currentCardState = get().cardState;
+    const wasAlreadyInHand = currentCardState.hand.includes(cardId);
+    const previousOffer = currentCardState.currentOffer;
+
+    pendingCardCommands.set(commandId, {
+      type: "PICK",
+      commandId,
+      matchId,
+      cardId,
+      offerSeqNo,
+      addedToHand: !wasAlreadyInHand,
+      previousOffer,
+    });
+
     // Optimistically dismiss offer and put in hand
     set((state) => ({
       cardState: {
@@ -1074,14 +1191,28 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       matchId,
       cardId,
       offerSeqNo,
-      commandId: generateId(),
+      commandId,
     });
   },
 
   playCard: (cardId, offerSeqNo, targetPlayerId) => {
+    if (!offerSeqNo || offerSeqNo <= 0) return;
     const socket = get().socket;
     const matchId = get().match?.id;
     if (!socket || !matchId) return;
+
+    const commandId = generateId();
+    const currentCardState = get().cardState;
+    const wasAlreadyInPlayed = currentCardState.playedCardIds.includes(cardId);
+
+    pendingCardCommands.set(commandId, {
+      type: "PLAY",
+      commandId,
+      matchId,
+      cardId,
+      offerSeqNo,
+      addedToPlayed: !wasAlreadyInPlayed,
+    });
 
     // Optimistically mark as played
     set((state) => ({
@@ -1102,13 +1233,13 @@ export const useSocketStore = create<SocketState>((set, get) => ({
             cardId,
             offerSeqNo,
             targetPlayerId,
-            commandId: generateId(),
+            commandId,
           }
         : {
             matchId,
             cardId,
             offerSeqNo,
-            commandId: generateId(),
+            commandId,
           },
     );
   },

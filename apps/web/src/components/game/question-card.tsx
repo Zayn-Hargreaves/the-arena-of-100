@@ -46,11 +46,9 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
             />
             <div className="text-left">
               <span className="font-display font-black text-xs uppercase tracking-wider block text-candy-yellow">
-                SƯƠNG MÙ TRÍ NÃO (CB-5)
+                {t("effects.fogTitle")}
               </span>
-              <span className="text-xs opacity-90">
-                Câu hỏi đang bị che phủ trong màn sương mờ...
-              </span>
+              <span className="text-xs opacity-90">{t("effects.fogDesc")}</span>
             </div>
           </div>
         </div>
@@ -67,11 +65,9 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
             />
             <div className="text-left">
               <span className="font-display font-black text-xs uppercase tracking-wider block text-candy-yellow">
-                PHÁ HOẠI CÂU HỎI (CB-2)
+                {t("effects.delayTitle")}
               </span>
-              <span className="text-xs">
-                Nội dung câu hỏi đang bị đối thủ trì hoãn hiển thị!
-              </span>
+              <span className="text-xs">{t("effects.delayDesc")}</span>
             </div>
           </div>
         </div>
@@ -87,11 +83,11 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
               className="text-candy-yellow shrink-0 animate-spin"
             />
             <span className="text-xs font-black uppercase tracking-wide">
-              LẬT NGỮ NGHĨA (CB-7): Câu hỏi đã bị quay ngược 180°!
+              {t("effects.flipWarning")}
             </span>
           </div>
           <span className="text-[10px] bg-white/25 px-2 py-0.5 rounded-md font-mono font-black shrink-0">
-            FLIPPED
+            {t("effects.flipBadge")}
           </span>
         </div>
       )}
@@ -122,7 +118,11 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
         {/* Render a loading skeleton when the current question is not
             yet available, instead of stale fallback content. */}
         {hasCurrentQuestion ? (
-          questionText
+          isFoggy || isDelayRender ? (
+            ""
+          ) : (
+            questionText
+          )
         ) : (
           <div
             data-testid="loading-question"
@@ -141,10 +141,10 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
           </div>
           <div className="text-left">
             <span className="font-display font-black text-[10px] uppercase tracking-wider text-candy-ink/60 block">
-              GỢI Ý TỪ THẺ BÀI (TN-3)
+              {t("effects.hintTitle")}
             </span>
             <span className="font-mono font-black text-sm text-candy-ink">
-              Đáp án bắt đầu bằng ký tự:{" "}
+              {t("effects.hintPrefix")}
               <span className="text-candy-pink underline text-base font-display font-black">
                 {hintPartial}
               </span>

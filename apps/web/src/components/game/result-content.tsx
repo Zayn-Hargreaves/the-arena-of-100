@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { useLocale, useTranslations } from "next-intl";
+import { type ReactNode, useMemo } from "react";
+import { useTranslations } from "next-intl";
 import { MiniGlyph } from "@/components/ui/mini-glyph";
 import { AnimatedSprite } from "@/components/ui/animated-sprite";
 import { Avatar } from "@/components/ui/avatar";
@@ -9,15 +9,15 @@ import type {
 } from "@/hooks/use-match-results";
 import { ProfessorAvatar } from "@/components/character/professor-avatar";
 import {
-  getRandomProfessorDialogue,
   type ProfessorMood,
+  getRandomProfessorDialogue,
 } from "@/components/character/professor-roast-engine";
 
-interface ResultContentProps {
+export interface ResultContentProps {
   matchId: string;
   winner: WinnerViewModel;
   performance: PerformanceViewModel;
-  opponents: number;
+  opponents?: number;
   onRematch: () => void;
   onHome: () => void;
 }
@@ -26,33 +26,33 @@ export function ResultContent({
   matchId,
   winner,
   performance,
-  opponents,
+  opponents = 0,
   onRematch,
   onHome,
 }: ResultContentProps) {
   const t = useTranslations("Result");
   const tProf = useTranslations("Professor");
-  const locale = useLocale();
 
   const isWinner =
     performance.isWinner ||
     (performance.rank === 1 && !performance.eliminatedRound);
-  const isEliminated = !isWinner;
+  const isEliminated = performance.eliminatedRound != null;
   const rank = performance.rank;
   const isTop10 =
     !isWinner && typeof rank === "number" && rank >= 2 && rank <= 10;
 
-  const evaluationMood: ProfessorMood = isWinner
-    ? "proud_cheer"
-    : isTop10
-      ? "proud_cheer"
-      : "angry_roast";
+  const evaluationMood: ProfessorMood =
+    isWinner || isTop10 ? "proud_cheer" : "angry_roast";
 
-  const evaluationText = isWinner
-    ? getRandomProfessorDialogue("result_winner", locale).text
-    : isTop10
-      ? getRandomProfessorDialogue("result_top10", locale).text
-      : getRandomProfessorDialogue("result_early_elim", locale).text;
+  const evaluationText = useMemo(() => {
+    if (isWinner) {
+      return tProf(getRandomProfessorDialogue("result_winner").key);
+    }
+    if (isTop10) {
+      return tProf(getRandomProfessorDialogue("result_top10").key);
+    }
+    return tProf(getRandomProfessorDialogue("result_early_elim").key);
+  }, [isWinner, isTop10, tProf]);
 
   const gradeBadge = isWinner
     ? tProf("grades.valedictorian")
@@ -250,7 +250,7 @@ export function ResultContent({
                       ? "bg-candy-yellow text-candy-ink"
                       : isTop10
                         ? "bg-candy-mint text-candy-ink"
-                        : "bg-candy-yellow text-candy-ink"
+                        : "bg-candy-red text-white"
                   }`}
                 >
                   {gradeBadge}

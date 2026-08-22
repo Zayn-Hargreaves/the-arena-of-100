@@ -71,13 +71,17 @@ export function CardAnimation({
     return null;
   }
 
+  const fallbackOpponent = t("animation.opponent");
+  const fallbackYou = t("animation.you");
+
   const playedByName =
-    players.find((p) => p.id === event.playedByPlayerId)?.name ?? "Đối thủ";
+    players.find((p) => p.id === event.playedByPlayerId)?.name ??
+    fallbackOpponent;
   const targetNames = event.targetPlayerIds
     .map((tid) =>
       tid === userId
-        ? "Bạn"
-        : (players.find((p) => p.id === tid)?.name ?? "Đối thủ"),
+        ? fallbackYou
+        : (players.find((p) => p.id === tid)?.name ?? fallbackOpponent),
     )
     .join(", ");
 
@@ -140,7 +144,7 @@ export function CardAnimation({
               </span>
               {event.targetRoundNo && (
                 <span className="text-[10px] font-black uppercase px-1.5 py-0.5 rounded bg-candy-yellow text-candy-ink border border-candy-ink/40 shadow-xs">
-                  VÒNG {event.targetRoundNo}
+                  {t("animation.round", { round: event.targetRoundNo })}
                 </span>
               )}
             </div>
@@ -157,20 +161,23 @@ export function CardAnimation({
             {isPlayedByMe ? (
               targetNames ? (
                 <span>
-                  Bạn đã kích hoạt lên:{" "}
-                  <span className="underline">{targetNames}</span>
+                  {t("animation.youActivatedOn", { targets: targetNames })}
                 </span>
               ) : (
-                <span>Bạn đã kích hoạt hiệu ứng</span>
+                <span>{t("animation.youActivated")}</span>
               )
             ) : isTargetingMe ? (
               <span className="font-black text-candy-yellow">
-                ⚠️ {playedByName} vừa tung chiêu lên Bạn!
+                {t("animation.opponentTargetedYou", { name: playedByName })}
               </span>
             ) : (
               <span>
-                {playedByName} đã kích hoạt{" "}
-                {targetNames ? `lên ${targetNames}` : ""}
+                {targetNames
+                  ? t("animation.opponentActivatedOn", {
+                      name: playedByName,
+                      targets: targetNames,
+                    })
+                  : t("animation.opponentActivated", { name: playedByName })}
               </span>
             )}
           </div>

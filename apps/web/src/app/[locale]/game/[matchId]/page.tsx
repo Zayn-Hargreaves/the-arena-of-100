@@ -61,9 +61,13 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
     dismissCardOffer,
   } = useSocketStore();
 
-  const [pickingTargetCardId, setPickingTargetCardId] = useState<CardId | null>(
-    null,
-  );
+  const [pickingTarget, setPickingTarget] = useState<{
+    cardId: CardId;
+    offerSeqNo: number;
+  } | null>(null);
+  const [cardOfferSeqNos, setCardOfferSeqNos] = useState<
+    Record<string, number>
+  >({});
 
   // Drop-in spectating baseline: a late-joiner entered the room as
   // SPECTATOR and is viewing the match read-only. The server enforces
@@ -145,15 +149,15 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
     deltaSeconds: number;
     key: number;
   } | null>(null);
-  const [timeOffsetSeconds, setTimeOffsetSeconds] = useState<number>(0);
 
-  // Reset time adjustment on every new round & activate pre-cast time effects
   const currentRoundNo = match?.currentRoundNo ?? 0;
-  React.useEffect(() => {
-    setTimeOffsetSeconds(0);
-    setTimeDelta(null);
 
-    // If there is an active TIMER_MODIFY or TIME_BONUS for this round
+  // Compute a single offset from myRoundEffects
+  const timeOffsetSeconds = useMemo(() => {
+    // If server provides roundEndTime, server has authoritative timing
+    // so we maintain server-authoritative time calculation
+    if (match?.roundEndTime) return 0;
+
     const timerEff = myRoundEffects.find(
       (e) =>
         e.effect.kind === "TIMER_MODIFY" || e.effect.kind === "QUESTION_REPLAY",
@@ -163,15 +167,12 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
         timerEff.effect.kind === "TIMER_MODIFY"
           ? (timerEff.effect.deltaMs ?? 0)
           : ((timerEff.effect as { extraMs?: number }).extraMs ?? 0);
-      const deltaSec = Math.round(deltaMs / 1000);
-      if (deltaSec !== 0) {
-        setTimeDelta({ deltaSeconds: deltaSec, key: Date.now() });
-        setTimeOffsetSeconds(deltaSec);
-      }
+      return Math.round(deltaMs / 1000);
     }
-  }, [currentRoundNo, myRoundEffects]);
+    return 0;
+  }, [match?.roundEndTime, myRoundEffects]);
 
-  // Trigger time delta animation and adjust countdown when TIMER_MODIFY lands during round
+  // Trigger time delta animation when activeEffect lands during round
   React.useEffect(() => {
     if (!activeEffect || !userId) return;
     const isTarget =
@@ -192,7 +193,6 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
       const deltaSec = Math.round(deltaMs / 1000);
       if (deltaSec !== 0) {
         setTimeDelta({ deltaSeconds: deltaSec, key: Date.now() });
-        setTimeOffsetSeconds((prev) => prev + deltaSec);
       }
     }
   }, [activeEffect, userId, currentRoundNo]);
@@ -329,13 +329,15 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
   const burningCardId = useMemo(() => {
     const eff =
       myRoundEffects.find((e) => e.effect.kind === "HAND_DESTROY") ||
-      (isTargetOfActiveEffect && activeEffect?.effect.kind === "HAND_DESTROY"
+      (isTargetOfActiveEffect &&
+      activeEffect?.effect.kind === "HAND_DESTROY" &&
+      (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
         ? activeEffect
         : null);
     return eff?.effect.kind === "HAND_DESTROY"
       ? ((eff.effect.destroyedCardIds?.[0] as CardId) ?? null)
       : null;
-  }, [myRoundEffects, isTargetOfActiveEffect, activeEffect]);
+  }, [myRoundEffects, isTargetOfActiveEffect, activeEffect, currentRoundNo]);
 
   const hasShield = Boolean(
     userId &&
@@ -403,6 +405,10 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
           offeredCardIds={cardState.currentOffer!.offeredCardIds}
           offerSeqNo={cardState.currentOffer!.offerSeqNo}
           onPickCard={(cardId, offerSeqNo) => {
+            setCardOfferSeqNos((prev) => ({
+              ...prev,
+              [cardId]: offerSeqNo,
+            }));
             pickCard(cardId, offerSeqNo);
           }}
           onDismiss={dismissCardOffer}
@@ -410,22 +416,22 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
       )}
 
       {/* Phase 2: Card Target Picker Overlay */}
-      {pickingTargetCardId && (
+      {pickingTarget && (
         <CardTargetPicker
-          cardId={pickingTargetCardId}
-          offerSeqNo={cardState.currentOffer?.offerSeqNo ?? 0}
+          cardId={pickingTarget.cardId}
+          offerSeqNo={pickingTarget.offerSeqNo}
           targets={(match?.players ?? room?.players ?? [])
             .filter((p) => p.id !== userId && p.status === "ACTIVE")
             .map((p) => ({ playerId: p.id, name: p.name }))}
           onPick={(targetPlayerId) => {
             playCard(
-              pickingTargetCardId,
-              cardState.currentOffer?.offerSeqNo ?? 0,
+              pickingTarget.cardId,
+              pickingTarget.offerSeqNo,
               targetPlayerId,
             );
-            setPickingTargetCardId(null);
+            setPickingTarget(null);
           }}
-          onCancel={() => setPickingTargetCardId(null)}
+          onCancel={() => setPickingTarget(null)}
         />
       )}
 
@@ -527,7 +533,7 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
                   (activePendingAnswer !== null ||
                     activeAnswerResult !== null)) ||
                 !match?.id ||
-                match?.currentRoundNo <= 0
+                (match?.currentRoundNo ?? 0) <= 0
               }
               disabledOptionCodes={disabledOptionCodes}
               isOptionLocked={isOptionLocked}
@@ -555,7 +561,12 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
                   playedCardIds={cardState.playedCardIds}
                   classId={cardState.classId}
                   onPickCard={(cardId) => {
-                    setPickingTargetCardId(cardId);
+                    const offerSeqNo = cardOfferSeqNos[cardId];
+                    if (!offerSeqNo || offerSeqNo <= 0) return;
+                    setPickingTarget({
+                      cardId,
+                      offerSeqNo,
+                    });
                   }}
                   disabled={roundCompleted || isObserving}
                   burningCardId={burningCardId}

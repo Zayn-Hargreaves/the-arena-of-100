@@ -91,13 +91,19 @@ export function useGameRoundState({
   }, []);
 
   const lastTrackedRoundRef = useRef<number | null>(null);
+  const prevStatusRef = useRef<MatchStatus | null>(null);
 
   // When round changes to a new active round, reset selectedAnswer, roundCompleted and revealedCorrectAnswer
   useEffect(() => {
-    if (match?.status === MatchStatus.ROUND_ACTIVE) {
+    const isNowActive = match?.status === MatchStatus.ROUND_ACTIVE;
+    const statusChangedToActive =
+      isNowActive && prevStatusRef.current !== MatchStatus.ROUND_ACTIVE;
+    prevStatusRef.current = match?.status ?? null;
+
+    if (isNowActive) {
       if (
         activeRoundNo !== undefined &&
-        activeRoundNo !== lastTrackedRoundRef.current
+        (activeRoundNo !== lastTrackedRoundRef.current || statusChangedToActive)
       ) {
         lastTrackedRoundRef.current = activeRoundNo;
         setRoundCompleted(false);
@@ -194,20 +200,23 @@ export function useGameRoundState({
         activePendingAnswer ||
         activeAnswerResult ||
         !match?.id ||
-        match.currentRoundNo <= 0
+        match.currentRoundNo <= 0 ||
+        isSpectator
       ) {
         return;
       }
+      const prevAnswer = selectedAnswer;
       setSelectedAnswer(option);
-      if (isSpectator) {
-        return;
+      const subResult = submitAnswer(match.id, match.currentRoundNo, option);
+      if (subResult === null) {
+        setSelectedAnswer(prevAnswer);
       }
-      submitAnswer(match.id, match.currentRoundNo, option);
     },
     [
       roundCompleted,
       activePendingAnswer,
       activeAnswerResult,
+      selectedAnswer,
       isSpectator,
       match?.id,
       match?.currentRoundNo,

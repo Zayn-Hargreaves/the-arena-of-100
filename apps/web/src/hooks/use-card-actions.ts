@@ -61,7 +61,7 @@ export function useCardActions({
 
   const playCard = useCallback(
     (cardId: CardId, offerSeqNo: number, targetPlayerId?: string) => {
-      if (!socket || !matchId) return;
+      if (!socket || !matchId || !offerSeqNo || offerSeqNo <= 0) return;
       socket.emit(
         ClientEvent.CARD_PLAY,
         targetPlayerId

@@ -106,7 +106,7 @@ export function CardTile({
             size={18}
             className="text-candy-yellow animate-bounce"
           />
-          <span>BỊ THIÊU HỦY!</span>
+          <span>{t("burning")}</span>
         </div>
       )}
 

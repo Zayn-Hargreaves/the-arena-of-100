@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 
 import { CardGlyph } from "./card-glyphs";
@@ -72,6 +73,7 @@ export const AnswerTile: React.FC<AnswerTileProps> = ({
   isFakeFlagged = false,
   className = "",
 }) => {
+  const t = useTranslations("Game");
   const isInteractive =
     variant !== "disabled" &&
     !disabled &&
@@ -108,17 +110,23 @@ export const AnswerTile: React.FC<AnswerTileProps> = ({
           )}
         >
           {isLocked ? (
-            <CardGlyph
-              variant="lock"
-              size={16}
-              className="text-candy-orange animate-pulse"
-            />
+            <>
+              <CardGlyph
+                variant="lock"
+                size={16}
+                className="text-candy-orange animate-pulse"
+              />
+              <span className="sr-only">{option}</span>
+            </>
           ) : isFiftyFiftyDisabled ? (
-            <CardGlyph
-              variant="fiftyFifty"
-              size={16}
-              className="text-candy-red opacity-60"
-            />
+            <>
+              <CardGlyph
+                variant="fiftyFifty"
+                size={16}
+                className="text-candy-red opacity-60"
+              />
+              <span className="sr-only">{option}</span>
+            </>
           ) : (
             option
           )}
@@ -132,16 +140,21 @@ export const AnswerTile: React.FC<AnswerTileProps> = ({
         {/* Locked Banner Pill */}
         {isLocked && (
           <span className="absolute right-3 top-2 text-[9px] font-black uppercase text-candy-orange bg-candy-yellow/30 border border-candy-orange/40 px-1.5 py-0.5 rounded shadow-sm">
-            LOCKED
+            {t("lockedBadge")}
           </span>
         )}
 
         {/* Fake Flag Marker (CB-6) */}
         {isFakeFlagged && (
-          <div className="absolute right-3 top-2 flex items-center gap-1 text-[9px] font-black uppercase text-candy-pink bg-candy-pink/15 border border-candy-pink/40 px-1.5 py-0.5 rounded shadow-xs animate-bounce">
+          <span
+            className={cn(
+              "absolute flex items-center gap-1 text-[9px] font-black uppercase text-candy-pink bg-candy-pink/15 border border-candy-pink/40 px-1.5 py-0.5 rounded shadow-xs animate-bounce",
+              isLocked ? "right-3 bottom-2" : "right-3 top-2",
+            )}
+          >
             <CardGlyph variant="flag" size={12} className="text-candy-pink" />
-            <span>GỢI Ý?</span>
-          </div>
+            <span>{t("fakeFlagBadge")}</span>
+          </span>
         )}
       </span>
     </button>

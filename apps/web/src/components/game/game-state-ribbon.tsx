@@ -3,7 +3,7 @@
 import React from "react";
 import { useTranslations } from "next-intl";
 import { MiniGlyph } from "@/components/ui/mini-glyph";
-import { Timer } from "./timer";
+import { Timer, type TimeDelta } from "./timer";
 
 export interface GameStateRibbonProps {
   roundNo: number;
@@ -11,7 +11,7 @@ export interface GameStateRibbonProps {
   roundDuration: number;
   livePlayerCount: number;
   maxPlayers: number;
-  timeDelta?: { deltaSeconds: number; key: number } | null;
+  timeDelta?: TimeDelta | null;
 }
 
 /**

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo } from "react";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import type { EliminationReason } from "@arena/shared";
 import { ProfessorAvatar } from "@/components/character/professor-avatar";
 import { getRandomProfessorDialogue } from "@/components/character/professor-roast-engine";
@@ -37,7 +37,6 @@ export const EliminatedOverlay: React.FC<EliminatedOverlayProps> = ({
 }) => {
   const t = useTranslations("Game");
   const tProf = useTranslations("Professor");
-  const locale = useLocale();
 
   const REASON_TEXT: Record<EliminationReason, string> = {
     WRONG_ANSWER: t("eliminatedOverlay.reasonWrong"),
@@ -47,14 +46,86 @@ export const EliminatedOverlay: React.FC<EliminatedOverlayProps> = ({
   const reasonText = reason ? REASON_TEXT[reason] : null;
 
   const professorRoast = useMemo(() => {
-    if (reason === "TIMEOUT") {
-      return getRandomProfessorDialogue("game_eliminated_timeout", locale).text;
+    const d = getRandomProfessorDialogue(
+      reason === "TIMEOUT" ? "game_eliminated_timeout" : "game_wrong_answer",
+    );
+    return tProf(d.key);
+  }, [reason, tProf]);
+
+  const dialogRef = React.useRef<HTMLDivElement>(null);
+  const previousActiveElement = React.useRef<HTMLElement | null>(null);
+
+  React.useEffect(() => {
+    previousActiveElement.current =
+      document.activeElement as HTMLElement | null;
+    if (dialogRef.current) {
+      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusable.length > 0) {
+        focusable[0]?.focus();
+      } else {
+        dialogRef.current.focus();
+      }
     }
-    return getRandomProfessorDialogue("game_wrong_answer", locale).text;
-  }, [reason, locale]);
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || !dialogRef.current) return;
+
+      const focusable = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) {
+        e.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
+
+      const firstElement = focusable[0];
+      const lastElement = focusable[focusable.length - 1];
+
+      if (e.shiftKey) {
+        if (
+          document.activeElement === firstElement ||
+          document.activeElement === dialogRef.current
+        ) {
+          e.preventDefault();
+          lastElement?.focus();
+        }
+      } else {
+        if (
+          document.activeElement === lastElement ||
+          document.activeElement === dialogRef.current
+        ) {
+          e.preventDefault();
+          firstElement?.focus();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      if (
+        previousActiveElement.current &&
+        typeof previousActiveElement.current.focus === "function"
+      ) {
+        previousActiveElement.current.focus();
+      }
+    };
+  }, []);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pt-16 sm:pt-4 overflow-y-auto bg-black/60 backdrop-blur-sm pointer-events-none">
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="eliminated-title"
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 pt-16 sm:pt-4 overflow-y-auto bg-black/60 backdrop-blur-sm pointer-events-none outline-none"
+    >
       <div className="jelly-card p-5 sm:p-6 md:p-8 rounded-3xl border-[4px] border-candy-ink bg-white shadow-[8px_8px_0_0_#2B2D42] text-center space-y-3.5 sm:space-y-4 animate-bounce-in pointer-events-auto max-w-md w-full my-auto relative">
         {/* Red Stamp Badge */}
         <div className="absolute -top-3 -right-2 sm:-top-3.5 sm:-right-2 bg-candy-red text-white font-display font-black text-[10px] sm:text-[11px] px-3 sm:px-3.5 py-1 border-[3px] border-candy-ink rounded-xl transform rotate-6 shadow-[2px_2px_0_0_#2B2D42] z-10">
@@ -67,7 +138,10 @@ export const EliminatedOverlay: React.FC<EliminatedOverlayProps> = ({
         </div>
 
         <div>
-          <h2 className="font-display font-black text-2xl tracking-wide uppercase text-candy-ink">
+          <h2
+            id="eliminated-title"
+            className="font-display font-black text-2xl tracking-wide uppercase text-candy-ink"
+          >
             {t("eliminatedOverlay.title")}
           </h2>
           {reasonText && (

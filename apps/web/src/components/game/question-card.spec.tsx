@@ -63,6 +63,6 @@ describe("QuestionCard", () => {
     );
     const heading = screen.getByText("Flipped Question Text");
     expect(heading.className).toContain("scale-y-[-1]");
-    expect(container.textContent).toContain("LẬT NGỮ NGHĨA (CB-7)");
+    expect(container.textContent).toContain("effects.flipWarning");
   });
 });

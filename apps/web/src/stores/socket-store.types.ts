@@ -127,15 +127,19 @@ export interface CardState {
   activeRoundEffects: CardEffectEvent[];
 }
 
-export const INITIAL_CARD_STATE: CardState = {
-  classId: null,
-  hand: [],
-  playedCardIds: [],
-  currentOffer: null,
-  lastResolvedEffect: null,
-  pendingNextRoundEffects: [],
-  activeRoundEffects: [],
-};
+export function createInitialCardState(): CardState {
+  return {
+    classId: null,
+    hand: [],
+    playedCardIds: [],
+    currentOffer: null,
+    lastResolvedEffect: null,
+    pendingNextRoundEffects: [],
+    activeRoundEffects: [],
+  };
+}
+
+export const INITIAL_CARD_STATE: CardState = createInitialCardState();
 
 export interface SocketState extends ConnectionState {
   socket: Socket | null;

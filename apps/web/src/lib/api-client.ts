@@ -49,23 +49,27 @@ function parseMessageValue(raw: unknown): string | undefined {
   return undefined;
 }
 
-function parseErrorPayload(payload: unknown): string | undefined {
+export function parseErrorPayload(payload: unknown): string | undefined {
   if (typeof payload === "string") {
     return payload.trim() || undefined;
   }
   if (payload && typeof payload === "object") {
     const obj = payload as {
       message?: unknown;
-      error?: { message?: unknown; code?: unknown };
+      error?: unknown;
       code?: unknown;
     };
     const fromMessage = parseMessageValue(obj.message);
     if (fromMessage) return fromMessage;
-    if (obj.error) {
-      const fromNested = parseMessageValue(obj.error.message);
+    if (typeof obj.error === "string" && obj.error.trim()) {
+      return obj.error.trim();
+    }
+    if (obj.error && typeof obj.error === "object") {
+      const nested = obj.error as { message?: unknown; code?: unknown };
+      const fromNested = parseMessageValue(nested.message);
       if (fromNested) return fromNested;
-      if (typeof obj.error.code === "string" && obj.error.code.trim()) {
-        return obj.error.code.trim();
+      if (typeof nested.code === "string" && nested.code.trim()) {
+        return nested.code.trim();
       }
     }
     if (typeof obj.code === "string" && obj.code.trim()) {

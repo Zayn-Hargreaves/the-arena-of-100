@@ -13,8 +13,40 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, act } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import React from "react";
+import { type CardEffectEvent } from "@arena/shared";
 import { CardAnimation } from "./card-animation";
-import type { CardEffectEvent } from "@arena/shared";
+
+vi.mock("next-intl", async () => {
+  const actual = await vi.importActual<typeof import("next-intl")>("next-intl");
+  const translations: Record<string, string> = {
+    "classes.ATTACK": "Offensive",
+    "classes.DEFENSE": "Defensive",
+    "animation.opponent": "Opponent",
+    "animation.you": "You",
+    "animation.round": "ROUND {round}",
+    "animation.youActivatedOn": "You activated on: {targets}",
+    "animation.youActivated": "You activated card effect",
+    "animation.opponentTargetedYou": "⚠️ {name} targeted You!",
+    "animation.opponentActivatedOn": "{name} activated on {targets}",
+    "animation.opponentActivated": "{name} activated card effect",
+  };
+  return {
+    ...actual,
+    useTranslations: vi.fn((_namespace?: string) => {
+      const t = (key: string, params?: Record<string, string | number>) => {
+        let text = translations[key] ?? key;
+        if (params) {
+          text = text.replace(/\{(\w+)\}/g, (_, name: string) =>
+            String(params[name] ?? ""),
+          );
+        }
+        return text;
+      };
+      t.has = (key: string) => Boolean(translations[key]);
+      return t;
+    }),
+  };
+});
 
 function makeTempEvent(remainingMs: number): CardEffectEvent {
   return {
@@ -93,5 +125,38 @@ describe("CardAnimation — TEMPORARY completion timer", () => {
     expect(container.querySelector("svg")).toBeInTheDocument();
     expect(container.textContent).toContain("50:50");
     expect(container.textContent).toContain("Bob");
+  });
+
+  it("does not render banner for uninvolved user p3", () => {
+    const { container } = render(
+      <CardAnimation
+        event={makeTempEvent(5000)}
+        userId="p3"
+        players={[
+          { id: "p1", name: "Alice" },
+          { id: "p2", name: "Bob" },
+          { id: "p3", name: "Charlie" },
+        ]}
+      />,
+    );
+
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("renders notification for targeted user p2", () => {
+    const { container } = render(
+      <CardAnimation
+        event={makeTempEvent(5000)}
+        userId="p2"
+        players={[
+          { id: "p1", name: "Alice" },
+          { id: "p2", name: "Bob" },
+        ]}
+      />,
+    );
+
+    expect(container.querySelector("svg")).toBeInTheDocument();
+    expect(container.textContent).toContain("Alice");
+    expect(container.textContent).toContain("⚠️ Alice targeted You!");
   });
 });

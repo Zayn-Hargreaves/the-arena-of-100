@@ -53,6 +53,7 @@ export const AnswerPanel: React.FC<AnswerPanelProps> = ({
     <div className="space-y-3">
       {isObserving && (
         <div
+          role="status"
           data-testid="spectator-practice-badge"
           className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-candy-cloud rounded-2xl border-[2.5px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42] text-xs text-candy-ink/80 animate-fade-in"
         >

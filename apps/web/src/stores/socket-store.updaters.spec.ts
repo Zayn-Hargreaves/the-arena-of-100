@@ -2331,6 +2331,49 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
     it("applyClassAssignedState updates player class and roster", () => {
       const state = makeState({
         userId: "p1",
+        room: makeRoom({
+          id: "r1",
+          code: "ROOM1",
+          hostId: "p1",
+          status: RoomStatus.WAITING,
+          players: [
+            {
+              id: "p1",
+              name: "P1",
+              status: PlayerStatus.ACTIVE,
+              score: 0,
+              isOnline: true,
+            },
+            {
+              id: "p2",
+              name: "P2",
+              status: PlayerStatus.ACTIVE,
+              score: 0,
+              isOnline: true,
+            },
+          ],
+        }),
+        match: makeMatch({
+          id: "m1",
+          status: MatchStatus.COUNTDOWN,
+          currentRoundNo: 1,
+          players: [
+            {
+              id: "p1",
+              name: "P1",
+              status: PlayerStatus.ACTIVE,
+              score: 100,
+              isOnline: true,
+            },
+            {
+              id: "p2",
+              name: "P2",
+              status: PlayerStatus.ACTIVE,
+              score: 200,
+              isOnline: true,
+            },
+          ],
+        }),
       });
 
       const res = applyClassAssignedState(state, {
@@ -2343,22 +2386,39 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
       });
 
       expect(res.cardState?.classId).toBe("ATTACK");
+      expect(res.room?.players.find((p) => p.id === "p1")?.classId).toBe(
+        "ATTACK",
+      );
+      expect(res.room?.players.find((p) => p.id === "p2")?.classId).toBe(
+        "DEFENSE",
+      );
+      const matchP1 = res.match?.players.find((p) => p.id === "p1");
+      const matchP2 = res.match?.players.find((p) => p.id === "p2");
+      expect(matchP1?.classId).toBe("ATTACK");
+      expect(matchP1?.status).toBe(PlayerStatus.ACTIVE);
+      expect(matchP1?.score).toBe(100);
+      expect(matchP2?.classId).toBe("DEFENSE");
+      expect(matchP2?.status).toBe(PlayerStatus.ACTIVE);
+      expect(matchP2?.score).toBe(200);
     });
 
     it("applyCardOfferState sets currentOffer for matching player", () => {
       const state = makeState({
         userId: "p1",
+        match: makeMatch({ id: "m1" }),
       });
+
+      const offeredCards: readonly [CardId, CardId, CardId] = [
+        "CB-1",
+        "CB-2",
+        "CB-3",
+      ];
 
       const res = applyCardOfferState(state, {
         matchId: "m1",
         roundNo: 5,
         playerId: "p1",
-        offeredCardIds: ["CB-1", "CB-2", "CB-3"] as unknown as readonly [
-          CardId,
-          CardId,
-          CardId,
-        ],
+        offeredCardIds: offeredCards,
         offerSeqNo: 42,
         seedUsed: "seed-offer",
       });
@@ -2372,9 +2432,49 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
       expect(res.cardState?.currentOffer?.offerSeqNo).toBe(42);
     });
 
+    it("applyCardOfferState returns empty object when matchId mismatches or is null", () => {
+      const stateWithoutMatch = makeState({ userId: "p1" });
+      const offeredCards: readonly [CardId, CardId, CardId] = [
+        "CB-1",
+        "CB-2",
+        "CB-3",
+      ];
+      expect(
+        applyCardOfferState(stateWithoutMatch, {
+          matchId: "m1",
+          roundNo: 5,
+          playerId: "p1",
+          offeredCardIds: offeredCards,
+          offerSeqNo: 42,
+          seedUsed: "seed-offer",
+        }),
+      ).toEqual({});
+
+      const stateMismatch = makeState({
+        userId: "p1",
+        room: makeRoom({ currentMatchId: "m-other" }),
+      });
+      expect(
+        applyCardOfferState(stateMismatch, {
+          matchId: "m1",
+          roundNo: 5,
+          playerId: "p1",
+          offeredCardIds: offeredCards,
+          offerSeqNo: 42,
+          seedUsed: "seed-offer",
+        }),
+      ).toEqual({});
+    });
+
     it("applyCardPickedState adds card to hand and clears currentOffer", () => {
+      const offeredCards: readonly [CardId, CardId, CardId] = [
+        "CB-1",
+        "CB-2",
+        "CB-3",
+      ];
       const state = makeState({
         userId: "p1",
+        match: makeMatch({ id: "m1" }),
         cardState: {
           ...INITIAL_CARD_STATE,
           classId: "ATTACK" as ClassId,
@@ -2382,11 +2482,7 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
           currentOffer: {
             matchId: "m1",
             roundNo: 5,
-            offeredCardIds: ["CB-1", "CB-2", "CB-3"] as unknown as readonly [
-              CardId,
-              CardId,
-              CardId,
-            ],
+            offeredCardIds: offeredCards,
             offerSeqNo: 42,
             seedUsed: "seed-offer",
             expiresAt: 9999,
@@ -2406,6 +2502,19 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
       expect(res.cardState?.currentOffer).toBeNull();
     });
 
+    it("applyCardPickedState returns empty object when matchId mismatches or is null", () => {
+      const stateWithoutMatch = makeState({ userId: "p1" });
+      expect(
+        applyCardPickedState(stateWithoutMatch, {
+          matchId: "m1",
+          roundNo: 5,
+          playerId: "p1",
+          selectedCardId: "CB-2" as CardId,
+          offerSeqNo: 42,
+        }),
+      ).toEqual({});
+    });
+
     it("applyCardResolvedState records playedCardIds for self-played cards", () => {
       const state = makeState({
         userId: "p1",
@@ -2416,11 +2525,22 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         },
       });
 
-      const res = applyCardResolvedState(state, {
-        cardId: "CB-2" as CardId,
+      const event: CardEffectEvent = {
+        matchId: "m1",
+        roundNo: 1,
+        targetRoundNo: 1,
+        cardId: "CB-2",
+        offerSeqNo: 42,
         playedByPlayerId: "p1",
-        effect: { kind: "TIMER_MODIFY", deltaMs: -5000 },
-      } as unknown as CardEffectEvent);
+        targetPlayerIds: ["p2"],
+        effect: { kind: "TIMER_MODIFY", deltaMs: -5000, targetCount: 1 },
+        resolution: "MUTATION",
+        serverTimestamp: 1000,
+        expiresAtServer: null,
+        remainingMs: null,
+      };
+
+      const res = applyCardResolvedState(state, event);
 
       expect(res.cardState?.playedCardIds).toEqual(["CB-2"]);
       expect(res.cardState?.lastResolvedEffect).toBeDefined();

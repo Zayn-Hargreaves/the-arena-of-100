@@ -20,9 +20,12 @@ export async function ensureCsrfToken(): Promise<string | null> {
 
   if (!csrfTokenPromise) {
     csrfTokenPromise = (async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
       try {
         const res = await fetch(`${API_URL}/api/v1/auth/csrf-token`, {
           credentials: "include",
+          signal: controller.signal,
         });
         if (res.ok) {
           const raw = (await res.json()) as {
@@ -32,8 +35,9 @@ export async function ensureCsrfToken(): Promise<string | null> {
           return raw.data?.csrfToken || raw.csrfToken || getCsrfToken();
         }
       } catch {
-        // ignore fetch failures
+        // ignore fetch failures / timeout aborts
       } finally {
+        clearTimeout(timer);
         csrfTokenPromise = null;
       }
       return getCsrfToken();

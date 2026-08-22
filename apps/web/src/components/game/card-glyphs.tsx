@@ -224,7 +224,7 @@ export function CardGlyph({
 /**
  * Maps a CardId (e.g. 'CB-1', 'TN-4') to its corresponding SVG Pop-Art Glyph.
  */
-export function getGlyphForCardId(cardId: CardId | string): CardGlyphVariant {
+export function getGlyphForCardId(cardId: CardId): CardGlyphVariant {
   switch (cardId) {
     case "CB-1":
       return "freeze";

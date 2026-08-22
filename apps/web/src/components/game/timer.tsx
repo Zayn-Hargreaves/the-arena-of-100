@@ -3,15 +3,57 @@ import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { CardGlyph } from "./card-glyphs";
 
+export interface TimeDelta {
+  deltaSeconds: number;
+  key: number;
+}
+
 export interface TimerProps {
   duration: number; // Max round duration in seconds (e.g., 15)
   timeLeft: number; // Current seconds left (e.g., 12.5)
   size?: number; // Width of the component in pixels
   height?: number; // Height of the component in pixels
   showText?: boolean;
-  timeDelta?: { deltaSeconds: number; key: number } | null;
+  timeDelta?: TimeDelta | null;
   className?: string;
 }
+
+interface TimeDeltaBadgeProps {
+  deltaSeconds: number;
+  size?: "sm" | "md";
+  className?: string;
+}
+
+const TimeDeltaBadge: React.FC<TimeDeltaBadgeProps> = ({
+  deltaSeconds,
+  size = "md",
+  className,
+}) => {
+  if (deltaSeconds === 0) return null;
+  const isPositive = deltaSeconds > 0;
+  const isSm = size === "sm";
+
+  return (
+    <div
+      className={cn(
+        "z-30 flex items-center gap-1 font-display font-black pointer-events-none",
+        isSm
+          ? "px-1.5 py-0.5 rounded-full border-[1.5px] border-candy-ink text-[10px]"
+          : "px-2 py-0.5 rounded-full border-[2px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42] text-xs",
+        isPositive
+          ? "bg-candy-mint text-candy-ink animate-bounce"
+          : "bg-candy-red text-white animate-shake",
+        className,
+      )}
+    >
+      <CardGlyph
+        variant={isPositive ? "timeBonus" : "freeze"}
+        size={isSm ? 12 : 14}
+      />
+      <span>{isPositive ? `+${deltaSeconds}s` : `${deltaSeconds}s`}</span>
+    </div>
+  );
+};
 
 export const Timer: React.FC<TimerProps> = ({
   duration,
@@ -103,25 +145,12 @@ export const Timer: React.FC<TimerProps> = ({
 
         {/* Floating Time Delta Animation Badge */}
         {timeDelta && (
-          <div
+          <TimeDeltaBadge
             key={timeDelta.key}
-            className={cn(
-              "absolute -top-3 -right-3 z-30 flex items-center gap-1 px-2 py-0.5 rounded-full border-[2px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42] font-display font-black text-xs pointer-events-none",
-              timeDelta.deltaSeconds > 0
-                ? "bg-candy-mint text-candy-ink animate-bounce"
-                : "bg-candy-red text-white animate-shake",
-            )}
-          >
-            <CardGlyph
-              variant={timeDelta.deltaSeconds > 0 ? "timeBonus" : "freeze"}
-              size={14}
-            />
-            <span>
-              {timeDelta.deltaSeconds > 0
-                ? `+${timeDelta.deltaSeconds}s`
-                : `${timeDelta.deltaSeconds}s`}
-            </span>
-          </div>
+            deltaSeconds={timeDelta.deltaSeconds}
+            size="md"
+            className="absolute -top-3 -right-3"
+          />
         )}
       </div>
     );
@@ -157,25 +186,12 @@ export const Timer: React.FC<TimerProps> = ({
 
       {/* Floating Time Delta Animation Badge */}
       {timeDelta && (
-        <div
+        <TimeDeltaBadge
           key={timeDelta.key}
-          className={cn(
-            "absolute right-2 z-30 flex items-center gap-1 px-1.5 py-0.2 rounded-full border-[1.5px] border-candy-ink font-display font-black text-[10px] pointer-events-none",
-            timeDelta.deltaSeconds > 0
-              ? "bg-candy-mint text-candy-ink animate-bounce"
-              : "bg-candy-red text-white animate-shake",
-          )}
-        >
-          <CardGlyph
-            variant={timeDelta.deltaSeconds > 0 ? "timeBonus" : "freeze"}
-            size={12}
-          />
-          <span>
-            {timeDelta.deltaSeconds > 0
-              ? `+${timeDelta.deltaSeconds}s`
-              : `${timeDelta.deltaSeconds}s`}
-          </span>
-        </div>
+          deltaSeconds={timeDelta.deltaSeconds}
+          size="sm"
+          className="absolute right-2"
+        />
       )}
     </div>
   );

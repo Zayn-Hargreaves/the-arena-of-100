@@ -53,22 +53,6 @@ export function CardTargetPicker({
     (def.effectTemplate as { targetCount?: number }).targetCount !== 1 &&
     (def.effectTemplate as { targetCount?: number }).targetCount !== undefined;
 
-  // Auto-bypass: fire-and-forget. Both branches guard with a ref
-  // keyed by `offerSeqNo` so the effect runs at most once per
-  // offer — the parent can re-render with new `targets` / `onPick`
-  // references (e.g. after a roster update) without re-firing.
-  // A later offer carrying the same `cardId` starts a fresh
-  // session and triggers `onPick` again.
-  //
-  // Self-only Defensive/DEFENSE cards: the dialog is bypassed and
-  // `onPick` is invoked with no target so the wire payload
-  // omits `targetPlayerId` (server rejects any target on a
-  // self-only play). Full selection, timing, and validation
-  // remain the server's responsibility.
-  //
-  // AOE Offensive/ATTACK cards: the client sends only the initial
-  // eligible target; full AOE roster expansion is the server's
-  // responsibility.
   const firedRef = React.useRef<Set<number>>(new Set());
   React.useEffect(() => {
     if (firedRef.current.has(offerSeqNo)) return;
@@ -84,6 +68,76 @@ export function CardTargetPicker({
   }, [isSelfOnly, isAoe, cardId, offerSeqNo, targets, onPick]);
 
   const [searchQuery, setSearchQuery] = React.useState("");
+  const dialogRef = React.useRef<HTMLDivElement>(null);
+  const previousActiveElement = React.useRef<HTMLElement | null>(null);
+
+  React.useEffect(() => {
+    if (isSelfOnly || isAoe) return;
+    previousActiveElement.current =
+      document.activeElement as HTMLElement | null;
+    if (dialogRef.current) {
+      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusable.length > 0) {
+        focusable[0]?.focus();
+      } else {
+        dialogRef.current.focus();
+      }
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCancel();
+        return;
+      }
+      if (e.key !== "Tab" || !dialogRef.current) return;
+
+      const focusable = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) {
+        e.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
+
+      const firstElement = focusable[0];
+      const lastElement = focusable[focusable.length - 1];
+
+      if (e.shiftKey) {
+        if (
+          document.activeElement === firstElement ||
+          document.activeElement === dialogRef.current
+        ) {
+          e.preventDefault();
+          lastElement?.focus();
+        }
+      } else {
+        if (
+          document.activeElement === lastElement ||
+          document.activeElement === dialogRef.current
+        ) {
+          e.preventDefault();
+          firstElement?.focus();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      if (
+        previousActiveElement.current &&
+        typeof previousActiveElement.current.focus === "function"
+      ) {
+        previousActiveElement.current.focus();
+      }
+    };
+  }, [isSelfOnly, isAoe, onCancel]);
 
   const filteredTargets = React.useMemo(() => {
     if (!searchQuery.trim()) return targets;
@@ -107,25 +161,23 @@ export function CardTargetPicker({
     }
   };
 
-  const cardName = (t as { has?: (key: string) => boolean }).has?.(
-    `byId.${cardId}.name`,
-  )
+  const cardName = t.has(`byId.${cardId}.name`)
     ? t(`byId.${cardId}.name`)
     : def.name;
 
-  const cardDesc = (t as { has?: (key: string) => boolean }).has?.(
-    `byId.${cardId}.description`,
-  )
+  const cardDesc = t.has(`byId.${cardId}.description`)
     ? t(`byId.${cardId}.description`)
     : def.description;
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
+      tabIndex={-1}
       aria-label={t("select")}
       className={cn(
-        "fixed inset-0 z-50 flex items-center justify-center bg-candy-ink/60 backdrop-blur-sm p-4 animate-fade-in",
+        "fixed inset-0 z-50 flex items-center justify-center bg-candy-ink/60 backdrop-blur-sm p-4 animate-fade-in outline-none",
         className,
       )}
     >
@@ -173,16 +225,19 @@ export function CardTargetPicker({
                 variant="target"
                 className="w-4 h-4 text-white stroke-[2.5]"
               />
-              <span>MỤC TIÊU NGẪU NHIÊN</span>
+              <span>{t("picker.randomTarget")}</span>
             </button>
           </div>
 
           <div className="relative">
             <input
               type="text"
+              aria-label={t("picker.searchLabel")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={`Tìm tên đối thủ (${targets.length} người)...`}
+              placeholder={t("picker.searchPlaceholder", {
+                count: targets.length,
+              })}
               className="w-full bg-white border-2 border-candy-ink rounded-xl px-3.5 py-2 text-xs sm:text-sm text-candy-ink placeholder:text-candy-ink/40 font-medium focus:outline-none focus:ring-2 focus:ring-candy-pink/50 shadow-[2px_2px_0_0_#2B2D42]"
             />
             {searchQuery && (
@@ -190,7 +245,7 @@ export function CardTargetPicker({
                 type="button"
                 onClick={() => setSearchQuery("")}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-candy-ink/50 hover:text-candy-ink text-xs font-bold"
-                aria-label="Xóa tìm kiếm"
+                aria-label={t("picker.clearSearch")}
               >
                 <MiniGlyph variant="close" className="w-3 h-3 stroke-[2.5]" />
               </button>
@@ -202,7 +257,7 @@ export function CardTargetPicker({
         <div className="p-4 overflow-y-auto flex-1 max-h-[300px]">
           {filteredTargets.length === 0 ? (
             <div className="text-center py-8 text-candy-ink/50 text-xs font-bold">
-              Không tìm thấy đối thủ phù hợp
+              {t("picker.noMatches")}
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -241,7 +296,7 @@ export function CardTargetPicker({
         {/* Footer */}
         <div className="p-3.5 bg-candy-cloud/30 border-t-2 border-candy-ink/20 flex items-center justify-between gap-3">
           <span className="text-[11px] text-candy-ink/60 font-medium">
-            Chọn 1 mục tiêu để thi triển
+            {t("picker.prompt")}
           </span>
           <button
             type="button"

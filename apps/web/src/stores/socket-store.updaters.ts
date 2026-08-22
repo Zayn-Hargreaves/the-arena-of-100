@@ -33,7 +33,7 @@ import {
 } from "@arena/shared";
 
 import {
-  INITIAL_CARD_STATE,
+  createInitialCardState,
   type LastAnswerResult,
   type Player,
   type SocketState,
@@ -68,7 +68,7 @@ export function applyRoomCreatedState(
 ): Partial<SocketState> {
   return {
     match: null,
-    cardState: INITIAL_CARD_STATE,
+    cardState: createInitialCardState(),
     lastAnswerResult: null,
     pendingAnswer: null,
     remainingCount: null,
@@ -95,7 +95,7 @@ export function applyRoomJoinedState(
 ): Partial<SocketState> {
   return {
     match: null,
-    cardState: INITIAL_CARD_STATE,
+    cardState: createInitialCardState(),
     lastAnswerResult: null,
     pendingAnswer: null,
     remainingCount: null,
@@ -257,7 +257,7 @@ export function applyMatchStartingState(
 ): Partial<SocketState> {
   return {
     remainingCount: null,
-    cardState: INITIAL_CARD_STATE,
+    cardState: createInitialCardState(),
     lastAnswerResult: null,
     pendingAnswer: null,
     room: state.room
@@ -501,7 +501,7 @@ export function applyMatchFinishedState(
   const currentMatch = state.match?.id === data.matchId ? state.match : null;
 
   return {
-    cardState: INITIAL_CARD_STATE,
+    cardState: createInitialCardState(),
     room: state.room
       ? {
           ...state.room,
@@ -837,7 +837,7 @@ export function applyRoomTerminatedState(
   return {
     room: null,
     match: null,
-    cardState: INITIAL_CARD_STATE,
+    cardState: createInitialCardState(),
     remainingCount: null,
     lastAnswerResult: null,
     pendingAnswer: null,
@@ -862,7 +862,7 @@ export function applyUnauthorizedErrorState(
     username: null,
     room: null,
     match: null,
-    cardState: INITIAL_CARD_STATE,
+    cardState: createInitialCardState(),
     topicVoting: null,
     remainingCount: null,
     lastAnswerResult: null,
@@ -1029,7 +1029,7 @@ export function applyMatchmakingMatchedState(
           }
         : null,
     topicVoting: isSameTopicVoting ? state.topicVoting : null,
-    cardState: INITIAL_CARD_STATE,
+    cardState: createInitialCardState(),
     lastAnswerResult: null,
     pendingAnswer: null,
     remainingCount: null,
@@ -1065,8 +1065,13 @@ export function applyClassAssignedState(
   );
   const classId = ownAssignment?.classId ?? state.cardState.classId;
 
-  // Also update classId on player list in room/match
-  const updatedPlayers = state.room?.players.map((p) => {
+  // Independently map room and match player rosters
+  const updatedRoomPlayers = state.room?.players.map((p) => {
+    const assign = data.assignments.find((a) => a.playerId === p.id);
+    return assign ? { ...p, classId: assign.classId } : p;
+  });
+
+  const updatedMatchPlayers = state.match?.players.map((p) => {
     const assign = data.assignments.find((a) => a.playerId === p.id);
     return assign ? { ...p, classId: assign.classId } : p;
   });
@@ -1077,12 +1082,12 @@ export function applyClassAssignedState(
       classId,
     },
     room:
-      state.room && updatedPlayers
-        ? { ...state.room, players: updatedPlayers }
+      state.room && updatedRoomPlayers
+        ? { ...state.room, players: updatedRoomPlayers }
         : state.room,
     match:
-      state.match && updatedPlayers
-        ? { ...state.match, players: updatedPlayers }
+      state.match && updatedMatchPlayers
+        ? { ...state.match, players: updatedMatchPlayers }
         : state.match,
   };
 }
@@ -1096,12 +1101,37 @@ export function applyCardOfferState(
     offeredCardIds: readonly [CardId, CardId, CardId];
     offerSeqNo: number;
     seedUsed: string;
+    durationMs?: number;
+    expiresAt?: number;
   },
 ): Partial<SocketState> {
+  const activeMatchId = state.room?.currentMatchId ?? state.match?.id ?? null;
+  if (activeMatchId === null || data.matchId !== activeMatchId) {
+    return {};
+  }
   // Only apply to the designated player
   if (state.userId && data.playerId !== state.userId) {
     return {};
   }
+
+  // If there is an existing offer, only accept newer/matching sequence
+  if (
+    state.cardState.currentOffer &&
+    data.offerSeqNo < state.cardState.currentOffer.offerSeqNo
+  ) {
+    return {};
+  }
+
+  const serverExpiresAt = data.expiresAt;
+  const serverDurationMs = data.durationMs;
+  const fallbackDurationMs =
+    (GAME_CONFIG as { CARD_OFFER_DURATION_MS?: number })
+      .CARD_OFFER_DURATION_MS ?? 8000;
+  const expiresAt =
+    serverExpiresAt ??
+    (serverDurationMs
+      ? Date.now() + serverDurationMs
+      : Date.now() + fallbackDurationMs);
 
   return {
     cardState: {
@@ -1112,7 +1142,7 @@ export function applyCardOfferState(
         offeredCardIds: data.offeredCardIds,
         offerSeqNo: data.offerSeqNo,
         seedUsed: data.seedUsed,
-        expiresAt: Date.now() + 8000,
+        expiresAt,
       },
     },
   };
@@ -1128,7 +1158,19 @@ export function applyCardPickedState(
     offerSeqNo: number;
   },
 ): Partial<SocketState> {
+  const activeMatchId = state.room?.currentMatchId ?? state.match?.id ?? null;
+  if (activeMatchId === null || data.matchId !== activeMatchId) {
+    return {};
+  }
   if (state.userId && data.playerId !== state.userId) {
+    return {};
+  }
+
+  // If currentOffer is active and offerSeqNo does not match, ignore stale pick
+  if (
+    state.cardState.currentOffer &&
+    data.offerSeqNo !== state.cardState.currentOffer.offerSeqNo
+  ) {
     return {};
   }
 

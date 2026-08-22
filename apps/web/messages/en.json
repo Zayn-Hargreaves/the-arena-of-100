@@ -285,6 +285,18 @@
     "remainingLabel": "Remaining",
     "rulesHeader": "RULES // QUESTION",
     "lockedAnswer": "ANSWER LOCKED",
+    "lockedBadge": "LOCKED",
+    "fakeFlagBadge": "HINT?",
+    "effects": {
+      "fogTitle": "BRAIN FOG (CB-5)",
+      "fogDesc": "The question is obscured in foggy mist...",
+      "delayTitle": "QUESTION SABOTAGE (CB-2)",
+      "delayDesc": "Question content is being delayed by opponent!",
+      "flipWarning": "SEMANTIC FLIP (CB-7): Question turned 180°!",
+      "flipBadge": "FLIPPED",
+      "hintTitle": "CARD HINT (TN-3)",
+      "hintPrefix": "Answer starts with character: "
+    },
     "answerSubmitted": "ANSWER SUBMITTED",
     "waiting": "WAITING...",
     "fallbackQuestion": "Tie-breaker rule: when two players answer the same question correctly, who survives the next round?",
@@ -308,7 +320,7 @@
       "title": "SPECTATOR MODE",
       "subtitle": "You have been eliminated. Watch the remaining players to see who will be the champion!",
       "observingBadge": "Observing Only",
-      "practiceHint": "Spectator mode: You can select an answer to test your knowledge (no score counted)."
+      "practiceHint": "Spectator mode: You are watching the match in read-only mode."
     },
     "leaveMatchButton": "LEAVE MATCH",
     "matchFinishedOverlay": {
@@ -841,11 +853,33 @@
   "Cards": {
     "hand": "Card Hand",
     "offer": "Choose a card",
+    "burning": "BURNED!",
+    "milestoneRound": "MILESTONE ROUND {round}",
+    "offerTitle": "CHOOSE 1 SUPPORT CARD",
+    "offerFooter": "The card will be stored in your hand to use during your battle round.",
     "select": "Select Target",
     "cancel": "Cancel",
     "play": "Play",
     "noCards": "No cards in hand",
     "milestoneOffer": "Milestone round — pick a card to play",
+    "picker": {
+      "randomTarget": "RANDOM TARGET",
+      "searchPlaceholder": "Search opponent ({count} {count, plural, one {player} other {players}})...",
+      "searchLabel": "Search opponent",
+      "clearSearch": "Clear search",
+      "noMatches": "No matching opponents found",
+      "prompt": "Select 1 target to cast"
+    },
+    "animation": {
+      "opponent": "Opponent",
+      "you": "You",
+      "round": "ROUND {round}",
+      "youActivatedOn": "You activated on: {targets}",
+      "youActivated": "You activated card effect",
+      "opponentTargetedYou": "⚠️ {name} targeted You!",
+      "opponentActivatedOn": "{name} activated on {targets}",
+      "opponentActivated": "{name} activated card effect"
+    },
     "classes": {
       "ATTACK": "Offensive",
       "DEFENSE": "Defensive"

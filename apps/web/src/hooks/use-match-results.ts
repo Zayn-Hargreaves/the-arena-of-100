@@ -213,79 +213,6 @@ export function useMatchResults(matchId: string, userId: string | null) {
     [payload?.players],
   );
 
-  const getPlayerEliminatedRound = useCallback(
-    (playerId: string) => {
-      const playerAnswers = (payload?.answers ?? []).filter(
-        (a) => a.userId === playerId,
-      );
-      const wrongAnswer = playerAnswers.find((a) => !a.isCorrect);
-      if (wrongAnswer && payload?.rounds) {
-        const roundIdx = payload.rounds.findIndex(
-          (r) => r.id === wrongAnswer.roundId,
-        );
-        if (roundIdx !== -1) {
-          return payload.rounds[roundIdx]?.roundNo ?? roundIdx + 1;
-        }
-      }
-      // If winner or never eliminated
-      if (payload?.winnerId && payload.winnerId === playerId) {
-        return (payload?.rounds?.length ?? 1) + 1;
-      }
-      return 0;
-    },
-    [payload?.answers, payload?.rounds, payload?.winnerId],
-  );
-
-  const sortedPlayers = useMemo(
-    () =>
-      [...players].sort((a, b) => {
-        // 1. Winner is always first
-        const aIsWinner = Boolean(
-          payload?.winnerId && payload.winnerId === a.id,
-        );
-        const bIsWinner = Boolean(
-          payload?.winnerId && payload.winnerId === b.id,
-        );
-        if (aIsWinner && !bIsWinner) return -1;
-        if (!aIsWinner && bIsWinner) return 1;
-
-        // 2. Higher survived/elimination round
-        const aRound = getPlayerEliminatedRound(a.id);
-        const bRound = getPlayerEliminatedRound(b.id);
-        if (bRound !== aRound) return bRound - aRound;
-
-        // 3. Higher score
-        if (b.score !== a.score) return b.score - a.score;
-
-        return a.id.localeCompare(b.id);
-      }),
-    [players, payload?.winnerId, getPlayerEliminatedRound],
-  );
-
-  const playerById = useMemo(
-    () => new Map(players.map((p) => [p.id, p])),
-    [players],
-  );
-
-  const playerRankById = useMemo(
-    () =>
-      new Map(
-        (payload?.players ?? []).map((p) => {
-          const id = p.userId ?? p.user?.id ?? "";
-          if (p.placement !== undefined && p.placement !== null) {
-            return [id, p.placement];
-          }
-          if (p.rank !== undefined && p.rank !== null) {
-            return [id, p.rank];
-          }
-          const computedRank =
-            sortedPlayers.findIndex((sp) => sp.id === id) + 1;
-          return [id, computedRank > 0 ? computedRank : null];
-        }),
-      ),
-    [payload?.players, sortedPlayers],
-  );
-
   const rawPlayerById = useMemo(
     () =>
       new Map(
@@ -314,14 +241,19 @@ export function useMatchResults(matchId: string, userId: string | null) {
           ? `${(totalTimeMs / totalAnswers / 1000).toFixed(1)}s`
           : "--";
 
-      const wrongAnswer = playerAnswers.find((a) => !a.isCorrect);
+      const wrongAnswers = playerAnswers.filter((a) => !a.isCorrect);
       let eliminatedRoundNo: number | null = null;
-      if (wrongAnswer && payload?.rounds) {
-        const roundIdx = payload.rounds.findIndex(
-          (r) => r.id === wrongAnswer.roundId,
-        );
-        if (roundIdx !== -1) {
-          eliminatedRoundNo = payload.rounds[roundIdx]?.roundNo ?? roundIdx + 1;
+      if (wrongAnswers.length > 0 && payload?.rounds) {
+        for (const wrong of wrongAnswers) {
+          const roundIdx = payload.rounds.findIndex(
+            (r) => r.id === wrong.roundId,
+          );
+          if (roundIdx !== -1) {
+            const rNo = payload.rounds[roundIdx]?.roundNo ?? roundIdx + 1;
+            if (eliminatedRoundNo === null || rNo < eliminatedRoundNo) {
+              eliminatedRoundNo = rNo;
+            }
+          }
         }
       }
 
@@ -334,6 +266,80 @@ export function useMatchResults(matchId: string, userId: string | null) {
       };
     },
     [payload?.answers, payload?.rounds],
+  );
+
+  const getPlayerEliminatedRound = useCallback(
+    (playerId: string) => {
+      const metrics = getPlayerMetrics(playerId);
+      if (metrics.eliminatedRoundNo !== null) {
+        return metrics.eliminatedRoundNo;
+      }
+      // If winner or never eliminated
+      if (payload?.winnerId && payload.winnerId === playerId) {
+        return (payload?.rounds?.length ?? 1) + 1;
+      }
+      return 0;
+    },
+    [getPlayerMetrics, payload?.rounds?.length, payload?.winnerId],
+  );
+
+  const sortedPlayers = useMemo(
+    () =>
+      [...players].sort((a, b) => {
+        // 1. Winner is always first
+        const aIsWinner = Boolean(
+          payload?.winnerId && payload.winnerId === a.id,
+        );
+        const bIsWinner = Boolean(
+          payload?.winnerId && payload.winnerId === b.id,
+        );
+        if (aIsWinner && !bIsWinner) return -1;
+        if (!aIsWinner && bIsWinner) return 1;
+
+        // 2. Higher survived/elimination round
+        const aRound = getPlayerEliminatedRound(a.id);
+        const bRound = getPlayerEliminatedRound(b.id);
+        if (bRound !== aRound) return bRound - aRound;
+
+        // 3. Higher score
+        if (b.score !== a.score) return b.score - a.score;
+
+        // 4. Faster total response time as tie-breaker
+        const aTotalTime = (payload?.answers ?? [])
+          .filter((ans) => ans.userId === a.id)
+          .reduce((acc, ans) => acc + (ans.responseTimeMs ?? 0), 0);
+        const bTotalTime = (payload?.answers ?? [])
+          .filter((ans) => ans.userId === b.id)
+          .reduce((acc, ans) => acc + (ans.responseTimeMs ?? 0), 0);
+        if (aTotalTime !== bTotalTime) return aTotalTime - bTotalTime;
+
+        return a.id.localeCompare(b.id);
+      }),
+    [players, payload?.winnerId, payload?.answers, getPlayerEliminatedRound],
+  );
+
+  const playerById = useMemo(
+    () => new Map(players.map((p) => [p.id, p])),
+    [players],
+  );
+
+  const playerRankById = useMemo(
+    () =>
+      new Map(
+        (payload?.players ?? []).map((p) => {
+          const id = p.userId ?? p.user?.id ?? "";
+          if (p.placement !== undefined && p.placement !== null) {
+            return [id, p.placement];
+          }
+          if (p.rank !== undefined && p.rank !== null) {
+            return [id, p.rank];
+          }
+          const computedRank =
+            sortedPlayers.findIndex((sp) => sp.id === id) + 1;
+          return [id, computedRank > 0 ? computedRank : null];
+        }),
+      ),
+    [payload?.players, sortedPlayers],
   );
 
   const winner = useMemo<WinnerViewModel>(() => {
@@ -360,7 +366,10 @@ export function useMatchResults(matchId: string, userId: string | null) {
         totalScore: 0,
         averageSpeed: "--",
         accuracy: "--",
-        survivedRounds: `${Math.max(1, totalRounds)}`,
+        survivedRounds:
+          payload?.status === "FINISHED" || payload?.winnerId
+            ? `${Math.max(1, totalRounds)}`
+            : "--",
       };
     }
     const metrics = getPlayerMetrics(winnerFromServer.id);
@@ -396,11 +405,11 @@ export function useMatchResults(matchId: string, userId: string | null) {
         } else {
           const storedCallsign = localStorage.getItem("callsign");
           if (storedCallsign) {
-            const matchedPlayer = players.find(
+            const matchedPlayers = players.filter(
               (p) => p.name?.toLowerCase() === storedCallsign.toLowerCase(),
             );
-            if (matchedPlayer) {
-              effectiveUserId = matchedPlayer.id;
+            if (matchedPlayers.length === 1 && matchedPlayers[0]) {
+              effectiveUserId = matchedPlayers[0].id;
             }
           }
         }
@@ -432,14 +441,12 @@ export function useMatchResults(matchId: string, userId: string | null) {
         rank = 1;
       } else {
         const idx = sortedPlayers.findIndex((p) => p.id === currentPlayer.id);
-        rank =
-          idx >= 0
-            ? payload?.winnerId
-              ? idx + 1 > 1
-                ? idx + 1
-                : 2
-              : idx + 1
-            : null;
+        if (idx >= 0) {
+          const baseRank = idx + 1;
+          rank = payload?.winnerId ? Math.max(2, baseRank) : baseRank;
+        } else {
+          rank = null;
+        }
       }
     }
 

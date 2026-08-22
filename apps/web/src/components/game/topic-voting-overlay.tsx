@@ -182,7 +182,7 @@ export function TopicVotingOverlay() {
     }
     const counts = voteCounts;
     const sorted = [...candidateTopics]
-      .filter((t) => (counts[t] ?? 0) > 0)
+      .filter((topic) => (counts[topic] ?? 0) > 0)
       .sort((a, b) => (counts[b] ?? 0) - (counts[a] ?? 0));
     return new Set(sorted.slice(0, 2));
   }, [candidateTopics, voteCounts, totalVotes]);
