@@ -27,21 +27,77 @@ export function PolicyModal({
 }: Readonly<PolicyModalProps>) {
   const t = useTranslations("policies");
   const dialogRef = useRef<HTMLDivElement>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   // Focus and Escape key handling
   useEffect(() => {
     if (!isOpen) return;
 
+    if (typeof document !== "undefined") {
+      previouslyFocusedRef.current =
+        (document.activeElement as HTMLElement | null) ?? null;
+    }
+
+    if (dialogRef.current) {
+      const focusable = dialogRef.current.querySelector<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusable) {
+        focusable.focus();
+      } else {
+        dialogRef.current.focus();
+      }
+    }
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        onClose();
+        onCloseRef.current?.();
+        return;
+      }
+
+      if (e.key === "Tab" && dialogRef.current) {
+        const focusables = dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        );
+        if (focusables.length === 0) return;
+
+        const firstElement = focusables[0]!;
+        const lastElement = focusables[focusables.length - 1]!;
+
+        if (e.shiftKey) {
+          if (
+            document.activeElement === firstElement ||
+            document.activeElement === dialogRef.current
+          ) {
+            e.preventDefault();
+            lastElement.focus();
+          }
+        } else {
+          if (document.activeElement === lastElement) {
+            e.preventDefault();
+            firstElement.focus();
+          }
+        }
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      const prevElement = previouslyFocusedRef.current;
+      if (
+        prevElement &&
+        typeof prevElement.focus === "function" &&
+        typeof document !== "undefined" &&
+        document.contains(prevElement)
+      ) {
+        prevElement.focus();
+      }
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -97,7 +153,7 @@ export function PolicyModal({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t("close")}
             className="p-2 rounded-2xl border-3 border-candy-ink bg-candy-cloud hover:bg-candy-red hover:text-white transition-colors cursor-pointer shrink-0 shadow-[2px_2px_0_0_#2B2D42]"
           >
             <CloseSvg size={18} />

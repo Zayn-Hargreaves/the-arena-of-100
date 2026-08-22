@@ -6,6 +6,7 @@
     "english": "English"
   },
   "policies": {
+    "badgeLabel": "Sổ Tay Quy Tắc",
     "termsTitle": "Điều Khoản Đấu Võ",
     "termsSubtitle": "Quy tắc chính thức và tôn chỉ danh dự trong đấu trường 100 chiến binh.",
     "antiCheatTitle": "Khai Trừ Gian Lận",
@@ -36,8 +37,18 @@
     "subtitle": "Đấu Trường Trí Tuệ Sinh Tử",
     "brand": "ARENA 100",
     "brandFull": "ARENA OF 100",
-    "taglineBadge": "LỐ LĂNG • VÔ TRI",
+    "taglineBadge": "VÔ TRI • ĐẤU TRÍ",
     "onlineCount": "{count} NGƯỜI CHƠI ĐANG ONLINE",
+    "onlineCountShort": "{count} ONLINE",
+    "dailySpeedQuestions": "{count} Câu hỏi tốc độ",
+    "dailyUnlockSkins": "Mở khóa skin thẻ",
+    "feature100Players": "{count} CHIẾN BINH",
+    "featureOneWrong": "Sai 1 câu = loại",
+    "feature5Classes": "{count} HỆ PHÁI",
+    "featureUniquePassives": "Nội tại độc bản",
+    "featureCards": "THẺ BÀI",
+    "featureShieldSabotage": "Khiên & phá hoại",
+    "top100Badge": "Top {count}",
     "heroTitle": "ĐẤU TRƯỜNG VÔ TRI",
     "heroSubtitle": "Ai sai người đó bay màu!",
     "guestLogin": "GUEST LOGIN OK",
@@ -653,7 +664,13 @@
       "offline": "Mất kết nối",
       "waitingSlot": "Đang chờ đối thủ...",
       "inviteSlot": "Mời bạn bè tham chiến",
-      "playerRoster": "CHIẾN BINH SẴN SÀNG"
+      "playerRoster": "CHIẾN BINH SẴN SÀNG",
+      "slotNumber": "Vị trí {slot} / {capacity}",
+      "scaleLabel": "Quy mô",
+      "scaleValue": "{count} Chiến Binh",
+      "timeLabel": "Thời gian",
+      "timeValue": "{seconds}s / câu hỏi",
+      "online": "{count} Trực tuyến"
     },
     "roomCodeCard": {
       "label": "MÃ PHÒNG ĐẤU",
@@ -931,13 +948,16 @@
     "estimatedWait": "Ước tính: ~{time}",
     "playersInQueue": "Người đang tìm trận:",
     "playerCount": "{count} người",
-    "cancelSearch": "HỦY TÌM TRẬN"
+    "cancelSearch": "HỦY TÌM TRẬN",
+    "retry": "Thử lại"
   },
   "Professor": {
     "name": "Giáo Sư Não To",
     "supervisorTitle": "GIÁM THỊ COI THI",
     "supervisorLabel": "Bàn Giám Sát Của Giáo Sư",
     "attendanceDesk": "BÀN ĐIỂM DANH",
+    "greetingIdle": "Trò mới tới à? Mau ghi danh vào sổ điểm danh để thầy xếp phòng thi!",
+    "greetingNickname": "Biệt danh \"{nickname}\"{avatarNote} nghe chiến đấy! Sẵn sàng vào đấu trường chưa trò?",
     "instructionsLabel": "LỜI DẶN CỦA GIÁM THỊ:",
     "rulesLabel": "QUY CHẾ PHÒNG THI",
     "roastLabel": "LỜI PHÊ CỦA GIÁO SƯ:",

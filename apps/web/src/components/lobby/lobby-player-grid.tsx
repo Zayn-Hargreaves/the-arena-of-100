@@ -8,7 +8,7 @@ import { AvatarFrame } from "@/components/ui/avatar-frame";
 import { AnimatedSprite } from "@/components/ui/animated-sprite";
 import { cn } from "@/lib/utils";
 import { avatars, findAvatarBySeed, type AvatarOption } from "@/lib/avatars";
-import type { AvatarSeed } from "@arena/shared";
+import { GAME_CONFIG, type AvatarSeed } from "@arena/shared";
 
 export interface LobbyPlayer {
   id: string;
@@ -23,6 +23,7 @@ interface LobbyPlayerGridProps {
   currentUserId: string | null;
   hostId: string | null;
   emptyStateMessage?: string;
+  capacity?: number;
 }
 
 export const LobbyPlayerGrid: FC<LobbyPlayerGridProps> = ({
@@ -30,6 +31,7 @@ export const LobbyPlayerGrid: FC<LobbyPlayerGridProps> = ({
   currentUserId,
   hostId,
   emptyStateMessage,
+  capacity = GAME_CONFIG.MAX_PLAYERS,
 }) => {
   const t = useTranslations("lobby.playerGrid");
 
@@ -190,7 +192,10 @@ export const LobbyPlayerGrid: FC<LobbyPlayerGridProps> = ({
               {t("waitingSlot")}
             </p>
             <p className="font-mono text-[9px] uppercase tracking-wider font-semibold text-candy-ink/25 mt-0.5">
-              Slot {players.length + index + 1} / 100
+              {t("slotNumber", {
+                slot: players.length + index + 1,
+                capacity: capacity ?? GAME_CONFIG.MAX_PLAYERS,
+              })}
             </p>
           </div>
         </div>

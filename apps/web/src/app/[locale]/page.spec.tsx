@@ -9,13 +9,19 @@ const mockToast = vi.fn();
 const mockConnect = vi.fn();
 const mockAuthenticate = vi.fn();
 const mockJoinMatchmaking = vi.fn();
+const mockApiSendJson = vi.fn();
 
 let mockSocketStore = {
   username: null as string | null,
+  accessToken: "mock-token" as string | null,
   connect: mockConnect,
   authenticate: mockAuthenticate,
   joinMatchmaking: mockJoinMatchmaking,
 };
+
+vi.mock("@/lib/api-client", () => ({
+  apiSendJson: (...args: unknown[]) => mockApiSendJson(...args),
+}));
 
 vi.mock("@/i18n/routing", () => ({
   useRouter: () => ({
@@ -37,9 +43,14 @@ vi.mock("@/i18n/routing", () => ({
   ),
 }));
 
-vi.mock("@/stores/socket-store", () => ({
-  useSocketStore: () => mockSocketStore,
-}));
+vi.mock("@/stores/socket-store", () => {
+  const storeFn = Object.assign(() => mockSocketStore, {
+    getState: () => mockSocketStore,
+  });
+  return {
+    useSocketStore: storeFn,
+  };
+});
 
 vi.mock("@/hooks/use-toast", () => ({
   useToast: () => ({
@@ -70,8 +81,10 @@ describe("HomePage - runAuthFlow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    mockApiSendJson.mockResolvedValue({});
     mockSocketStore = {
       username: null,
+      accessToken: "mock-token",
       connect: mockConnect.mockResolvedValue(undefined),
       authenticate: mockAuthenticate.mockResolvedValue(undefined),
       joinMatchmaking: mockJoinMatchmaking,
@@ -105,6 +118,12 @@ describe("HomePage - runAuthFlow", () => {
     });
 
     expect(callOrder).toEqual(["connect", "connect", "authenticate"]);
+    expect(mockApiSendJson).toHaveBeenCalledWith(
+      "/api/v1/users/me/avatar",
+      "PATCH",
+      expect.any(Object),
+      "mock-token",
+    );
     expect(mockJoinMatchmaking).toHaveBeenCalled();
   });
 
@@ -135,8 +154,33 @@ describe("HomePage - runAuthFlow", () => {
 
     await waitFor(() => {
       expect(mockAuthenticate).toHaveBeenCalledWith("AsyncPlayer");
+      expect(mockApiSendJson).toHaveBeenCalledWith(
+        "/api/v1/users/me/avatar",
+        "PATCH",
+        expect.any(Object),
+        "mock-token",
+      );
       expect(mockJoinMatchmaking).toHaveBeenCalled();
     });
+  });
+
+  it("does not call apiSendJson when accessToken is absent", async () => {
+    mockSocketStore.accessToken = null;
+
+    render(<HomePage />);
+
+    const nicknameInput = screen.getByPlaceholderText(/nicknamePlaceholder/i);
+    fireEvent.change(nicknameInput, { target: { value: "NoTokenPlayer" } });
+
+    const form = nicknameInput.closest("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockAuthenticate).toHaveBeenCalledWith("NoTokenPlayer");
+      expect(mockJoinMatchmaking).toHaveBeenCalled();
+    });
+
+    expect(mockApiSendJson).not.toHaveBeenCalled();
   });
 
   it("shows error toast if authenticate fails and does not proceed with action", async () => {
@@ -158,6 +202,7 @@ describe("HomePage - runAuthFlow", () => {
       );
     });
 
+    expect(mockApiSendJson).not.toHaveBeenCalled();
     expect(mockJoinMatchmaking).not.toHaveBeenCalled();
   });
 
@@ -174,5 +219,6 @@ describe("HomePage - runAuthFlow", () => {
       }),
     );
     expect(mockAuthenticate).not.toHaveBeenCalled();
+    expect(mockApiSendJson).not.toHaveBeenCalled();
   });
 });

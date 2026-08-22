@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { ProfessorAvatar } from "@/components/character/professor-avatar";
 import {
   getRandomProfessorDialogue,
   type ProfessorMood,
+  type ProfessorDialogueKey,
 } from "@/components/character/professor-roast-engine";
 
 export interface LobbyProfessorBriefingProps {
@@ -16,29 +17,28 @@ export const LobbyProfessorBriefing: React.FC<LobbyProfessorBriefingProps> = ({
   playersCount,
 }) => {
   const tProf = useTranslations("Professor");
-  const locale = useLocale();
   const [mood, setMood] = useState<ProfessorMood>("teaching");
-  const [dialogue, setDialogue] = useState<string>(() =>
-    locale.startsWith("vi")
-      ? "Quy chế thi: Sai một câu là xách cặp ra khỏi phòng ngay lập tức! Rõ chưa?"
-      : "Exam rule: One wrong answer and you are ejected immediately! Understood?",
+  const [dialogueKey, setDialogueKey] = useState<ProfessorDialogueKey>(
+    "dialogues.lobby_briefing.0",
   );
 
   useEffect(() => {
     const interval = setInterval(() => {
-      const d = getRandomProfessorDialogue("lobby_briefing", locale);
+      const d = getRandomProfessorDialogue("lobby_briefing");
       setMood(d.mood);
-      setDialogue(d.text);
+      setDialogueKey(d.key);
     }, 6000);
 
     return () => clearInterval(interval);
-  }, [locale]);
+  }, []);
 
   const handlePoke = () => {
-    const d = getRandomProfessorDialogue("lobby_briefing", locale);
+    const d = getRandomProfessorDialogue("lobby_briefing");
     setMood(d.mood);
-    setDialogue(d.text);
+    setDialogueKey(d.key);
   };
+
+  const dialogue = tProf(dialogueKey);
 
   return (
     <div

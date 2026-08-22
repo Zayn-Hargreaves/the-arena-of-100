@@ -1,16 +1,13 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { useSocketStore } from "@/stores/socket-store";
 import { useRouter } from "@/i18n/routing";
 import { ZapSvg, CloseSvg } from "@/components/home/home-icons";
 import { ProfessorAvatar } from "@/components/character/professor-avatar";
 import { ProfessorDialogueBox } from "@/components/character/professor-dialogue-box";
-import {
-  getRandomProfessorDialogue,
-  useSafeLocale,
-} from "@/components/character/professor-roast-engine";
+import { getRandomProfessorDialogue } from "@/components/character/professor-roast-engine";
 
 interface FocusableElement {
   focus: (options?: FocusOptions) => void;
@@ -27,7 +24,8 @@ function isFocusableElement(element: unknown): element is FocusableElement {
 
 export function MatchmakingModal() {
   const t = useTranslations("MatchmakingModal");
-  const locale = useSafeLocale();
+  const tErrors = useTranslations("Errors");
+  const tProf = useTranslations("Professor");
   const router = useRouter();
   const {
     matchmaking,
@@ -39,13 +37,20 @@ export function MatchmakingModal() {
   } = useSocketStore();
 
   const [displaySeconds, setDisplaySeconds] = useState(0);
+  const [joinError, setJoinError] = useState<string | null>(null);
   const [professorLine, setProfessorLine] = useState(() =>
-    locale.startsWith("vi")
-      ? "Đang gom đủ 100 trò... Đừng có đứa nào trốn tiết nhé!"
-      : "Gathering 100 students... Nobody skip class while I'm not looking!",
+    tProf("dialogues.matchmaking_waiting.0"),
   );
   const dialogRef = useRef<HTMLDivElement>(null);
   const previouslyFocusedElementRef = useRef<FocusableElement | null>(null);
+  const routerRef = useRef(router);
+  routerRef.current = router;
+  const joinRoomRef = useRef(joinRoom);
+  joinRoomRef.current = joinRoom;
+  const clearMatchedRef = useRef(clearMatchmakingMatched);
+  clearMatchedRef.current = clearMatchmakingMatched;
+  const attemptedRoomCodeRef = useRef<string | null>(null);
+  const joinInFlightRef = useRef(false);
 
   const isVisible = Boolean(
     matchmaking.isQueued || matchmaking.matchedRoomCode,
@@ -159,63 +164,70 @@ export function MatchmakingModal() {
   // Dialogue ticker for Professor during matchmaking
   useEffect(() => {
     if (isMatched) {
-      setProfessorLine(
-        locale.startsWith("vi")
-          ? "Đã tìm thấy phòng thi! 100 thí sinh đã có mặt. Chuẩn bị nộp não!"
-          : "Exam room located! All 100 candidates present. Prepare your brain!",
-      );
+      setProfessorLine(tProf("dialogues.matchmaking_matched.0"));
       return undefined;
     }
     if (isVisible) {
       const interval = setInterval(() => {
-        const d = getRandomProfessorDialogue("matchmaking_waiting", locale);
-        setProfessorLine(d.text);
+        const d = getRandomProfessorDialogue("matchmaking_waiting");
+        setProfessorLine(tProf(d.key));
       }, 4000);
       return () => clearInterval(interval);
     }
     return undefined;
-  }, [isVisible, isMatched, locale]);
+  }, [isVisible, isMatched, tProf]);
+
+  const getErrorMessage = (errorKey: string | null) => {
+    if (!errorKey) return "";
+    try {
+      return tErrors(errorKey as Parameters<typeof tErrors>[0]);
+    } catch {
+      return tErrors("UNKNOWN_ERROR");
+    }
+  };
+
+  const handleJoinMatchedRoom = useCallback(
+    (targetCode: string, targetMatchId?: string | null) => {
+      if (joinInFlightRef.current) return;
+      joinInFlightRef.current = true;
+      setJoinError(null);
+      attemptedRoomCodeRef.current = targetCode;
+      const delayPromise = new Promise((resolve) => setTimeout(resolve, 500));
+      const joinPromise = joinRoomRef.current(targetCode);
+
+      return Promise.all([joinPromise, delayPromise])
+        .then(() => {
+          const resolvedMatchId =
+            targetMatchId ?? match?.id ?? room?.currentMatchId;
+
+          clearMatchedRef.current();
+          if (resolvedMatchId) {
+            routerRef.current.push(`/game/${resolvedMatchId}`);
+          } else {
+            routerRef.current.push(`/lobby/${targetCode}`);
+          }
+        })
+        .catch((err) => {
+          console.warn("Auto-joining matched room error:", err);
+          attemptedRoomCodeRef.current = null;
+          const errorCode =
+            err instanceof Error && err.message ? err.message : "UNKNOWN_ERROR";
+          setJoinError(errorCode);
+        })
+        .finally(() => {
+          joinInFlightRef.current = false;
+        });
+    },
+    [match?.id, room?.currentMatchId],
+  );
 
   // Handle match found auto-redirect
   useEffect(() => {
-    if (matchmaking.matchedRoomCode) {
-      let isCancelled = false;
-      const targetCode = matchmaking.matchedRoomCode;
-      const targetMatchId = matchmaking.matchedMatchId;
-
-      // Join room via socket to establish channel membership and fetch players
-      void joinRoom(targetCode).catch((err) => {
-        console.warn("Auto-joining matched room error:", err);
-      });
-
-      const timer = setTimeout(() => {
-        if (isCancelled) return;
-        const resolvedMatchId =
-          targetMatchId ?? match?.id ?? room?.currentMatchId;
-
-        clearMatchmakingMatched();
-        if (resolvedMatchId) {
-          router.push(`/game/${resolvedMatchId}`);
-        } else {
-          router.push(`/lobby/${targetCode}`);
-        }
-      }, 500);
-
-      return () => {
-        isCancelled = true;
-        clearTimeout(timer);
-      };
+    const targetCode = matchmaking.matchedRoomCode;
+    if (targetCode && attemptedRoomCodeRef.current !== targetCode) {
+      void handleJoinMatchedRoom(targetCode);
     }
-    return undefined;
-  }, [
-    matchmaking.matchedRoomCode,
-    matchmaking.matchedMatchId,
-    joinRoom,
-    match?.id,
-    room?.currentMatchId,
-    clearMatchmakingMatched,
-    router,
-  ]);
+  }, [matchmaking.matchedRoomCode, handleJoinMatchedRoom]);
 
   if (!isVisible) {
     return null;
@@ -271,7 +283,39 @@ export function MatchmakingModal() {
 
         {/* Content Body */}
         <div className="flex flex-col items-center text-center my-4 gap-3">
-          {isMatched ? (
+          {joinError ? (
+            <div className="flex flex-col items-center gap-3">
+              <ProfessorAvatar mood="angry_roast" size="lg" />
+              <div role="alert" aria-live="assertive">
+                <h3 className="font-display font-black text-lg text-candy-red">
+                  {getErrorMessage(joinError)}
+                </h3>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (matchmaking.matchedRoomCode) {
+                      void handleJoinMatchedRoom(matchmaking.matchedRoomCode);
+                    }
+                  }}
+                  className="px-4 py-2 bg-candy-yellow border-2 border-candy-ink rounded-xl font-display font-black text-xs uppercase shadow-[2px_2px_0_0_#2B2D42] cursor-pointer"
+                >
+                  {t("retry")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setJoinError(null);
+                    leaveMatchmaking();
+                  }}
+                  className="px-4 py-2 bg-white border-2 border-candy-ink rounded-xl font-display font-black text-xs uppercase shadow-[2px_2px_0_0_#2B2D42] cursor-pointer"
+                >
+                  {t("cancelButton")}
+                </button>
+              </div>
+            </div>
+          ) : isMatched ? (
             <div className="flex flex-col items-center gap-3 animate-bounce">
               <ProfessorAvatar mood="proud_cheer" size="lg" />
               <h3 className="font-display font-black text-2xl text-candy-ink">

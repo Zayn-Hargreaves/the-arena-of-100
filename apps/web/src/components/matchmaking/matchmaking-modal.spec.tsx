@@ -18,8 +18,9 @@ let mockSocketStore = {
     playersInQueue: 0,
     matchedRoomCode: null as string | null,
     matchedRoomId: null as string | null,
-    matchedMatchId: null as string | null,
   },
+  room: null as { currentMatchId?: string } | null,
+  match: null as { id: string } | null,
   leaveMatchmaking: mockLeaveMatchmaking,
   clearMatchmakingMatched: mockClearMatchmakingMatched,
   joinRoom: mockJoinRoom,
@@ -51,6 +52,9 @@ vi.mock("next-intl", async () => {
     playersInQueue: "Người đang tìm trận:",
     playerCount: "{count} người",
     cancelSearch: "HỦY TÌM TRẬN",
+    retry: "Thử lại",
+    ROOM_FULL: "Phòng đã đầy người chơi!",
+    UNKNOWN_ERROR: "Đã xảy ra lỗi không xác định. Vui lòng thử lại!",
   };
   return {
     ...actual,
@@ -87,8 +91,9 @@ describe("MatchmakingModal", () => {
         playersInQueue: 0,
         matchedRoomCode: null,
         matchedRoomId: null,
-        matchedMatchId: null,
       },
+      room: null,
+      match: null,
       leaveMatchmaking: mockLeaveMatchmaking,
       clearMatchmakingMatched: mockClearMatchmakingMatched,
       joinRoom: mockJoinRoom,
@@ -255,27 +260,26 @@ describe("MatchmakingModal", () => {
   it("auto redirects on match found after timer", async () => {
     vi.useFakeTimers();
     mockSocketStore.matchmaking.matchedRoomCode = "ROOM999";
-    mockSocketStore.matchmaking.matchedMatchId = null;
 
     render(<MatchmakingModal />);
 
-    act(() => {
-      vi.advanceTimersByTime(650);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
     });
 
     expect(mockClearMatchmakingMatched).toHaveBeenCalledTimes(1);
     expect(mockPush).toHaveBeenCalledWith("/lobby/ROOM999");
   });
 
-  it("auto redirects directly to /game when matchedMatchId is present", async () => {
+  it("auto redirects directly to /game when match is present", async () => {
     vi.useFakeTimers();
     mockSocketStore.matchmaking.matchedRoomCode = "ROOM999";
-    mockSocketStore.matchmaking.matchedMatchId = "match_123";
+    mockSocketStore.match = { id: "match_123" };
 
     render(<MatchmakingModal />);
 
-    act(() => {
-      vi.advanceTimersByTime(650);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
     });
 
     expect(mockClearMatchmakingMatched).toHaveBeenCalledTimes(1);
@@ -369,5 +373,43 @@ describe("MatchmakingModal", () => {
 
     render(<MatchmakingModal />);
     expect(screen.getByText("12 người")).toBeInTheDocument();
+  });
+
+  it("handles join room failure, displays translated error, and allows retry", async () => {
+    vi.useFakeTimers();
+    mockJoinRoom.mockRejectedValueOnce(new Error("ROOM_FULL"));
+    mockSocketStore.matchmaking.matchedRoomCode = "ROOM_FAIL";
+
+    render(<MatchmakingModal />);
+
+    // Advance past delay
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
+    });
+
+    expect(screen.getByText("Phòng đã đầy người chơi!")).toBeInTheDocument();
+    const retryButton = screen.getByRole("button", { name: "Thử lại" });
+    expect(retryButton).toBeInTheDocument();
+
+    // Setup pending retry join promise to test concurrent guard
+    let resolveRetry!: (value?: unknown) => void;
+    const pendingRetryPromise = new Promise((resolve) => {
+      resolveRetry = resolve;
+    });
+    mockJoinRoom.mockReturnValueOnce(pendingRetryPromise);
+
+    fireEvent.click(retryButton);
+    fireEvent.click(retryButton);
+
+    expect(mockJoinRoom).toHaveBeenCalledTimes(2);
+
+    resolveRetry();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
+    });
+
+    expect(mockClearMatchmakingMatched).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith("/lobby/ROOM_FAIL");
   });
 });

@@ -3,6 +3,7 @@
 import React from "react";
 import { Link } from "@/i18n/routing";
 import { useTranslations } from "next-intl";
+import { GAME_CONFIG, CLASS_IDS } from "@arena/shared";
 import {
   FlameSvg,
   GamepadSvg,
@@ -46,10 +47,10 @@ export function GameFeaturesBanner() {
               <FlameSvg size={20} />
             </div>
             <h4 className="font-display font-black text-xs text-candy-ink uppercase">
-              100 PLAYERS
+              {t("feature100Players", { count: GAME_CONFIG.MAX_PLAYERS })}
             </h4>
             <p className="font-body text-[10px] text-candy-ink/70 font-semibold mt-0.5">
-              1 wrong = out
+              {t("featureOneWrong")}
             </p>
           </div>
 
@@ -58,10 +59,10 @@ export function GameFeaturesBanner() {
               <ShieldCheckSvg size={20} />
             </div>
             <h4 className="font-display font-black text-xs text-candy-ink uppercase">
-              5 CLASSES
+              {t("feature5Classes", { count: CLASS_IDS.length })}
             </h4>
             <p className="font-body text-[10px] text-candy-ink/70 font-semibold mt-0.5">
-              Unique passives
+              {t("featureUniquePassives")}
             </p>
           </div>
 
@@ -70,10 +71,10 @@ export function GameFeaturesBanner() {
               <GamepadSvg size={20} />
             </div>
             <h4 className="font-display font-black text-xs text-candy-ink uppercase">
-              CARDS
+              {t("featureCards")}
             </h4>
             <p className="font-body text-[10px] text-candy-ink/70 font-semibold mt-0.5">
-              Shield & sabotage
+              {t("featureShieldSabotage")}
             </p>
           </div>
         </div>
@@ -95,7 +96,7 @@ export function GameFeaturesBanner() {
                   {t("rankings")}
                 </span>
                 <span className="bg-candy-ink text-white font-mono text-[10px] px-2 py-0.5 rounded-full font-bold uppercase">
-                  Top 100
+                  {t("top100Badge", { count: 100 })}
                 </span>
               </div>
               <p className="font-body text-xs text-candy-ink/80 font-semibold mt-0.5">

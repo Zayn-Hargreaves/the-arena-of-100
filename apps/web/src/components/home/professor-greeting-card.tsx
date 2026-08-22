@@ -1,12 +1,13 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { ProfessorAvatar } from "@/components/character/professor-avatar";
 import { ProfessorDialogueBox } from "@/components/character/professor-dialogue-box";
 import {
   getRandomProfessorDialogue,
   type ProfessorMood,
+  type ProfessorDialogueKey,
 } from "@/components/character/professor-roast-engine";
 
 export interface ProfessorGreetingCardProps {
@@ -20,42 +21,36 @@ export const ProfessorGreetingCard: React.FC<ProfessorGreetingCardProps> = ({
 }) => {
   const t = useTranslations("HomePage");
   const tProf = useTranslations("Professor");
-  const locale = useLocale();
   const [mood, setMood] = useState<ProfessorMood>("idle");
-  const [dialogue, setDialogue] = useState<string>(() =>
-    locale.startsWith("vi")
-      ? "Trò mới tới à? Mau ghi danh vào sổ điểm danh để thầy xếp phòng thi!"
-      : "New student? Quick, sign into the attendance book so I can assign your exam hall!",
+  const [dialogueKey, setDialogueKey] = useState<ProfessorDialogueKey | null>(
+    null,
   );
 
   // Update dialogue and mood when nickname changes
   useEffect(() => {
     if (!nickname.trim()) {
       setMood("idle");
-      setDialogue(
-        locale.startsWith("vi")
-          ? "Trò mới tới à? Mau ghi danh vào sổ điểm danh để thầy xếp phòng thi!"
-          : "New student? Quick, sign into the attendance book so I can assign your exam hall!",
-      );
+      setDialogueKey(null);
     } else {
       setMood("proud_cheer");
-      const avatarNote = avatarName ? ` (${avatarName})` : "";
-      setDialogue(
-        locale.startsWith("vi")
-          ? `Biệt danh "${nickname}"${avatarNote} nghe chiến đấy! Sẵn sàng vào đấu trường chưa trò?`
-          : `Fierce nickname "${nickname}"${avatarNote}! Are you ready to enter the arena?`,
-      );
+      setDialogueKey(null);
     }
-  }, [nickname, avatarName, locale]);
+  }, [nickname, avatarName]);
 
   const handlePoke = () => {
     const d = getRandomProfessorDialogue(
       nickname.trim() ? "home_nickname_typed" : "home_greeting",
-      locale,
     );
     setMood(d.mood);
-    setDialogue(d.text);
+    setDialogueKey(d.key);
   };
+
+  const avatarNote = avatarName ? ` (${avatarName})` : "";
+  const dialogue = dialogueKey
+    ? tProf(dialogueKey)
+    : !nickname.trim()
+      ? tProf("greetingIdle")
+      : tProf("greetingNickname", { nickname, avatarNote });
 
   return (
     <aside

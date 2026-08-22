@@ -28,7 +28,6 @@ import {
 import { avatars, type AvatarOption } from "@/lib/avatars";
 import { apiSendJson } from "@/lib/api-client";
 import { LanguageToggle } from "@/components/ui/language-toggle";
-import { PolicyModal, type PolicyType } from "@/components/home/policy-modal";
 import { DailyModeCard } from "@/components/home/daily-mode-card";
 import { GameFeaturesBanner } from "@/components/home/game-features-banner";
 import { ProfessorGreetingCard } from "@/components/home/professor-greeting-card";
@@ -48,7 +47,6 @@ export default function HomePage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [avatarIndex, setAvatarIndex] = useState(0);
   const [squash, setSquash] = useState(false);
-  const [activePolicy, setActivePolicy] = useState<PolicyType | null>(null);
 
   const confettiCanvasRef = useRef<HTMLCanvasElement>(null);
   const confettiInstanceRef = useRef<CreateTypes | null>(null);
@@ -134,7 +132,26 @@ export default function HomePage() {
     return t("alerts.authFailed");
   };
 
-  const runAuthFlow = async (action: () => void | Promise<void>) => {
+  const syncAvatarOnServer = async (opt: AvatarOption) => {
+    const token = useSocketStore.getState().accessToken;
+    if (token) {
+      try {
+        await apiSendJson(
+          "/api/v1/users/me/avatar",
+          "PATCH",
+          { avatar: opt.seed },
+          token,
+        );
+      } catch (err) {
+        console.error("Failed to sync avatar:", err);
+      }
+    }
+  };
+
+  const runAuthFlow = async (
+    action: () => void | Promise<void>,
+    activeAvatar?: AvatarOption,
+  ) => {
     if (isSubmitting) return;
 
     setIsSubmitting(true);
@@ -152,6 +169,8 @@ export default function HomePage() {
       }
 
       if (authenticated) {
+        const avatarToSync = activeAvatar ?? avatars[avatarIndex];
+        await syncAvatarOnServer(avatarToSync);
         try {
           await action();
         } catch (err) {
@@ -179,16 +198,6 @@ export default function HomePage() {
       );
       localStorage.setItem("petSeed", "");
       window.dispatchEvent(new Event("storage"));
-
-      const token = useSocketStore.getState().accessToken;
-      if (token) {
-        void apiSendJson(
-          "/api/v1/users/me/avatar",
-          "PATCH",
-          { avatar: opt.seed },
-          token,
-        ).catch(() => {});
-      }
     } catch {
       // Ignore localStorage errors
     }
@@ -245,7 +254,7 @@ export default function HomePage() {
 
     void runAuthFlow(() => {
       joinMatchmaking();
-    });
+    }, activeAvatar);
   };
 
   const handleCreateRoom = () => {
@@ -258,7 +267,7 @@ export default function HomePage() {
     saveAvatarToLocalStorage(nickname.trim(), activeAvatar);
     void runAuthFlow(() => {
       router.push("/room/create");
-    });
+    }, activeAvatar);
   };
 
   const handleJoinRoom = () => {
@@ -275,7 +284,7 @@ export default function HomePage() {
     saveAvatarToLocalStorage(nickname.trim(), activeAvatar);
     void runAuthFlow(() => {
       router.push(`/lobby/${roomCode.trim().toUpperCase()}`);
-    });
+    }, activeAvatar);
   };
 
   const cycleAvatar = (direction: number) => {
@@ -358,9 +367,11 @@ export default function HomePage() {
               </span>
               <span className="font-display text-[10px] sm:text-xs md:text-sm tracking-tight text-candy-ink uppercase font-black">
                 <span className="hidden md:inline">
-                  {t("onlineCount", { count: "12,408" })}
+                  {t("onlineCount", { count: 12408 })}
                 </span>
-                <span className="md:hidden">12.4k Online</span>
+                <span className="md:hidden">
+                  {t("onlineCountShort", { count: "12.4k" })}
+                </span>
               </span>
             </div>
 
@@ -562,31 +573,21 @@ export default function HomePage() {
           </div>
 
           <div className="flex items-center gap-3 flex-wrap justify-center">
-            <button
-              type="button"
-              onClick={() => setActivePolicy("terms")}
+            <Link
+              href="/terms"
               className="font-mono text-xs font-bold text-slate-200 bg-white/10 hover:bg-candy-yellow hover:text-candy-ink hover:border-candy-ink border border-white/20 rounded-xl px-4 py-2 shadow-[2px_2px_0_0_rgba(0,0,0,0.3)] transition-all cursor-pointer"
             >
               {t("terms")}
-            </button>
-            <button
-              type="button"
-              onClick={() => setActivePolicy("antiCheat")}
+            </Link>
+            <Link
+              href="/rules"
               className="font-mono text-xs font-bold text-slate-200 bg-white/10 hover:bg-candy-pink hover:text-white hover:border-candy-ink border border-white/20 rounded-xl px-4 py-2 shadow-[2px_2px_0_0_rgba(0,0,0,0.3)] transition-all cursor-pointer"
             >
               {t("antiCheat")}
-            </button>
+            </Link>
           </div>
         </div>
       </footer>
-
-      {/* Terms of Battle / Anti-Cheat Policy Modal */}
-      <PolicyModal
-        isOpen={activePolicy !== null}
-        type={activePolicy ?? "terms"}
-        onClose={() => setActivePolicy(null)}
-        onSelectType={(type) => setActivePolicy(type)}
-      />
 
       {/* Matchmaking Queue Modal */}
       <MatchmakingModal />

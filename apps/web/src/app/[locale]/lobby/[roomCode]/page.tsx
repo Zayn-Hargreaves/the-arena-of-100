@@ -7,7 +7,7 @@ import { Users, AlertCircle, Eye, Trophy } from "lucide-react";
 import { useSocketStore } from "@/stores/socket-store";
 import { useRouter } from "@/i18n/routing";
 import { useToast } from "@/hooks/use-toast";
-import { RoomStatus } from "@arena/shared";
+import { RoomStatus, GAME_CONFIG } from "@arena/shared";
 import { RoomCodeCard } from "@/components/atoms/room-code-card";
 import {
   LobbyHeader,
@@ -332,7 +332,7 @@ export default function LobbyPage({ params }: Readonly<LobbyPageProps>) {
                   {t("opponentsCount")}
                 </span>
                 <span className="font-display font-black text-lg px-2.5 py-0.5 rounded-xl bg-candy-pink text-white border-[1.5px] border-candy-ink shadow-[1px_1px_0_0_#2B2D42]">
-                  {playersList.length} / 100
+                  {playersList.length} / {GAME_CONFIG.MAX_PLAYERS}
                 </span>
               </div>
 
@@ -378,18 +378,22 @@ export default function LobbyPage({ params }: Readonly<LobbyPageProps>) {
               <div className="grid grid-cols-2 gap-2 text-[11px]">
                 <div className="p-2.5 rounded-xl bg-candy-cloud/50 border-[1.5px] border-candy-ink/30 space-y-0.5">
                   <span className="text-candy-ink/60 font-semibold block uppercase text-[9px] font-mono">
-                    Quy mô
+                    {tPlayerGrid("scaleLabel")}
                   </span>
                   <span className="font-display font-black text-candy-ink">
-                    100 Chiến Binh
+                    {tPlayerGrid("scaleValue", {
+                      count: GAME_CONFIG.MAX_PLAYERS,
+                    })}
                   </span>
                 </div>
                 <div className="p-2.5 rounded-xl bg-candy-cloud/50 border-[1.5px] border-candy-ink/30 space-y-0.5">
                   <span className="text-candy-ink/60 font-semibold block uppercase text-[9px] font-mono">
-                    Thời gian
+                    {tPlayerGrid("timeLabel")}
                   </span>
                   <span className="font-display font-black text-candy-ink">
-                    10s / câu hỏi
+                    {tPlayerGrid("timeValue", {
+                      seconds: Math.round(GAME_CONFIG.ROUND_DURATION_MS / 1000),
+                    })}
                   </span>
                 </div>
               </div>
@@ -422,7 +426,9 @@ export default function LobbyPage({ params }: Readonly<LobbyPageProps>) {
                 {t("opponentsSection")}
               </h2>
               <span className="text-xs font-mono font-bold text-candy-ink/60 bg-white px-2.5 py-1 rounded-xl border-[2px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42]">
-                {playersList.length} Online
+                {tPlayerGrid("online", {
+                  count: playersList.filter((p) => p.isOnline).length,
+                })}
               </span>
             </div>
 
@@ -431,6 +437,7 @@ export default function LobbyPage({ params }: Readonly<LobbyPageProps>) {
               currentUserId={userId}
               hostId={roomHostId}
               emptyStateMessage={tPlayerGrid("empty")}
+              capacity={GAME_CONFIG.MAX_PLAYERS}
             />
           </div>
         </div>

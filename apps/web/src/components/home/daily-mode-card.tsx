@@ -55,11 +55,12 @@ export function DailyModeCard() {
         {/* Feature Pills */}
         <div className="flex flex-wrap gap-2 mt-4">
           <span className="inline-flex items-center gap-1.5 bg-candy-cloud text-candy-ink font-mono text-[10px] font-bold px-2.5 py-1 rounded-lg border border-candy-ink/20">
-            <ZapSvg size={13} />5 Speed Questions
+            <ZapSvg size={13} />
+            {t("dailySpeedQuestions", { count: 5 })}
           </span>
           <span className="inline-flex items-center gap-1.5 bg-candy-cloud text-candy-ink font-mono text-[10px] font-bold px-2.5 py-1 rounded-lg border border-candy-ink/20">
             <SparkleSmallSvg size={12} className="text-candy-pink" />
-            Unlock Card Skins
+            {t("dailyUnlockSkins")}
           </span>
         </div>
       </div>
