@@ -46,6 +46,7 @@ import {
 import {
   applyClearedTerminationState,
   emitIfConnected,
+  hasSecondChancePermission,
   requireSocket,
   waitForSocketAck,
 } from "./socket-store.helpers";
@@ -1310,27 +1311,13 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       (lastAnswerResult?.matchId === matchId &&
         lastAnswerResult.roundNo === roundNo);
 
-    const currentUserId = userId;
-    const hasSecondChancePermission = currentUserId
-      ? Boolean(
-          cardState.activeRoundEffects?.some(
-            (e) =>
-              (e.playedByPlayerId === currentUserId ||
-                e.targetPlayerIds?.includes(currentUserId)) &&
-              e.effect.kind === "SECOND_CHANCE" &&
-              (e.targetRoundNo ?? e.roundNo) === roundNo,
-          ) ||
-          ((cardState.lastResolvedEffect?.playedByPlayerId === currentUserId ||
-            cardState.lastResolvedEffect?.targetPlayerIds?.includes(
-              currentUserId,
-            )) &&
-            cardState.lastResolvedEffect?.effect.kind === "SECOND_CHANCE" &&
-            (cardState.lastResolvedEffect.targetRoundNo ??
-              cardState.lastResolvedEffect.roundNo) === roundNo),
-        )
-      : false;
+    const hasSecondChance = hasSecondChancePermission(
+      cardState,
+      userId,
+      roundNo,
+    );
 
-    if (hasExistingSubmission && !hasSecondChancePermission) {
+    if (hasExistingSubmission && !hasSecondChance) {
       return null;
     }
 
@@ -1430,3 +1417,5 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     }, TIMEOUT_MS);
   },
 }));
+
+export { hasSecondChancePermission } from "./socket-store.helpers";

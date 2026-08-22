@@ -390,6 +390,49 @@ describe("GamePage — derived UI flags", () => {
     );
   });
 
+  it("uses effect.remainingMs as fallback timing when expiresAtServer is absent", async () => {
+    const fakeEffectWithoutExpiry = {
+      matchId: "m1",
+      roundNo: 2,
+      targetRoundNo: 2,
+      cardId: "TN-5",
+      offerSeqNo: 1,
+      playedByPlayerId: "other",
+      targetPlayerIds: ["me"],
+      effect: { kind: "OPTION_FAKE", indexes: [0] },
+      resolution: "TEMPORARY",
+      serverTimestamp: 1000,
+      expiresAtServer: null,
+      remainingMs: 2500,
+    };
+    h.state = baseState({
+      match: matchFixture({ currentRoundNo: 2 }),
+      cardState: {
+        classId: "ATTACK",
+        hand: [],
+        playedCardIds: [],
+        offerSeqNoByCardId: {},
+        currentOffer: null,
+        lastResolvedEffect: null,
+        pendingNextRoundEffects: [],
+        activeRoundEffects: [fakeEffectWithoutExpiry],
+      },
+    });
+    await renderPage("m1");
+    expect(screen.getByTestId("answer-select").dataset.fakeFlags).toBe(
+      JSON.stringify([0]),
+    );
+
+    // Advance timer past remainingMs (2500ms)
+    await act(async () => {
+      vi.advanceTimersByTime(2600);
+    });
+
+    expect(screen.getByTestId("answer-select").dataset.fakeFlags).toBe(
+      JSON.stringify([]),
+    );
+  });
+
   it("shows the eliminated overlay when isEliminated is set", async () => {
     h.state = baseState({ match: matchFixture(), isEliminated: true });
     await renderPage("m1");

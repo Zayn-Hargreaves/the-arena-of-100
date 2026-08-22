@@ -10,6 +10,7 @@ import {
 } from "@/components/character/professor-roast-engine";
 
 import { MiniGlyph } from "@/components/ui/mini-glyph";
+import { useSocketStore } from "@/stores/socket-store";
 
 export interface EliminatedOverlayProps {
   /**
@@ -48,6 +49,10 @@ export const EliminatedOverlay: React.FC<EliminatedOverlayProps> = ({
   };
   const reasonText = reason ? REASON_TEXT[reason] : null;
 
+  const match = useSocketStore((s) => s.match);
+  const matchId = match?.id;
+  const roundNo = match?.currentRoundNo;
+
   const professorRoast = useMemo(() => {
     const context: DialogueContext =
       reason === "WRONG_ANSWER"
@@ -55,15 +60,17 @@ export const EliminatedOverlay: React.FC<EliminatedOverlayProps> = ({
         : reason === "TIMEOUT"
           ? "game_eliminated_timeout"
           : "game_eliminated";
-    const d = getDeterministicProfessorDialogue(
-      context,
-      reason ?? "eliminated",
-    );
+    const seed = `${reason ?? "eliminated"}-${matchId ?? "match"}-${roundNo ?? 0}`;
+    const d = getDeterministicProfessorDialogue(context, seed);
     return tProf(d.key);
-  }, [reason, tProf]);
+  }, [reason, matchId, roundNo, tProf]);
 
   const dialogRef = React.useRef<HTMLDivElement>(null);
   const previousActiveElement = React.useRef<HTMLElement | null>(null);
+  const onSpectateRef = React.useRef(onSpectate);
+  onSpectateRef.current = onSpectate;
+  const onLeaveRef = React.useRef(onLeave);
+  onLeaveRef.current = onLeave;
 
   React.useEffect(() => {
     previousActiveElement.current =
@@ -80,6 +87,16 @@ export const EliminatedOverlay: React.FC<EliminatedOverlayProps> = ({
     }
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (onSpectateRef.current) {
+          onSpectateRef.current();
+        } else if (onLeaveRef.current) {
+          onLeaveRef.current();
+        }
+        return;
+      }
+
       if (e.key !== "Tab" || !dialogRef.current) return;
 
       const focusable = Array.from(
@@ -88,8 +105,6 @@ export const EliminatedOverlay: React.FC<EliminatedOverlayProps> = ({
         ),
       );
       if (focusable.length === 0) {
-        e.preventDefault();
-        dialogRef.current.focus();
         return;
       }
 

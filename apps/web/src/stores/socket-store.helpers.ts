@@ -1,6 +1,11 @@
-import { ClientEvent, ServerEvent, type ErrorPayload } from "@arena/shared";
+import {
+  ClientEvent,
+  ServerEvent,
+  type ErrorPayload,
+  type CardEffectEvent,
+} from "@arena/shared";
 import type { Socket } from "socket.io-client";
-import type { SocketState } from "./socket-store.types";
+import type { SocketState, CardState } from "./socket-store.types";
 
 export const SOCKET_NOT_CONNECTED_MESSAGE = "Socket not connected";
 
@@ -92,4 +97,29 @@ export function waitForSocketAck<TResult, TSuccess = unknown>(options: {
     socket.on(successEvent, handleSuccess);
     socket.on(ServerEvent.ERROR, handleError);
   });
+}
+
+export function hasSecondChancePermission(
+  cardState:
+    | Pick<CardState, "activeRoundEffects" | "lastResolvedEffect">
+    | null
+    | undefined,
+  userId: string | null | undefined,
+  roundNo: number,
+): boolean {
+  if (!userId || !cardState) return false;
+
+  const matchesPlayer = (e: CardEffectEvent) =>
+    (e.playedByPlayerId === userId || e.targetPlayerIds?.includes(userId)) &&
+    e.effect.kind === "SECOND_CHANCE" &&
+    (e.targetRoundNo ?? e.roundNo) === roundNo;
+
+  const hasInActive = Boolean(
+    cardState.activeRoundEffects?.some(matchesPlayer),
+  );
+  const hasInLastResolved = Boolean(
+    cardState.lastResolvedEffect && matchesPlayer(cardState.lastResolvedEffect),
+  );
+
+  return hasInActive || hasInLastResolved;
 }

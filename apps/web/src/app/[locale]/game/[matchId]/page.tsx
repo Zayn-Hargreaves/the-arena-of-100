@@ -25,6 +25,7 @@ import {
 import { ProfessorHudWidget } from "@/components/character/professor-hud-widget";
 
 import { useSocketStore } from "@/stores/socket-store";
+import { hasSecondChancePermission } from "@/stores/socket-store.helpers";
 import { useRouter } from "@/i18n/routing";
 import { useGameRoundState } from "@/hooks/use-game-round-state";
 import { useGamePageLifecycle } from "@/hooks/use-game-page-lifecycle";
@@ -38,6 +39,7 @@ interface TimedEffectLike {
   offerSeqNo?: number;
   sourceSeqNo?: number;
   expiresAtServer?: number | null;
+  remainingMs?: number | null;
   effect?: {
     kind: string;
     durationMs?: number;
@@ -60,7 +62,7 @@ function useTimedEffectFlag(
 
   useEffect(() => {
     if (effect) {
-      const fallback = fallbackDuration ?? 0;
+      const fallback = effect.remainingMs ?? fallbackDuration ?? 0;
       const remaining =
         effect.expiresAtServer != null
           ? Math.max(0, effect.expiresAtServer - Date.now())
@@ -76,7 +78,13 @@ function useTimedEffectFlag(
       setActive(false);
       return undefined;
     }
-  }, [currentRoundNo, sourceSeqNo, effect?.expiresAtServer, fallbackDuration]);
+  }, [
+    currentRoundNo,
+    sourceSeqNo,
+    effect?.expiresAtServer,
+    effect?.remainingMs,
+    fallbackDuration,
+  ]);
 
   return active;
 }
@@ -143,15 +151,9 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
   const activeEffect = cardState.lastResolvedEffect;
   const currentRoundNo = match?.currentRoundNo ?? 0;
 
-  const hasSecondChance = Boolean(
-    userId &&
-    (myRoundEffects.some(
-      (e) => e.playedByPlayerId === userId && e.effect.kind === "SECOND_CHANCE",
-    ) ||
-      (activeEffect?.playedByPlayerId === userId &&
-        activeEffect?.effect.kind === "SECOND_CHANCE" &&
-        (activeEffect.targetRoundNo ?? activeEffect.roundNo) ===
-          currentRoundNo)),
+  const hasSecondChance = useMemo(
+    () => hasSecondChancePermission(cardState, userId, currentRoundNo),
+    [cardState, userId, currentRoundNo],
   );
 
   const handleSubmitAnswer = useCallback(
