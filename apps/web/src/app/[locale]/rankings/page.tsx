@@ -377,11 +377,13 @@ export default function RankingsPage() {
                       <div
                         role="table"
                         aria-label={t("tableTitle")}
+                        aria-rowcount={remaining.length + 1}
                         className="w-full text-left min-w-[640px]"
                       >
                         {/* Virtualized Header */}
                         <div
                           role="row"
+                          aria-rowindex={1}
                           className="flex border-b-[3px] border-candy-ink bg-candy-mint font-display font-black text-xs uppercase text-candy-ink tracking-wider sticky top-0 z-10"
                         >
                           <div
@@ -438,7 +440,7 @@ export default function RankingsPage() {
                                 <div
                                   key={virtualRow.key}
                                   role="row"
-                                  aria-rowindex={virtualRow.index + 4}
+                                  aria-rowindex={virtualRow.index + 2}
                                   className="absolute left-0 top-0 w-full border-b-[2px] border-candy-ink bg-candy-yellow/10 px-4 py-5 text-xs font-mono font-black text-candy-ink/70"
                                   style={{
                                     transform: `translateY(${virtualRow.start}px)`,
@@ -459,7 +461,7 @@ export default function RankingsPage() {
                               <div
                                 key={virtualRow.key}
                                 role="row"
-                                aria-rowindex={virtualRow.index + 4}
+                                aria-rowindex={virtualRow.index + 2}
                                 className="absolute left-0 top-0 w-full flex items-center hover:bg-candy-yellow/15 transition-colors duration-150 border-b-[2px] border-candy-ink bg-candy-cloud"
                                 style={{
                                   transform: `translateY(${virtualRow.start}px)`,

@@ -906,16 +906,38 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       userId: auth.userId,
       username: auth.username,
       userRole: auth.userRole,
-      isAuthenticated: true,
+      isAuthenticated: false,
     });
 
     const socket = get().socket;
     if (socket?.connected) {
+      const AUTH_TIMEOUT_MS = 5000;
+      const ack = waitForSocketAck<void>({
+        socket,
+        successEvent: ServerEvent.AUTHENTICATED,
+        timeoutMs: AUTH_TIMEOUT_MS,
+        timeoutMessage: "Authentication timed out",
+        mapSuccess: () => undefined,
+        shouldRejectOnError: (data) =>
+          data.code === ErrorCode.INVALID_TOKEN ||
+          data.code === ErrorCode.UNAUTHORIZED,
+        getErrorMessage: (data) => data.message,
+      });
+
       socket.emit(ClientEvent.AUTHENTICATE, { token: auth.accessToken });
+      try {
+        await ack;
+        if (get().socket === socket) {
+          set({ isAuthenticated: true });
+        }
+      } catch (err) {
+        if (get().socket === socket) {
+          socket.disconnect();
+        }
+        throw err;
+      }
     } else {
-      await get()
-        .connect()
-        .catch(() => {});
+      await get().connect();
     }
   },
 

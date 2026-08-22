@@ -4,22 +4,15 @@ import {
   classWinrateSchema,
   classStatsSchema,
   classStatsResponseSchema,
-  rankTierSchema,
+  userSummarySchema,
   type ClassWinrate,
   type ClassStats,
   type ClassStatsResponse,
   type RankTier,
+  type UserSummary,
 } from "@arena/shared";
 
-export const userSummarySchema = z.object({
-  id: z.string(),
-  username: z.string(),
-  avatar: z.string(),
-  role: z.enum(["GUEST", "ADMIN"]),
-  elo: z.number().int().nonnegative().default(1200),
-  rankTier: rankTierSchema.default("SILVER"),
-  createdAt: z.string().optional(),
-});
+export { userSummarySchema, type UserSummary };
 
 export const statsSchema = z.object({
   matchesPlayed: z.number().int().nonnegative(),
@@ -37,7 +30,6 @@ export const statsResponseSchema = z.object({
   stats: statsSchema,
 });
 
-export type UserSummary = z.infer<typeof userSummarySchema>;
 export type Stats = z.infer<typeof statsSchema>;
 export type StatsResponse = z.infer<typeof statsResponseSchema>;
 

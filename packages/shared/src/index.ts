@@ -35,6 +35,9 @@ export {
   canonicalSerialize,
 } from "./cards.sampling-vector-helpers";
 
+// User summary contracts
+export * from "./user";
+
 // Class stats — profile stats contracts (class winrate + streak +
 // cards played). Shared between `@arena/api` (DTO + Zod parser)
 // and `@arena/web` (useClassStats hook + profile page).

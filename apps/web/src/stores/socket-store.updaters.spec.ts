@@ -11,7 +11,7 @@ import {
   type ClassId,
   type CardEffectEvent,
 } from "@arena/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   applyAnswerResultState,
   applyAuthenticatedState,
@@ -143,10 +143,10 @@ function makeState(overrides: Partial<SocketState> = {}): SocketState {
     eliminationReason: null,
     roomTerminated: false,
     roomTerminationMessage: null,
-    connect: () => Promise.resolve(),
+    connect: vi.fn(() => Promise.resolve()),
     disconnect: () => {},
     authenticate: () => Promise.resolve(),
-    updateAuth: () => Promise.resolve(),
+    updateAuth: vi.fn(() => Promise.resolve()),
     refreshAccessToken: () => Promise.resolve(null),
     createRoom: () => Promise.resolve("ROOM"),
     joinRoom: () => Promise.resolve(),

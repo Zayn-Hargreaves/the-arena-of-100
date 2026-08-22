@@ -183,7 +183,7 @@ function StatsSection({
           <div className="mt-3 font-display font-black text-3xl md:text-4xl text-candy-blue tracking-tight">
             <StatValue
               isLoading={statsQuery.isLoading}
-              value={profile?.stats.matchesPlayed ?? 0}
+              value={format.number(profile?.stats.matchesPlayed ?? 0)}
             />
           </div>
         </div>
@@ -200,7 +200,7 @@ function StatsSection({
           <div className="mt-3 font-display font-black text-3xl md:text-4xl text-candy-ink tracking-tight">
             <StatValue
               isLoading={statsQuery.isLoading}
-              value={profile?.stats.wins ?? 0}
+              value={format.number(profile?.stats.wins ?? 0)}
             />
           </div>
         </div>
