@@ -436,11 +436,10 @@ export function applyRoundEndedState(
         roundEndTime: null,
       };
 
-  const selfEliminated = computeIsEliminated(
-    state.userId,
-    updatedMatch,
-    state.isEliminated,
-  );
+  const selfEliminated =
+    state.userId && data.eliminatedPlayerIds?.includes(state.userId)
+      ? true
+      : computeIsEliminated(state.userId, updatedMatch, state.isEliminated);
 
   return {
     match: updatedMatch,

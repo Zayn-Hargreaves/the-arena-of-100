@@ -6,7 +6,9 @@ import {
   MatchStatus,
   type SnapshotPayload,
   type VoteBanTopicPayload,
+  type CardEffectEvent,
 } from "@arena/shared";
+import { INITIAL_CARD_STATE } from "./socket-store.types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const waitForSocketAckMock = vi.hoisted(() => vi.fn());
@@ -410,6 +412,49 @@ describe("socket-store connect heartbeat ownership", () => {
       ClientEvent.SUBMIT_ANSWER,
       expect.objectContaining({ submissionId }),
     );
+  });
+
+  it("rejects duplicate submission and does not emit when SECOND_CHANCE targetRoundNo does not match submission round", () => {
+    const emit = vi.fn();
+    const scEffect: CardEffectEvent = {
+      matchId: "m1",
+      roundNo: 1,
+      targetRoundNo: 2,
+      cardId: "TN-6",
+      offerSeqNo: 1,
+      playedByPlayerId: "p1",
+      targetPlayerIds: ["p1"],
+      effect: { kind: "SECOND_CHANCE" },
+      resolution: "MUTATION",
+      serverTimestamp: 1000,
+      expiresAtServer: null,
+      remainingMs: null,
+    };
+    useSocketStore.setState({
+      userId: "p1",
+      socket: {
+        connected: true,
+        emit,
+      } as unknown as ReturnType<typeof useSocketStore.getState>["socket"],
+      lastAnswerResult: {
+        matchId: "m1",
+        roundNo: 1,
+        submissionId: "s1",
+        isCorrect: false,
+        responseTimeMs: 1000,
+      },
+      pendingAnswer: null,
+      cardState: {
+        ...INITIAL_CARD_STATE,
+        activeRoundEffects: [scEffect],
+        lastResolvedEffect: scEffect,
+      },
+    });
+
+    const submissionId = useSocketStore.getState().submitAnswer("m1", 1, "B");
+    expect(submissionId).toBeNull();
+    expect(emit).not.toHaveBeenCalled();
+    expect(useSocketStore.getState().pendingAnswer).toBeNull();
   });
 
   it("optimistically hydrates SNAPSHOT UI while preserving lastSeenSeqNo for pending delta", async () => {

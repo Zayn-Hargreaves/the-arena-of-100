@@ -319,6 +319,77 @@ describe("GamePage — derived UI flags", () => {
     );
   });
 
+  it("does not restart effect timer when re-rendered with a new effect object instance having the same identity", async () => {
+    const fakeEffect1 = {
+      matchId: "m1",
+      roundNo: 2,
+      targetRoundNo: 2,
+      playedByPlayerId: "other",
+      targetPlayerIds: ["me"],
+      effect: { kind: "OPTION_FAKE", indexes: [1, 2], durationMs: 3000 },
+      resolution: "TEMPORARY",
+      serverTimestamp: 1000,
+      expiresAtServer: Date.now() + 3000,
+      remainingMs: 3000,
+    };
+    const params = Promise.resolve({ matchId: "m1", locale: "en" });
+    h.state = baseState({
+      match: matchFixture({ currentRoundNo: 2 }),
+      cardState: {
+        classId: "ATTACK",
+        hand: [],
+        playedCardIds: [],
+        offerSeqNoByCardId: {},
+        currentOffer: null,
+        lastResolvedEffect: null,
+        pendingNextRoundEffects: [],
+        activeRoundEffects: [fakeEffect1],
+      },
+    });
+    const utils = await renderPage("m1", params);
+    expect(screen.getByTestId("answer-select").dataset.fakeFlags).toBe(
+      JSON.stringify([1, 2]),
+    );
+
+    // Advance timer by 2000ms (1000ms remaining until expiry)
+    await act(async () => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    // Re-render with a distinct object reference having the same identity
+    const fakeEffect2 = { ...fakeEffect1, effect: { ...fakeEffect1.effect } };
+    h.state = baseState({
+      match: matchFixture({ currentRoundNo: 2 }),
+      cardState: {
+        classId: "ATTACK",
+        hand: [],
+        playedCardIds: [],
+        offerSeqNoByCardId: {},
+        currentOffer: null,
+        lastResolvedEffect: null,
+        pendingNextRoundEffects: [],
+        activeRoundEffects: [fakeEffect2],
+      },
+    });
+    await act(async () => {
+      utils.rerender(
+        <Suspense fallback={<div data-testid="fallback" />}>
+          <GamePage params={params} />
+        </Suspense>,
+      );
+      await Promise.resolve();
+    });
+
+    // Advance by 1100ms (total 3100ms from start)
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+
+    expect(screen.getByTestId("answer-select").dataset.fakeFlags).toBe(
+      JSON.stringify([]),
+    );
+  });
+
   it("shows the eliminated overlay when isEliminated is set", async () => {
     h.state = baseState({ match: matchFixture(), isEliminated: true });
     await renderPage("m1");

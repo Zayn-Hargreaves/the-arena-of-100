@@ -539,6 +539,7 @@ describe("applyAnswerResultState", () => {
     });
     expect(result.cardState?.activeRoundEffects).toEqual([]);
     expect(result.cardState?.lastResolvedEffect).toBeNull();
+    expect(result.pendingAnswer).toBeNull();
   });
 });
 
@@ -2813,6 +2814,36 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
 
       expect(res.isEliminated).toBe(true);
       expect(res.eliminationReason).toBe("WRONG_ANSWER");
+    });
+
+    it("applyRoundEndedState marks isEliminated as true when eliminatedPlayerIds contains userId even with empty roster", () => {
+      const state = makeState({
+        userId: "p_local",
+        isEliminated: false,
+        eliminationReason: null,
+        match: {
+          id: "m1",
+          status: MatchStatus.ROUND_ACTIVE,
+          currentRoundNo: 2,
+          players: [], // empty roster snapshot
+          currentQuestion: null,
+          roundEndTime: null,
+        },
+      });
+
+      const res = applyRoundEndedState(
+        state,
+        {
+          matchId: "m1",
+          roundNo: 2,
+          correctAnswer: "B",
+          survivingPlayerIds: [],
+          eliminatedPlayerIds: ["p_local"],
+        },
+        null,
+      );
+
+      expect(res.isEliminated).toBe(true);
     });
   });
 });

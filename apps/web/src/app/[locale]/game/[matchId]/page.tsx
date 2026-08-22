@@ -55,7 +55,7 @@ function useTimedEffectFlag(
     ? (effect.sourceSeqNo ??
       (effect.cardId !== undefined || effect.offerSeqNo !== undefined
         ? `${effect.cardId}-${effect.offerSeqNo}`
-        : effect))
+        : (effect.effect?.kind ?? "active")))
     : null;
 
   useEffect(() => {
@@ -76,13 +76,7 @@ function useTimedEffectFlag(
       setActive(false);
       return undefined;
     }
-  }, [
-    currentRoundNo,
-    sourceSeqNo,
-    effect,
-    effect?.expiresAtServer,
-    fallbackDuration,
-  ]);
+  }, [currentRoundNo, sourceSeqNo, effect?.expiresAtServer, fallbackDuration]);
 
   return active;
 }
