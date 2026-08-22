@@ -2,7 +2,7 @@ import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DailyShareButton } from "./daily-share-button";
-import type { DailySubmitResponse } from "@/types/daily";
+import type { DailySubmitResponse } from "../../types/daily";
 
 const result: DailySubmitResponse = {
   dateKey: "2026-08-09",

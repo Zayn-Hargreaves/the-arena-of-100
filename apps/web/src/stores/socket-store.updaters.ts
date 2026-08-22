@@ -822,7 +822,20 @@ export function applyAnswerResultState(
         state.lastAnswerResult?.roundNo === data.roundNo
       ? state.lastAnswerResult.submittedAnswer
       : undefined;
+
+  const isRetry = Boolean(
+    state.lastAnswerResult &&
+    state.lastAnswerResult.matchId === data.matchId &&
+    state.lastAnswerResult.roundNo === data.roundNo &&
+    state.lastAnswerResult.submissionId !== data.submissionId,
+  );
+
+  const consumed = isRetry
+    ? applyConsumeSecondChance(state, state.userId ?? undefined)
+    : {};
+
   return {
+    ...consumed,
     lastAnswerResult: {
       ...data,
       submittedAnswer,
@@ -1124,9 +1137,7 @@ export function applyCardOfferState(
 
   const serverExpiresAt = data.expiresAt;
   const serverDurationMs = data.durationMs;
-  const fallbackDurationMs =
-    (GAME_CONFIG as { CARD_OFFER_DURATION_MS?: number })
-      .CARD_OFFER_DURATION_MS ?? 8000;
+  const fallbackDurationMs = GAME_CONFIG.CARD_OFFER_DURATION_MS;
   const expiresAt =
     serverExpiresAt ??
     (serverDurationMs
@@ -1184,6 +1195,10 @@ export function applyCardPickedState(
     cardState: {
       ...state.cardState,
       hand: nextHand,
+      offerSeqNoByCardId: {
+        ...(state.cardState.offerSeqNoByCardId ?? {}),
+        [data.selectedCardId]: data.offerSeqNo,
+      },
       currentOffer: null, // dismiss active offer
     },
   };
@@ -1193,6 +1208,11 @@ export function applyCardResolvedState(
   state: SocketState,
   data: CardEffectEvent,
 ): Partial<SocketState> {
+  const activeMatchId = state.room?.currentMatchId ?? state.match?.id ?? null;
+  if (activeMatchId === null || data.matchId !== activeMatchId) {
+    return {};
+  }
+
   const isPlayedBySelf = state.userId && data.playedByPlayerId === state.userId;
   const currentPlayed = state.cardState.playedCardIds;
   const nextPlayed =
@@ -1200,15 +1220,60 @@ export function applyCardResolvedState(
       ? [...currentPlayed, data.cardId]
       : currentPlayed;
 
+  const currentRoundNo = state.match?.currentRoundNo ?? data.roundNo;
+  const targetRoundNo = data.targetRoundNo ?? data.roundNo;
+
+  const isCurrentRound = targetRoundNo <= currentRoundNo;
+
+  const currentActive = state.cardState.activeRoundEffects ?? [];
   const currentPending = state.cardState.pendingNextRoundEffects ?? [];
-  const nextPending = [...currentPending, data];
+
+  const nextActive = isCurrentRound ? [...currentActive, data] : currentActive;
+  const nextPending = isCurrentRound
+    ? currentPending
+    : [...currentPending, data];
 
   return {
     cardState: {
       ...state.cardState,
       playedCardIds: nextPlayed,
       lastResolvedEffect: data,
+      activeRoundEffects: nextActive,
       pendingNextRoundEffects: nextPending,
+    },
+  };
+}
+
+export function applyConsumeSecondChance(
+  state: SocketState,
+  playerId?: string,
+): Partial<SocketState> {
+  const targetId = playerId ?? state.userId;
+  if (!targetId) return {};
+
+  const currentActive = state.cardState.activeRoundEffects ?? [];
+  const nextActive = currentActive.filter(
+    (e) =>
+      !(
+        (e.playedByPlayerId === targetId ||
+          e.targetPlayerIds?.includes(targetId)) &&
+        e.effect.kind === "SECOND_CHANCE"
+      ),
+  );
+  const nextLastResolved =
+    (state.cardState.lastResolvedEffect?.playedByPlayerId === targetId ||
+      state.cardState.lastResolvedEffect?.targetPlayerIds?.includes(
+        targetId,
+      )) &&
+    state.cardState.lastResolvedEffect?.effect.kind === "SECOND_CHANCE"
+      ? null
+      : state.cardState.lastResolvedEffect;
+
+  return {
+    cardState: {
+      ...state.cardState,
+      activeRoundEffects: nextActive,
+      lastResolvedEffect: nextLastResolved,
     },
   };
 }

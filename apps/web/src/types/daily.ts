@@ -1,6 +1,6 @@
-export type DailyDifficulty = "EASY" | "MEDIUM" | "HARD";
-
 import type { UnlockableCardVariantKey } from "@arena/shared";
+
+export type DailyDifficulty = "EASY" | "MEDIUM" | "HARD";
 
 export interface DailyQuestionPublic {
   content: string;

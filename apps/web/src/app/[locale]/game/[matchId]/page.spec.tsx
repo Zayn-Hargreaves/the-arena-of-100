@@ -86,6 +86,7 @@ vi.mock("@/components/game", () => ({
     isSpectator: boolean;
     isEliminated: boolean;
     disabled: boolean;
+    fakeFlaggedIndexes?: number[];
     onSelect: (o: string) => void;
   }) => (
     <button
@@ -93,6 +94,7 @@ vi.mock("@/components/game", () => ({
       data-spectator={String(p.isSpectator)}
       data-eliminated={String(p.isEliminated)}
       data-disabled={String(p.disabled)}
+      data-fake-flags={JSON.stringify(p.fakeFlaggedIndexes ?? [])}
       onClick={() => p.onSelect("B")}
     />
   ),
@@ -110,6 +112,12 @@ vi.mock("@/components/game", () => ({
     <button data-testid="confirm-leave" onClick={p.onConfirm} />
   ),
   TopicVotingOverlay: () => <div data-testid="topic-voting-overlay" />,
+  CardAnimation: () => <div data-testid="card-animation" />,
+  CardGlyph: () => <span data-testid="card-glyph" />,
+  ClassBadge: () => <div data-testid="class-badge" />,
+  CardHand: () => <div data-testid="card-hand" />,
+  CardOfferOverlay: () => <div data-testid="card-offer-overlay" />,
+  CardTargetPicker: () => <div data-testid="card-target-picker" />,
 }));
 
 import GamePage from "./page";
@@ -130,6 +138,7 @@ function baseState(overrides: Record<string, unknown> = {}) {
     roomTerminationMessage: null,
     room: null,
     requestSnapshot: vi.fn(),
+    consumeSecondChance: vi.fn(),
     ...overrides,
   };
 }
@@ -207,6 +216,45 @@ describe("GamePage — answer submission gating", () => {
     expect(h.state.submitAnswer).toHaveBeenCalledWith("m1", 2, "B");
   });
 
+  it("allows retry submission when second chance is active", async () => {
+    const scEffect = {
+      matchId: "m1",
+      roundNo: 2,
+      targetRoundNo: 2,
+      cardId: "TN-6",
+      offerSeqNo: 1,
+      playedByPlayerId: "me",
+      targetPlayerIds: ["me"],
+      effect: { kind: "SECOND_CHANCE" },
+      resolution: "MUTATION",
+      serverTimestamp: 1000,
+      expiresAtServer: null,
+      remainingMs: null,
+    };
+    h.state = baseState({
+      match: matchFixture({ currentRoundNo: 2 }),
+      pendingAnswer: {
+        matchId: "m1",
+        roundNo: 2,
+        answer: "A",
+        submissionId: "sub-prior",
+      },
+      cardState: {
+        classId: "SUPPORT",
+        hand: [],
+        playedCardIds: ["TN-6"],
+        offerSeqNoByCardId: {},
+        currentOffer: null,
+        lastResolvedEffect: scEffect,
+        pendingNextRoundEffects: [],
+        activeRoundEffects: [scEffect],
+      },
+    });
+    await renderPage("m1");
+    fireEvent.click(screen.getByTestId("answer-select"));
+    expect(h.state.submitAnswer).toHaveBeenCalledWith("m1", 2, "B");
+  });
+
   it("does not submit when the local user is a spectator", async () => {
     h.state = baseState({
       match: matchFixture(),
@@ -227,6 +275,49 @@ describe("GamePage — answer submission gating", () => {
 });
 
 describe("GamePage — derived UI flags", () => {
+  it("shows fake flagged indexes until server expiry, then clears them", async () => {
+    const fakeEffect = {
+      matchId: "m1",
+      roundNo: 2,
+      targetRoundNo: 2,
+      cardId: "TN-5",
+      offerSeqNo: 1,
+      playedByPlayerId: "other",
+      targetPlayerIds: ["me"],
+      effect: { kind: "OPTION_FAKE", indexes: [1, 2], durationMs: 3000 },
+      resolution: "TEMPORARY",
+      serverTimestamp: 1000,
+      expiresAtServer: Date.now() + 3000,
+      remainingMs: 3000,
+    };
+    h.state = baseState({
+      match: matchFixture({ currentRoundNo: 2 }),
+      cardState: {
+        classId: "ATTACK",
+        hand: [],
+        playedCardIds: [],
+        offerSeqNoByCardId: {},
+        currentOffer: null,
+        lastResolvedEffect: null,
+        pendingNextRoundEffects: [],
+        activeRoundEffects: [fakeEffect],
+      },
+    });
+    await renderPage("m1");
+    expect(screen.getByTestId("answer-select").dataset.fakeFlags).toBe(
+      JSON.stringify([1, 2]),
+    );
+
+    // Advance timer past expiry
+    await act(async () => {
+      vi.advanceTimersByTime(3100);
+    });
+
+    expect(screen.getByTestId("answer-select").dataset.fakeFlags).toBe(
+      JSON.stringify([]),
+    );
+  });
+
   it("shows the eliminated overlay when isEliminated is set", async () => {
     h.state = baseState({ match: matchFixture(), isEliminated: true });
     await renderPage("m1");

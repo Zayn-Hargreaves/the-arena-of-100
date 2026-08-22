@@ -10,9 +10,9 @@
 // (`offerSeqNo` ↔ `CARD_OFFER.seqNo`).
 // ============================================================
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useSocketStore } from "@/stores/socket-store";
-import { ClientEvent, type CardId } from "@arena/shared";
+import { ServerEvent, type CardId } from "@arena/shared";
 
 export interface UseCardActionsOptions {
   matchId: string | null;
@@ -45,42 +45,23 @@ export function useCardActions({
   onError,
 }: UseCardActionsOptions): UseCardActionsResult {
   const socket = useSocketStore((state) => state.socket);
+  const storePickCard = useSocketStore((state) => state.pickCard);
+  const storePlayCard = useSocketStore((state) => state.playCard);
 
   const pickCard = useCallback(
     (cardId: CardId, offerSeqNo: number) => {
       if (!socket || !matchId) return;
-      socket.emit(ClientEvent.CARD_PICK, {
-        matchId,
-        cardId,
-        offerSeqNo,
-        commandId: makeCommandId(),
-      });
+      storePickCard(cardId, offerSeqNo);
     },
-    [socket, matchId],
+    [socket, matchId, storePickCard],
   );
 
   const playCard = useCallback(
     (cardId: CardId, offerSeqNo: number, targetPlayerId?: string) => {
       if (!socket || !matchId || !offerSeqNo || offerSeqNo <= 0) return;
-      socket.emit(
-        ClientEvent.CARD_PLAY,
-        targetPlayerId
-          ? {
-              matchId,
-              cardId,
-              offerSeqNo,
-              targetPlayerId,
-              commandId: makeCommandId(),
-            }
-          : {
-              matchId,
-              cardId,
-              offerSeqNo,
-              commandId: makeCommandId(),
-            },
-      );
+      storePlayCard(cardId, offerSeqNo, targetPlayerId);
     },
-    [socket, matchId],
+    [socket, matchId, storePlayCard],
   );
 
   const isReady = useMemo(() => Boolean(socket && matchId), [socket, matchId]);
@@ -96,9 +77,9 @@ export function useCardActions({
         onError(payload.code, payload.message);
       }
     };
-    socket.on("error", handler);
+    socket.on(ServerEvent.ERROR, handler);
     return () => {
-      socket.off("error", handler);
+      socket.off(ServerEvent.ERROR, handler);
     };
   }, [socket, onError]);
 
@@ -109,6 +90,3 @@ export function useCardActions({
     isReady,
   };
 }
-
-// Re-exported so consumers can `import { useCardActions } from "..."`.
-import { useEffect } from "react";

@@ -70,6 +70,8 @@ export function CardTargetPicker({
   const [searchQuery, setSearchQuery] = React.useState("");
   const dialogRef = React.useRef<HTMLDivElement>(null);
   const previousActiveElement = React.useRef<HTMLElement | null>(null);
+  const onCancelRef = React.useRef(onCancel);
+  onCancelRef.current = onCancel;
 
   React.useEffect(() => {
     if (isSelfOnly || isAoe) return;
@@ -89,7 +91,7 @@ export function CardTargetPicker({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        onCancel();
+        onCancelRef.current();
         return;
       }
       if (e.key !== "Tab" || !dialogRef.current) return;
@@ -137,7 +139,7 @@ export function CardTargetPicker({
         previousActiveElement.current.focus();
       }
     };
-  }, [isSelfOnly, isAoe, onCancel]);
+  }, [isSelfOnly, isAoe]);
 
   const filteredTargets = React.useMemo(() => {
     if (!searchQuery.trim()) return targets;

@@ -121,6 +121,7 @@ export interface CardState {
   classId: ClassId | null;
   hand: CardId[];
   playedCardIds: CardId[];
+  offerSeqNoByCardId: Record<string, number>;
   currentOffer: CardOfferState | null;
   lastResolvedEffect: CardEffectEvent | null;
   pendingNextRoundEffects: CardEffectEvent[];
@@ -132,6 +133,7 @@ export function createInitialCardState(): CardState {
     classId: null,
     hand: [],
     playedCardIds: [],
+    offerSeqNoByCardId: {},
     currentOffer: null,
     lastResolvedEffect: null,
     pendingNextRoundEffects: [],
@@ -139,7 +141,16 @@ export function createInitialCardState(): CardState {
   };
 }
 
-export const INITIAL_CARD_STATE: CardState = createInitialCardState();
+export const INITIAL_CARD_STATE: Readonly<CardState> = Object.freeze({
+  classId: null,
+  hand: Object.freeze([]) as unknown as CardId[],
+  playedCardIds: Object.freeze([]) as unknown as CardId[],
+  offerSeqNoByCardId: Object.freeze({}) as Record<string, number>,
+  currentOffer: null,
+  lastResolvedEffect: null,
+  pendingNextRoundEffects: Object.freeze([]) as unknown as CardEffectEvent[],
+  activeRoundEffects: Object.freeze([]) as unknown as CardEffectEvent[],
+});
 
 export interface SocketState extends ConnectionState {
   socket: Socket | null;
@@ -192,6 +203,8 @@ export interface SocketState extends ConnectionState {
     targetPlayerId?: string,
   ) => void;
   dismissCardOffer: () => void;
+  clearResolvedCardEffect: () => void;
+  consumeSecondChance: (playerId?: string) => void;
   submitAnswer: (
     matchId: string,
     roundNo: number,

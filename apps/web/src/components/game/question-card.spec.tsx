@@ -62,7 +62,8 @@ describe("QuestionCard", () => {
       />,
     );
     const heading = screen.getByText("Flipped Question Text");
-    expect(heading.className).toContain("scale-y-[-1]");
+    expect(heading.className).toContain("rotate-180");
+    expect(heading.className).not.toContain("scale-y-[-1]");
     expect(container.textContent).toContain("effects.flipWarning");
   });
 });

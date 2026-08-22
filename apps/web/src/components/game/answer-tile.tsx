@@ -30,6 +30,12 @@ const getVariantStyles = (
   if (isFiftyFiftyDisabled) {
     return "opacity-35 cursor-not-allowed bg-candy-cloud/60 border-candy-ink/30 text-candy-ink/40 shadow-none line-through";
   }
+  if (variant === "correct") {
+    return "bg-candy-mint text-candy-ink border-candy-ink animate-jelly-wobble shadow-[4px_4px_0_0_#2B2D42]";
+  }
+  if (variant === "incorrect") {
+    return "bg-candy-red text-white border-candy-ink animate-shake shadow-[4px_4px_0_0_#2B2D42]";
+  }
   if (isLocked) {
     return "opacity-60 cursor-not-allowed bg-candy-yellow/20 border-candy-orange text-candy-ink/70 shadow-[2px_2px_0_0_#2B2D42]";
   }
@@ -38,10 +44,6 @@ const getVariantStyles = (
       return "bg-white border-candy-ink text-candy-ink hover:translate-y-[-2px] hover:shadow-[6px_6px_0_0_#2B2D42] shadow-[4px_4px_0_0_#2B2D42]";
     case "selected":
       return "bg-candy-pink text-candy-ink border-candy-ink translate-y-[2px] shadow-[2px_2px_0_0_#2B2D42]";
-    case "correct":
-      return "bg-candy-mint text-candy-ink border-candy-ink animate-jelly-wobble shadow-[4px_4px_0_0_#2B2D42]";
-    case "incorrect":
-      return "bg-candy-red text-white border-candy-ink animate-shake shadow-[4px_4px_0_0_#2B2D42]";
     case "disabled":
       return "opacity-45 cursor-not-allowed bg-candy-cloud border-candy-ink/40 text-candy-ink/50 shadow-none";
     default:

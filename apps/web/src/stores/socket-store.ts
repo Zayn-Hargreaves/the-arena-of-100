@@ -80,6 +80,7 @@ import {
   applyCardOfferState,
   applyCardPickedState,
   applyCardResolvedState,
+  applyConsumeSecondChance,
 } from "./socket-store.updaters";
 
 interface PendingTopicVoteCommand {
@@ -520,14 +521,18 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     newSocket.on(ServerEvent.CARD_PICKED, (data) => {
       if (get().socket !== newSocket) return;
       if (data.playerId === get().userId) {
-        for (const [cmdId, cmd] of pendingCardCommands.entries()) {
-          if (
-            cmd.type === "PICK" &&
-            cmd.matchId === data.matchId &&
-            cmd.cardId === data.selectedCardId
-          ) {
-            pendingCardCommands.delete(cmdId);
-            break;
+        if (data.commandId && pendingCardCommands.has(data.commandId)) {
+          pendingCardCommands.delete(data.commandId);
+        } else {
+          for (const [cmdId, cmd] of pendingCardCommands.entries()) {
+            if (
+              cmd.type === "PICK" &&
+              cmd.matchId === data.matchId &&
+              cmd.cardId === data.selectedCardId
+            ) {
+              pendingCardCommands.delete(cmdId);
+              break;
+            }
           }
         }
       }
@@ -538,14 +543,18 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     newSocket.on(ServerEvent.CARD_RESOLVED, (data) => {
       if (get().socket !== newSocket) return;
       if (data.playedByPlayerId === get().userId) {
-        for (const [cmdId, cmd] of pendingCardCommands.entries()) {
-          if (
-            cmd.type === "PLAY" &&
-            cmd.matchId === data.matchId &&
-            cmd.cardId === data.cardId
-          ) {
-            pendingCardCommands.delete(cmdId);
-            break;
+        if (data.commandId && pendingCardCommands.has(data.commandId)) {
+          pendingCardCommands.delete(data.commandId);
+        } else {
+          for (const [cmdId, cmd] of pendingCardCommands.entries()) {
+            if (
+              cmd.type === "PLAY" &&
+              cmd.matchId === data.matchId &&
+              cmd.cardId === data.cardId
+            ) {
+              pendingCardCommands.delete(cmdId);
+              break;
+            }
           }
         }
       }
@@ -561,14 +570,21 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           const currentUserId = get().userId;
           for (const effect of data.effects) {
             if (effect.playedByPlayerId === currentUserId) {
-              for (const [cmdId, cmd] of pendingCardCommands.entries()) {
-                if (
-                  cmd.type === "PLAY" &&
-                  cmd.matchId === effect.matchId &&
-                  cmd.cardId === effect.cardId
-                ) {
-                  pendingCardCommands.delete(cmdId);
-                  break;
+              if (
+                effect.commandId &&
+                pendingCardCommands.has(effect.commandId)
+              ) {
+                pendingCardCommands.delete(effect.commandId);
+              } else {
+                for (const [cmdId, cmd] of pendingCardCommands.entries()) {
+                  if (
+                    cmd.type === "PLAY" &&
+                    cmd.matchId === effect.matchId &&
+                    cmd.cardId === effect.cardId
+                  ) {
+                    pendingCardCommands.delete(cmdId);
+                    break;
+                  }
                 }
               }
             }
@@ -622,19 +638,28 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           const currentMatchId = get().room?.currentMatchId ?? get().match?.id;
           if (currentMatchId === pending.matchId) {
             if (pending.type === "PICK") {
-              set((state) => ({
-                cardState: {
-                  ...state.cardState,
-                  hand: pending.addedToHand
-                    ? state.cardState.hand.filter((id) => id !== pending.cardId)
-                    : state.cardState.hand,
-                  currentOffer:
-                    state.cardState.currentOffer ??
-                    (pending.previousOffer?.matchId === currentMatchId
-                      ? pending.previousOffer
-                      : null),
-                },
-              }));
+              set((state) => {
+                const nextOfferSeqNo = {
+                  ...(state.cardState.offerSeqNoByCardId ?? {}),
+                };
+                delete nextOfferSeqNo[pending.cardId];
+                return {
+                  cardState: {
+                    ...state.cardState,
+                    hand: pending.addedToHand
+                      ? state.cardState.hand.filter(
+                          (id) => id !== pending.cardId,
+                        )
+                      : state.cardState.hand,
+                    offerSeqNoByCardId: nextOfferSeqNo,
+                    currentOffer:
+                      state.cardState.currentOffer ??
+                      (pending.previousOffer?.matchId === currentMatchId
+                        ? pending.previousOffer
+                        : null),
+                  },
+                };
+              });
             } else if (pending.type === "PLAY") {
               set((state) => ({
                 cardState: {
@@ -725,12 +750,14 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
     if (!effectiveToken) {
       newSocket.disconnect();
-      set({
-        socket: null,
-        isConnected: false,
-        isAuthenticated: false,
-        error: "Authentication required",
-      });
+      if (get().socket === newSocket) {
+        set({
+          socket: null,
+          isConnected: false,
+          isAuthenticated: false,
+          error: "Authentication required",
+        });
+      }
       throw new Error("Authentication required");
     }
 
@@ -1158,7 +1185,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   // Phase 2: Card Actions
   pickCard: (cardId, offerSeqNo) => {
     const socket = get().socket;
-    const matchId = get().match?.id;
+    const matchId = get().room?.currentMatchId ?? get().match?.id;
     if (!socket || !matchId) return;
 
     const commandId = generateId();
@@ -1183,6 +1210,10 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         hand: state.cardState.hand.includes(cardId)
           ? state.cardState.hand
           : [...state.cardState.hand, cardId],
+        offerSeqNoByCardId: {
+          ...(state.cardState.offerSeqNoByCardId ?? {}),
+          [cardId]: offerSeqNo,
+        },
         currentOffer: null,
       },
     }));
@@ -1198,7 +1229,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   playCard: (cardId, offerSeqNo, targetPlayerId) => {
     if (!offerSeqNo || offerSeqNo <= 0) return;
     const socket = get().socket;
-    const matchId = get().match?.id;
+    const matchId = get().room?.currentMatchId ?? get().match?.id;
     if (!socket || !matchId) return;
 
     const commandId = generateId();
@@ -1253,20 +1284,55 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     }));
   },
 
+  clearResolvedCardEffect: () => {
+    set((state) => ({
+      cardState: {
+        ...state.cardState,
+        lastResolvedEffect: null,
+      },
+    }));
+  },
+
+  consumeSecondChance: (playerId?: string) => {
+    set((state) => applyConsumeSecondChance(state, playerId));
+  },
+
   // Submit Answer
 
   submitAnswer: (matchId: string, roundNo: number, answer: string) => {
-    const { socket, pendingAnswer } = get();
+    const { socket, pendingAnswer, cardState, userId } = get();
     if (!socket?.connected) return null;
-    if (
-      pendingAnswer?.matchId === matchId &&
-      pendingAnswer.roundNo === roundNo
-    ) {
+
+    const hasExistingSubmission =
+      pendingAnswer?.matchId === matchId && pendingAnswer.roundNo === roundNo;
+
+    const currentUserId = userId;
+    const hasSecondChancePermission =
+      Boolean(currentUserId) &&
+      Boolean(
+        currentUserId &&
+        (cardState.activeRoundEffects?.some(
+          (e) =>
+            (e.playedByPlayerId === currentUserId ||
+              e.targetPlayerIds?.includes(currentUserId)) &&
+            e.effect.kind === "SECOND_CHANCE",
+        ) ||
+          ((cardState.lastResolvedEffect?.playedByPlayerId === currentUserId ||
+            cardState.lastResolvedEffect?.targetPlayerIds?.includes(
+              currentUserId,
+            )) &&
+            cardState.lastResolvedEffect?.effect.kind === "SECOND_CHANCE" &&
+            (cardState.lastResolvedEffect.targetRoundNo ??
+              cardState.lastResolvedEffect.roundNo) === roundNo)),
+      );
+
+    if (hasExistingSubmission && !hasSecondChancePermission) {
       return null;
     }
 
     const submissionId = generateId();
     set({ pendingAnswer: { matchId, roundNo, answer, submissionId } });
+
     emitIfConnected(socket, ClientEvent.SUBMIT_ANSWER, {
       matchId,
       roundNo,

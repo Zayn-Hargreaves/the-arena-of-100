@@ -4,7 +4,7 @@ import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { DailyQuestionCard } from "./daily-question-card";
-import type { DailyQuestionPublic } from "@/types/daily";
+import type { DailyQuestionPublic } from "../../types/daily";
 
 const question: DailyQuestionPublic = {
   content: "Which planet is closest to the Sun?",

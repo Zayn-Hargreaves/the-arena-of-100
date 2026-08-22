@@ -221,46 +221,30 @@ export function CardGlyph({
   );
 }
 
+const CARD_GLYPH_BY_ID: Record<CardId, CardGlyphVariant> = {
+  "CB-1": "freeze",
+  "CB-2": "delay",
+  "CB-3": "burn",
+  "CB-4": "lock",
+  "CB-5": "fog",
+  "CB-6": "flag",
+  "CB-7": "reverse",
+  "CB-8": "distract",
+  "TN-1": "fiftyFifty",
+  "TN-2": "doubleScore",
+  "TN-3": "hint",
+  "TN-4": "shield",
+  "TN-5": "timeBonus",
+  "TN-6": "secondChance",
+  "TN-7": "deepRead",
+  "TN-8": "timeBonus",
+  "TN-9": "brainBurst",
+  "TN-10": "fiftyFifty",
+};
+
 /**
  * Maps a CardId (e.g. 'CB-1', 'TN-4') to its corresponding SVG Pop-Art Glyph.
  */
 export function getGlyphForCardId(cardId: CardId): CardGlyphVariant {
-  switch (cardId) {
-    case "CB-1":
-      return "freeze";
-    case "CB-2":
-      return "delay";
-    case "CB-3":
-      return "burn";
-    case "CB-4":
-      return "lock";
-    case "CB-5":
-      return "fog";
-    case "CB-6":
-      return "flag";
-    case "CB-7":
-      return "reverse";
-    case "CB-8":
-      return "distract";
-    case "TN-1":
-    case "TN-10":
-      return "fiftyFifty";
-    case "TN-2":
-      return "doubleScore";
-    case "TN-3":
-      return "hint";
-    case "TN-4":
-      return "shield";
-    case "TN-5":
-    case "TN-8":
-      return "timeBonus";
-    case "TN-6":
-      return "secondChance";
-    case "TN-7":
-      return "deepRead";
-    case "TN-9":
-      return "brainBurst";
-    default:
-      return "cards";
-  }
+  return CARD_GLYPH_BY_ID[cardId];
 }

@@ -29,12 +29,19 @@ const TimeDeltaBadge: React.FC<TimeDeltaBadgeProps> = ({
   size = "md",
   className,
 }) => {
+  const t = useTranslations("Timer");
   if (deltaSeconds === 0) return null;
   const isPositive = deltaSeconds > 0;
   const isSm = size === "sm";
+  const absSeconds = Math.abs(deltaSeconds);
+  const announcement = isPositive
+    ? t("secondsAdded", { count: absSeconds })
+    : t("secondsRemoved", { count: absSeconds });
 
   return (
     <div
+      role="status"
+      aria-live="polite"
       className={cn(
         "z-30 flex items-center gap-1 font-display font-black pointer-events-none",
         isSm
@@ -46,11 +53,14 @@ const TimeDeltaBadge: React.FC<TimeDeltaBadgeProps> = ({
         className,
       )}
     >
+      <span className="sr-only">{announcement}</span>
       <CardGlyph
         variant={isPositive ? "timeBonus" : "freeze"}
         size={isSm ? 12 : 14}
       />
-      <span>{isPositive ? `+${deltaSeconds}s` : `${deltaSeconds}s`}</span>
+      <span aria-hidden="true">
+        {isPositive ? `+${deltaSeconds}s` : `${deltaSeconds}s`}
+      </span>
     </div>
   );
 };

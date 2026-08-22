@@ -8,6 +8,7 @@ import {
   type CardVariantKey,
   getCardDefinition,
 } from "@arena/shared";
+import { CardGlyph, getGlyphForCardId } from "./card-glyphs";
 
 export interface CardTileProps {
   cardId: CardId;
@@ -53,8 +54,6 @@ const COSMETIC_VARIANT_STYLES: Record<
   NEON: "ring-2 ring-cyan-400 shadow-[0_0_12px_2px_rgba(34,211,238,0.5)]",
   GOLD: "ring-2 ring-amber-400 shadow-[0_0_12px_2px_rgba(251,191,36,0.5)]",
 };
-
-import { CardGlyph, getGlyphForCardId } from "./card-glyphs";
 
 export function CardTile({
   cardId,

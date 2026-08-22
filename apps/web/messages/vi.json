@@ -264,7 +264,9 @@
     }
   },
   "Timer": {
-    "seconds": "giây"
+    "seconds": "giây",
+    "secondsAdded": "{count, plural, one {Đã cộng thêm # giây} other {Đã cộng thêm # giây}}",
+    "secondsRemoved": "{count, plural, one {Đã trừ # giây} other {Đã trừ # giây}}"
   },
   "NotFoundPage": {
     "title": "CÂU HỎI SINH TỬ • ROUND 404",
@@ -283,6 +285,12 @@
     "roundComplexity": "Độ Phức Tạp Vòng",
     "roundLevelExtreme": "Cấp độ: Cực Hạn",
     "remainingLabel": "Còn Lại",
+    "shieldActive": "KHIÊN HOẠT ĐỘNG",
+    "scoreMultiplier": "x{factor} ĐIỂM",
+    "secondChance": "CƠ HỘI 2",
+    "classLabel": "HỆ PHÁI:",
+    "cardsInHand": "THẺ BÀI ĐANG CÓ ({count})",
+    "cardActivationPrompt": "Bấm để kích hoạt trong lượt này",
     "rulesHeader": "QUY TẮC // CÂU HỎI",
     "lockedAnswer": "ĐÃ KHÓA ĐÁP ÁN",
     "lockedBadge": "ĐÃ KHÓA",

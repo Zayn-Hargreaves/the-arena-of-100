@@ -10,7 +10,7 @@ import type {
 import { ProfessorAvatar } from "@/components/character/professor-avatar";
 import {
   type ProfessorMood,
-  getRandomProfessorDialogue,
+  getDeterministicProfessorDialogue,
 } from "@/components/character/professor-roast-engine";
 
 export interface ResultContentProps {
@@ -46,13 +46,19 @@ export function ResultContent({
 
   const evaluationText = useMemo(() => {
     if (isWinner) {
-      return tProf(getRandomProfessorDialogue("result_winner").key);
+      return tProf(
+        getDeterministicProfessorDialogue("result_winner", matchId).key,
+      );
     }
     if (isTop10) {
-      return tProf(getRandomProfessorDialogue("result_top10").key);
+      return tProf(
+        getDeterministicProfessorDialogue("result_top10", matchId).key,
+      );
     }
-    return tProf(getRandomProfessorDialogue("result_early_elim").key);
-  }, [isWinner, isTop10, tProf]);
+    return tProf(
+      getDeterministicProfessorDialogue("result_early_elim", matchId).key,
+    );
+  }, [isWinner, isTop10, matchId, tProf]);
 
   const gradeBadge = isWinner
     ? tProf("grades.valedictorian")

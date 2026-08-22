@@ -66,12 +66,7 @@ export function CardOfferOverlay({
         clearInterval(timer);
         if (!expiredRef.current) {
           expiredRef.current = true;
-          if (!selectedRef.current && offeredCardIdsRef.current[0]) {
-            onPickCardRef.current(
-              offeredCardIdsRef.current[0],
-              offerSeqNoRef.current,
-            );
-          } else if (onDismissRef.current) {
+          if (onDismissRef.current) {
             onDismissRef.current();
           }
         }
@@ -146,7 +141,7 @@ export function CardOfferOverlay({
         previousActiveElement.current.focus();
       }
     };
-  }, []);
+  }, [offerSeqNo]);
 
   return (
     <div

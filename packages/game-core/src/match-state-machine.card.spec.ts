@@ -808,3 +808,69 @@ describe("logEvent — deepFreeze preserves undefined payloads", () => {
     expect(Object.isFrozen(entry)).toBe(true);
   });
 });
+
+describe("SECOND_CHANCE lifecycle and rehydration", () => {
+  it("grants SECOND_CHANCE, consumes it on retry, logs both events, and rehydrates unconsumed grant", () => {
+    const m = makeMachine();
+    makeActiveRound(m);
+    m.classAssignment(["p1"], "seed");
+    const cards = m.pickOffer("p1", 5, "seed-1");
+    const card = cards[0]!;
+    m.pickCard("p1", card, 1);
+
+    // Play SECOND_CHANCE
+    m.playCard("p1", card, 1, { kind: "SECOND_CHANCE" }, ["p1"], 1000);
+
+    // First answer
+    m.submitAnswer("p1", "A", 1000);
+
+    // An invalid retry attempt after round ends should fail without consuming second chance
+    const round = m.getCurrentRound()!;
+    expect(() => m.submitAnswer("p1", "B", round.endsAt + 1000)).toThrow(
+      RoomError,
+    );
+
+    // Rehydrate before valid retry: secondChancePlayers should still have p1
+    const restoredBefore = MatchStateMachine.deserialize(m.serialize());
+    // Attach correctAnswer since deserialize leaves it undefined (fixture uses "B")
+    restoredBefore.attachCorrectAnswer("B");
+
+    // Second answer (retry) succeeds and consumes second chance
+    const retryResult = restoredBefore.submitAnswer(
+      "p1",
+      "B",
+      round.startedAt + 1500,
+    );
+    expect(retryResult.isCorrect).toBe(true);
+
+    // Verify event log contains SECOND_CHANCE_GRANTED followed by SECOND_CHANCE_CONSUMED
+    const eventLog = restoredBefore.getEventLog();
+    const grantIndex = eventLog.findIndex(
+      (e) => e.type === "SECOND_CHANCE_GRANTED",
+    );
+    const consumeIndex = eventLog.findIndex(
+      (e) => e.type === "SECOND_CHANCE_CONSUMED",
+    );
+    expect(grantIndex).toBeGreaterThanOrEqual(0);
+    expect(consumeIndex).toBeGreaterThan(grantIndex);
+    expect(eventLog[grantIndex]?.payload).toMatchObject({
+      playerId: "p1",
+      roundNo: 1,
+    });
+    expect(eventLog[consumeIndex]?.payload).toMatchObject({
+      playerId: "p1",
+      roundNo: 1,
+    });
+
+    // Rehydrate after retry: secondChancePlayers should be consumed
+    const restoredAfter = MatchStateMachine.deserialize(
+      restoredBefore.serialize(),
+    );
+    restoredAfter.attachCorrectAnswer("B");
+
+    // Attempting a third answer without second chance throws ALREADY_ANSWERED
+    expect(() =>
+      restoredAfter.submitAnswer("p1", "C", round.startedAt + 2000),
+    ).toThrow(RoomError);
+  });
+});

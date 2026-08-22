@@ -52,7 +52,14 @@ export function CardAnimation({
 
   if (!event) return null;
 
-  const def = getCardDefinition(event.cardId);
+  let def;
+  try {
+    def = event.cardId ? getCardDefinition(event.cardId) : null;
+  } catch {
+    def = null;
+  }
+  if (!def) return null;
+
   const glyph = getGlyphForCardId(event.cardId);
   const localizedName = t.has(`byId.${event.cardId}.name`)
     ? t(`byId.${event.cardId}.name`)
@@ -85,7 +92,10 @@ export function CardAnimation({
     )
     .join(", ");
 
-  const elapsed = Math.max(0, Date.now() - mountedAtRef.current);
+  const elapsed =
+    mountedAtRef.current > 0
+      ? Math.max(0, Date.now() - mountedAtRef.current)
+      : 0;
   const remainingMs =
     event.resolution === "TEMPORARY"
       ? Math.max(0, (event.remainingMs ?? 0) - elapsed)

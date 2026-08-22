@@ -264,7 +264,9 @@
     }
   },
   "Timer": {
-    "seconds": "seconds"
+    "seconds": "seconds",
+    "secondsAdded": "{count, plural, one {# second added} other {# seconds added}}",
+    "secondsRemoved": "{count, plural, one {# second removed} other {# seconds removed}}"
   },
   "NotFoundPage": {
     "title": "SURVIVAL QUESTION • ROUND 404",
@@ -283,6 +285,12 @@
     "roundComplexity": "Round Complexity",
     "roundLevelExtreme": "Level: Extreme",
     "remainingLabel": "Remaining",
+    "shieldActive": "SHIELD ACTIVE",
+    "scoreMultiplier": "x{factor} SCORE",
+    "secondChance": "SECOND CHANCE",
+    "classLabel": "CLASS:",
+    "cardsInHand": "CARDS IN HAND ({count})",
+    "cardActivationPrompt": "Click to activate this round",
     "rulesHeader": "RULES // QUESTION",
     "lockedAnswer": "ANSWER LOCKED",
     "lockedBadge": "LOCKED",

@@ -11,7 +11,8 @@ interface UseGameRoundStateOptions {
   match: Match | null;
   pendingAnswer: PendingAnswer | null;
   lastAnswerResult: LastAnswerResult | null;
-  isSpectator: boolean;
+  isSpectator?: boolean;
+  hasSecondChance?: boolean;
   submitAnswer: (
     matchId: string,
     roundNo: number,
@@ -25,6 +26,7 @@ export function useGameRoundState({
   pendingAnswer,
   lastAnswerResult,
   isSpectator,
+  hasSecondChance = false,
   submitAnswer,
 }: UseGameRoundStateOptions) {
   const roundDuration = GAME_CONFIG.ROUND_DURATION_MS / 1000;
@@ -197,8 +199,7 @@ export function useGameRoundState({
     (option: string) => {
       if (
         roundCompleted ||
-        activePendingAnswer ||
-        activeAnswerResult ||
+        (!hasSecondChance && (activePendingAnswer || activeAnswerResult)) ||
         !match?.id ||
         match.currentRoundNo <= 0 ||
         isSpectator
@@ -214,6 +215,7 @@ export function useGameRoundState({
     },
     [
       roundCompleted,
+      hasSecondChance,
       activePendingAnswer,
       activeAnswerResult,
       selectedAnswer,
@@ -231,9 +233,10 @@ export function useGameRoundState({
           return "selected";
         }
         if (
-          effectiveSelectedAnswer !== null ||
-          activePendingAnswer !== null ||
-          activeAnswerResult !== null
+          !hasSecondChance &&
+          (effectiveSelectedAnswer !== null ||
+            activePendingAnswer !== null ||
+            activeAnswerResult !== null)
         ) {
           return "disabled";
         }
@@ -258,6 +261,7 @@ export function useGameRoundState({
     },
     [
       roundCompleted,
+      hasSecondChance,
       revealedCorrectAnswer,
       effectiveSelectedAnswer,
       activePendingAnswer,

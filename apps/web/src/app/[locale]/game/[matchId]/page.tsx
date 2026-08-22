@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, use, useMemo } from "react";
+import React, { useState, use, useMemo, useCallback } from "react";
+import { useTranslations } from "next-intl";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import {
   EliminatedOverlay,
@@ -40,6 +41,7 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
   const resolvedParams = use(params);
   const { matchId } = resolvedParams;
   const router = useRouter();
+  const t = useTranslations("Game");
   const {
     match,
     submitAnswer,
@@ -59,15 +61,13 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
     pickCard,
     playCard,
     dismissCardOffer,
+    clearResolvedCardEffect,
   } = useSocketStore();
 
   const [pickingTarget, setPickingTarget] = useState<{
     cardId: CardId;
     offerSeqNo: number;
   } | null>(null);
-  const [cardOfferSeqNos, setCardOfferSeqNos] = useState<
-    Record<string, number>
-  >({});
 
   // Drop-in spectating baseline: a late-joiner entered the room as
   // SPECTATOR and is viewing the match read-only. The server enforces
@@ -79,6 +79,40 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [isSpectatingAfterElimination, setIsSpectatingAfterElimination] =
     useState(false);
+
+  // Active temporary card visual effects targeting the local player (active players only)
+  const roundEffects = cardState.activeRoundEffects;
+  const myRoundEffects = useMemo(() => {
+    if (isObserving || !userId || !roundEffects || roundEffects.length === 0)
+      return [];
+    return roundEffects.filter(
+      (eff) =>
+        eff.targetPlayerIds?.includes(userId) ||
+        (eff.playedByPlayerId === userId && eff.targetPlayerIds?.length === 0),
+    );
+  }, [isObserving, roundEffects, userId]);
+
+  const activeEffect = cardState.lastResolvedEffect;
+  const currentRoundNo = match?.currentRoundNo ?? 0;
+
+  const hasSecondChance = Boolean(
+    userId &&
+    (myRoundEffects.some(
+      (e) => e.playedByPlayerId === userId && e.effect.kind === "SECOND_CHANCE",
+    ) ||
+      (activeEffect?.playedByPlayerId === userId &&
+        activeEffect?.effect.kind === "SECOND_CHANCE" &&
+        (activeEffect.targetRoundNo ?? activeEffect.roundNo) ===
+          currentRoundNo)),
+  );
+
+  const handleSubmitAnswer = useCallback(
+    (mId: string, rNo: number, ans: string) => {
+      return submitAnswer(mId, rNo, ans);
+    },
+    [submitAnswer],
+  );
+
   const {
     activeAnswerResult,
     activePendingAnswer,
@@ -97,7 +131,8 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
     pendingAnswer,
     lastAnswerResult,
     isSpectator: isObserving,
-    submitAnswer,
+    hasSecondChance,
+    submitAnswer: handleSubmitAnswer,
   });
 
   useGamePageLifecycle({
@@ -123,19 +158,6 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
     match?.players?.filter((p) => p.status !== "ELIMINATED").length ??
     0;
 
-  // Active temporary card visual effects targeting the local player (active players only)
-  const roundEffects = cardState.activeRoundEffects;
-  const myRoundEffects = useMemo(() => {
-    if (isObserving || !userId || !roundEffects || roundEffects.length === 0)
-      return [];
-    return roundEffects.filter(
-      (eff) =>
-        eff.targetPlayerIds?.includes(userId) ||
-        (eff.playedByPlayerId === userId && eff.targetPlayerIds?.length === 0),
-    );
-  }, [isObserving, roundEffects, userId]);
-
-  const activeEffect = cardState.lastResolvedEffect;
   const isTargetOfActiveEffect = Boolean(
     !isObserving &&
     activeEffect &&
@@ -149,8 +171,6 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
     deltaSeconds: number;
     key: number;
   } | null>(null);
-
-  const currentRoundNo = match?.currentRoundNo ?? 0;
 
   // Compute a single offset from myRoundEffects
   const timeOffsetSeconds = useMemo(() => {
@@ -204,82 +224,163 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
   const [activeFoggy, setActiveFoggy] = useState(false);
   const [activeDelayRender, setActiveDelayRender] = useState(false);
   const [activeSemanticFlip, setActiveSemanticFlip] = useState(false);
+  const [activeFake, setActiveFake] = useState(false);
 
-  // 1. OPTION_LOCK: auto-unlocks after 2s (or durationMs)
+  // 1. OPTION_LOCK: auto-unlocks after remaining server time or durationMs
   const lockEff = useMemo(
     () => myRoundEffects.find((e) => e.effect.kind === "OPTION_LOCK"),
     [myRoundEffects],
   );
+  const lockSourceSeqNo = lockEff
+    ? ((lockEff as { sourceSeqNo?: number }).sourceSeqNo ??
+      `${lockEff.cardId}-${lockEff.offerSeqNo}`)
+    : null;
+
   React.useEffect(() => {
     if (lockEff && lockEff.effect.kind === "OPTION_LOCK") {
+      const fallback = lockEff.effect.durationMs;
+      const remaining =
+        lockEff.expiresAtServer != null
+          ? Math.max(0, lockEff.expiresAtServer - Date.now())
+          : fallback;
+      if (remaining <= 0) {
+        setActiveLocked(false);
+        return undefined;
+      }
       setActiveLocked(true);
-      const timer = setTimeout(
-        () => setActiveLocked(false),
-        lockEff.effect.durationMs ?? 2000,
-      );
+      const timer = setTimeout(() => setActiveLocked(false), remaining);
       return () => clearTimeout(timer);
     } else {
       setActiveLocked(false);
       return undefined;
     }
-  }, [currentRoundNo, lockEff]);
+  }, [currentRoundNo, lockSourceSeqNo]);
 
-  // 2. VISUAL_OVERLAY (Brain Fog): auto-clears after 5s
+  // 2. VISUAL_OVERLAY (Brain Fog): auto-clears after remaining server time or durationMs
   const fogEff = useMemo(
     () => myRoundEffects.find((e) => e.effect.kind === "VISUAL_OVERLAY"),
     [myRoundEffects],
   );
+  const fogSourceSeqNo = fogEff
+    ? ((fogEff as { sourceSeqNo?: number }).sourceSeqNo ??
+      `${fogEff.cardId}-${fogEff.offerSeqNo}`)
+    : null;
+
   React.useEffect(() => {
     if (fogEff && fogEff.effect.kind === "VISUAL_OVERLAY") {
+      const fallback = fogEff.effect.durationMs;
+      const remaining =
+        fogEff.expiresAtServer != null
+          ? Math.max(0, fogEff.expiresAtServer - Date.now())
+          : fallback;
+      if (remaining <= 0) {
+        setActiveFoggy(false);
+        return undefined;
+      }
       setActiveFoggy(true);
-      const timer = setTimeout(
-        () => setActiveFoggy(false),
-        fogEff.effect.durationMs ?? 5000,
-      );
+      const timer = setTimeout(() => setActiveFoggy(false), remaining);
       return () => clearTimeout(timer);
     } else {
       setActiveFoggy(false);
       return undefined;
     }
-  }, [currentRoundNo, fogEff]);
+  }, [currentRoundNo, fogSourceSeqNo]);
 
-  // 3. DELAY_RENDER: reveals after 3s (or delayMs)
+  // 3. DELAY_RENDER: reveals after remaining server time or delayMs
   const delayEff = useMemo(
     () => myRoundEffects.find((e) => e.effect.kind === "DELAY_RENDER"),
     [myRoundEffects],
   );
+  const delaySourceSeqNo = delayEff
+    ? ((delayEff as { sourceSeqNo?: number }).sourceSeqNo ??
+      `${delayEff.cardId}-${delayEff.offerSeqNo}`)
+    : null;
+
   React.useEffect(() => {
     if (delayEff && delayEff.effect.kind === "DELAY_RENDER") {
+      const fallback = delayEff.effect.delayMs;
+      const remaining =
+        delayEff.expiresAtServer != null
+          ? Math.max(0, delayEff.expiresAtServer - Date.now())
+          : fallback;
+      if (remaining <= 0) {
+        setActiveDelayRender(false);
+        return undefined;
+      }
       setActiveDelayRender(true);
-      const timer = setTimeout(
-        () => setActiveDelayRender(false),
-        delayEff.effect.delayMs ?? 3000,
-      );
+      const timer = setTimeout(() => setActiveDelayRender(false), remaining);
       return () => clearTimeout(timer);
     } else {
       setActiveDelayRender(false);
       return undefined;
     }
-  }, [currentRoundNo, delayEff]);
+  }, [currentRoundNo, delaySourceSeqNo]);
 
-  // 4. SEMANTIC_FLIP: resets after 4s (or durationMs)
+  // 4. SEMANTIC_FLIP: resets after remaining server time or durationMs
   const flipEff = useMemo(
     () => myRoundEffects.find((e) => e.effect.kind === "SEMANTIC_FLIP"),
     [myRoundEffects],
   );
+  const flipSourceSeqNo = flipEff
+    ? ((flipEff as { sourceSeqNo?: number }).sourceSeqNo ??
+      `${flipEff.cardId}-${flipEff.offerSeqNo}`)
+    : null;
+
   React.useEffect(() => {
     if (flipEff && flipEff.effect.kind === "SEMANTIC_FLIP") {
+      const fallback = flipEff.effect.durationMs;
+      const remaining =
+        flipEff.expiresAtServer != null
+          ? Math.max(0, flipEff.expiresAtServer - Date.now())
+          : fallback;
+      if (remaining <= 0) {
+        setActiveSemanticFlip(false);
+        return undefined;
+      }
       setActiveSemanticFlip(true);
-      const timer = setTimeout(
-        () => setActiveSemanticFlip(false),
-        flipEff.effect.durationMs ?? 4000,
-      );
+      const timer = setTimeout(() => setActiveSemanticFlip(false), remaining);
       return () => clearTimeout(timer);
     } else {
       setActiveSemanticFlip(false);
       return undefined;
     }
-  }, [currentRoundNo, flipEff]);
+  }, [currentRoundNo, flipSourceSeqNo]);
+
+  // 5. OPTION_FAKE: auto-clears after remaining server time or durationMs
+  const fakeEff = useMemo(
+    () =>
+      myRoundEffects.find((e) => e.effect.kind === "OPTION_FAKE") ||
+      (isTargetOfActiveEffect &&
+      activeEffect?.effect.kind === "OPTION_FAKE" &&
+      (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
+        ? activeEffect
+        : null),
+    [myRoundEffects, isTargetOfActiveEffect, activeEffect, currentRoundNo],
+  );
+  const fakeSourceSeqNo = fakeEff
+    ? ((fakeEff as { sourceSeqNo?: number }).sourceSeqNo ??
+      `${fakeEff.cardId}-${fakeEff.offerSeqNo}`)
+    : null;
+
+  React.useEffect(() => {
+    if (fakeEff && fakeEff.effect.kind === "OPTION_FAKE") {
+      const fallback = fakeEff.effect.durationMs;
+      const remaining =
+        fakeEff.expiresAtServer != null
+          ? Math.max(0, fakeEff.expiresAtServer - Date.now())
+          : fallback;
+      if (remaining <= 0) {
+        setActiveFake(false);
+        return undefined;
+      }
+      setActiveFake(true);
+      const timer = setTimeout(() => setActiveFake(false), remaining);
+      return () => clearTimeout(timer);
+    } else {
+      setActiveFake(false);
+      return undefined;
+    }
+  }, [currentRoundNo, fakeSourceSeqNo]);
 
   const isFoggy = activeFoggy;
   const isDelayRender = activeDelayRender;
@@ -316,15 +417,11 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
   }, [myRoundEffects, userId, activeEffect, currentRoundNo]);
 
   const fakeFlaggedIndexes = useMemo(() => {
-    const eff =
-      myRoundEffects.find((e) => e.effect.kind === "OPTION_FAKE") ||
-      (isTargetOfActiveEffect &&
-      activeEffect?.effect.kind === "OPTION_FAKE" &&
-      (activeEffect.targetRoundNo ?? activeEffect.roundNo) === currentRoundNo
-        ? activeEffect
-        : null);
-    return eff?.effect.kind === "OPTION_FAKE" ? (eff.effect.indexes ?? []) : [];
-  }, [myRoundEffects, isTargetOfActiveEffect, activeEffect, currentRoundNo]);
+    if (!activeFake || !fakeEff || fakeEff.effect.kind !== "OPTION_FAKE") {
+      return [];
+    }
+    return fakeEff.effect.indexes ?? [];
+  }, [activeFake, fakeEff]);
 
   const burningCardId = useMemo(() => {
     const eff =
@@ -364,17 +461,6 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
     return eff?.effect.kind === "SCORE_MULT" ? eff.effect.factor : null;
   }, [myRoundEffects, userId, activeEffect, currentRoundNo]);
 
-  const hasSecondChance = Boolean(
-    userId &&
-    (myRoundEffects.some(
-      (e) => e.playedByPlayerId === userId && e.effect.kind === "SECOND_CHANCE",
-    ) ||
-      (activeEffect?.playedByPlayerId === userId &&
-        activeEffect?.effect.kind === "SECOND_CHANCE" &&
-        (activeEffect.targetRoundNo ?? activeEffect.roundNo) ===
-          currentRoundNo)),
-  );
-
   return (
     <AppShellLayout>
       {isEliminated && !isSpectatingAfterElimination && (
@@ -405,10 +491,6 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
           offeredCardIds={cardState.currentOffer!.offeredCardIds}
           offerSeqNo={cardState.currentOffer!.offerSeqNo}
           onPickCard={(cardId, offerSeqNo) => {
-            setCardOfferSeqNos((prev) => ({
-              ...prev,
-              [cardId]: offerSeqNo,
-            }));
             pickCard(cardId, offerSeqNo);
           }}
           onDismiss={dismissCardOffer}
@@ -441,6 +523,7 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
           event={cardState.lastResolvedEffect}
           userId={userId}
           players={match?.players ?? room?.players ?? []}
+          onComplete={clearResolvedCardEffect}
         />
       )}
 
@@ -469,7 +552,7 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
                   size={18}
                   className="text-candy-ink"
                 />
-                <span>KHIÊN HOẠT ĐỘNG</span>
+                <span>{t("shieldActive")}</span>
               </div>
             )}
             {scoreMultiplier && (
@@ -479,7 +562,7 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
                   size={18}
                   className="text-candy-ink"
                 />
-                <span>x{scoreMultiplier} ĐIỂM</span>
+                <span>{t("scoreMultiplier", { factor: scoreMultiplier })}</span>
               </div>
             )}
             {hasSecondChance && (
@@ -489,13 +572,13 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
                   size={18}
                   className="text-candy-ink"
                 />
-                <span>CƠ HỘI 2</span>
+                <span>{t("secondChance")}</span>
               </div>
             )}
             {cardState.classId && (
               <div className="flex items-center gap-2 bg-white px-4 py-3 rounded-2xl border-[3px] border-candy-ink shadow-[3px_3px_0_0_#2B2D42]">
                 <span className="text-xs font-bold text-candy-ink/70">
-                  CLASS:
+                  {t("classLabel")}
                 </span>
                 <ClassBadge classId={cardState.classId} variant="strong" />
               </div>
@@ -550,10 +633,10 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
                       size={16}
                       className="text-candy-ink"
                     />
-                    THẺ BÀI ĐANG CÓ ({cardState.hand.length})
+                    {t("cardsInHand", { count: cardState.hand.length })}
                   </span>
                   <span className="text-[11px] text-candy-ink/60">
-                    Bấm để kích hoạt trong lượt này
+                    {t("cardActivationPrompt")}
                   </span>
                 </div>
                 <CardHand
@@ -561,7 +644,7 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
                   playedCardIds={cardState.playedCardIds}
                   classId={cardState.classId}
                   onPickCard={(cardId) => {
-                    const offerSeqNo = cardOfferSeqNos[cardId];
+                    const offerSeqNo = cardState.offerSeqNoByCardId[cardId];
                     if (!offerSeqNo || offerSeqNo <= 0) return;
                     setPickingTarget({
                       cardId,

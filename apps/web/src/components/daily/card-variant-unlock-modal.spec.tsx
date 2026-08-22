@@ -3,7 +3,7 @@ import { render, screen, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { CardVariantUnlockModal } from "./card-variant-unlock-modal";
-import type { DailySubmitResponse } from "@/types/daily";
+import type { DailySubmitResponse } from "../../types/daily";
 
 vi.mock("@arena/shared", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@arena/shared")>();

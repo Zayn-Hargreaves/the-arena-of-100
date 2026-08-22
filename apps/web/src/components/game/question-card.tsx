@@ -112,7 +112,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
       <h2
         className={cn(
           "font-sans font-bold text-lg md:text-2xl text-candy-ink leading-relaxed tracking-wide my-auto transition-transform duration-500",
-          isSemanticFlipped && "scale-y-[-1] scale-x-[-1] select-none",
+          isSemanticFlipped && "rotate-180 select-none",
         )}
       >
         {/* Render a loading skeleton when the current question is not

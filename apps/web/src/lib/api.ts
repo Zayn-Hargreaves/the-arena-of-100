@@ -26,6 +26,7 @@ export async function ensureCsrfToken(): Promise<string | null> {
         const res = await fetch(`${API_URL}/api/v1/auth/csrf-token`, {
           credentials: "include",
           signal: controller.signal,
+          cache: "no-store",
         });
         if (res.ok) {
           const raw = (await res.json()) as {

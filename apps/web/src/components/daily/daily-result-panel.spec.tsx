@@ -4,7 +4,7 @@ import React from "react";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { DailyResultPanel } from "./daily-result-panel";
-import type { DailySubmitResponse } from "@/types/daily";
+import type { DailySubmitResponse } from "../../types/daily";
 
 const baseResult: DailySubmitResponse = {
   dateKey: "2026-08-09",
