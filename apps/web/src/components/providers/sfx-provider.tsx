@@ -6,7 +6,7 @@ import {
   startBgm,
   isBgmPlaying,
   getAudioSettings,
-  type SoundEffectType,
+  isSoundEffectType,
 } from "@/lib/sound-engine";
 import { AudioOnboardingPrompt } from "@/components/ui/audio-onboarding-prompt";
 
@@ -52,7 +52,9 @@ export function SfxProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (customSfx) {
-        playSfx(customSfx as SoundEffectType);
+        if (isSoundEffectType(customSfx)) {
+          playSfx(customSfx);
+        }
         return;
       }
 

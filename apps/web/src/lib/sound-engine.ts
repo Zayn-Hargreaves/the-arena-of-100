@@ -4,17 +4,27 @@
  * Automatically synchronizes with user preferences stored in localStorage ('arena-settings').
  */
 
-export type SoundEffectType =
-  | "click"
-  | "tab_switch"
-  | "toggle"
-  | "select_answer"
-  | "card_play"
-  | "correct"
-  | "wrong"
-  | "countdown"
-  | "victory"
-  | "eliminated";
+export const SOUND_EFFECT_TYPES = [
+  "click",
+  "tab_switch",
+  "toggle",
+  "select_answer",
+  "card_play",
+  "correct",
+  "wrong",
+  "countdown",
+  "victory",
+  "eliminated",
+] as const;
+
+export type SoundEffectType = (typeof SOUND_EFFECT_TYPES)[number];
+
+export function isSoundEffectType(value: unknown): value is SoundEffectType {
+  return (
+    typeof value === "string" &&
+    (SOUND_EFFECT_TYPES as readonly string[]).includes(value)
+  );
+}
 
 export interface AudioSettings {
   sfxEnabled: boolean;
@@ -39,6 +49,8 @@ const defaultSettings: AudioSettings = {
 let cachedSettings: AudioSettings | null = null;
 let sharedAudioCtx: AudioContext | null = null;
 let bgmAudioElement: HTMLAudioElement | null = null;
+let currentBgmTrack: string | null = null;
+let isAutoplayResumeBound = false;
 
 function clampVolume(value: unknown, fallback: number): number {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -105,7 +117,7 @@ function getAudioContext(): AudioContext | null {
  * Reads settings from localStorage, caching for maximum performance
  */
 export function getAudioSettings(): AudioSettings {
-  if (typeof window === "undefined") return defaultSettings;
+  if (typeof window === "undefined") return { ...defaultSettings };
   if (cachedSettings) return cachedSettings;
 
   try {
@@ -119,7 +131,7 @@ export function getAudioSettings(): AudioSettings {
     // fallback to defaults
   }
 
-  cachedSettings = defaultSettings;
+  cachedSettings = { ...defaultSettings };
   return cachedSettings;
 }
 
@@ -165,6 +177,42 @@ export function invalidateAudioSettingsCache(): void {
 /**
  * BGM Manager
  */
+function handleAutoplayBlocked(): void {
+  if (typeof window === "undefined" || isAutoplayResumeBound) return;
+  isAutoplayResumeBound = true;
+
+  const resumeOnGesture = () => {
+    isAutoplayResumeBound = false;
+    window.removeEventListener("pointerdown", resumeOnGesture);
+    window.removeEventListener("keydown", resumeOnGesture);
+
+    const currentSettings = getAudioSettings();
+    if (
+      bgmAudioElement &&
+      currentSettings.soundConsent &&
+      currentSettings.bgmEnabled &&
+      currentSettings.bgmVolume > 0
+    ) {
+      safePlayBgm();
+    }
+  };
+
+  window.addEventListener("pointerdown", resumeOnGesture, { once: true });
+  window.addEventListener("keydown", resumeOnGesture, { once: true });
+}
+
+function safePlayBgm(): void {
+  if (!bgmAudioElement) return;
+  try {
+    const playPromise = bgmAudioElement.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch(handleAutoplayBlocked);
+    }
+  } catch {
+    handleAutoplayBlocked();
+  }
+}
+
 export function startBgm(trackUrl: string = DEFAULT_BGM_TRACK): void {
   if (typeof window === "undefined") return;
 
@@ -173,11 +221,10 @@ export function startBgm(trackUrl: string = DEFAULT_BGM_TRACK): void {
   if (!bgmAudioElement) {
     bgmAudioElement = new Audio(trackUrl);
     bgmAudioElement.loop = true;
-  } else if (
-    bgmAudioElement.src !== trackUrl &&
-    !bgmAudioElement.src.endsWith(trackUrl)
-  ) {
+    currentBgmTrack = trackUrl;
+  } else if (currentBgmTrack !== trackUrl) {
     bgmAudioElement.src = trackUrl;
+    currentBgmTrack = trackUrl;
   }
 
   const normalizedVol =
@@ -185,24 +232,7 @@ export function startBgm(trackUrl: string = DEFAULT_BGM_TRACK): void {
   bgmAudioElement.volume = settings.bgmEnabled ? normalizedVol : 0;
 
   if (settings.soundConsent && settings.bgmEnabled && settings.bgmVolume > 0) {
-    bgmAudioElement.play().catch(() => {
-      // Browsers may block autoplay before first user interaction
-      const resumeOnGesture = () => {
-        const currentSettings = getAudioSettings();
-        if (
-          bgmAudioElement &&
-          currentSettings.soundConsent &&
-          currentSettings.bgmEnabled &&
-          currentSettings.bgmVolume > 0
-        ) {
-          bgmAudioElement.play().catch(() => {});
-        }
-        window.removeEventListener("pointerdown", resumeOnGesture);
-        window.removeEventListener("keydown", resumeOnGesture);
-      };
-      window.addEventListener("pointerdown", resumeOnGesture, { once: true });
-      window.addEventListener("keydown", resumeOnGesture, { once: true });
-    });
+    safePlayBgm();
   } else {
     bgmAudioElement.pause();
   }
@@ -224,7 +254,7 @@ export function syncBgmWithSettings(): void {
   if (settings.soundConsent && settings.bgmEnabled && settings.bgmVolume > 0) {
     bgmAudioElement.volume = normalizedVol;
     if (bgmAudioElement.paused) {
-      bgmAudioElement.play().catch(() => {});
+      safePlayBgm();
     }
   } else {
     bgmAudioElement.pause();
@@ -485,6 +515,13 @@ export function playSfx(
 
         osc.start(now);
         osc.stop(now + 0.45);
+        break;
+      }
+
+      default: {
+        console.warn(
+          `[sound-engine] Unsupported sound effect type: ${type as string}`,
+        );
         break;
       }
     }

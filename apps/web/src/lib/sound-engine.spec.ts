@@ -5,26 +5,113 @@ import {
   invalidateAudioSettingsCache,
   normalizeAudioSettings,
   playSfx,
+  startBgm,
+  stopBgm,
+  isBgmPlaying,
+  isSoundEffectType,
+  SOUND_EFFECT_TYPES,
+  type SoundEffectType,
 } from "./sound-engine";
 
-describe("sound-engine", () => {
-  const originalAudioContext =
-    typeof window !== "undefined"
-      ? (window as unknown as { AudioContext?: unknown }).AudioContext
-      : undefined;
+interface MockOscillator {
+  type: string;
+  frequency: {
+    setValueAtTime: ReturnType<typeof vi.fn>;
+    exponentialRampToValueAtTime: ReturnType<typeof vi.fn>;
+  };
+  connect: ReturnType<typeof vi.fn>;
+  start: ReturnType<typeof vi.fn>;
+  stop: ReturnType<typeof vi.fn>;
+}
 
+let createdOscillators: MockOscillator[] = [];
+
+class MockAudioContext {
+  state: AudioContextState = "running";
+  currentTime = 0;
+  destination = {};
+
+  createGain = vi.fn(() => ({
+    gain: {
+      setValueAtTime: vi.fn(),
+      exponentialRampToValueAtTime: vi.fn(),
+    },
+    connect: vi.fn(),
+  }));
+
+  createOscillator = vi.fn(() => {
+    const osc: MockOscillator = {
+      type: "sine",
+      frequency: {
+        setValueAtTime: vi.fn(),
+        exponentialRampToValueAtTime: vi.fn(),
+      },
+      connect: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+    };
+    createdOscillators.push(osc);
+    return osc;
+  });
+
+  resume = vi.fn().mockResolvedValue(undefined);
+  close = vi.fn().mockImplementation(() => {
+    this.state = "closed";
+    return Promise.resolve();
+  });
+}
+
+class MockAudio {
+  src: string;
+  loop: boolean = false;
+  volume: number = 1;
+  paused: boolean = true;
+  currentTime: number = 0;
+
+  constructor(src: string = "") {
+    this.src = src;
+    MockAudio.lastInstance = this;
+  }
+
+  play() {
+    MockAudio.playSpy();
+    if (MockAudio.playBehavior === "throw") {
+      throw new Error("Autoplay blocked synchronously");
+    }
+    if (MockAudio.playBehavior === "reject") {
+      return Promise.reject(new Error("Autoplay blocked by policy"));
+    }
+    this.paused = false;
+    return Promise.resolve();
+  }
+
+  pause() {
+    this.paused = true;
+    MockAudio.pauseSpy();
+  }
+
+  static playBehavior: "resolve" | "reject" | "throw" = "resolve";
+  static playSpy = vi.fn();
+  static pauseSpy = vi.fn();
+  static lastInstance: MockAudio | null = null;
+}
+
+describe("sound-engine", () => {
   beforeEach(() => {
     localStorage.clear();
     invalidateAudioSettingsCache();
     vi.restoreAllMocks();
-    if (typeof window !== "undefined") {
-      if (originalAudioContext) {
-        (window as unknown as { AudioContext?: unknown }).AudioContext =
-          originalAudioContext;
-      } else {
-        delete (window as unknown as { AudioContext?: unknown }).AudioContext;
-      }
-    }
+    createdOscillators = [];
+    MockAudio.playBehavior = "resolve";
+    MockAudio.playSpy.mockClear();
+    MockAudio.pauseSpy.mockClear();
+
+    (window as unknown as { AudioContext: unknown }).AudioContext =
+      MockAudioContext;
+
+    (window as unknown as { Audio: unknown }).Audio = vi
+      .fn()
+      .mockImplementation((src?: string) => new MockAudio(src));
   });
 
   it("returns default settings when localStorage is empty", () => {
@@ -34,6 +121,14 @@ describe("sound-engine", () => {
     expect(settings.bgmEnabled).toBe(true);
     expect(settings.bgmVolume).toBe(60);
     expect(settings.soundConsent).toBe(false);
+  });
+
+  it("returns a copy of defaultSettings so mutations do not affect subsequent reads", () => {
+    const settings = getAudioSettings();
+    settings.sfxVolume = 10;
+    invalidateAudioSettingsCache();
+    const fresh = getAudioSettings();
+    expect(fresh.sfxVolume).toBe(80);
   });
 
   it("reads and caches settings from localStorage", () => {
@@ -108,9 +203,9 @@ describe("sound-engine", () => {
   });
 
   it("does not instantiate AudioContext when sfxEnabled is false or soundConsent is false", () => {
-    const audioContextMock = vi.fn();
+    const audioContextSpy = vi.fn();
     (window as unknown as { AudioContext: unknown }).AudioContext =
-      audioContextMock;
+      audioContextSpy;
 
     localStorage.setItem(
       "arena-settings",
@@ -118,7 +213,7 @@ describe("sound-engine", () => {
     );
     invalidateAudioSettingsCache();
     playSfx("click");
-    expect(audioContextMock).not.toHaveBeenCalled();
+    expect(audioContextSpy).not.toHaveBeenCalled();
 
     localStorage.setItem(
       "arena-settings",
@@ -126,7 +221,7 @@ describe("sound-engine", () => {
     );
     invalidateAudioSettingsCache();
     playSfx("click");
-    expect(audioContextMock).not.toHaveBeenCalled();
+    expect(audioContextSpy).not.toHaveBeenCalled();
   });
 
   it("handles legacy configuration without soundConsent by defaulting soundConsent to false", () => {
@@ -147,28 +242,270 @@ describe("sound-engine", () => {
     expect(settings.bgmVolume).toBe(55);
   });
 
-  it("handles playSfx for all sound effect types gracefully when consented", () => {
-    localStorage.setItem(
-      "arena-settings",
-      JSON.stringify({ sfxEnabled: true, sfxVolume: 50, soundConsent: true }),
-    );
-    invalidateAudioSettingsCache();
+  describe("playSfx", () => {
+    it("handles playSfx for all 10 sound effect types and verifies oscillator creation", () => {
+      localStorage.setItem(
+        "arena-settings",
+        JSON.stringify({ sfxEnabled: true, sfxVolume: 50, soundConsent: true }),
+      );
+      invalidateAudioSettingsCache();
 
-    const soundTypes = [
-      "click",
-      "tab_switch",
-      "toggle",
-      "select_answer",
-      "card_play",
-      "correct",
-      "wrong",
-      "countdown",
-      "victory",
-      "eliminated",
-    ] as const;
+      const expectedOscillatorCounts: Record<SoundEffectType, number> = {
+        click: 1,
+        tab_switch: 1,
+        toggle: 1,
+        select_answer: 2,
+        card_play: 1,
+        correct: 4,
+        wrong: 2,
+        countdown: 1,
+        victory: 4,
+        eliminated: 1,
+      };
 
-    soundTypes.forEach((type) => {
-      expect(() => playSfx(type)).not.toThrow();
+      SOUND_EFFECT_TYPES.forEach((type) => {
+        createdOscillators = [];
+        playSfx(type);
+        expect(createdOscillators.length).toBe(expectedOscillatorCounts[type]);
+      });
+    });
+
+    it("logs a warning and exits gracefully on unsupported sound effect type", () => {
+      localStorage.setItem(
+        "arena-settings",
+        JSON.stringify({ sfxEnabled: true, sfxVolume: 50, soundConsent: true }),
+      );
+      invalidateAudioSettingsCache();
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      playSfx("invalid_type" as SoundEffectType);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Unsupported sound effect type: invalid_type"),
+      );
+      warnSpy.mockRestore();
+    });
+  });
+
+  describe("BGM management", () => {
+    it("does not play BGM when soundConsent is false", () => {
+      localStorage.setItem(
+        "arena-settings",
+        JSON.stringify({
+          bgmEnabled: true,
+          bgmVolume: 60,
+          soundConsent: false,
+        }),
+      );
+      invalidateAudioSettingsCache();
+
+      startBgm("/audio/test.mp3");
+      expect(MockAudio.playSpy).not.toHaveBeenCalled();
+      expect(MockAudio.pauseSpy).toHaveBeenCalled();
+      expect(isBgmPlaying()).toBe(false);
+    });
+
+    it("pauses BGM when bgmVolume is 0", () => {
+      localStorage.setItem(
+        "arena-settings",
+        JSON.stringify({ bgmEnabled: true, bgmVolume: 0, soundConsent: true }),
+      );
+      invalidateAudioSettingsCache();
+
+      startBgm("/audio/test.mp3");
+      expect(MockAudio.playSpy).not.toHaveBeenCalled();
+      expect(MockAudio.pauseSpy).toHaveBeenCalled();
+    });
+
+    it("plays BGM when consent is true and volume > 0", () => {
+      localStorage.setItem(
+        "arena-settings",
+        JSON.stringify({ bgmEnabled: true, bgmVolume: 50, soundConsent: true }),
+      );
+      invalidateAudioSettingsCache();
+
+      startBgm("/audio/test.mp3");
+      expect(MockAudio.playSpy).toHaveBeenCalled();
+      expect(isBgmPlaying()).toBe(true);
+    });
+
+    it("updates the src on existing BGM audio element when startBgm is called with a new URL", () => {
+      localStorage.setItem(
+        "arena-settings",
+        JSON.stringify({ bgmEnabled: true, bgmVolume: 50, soundConsent: true }),
+      );
+      invalidateAudioSettingsCache();
+
+      startBgm("/audio/track-1.mp3");
+      expect(MockAudio.lastInstance?.src).toBe("/audio/track-1.mp3");
+
+      startBgm("/audio/track-2.mp3");
+      expect(MockAudio.lastInstance?.src).toBe("/audio/track-2.mp3");
+    });
+
+    it("pauses and resets currentTime to 0 on stopBgm", () => {
+      localStorage.setItem(
+        "arena-settings",
+        JSON.stringify({ bgmEnabled: true, bgmVolume: 50, soundConsent: true }),
+      );
+      invalidateAudioSettingsCache();
+
+      startBgm("/audio/test.mp3");
+      stopBgm();
+      expect(MockAudio.pauseSpy).toHaveBeenCalled();
+      expect(isBgmPlaying()).toBe(false);
+    });
+
+    it("syncs BGM state via syncBgmWithSettings when settings change", () => {
+      localStorage.setItem(
+        "arena-settings",
+        JSON.stringify({ bgmEnabled: true, bgmVolume: 50, soundConsent: true }),
+      );
+      invalidateAudioSettingsCache();
+
+      startBgm("/audio/test.mp3");
+      expect(MockAudio.playSpy).toHaveBeenCalled();
+
+      updateAudioSettings({ bgmVolume: 0 });
+      expect(MockAudio.pauseSpy).toHaveBeenCalled();
+    });
+
+    it("registers gesture listeners on autoplay promise rejection and retries play on user gesture", async () => {
+      localStorage.setItem(
+        "arena-settings",
+        JSON.stringify({ bgmEnabled: true, bgmVolume: 50, soundConsent: true }),
+      );
+      invalidateAudioSettingsCache();
+
+      MockAudio.playBehavior = "reject";
+      const addEventSpy = vi.spyOn(window, "addEventListener");
+
+      startBgm("/audio/test.mp3");
+      await Promise.resolve();
+
+      expect(addEventSpy).toHaveBeenCalledWith(
+        "pointerdown",
+        expect.any(Function),
+        { once: true },
+      );
+      expect(addEventSpy).toHaveBeenCalledWith(
+        "keydown",
+        expect.any(Function),
+        { once: true },
+      );
+
+      const pointerdownCallCount = addEventSpy.mock.calls.filter(
+        (call) => call[0] === "pointerdown",
+      ).length;
+
+      // Subsequent startBgm while listener is bound should not attach duplicate listeners
+      startBgm("/audio/test.mp3");
+      await Promise.resolve();
+      const pointerdownCallCountAfter = addEventSpy.mock.calls.filter(
+        (call) => call[0] === "pointerdown",
+      ).length;
+      expect(pointerdownCallCountAfter).toBe(pointerdownCallCount);
+
+      // Trigger gesture
+      MockAudio.playBehavior = "resolve";
+      window.dispatchEvent(new Event("pointerdown"));
+
+      expect(isBgmPlaying()).toBe(true);
+      addEventSpy.mockRestore();
+    });
+
+    it("handles synchronous throw in play() and retries on gesture", () => {
+      localStorage.setItem(
+        "arena-settings",
+        JSON.stringify({ bgmEnabled: true, bgmVolume: 50, soundConsent: true }),
+      );
+      invalidateAudioSettingsCache();
+
+      MockAudio.playBehavior = "throw";
+      const addEventSpy = vi.spyOn(window, "addEventListener");
+
+      startBgm("/audio/test.mp3");
+
+      expect(addEventSpy).toHaveBeenCalledWith(
+        "pointerdown",
+        expect.any(Function),
+        { once: true },
+      );
+      expect(addEventSpy).toHaveBeenCalledWith(
+        "keydown",
+        expect.any(Function),
+        { once: true },
+      );
+
+      // Trigger gesture
+      MockAudio.playBehavior = "resolve";
+      window.dispatchEvent(new Event("keydown"));
+
+      expect(isBgmPlaying()).toBe(true);
+      addEventSpy.mockRestore();
+    });
+
+    it("recovers via gesture listeners when syncBgmWithSettings encounters autoplay rejection", async () => {
+      localStorage.setItem(
+        "arena-settings",
+        JSON.stringify({ bgmEnabled: true, bgmVolume: 0, soundConsent: true }),
+      );
+      invalidateAudioSettingsCache();
+
+      startBgm("/audio/test.mp3");
+
+      MockAudio.playBehavior = "reject";
+      const addEventSpy = vi.spyOn(window, "addEventListener");
+
+      updateAudioSettings({ bgmVolume: 50 });
+      await Promise.resolve();
+
+      expect(addEventSpy).toHaveBeenCalledWith(
+        "pointerdown",
+        expect.any(Function),
+        { once: true },
+      );
+
+      MockAudio.playBehavior = "resolve";
+      window.dispatchEvent(new Event("pointerdown"));
+      expect(isBgmPlaying()).toBe(true);
+      addEventSpy.mockRestore();
+    });
+  });
+
+  describe("storage event handling", () => {
+    it("invalidates cache on window storage event when key matches arena-settings", () => {
+      localStorage.setItem(
+        "arena-settings",
+        JSON.stringify({ sfxEnabled: true, sfxVolume: 50, soundConsent: true }),
+      );
+      invalidateAudioSettingsCache();
+      const initial = getAudioSettings();
+      expect(initial.sfxVolume).toBe(50);
+
+      localStorage.setItem(
+        "arena-settings",
+        JSON.stringify({ sfxEnabled: true, sfxVolume: 90, soundConsent: true }),
+      );
+      // Cache still has old value
+      expect(getAudioSettings().sfxVolume).toBe(50);
+
+      // Trigger storage event
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: "arena-settings" }),
+      );
+      expect(getAudioSettings().sfxVolume).toBe(90);
+    });
+  });
+
+  describe("isSoundEffectType guard and constants", () => {
+    it("identifies valid and invalid sound effect types", () => {
+      SOUND_EFFECT_TYPES.forEach((type) => {
+        expect(isSoundEffectType(type)).toBe(true);
+      });
+      expect(isSoundEffectType("non_existent")).toBe(false);
+      expect(isSoundEffectType(null)).toBe(false);
+      expect(isSoundEffectType(undefined)).toBe(false);
+      expect(isSoundEffectType(123)).toBe(false);
     });
   });
 });

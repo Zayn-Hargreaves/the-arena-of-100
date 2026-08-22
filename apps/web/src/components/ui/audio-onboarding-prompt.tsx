@@ -6,6 +6,7 @@ import {
   playSfx,
   startBgm,
   stopBgm,
+  getAudioSettings,
   updateAudioSettings,
   AUDIO_PROMPT_KEY,
 } from "@/lib/sound-engine";
@@ -113,11 +114,12 @@ export function AudioOnboardingPrompt() {
       window.localStorage.setItem(AUDIO_PROMPT_KEY, "true");
     } catch {}
 
+    const current = getAudioSettings();
     updateAudioSettings({
       sfxEnabled: true,
       bgmEnabled: true,
-      sfxVolume: 80,
-      bgmVolume: 60,
+      sfxVolume: current.sfxVolume > 0 ? current.sfxVolume : 80,
+      bgmVolume: current.bgmVolume > 0 ? current.bgmVolume : 60,
       soundConsent: true,
     });
 
