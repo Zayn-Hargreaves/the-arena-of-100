@@ -149,11 +149,25 @@ export class DailyService {
     const dateKey = this.toDateKey(now);
     const set = await this.loadQuestionSet(dateKey);
 
-    const alreadyAttempted = userId
-      ? (await this.prisma.dailyAttempt.count({
+    let alreadyAttempted = false;
+    let currentStreak: number | undefined;
+
+    if (userId) {
+      alreadyAttempted =
+        (await this.prisma.dailyAttempt.count({
           where: { dateKey, userId },
-        })) > 0
-      : false;
+        })) > 0;
+
+      if (alreadyAttempted) {
+        const todayAttempt = await this.prisma.dailyAttempt.findUnique({
+          where: { dateKey_userId: { dateKey, userId } },
+          select: { streakAfter: true },
+        });
+        currentStreak = todayAttempt?.streakAfter ?? 0;
+      } else {
+        currentStreak = await this.resolveStreakBefore(userId, dateKey);
+      }
+    }
 
     return {
       dateKey,
@@ -177,6 +191,7 @@ export class DailyService {
       serverTime: now.toISOString(),
       nextResetAt: this.nextResetAt(now).toISOString(),
       alreadyAttempted,
+      currentStreak,
     };
   }
 

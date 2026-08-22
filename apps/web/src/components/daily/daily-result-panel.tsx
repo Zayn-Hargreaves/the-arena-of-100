@@ -41,7 +41,7 @@ export function DailyResultPanel({
             <div className="font-display font-black text-4xl sm:text-5xl text-candy-ink tracking-tight">
               {formattedScore}
               <span className="text-lg sm:text-xl font-mono text-candy-ink/70 ml-2 font-bold">
-                PTS
+                {t("result.pts")}
               </span>
             </div>
           </div>
@@ -97,7 +97,7 @@ export function DailyResultPanel({
       {/* Question Breakdown List */}
       <div className="space-y-3">
         <h3 className="font-display font-black text-base text-candy-ink uppercase tracking-wider">
-          Chi tiết câu hỏi
+          {t("result.questionDetails")}
         </h3>
 
         <div className="space-y-2.5">
@@ -165,7 +165,7 @@ export function DailyResultPanel({
                   {r.explanation && (
                     <div className="bg-white/80 border border-candy-ink/20 rounded-xl p-3 text-xs font-body text-candy-ink/80 leading-relaxed">
                       <span className="font-bold text-candy-ink block mb-0.5">
-                        Giải thích:
+                        {t("result.explanation")}
                       </span>
                       {r.explanation}
                     </div>

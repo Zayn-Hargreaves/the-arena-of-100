@@ -216,7 +216,7 @@ export default function SettingsPage() {
       });
     } catch {
       toast({
-        description: "Lỗi lưu biệt danh",
+        description: t("profile.callsignSaveFailed"),
         variant: "error",
       });
     }
@@ -305,7 +305,13 @@ export default function SettingsPage() {
 
   const handleClearCache = () => {
     try {
-      const keysToKeep = ["callsign", "avatarSeed"];
+      const keysToKeep = [
+        "callsign",
+        "avatarSeed",
+        "avatarName",
+        "avatarIsAnimated",
+        "avatarSpritesheet",
+      ];
       const saved: Record<string, string | null> = {};
       keysToKeep.forEach((k) => {
         saved[k] = localStorage.getItem(k);
@@ -323,7 +329,7 @@ export default function SettingsPage() {
       });
     } catch {
       toast({
-        description: "Không thể dọn dẹp bộ nhớ đệm.",
+        description: t("system.clearCacheFailed"),
         variant: "error",
       });
     }
@@ -390,12 +396,7 @@ export default function SettingsPage() {
           <div className="flex items-center gap-2 self-start md:self-auto shrink-0">
             <button
               type="button"
-              onClick={() => {
-                toast({
-                  description: t("saveSuccess"),
-                  variant: "success",
-                });
-              }}
+              onClick={() => handleSaveCallsign()}
               className="px-4 py-2.5 rounded-2xl bg-candy-mint text-white font-display font-black text-xs uppercase tracking-wider border-[2.5px] border-candy-ink shadow-[3px_3px_0_0_#2B2D42] hover:-translate-y-0.5 hover:shadow-[4px_4px_0_0_#2B2D42] active:translate-y-0.5 active:shadow-[1px_1px_0_0_#2B2D42] transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <CheckmarkBadgeSvg className="w-4 h-4 text-white" />
@@ -653,7 +654,15 @@ export default function SettingsPage() {
 
                   <button
                     type="button"
-                    onClick={() => setBgmEnabled(!bgmEnabled)}
+                    onClick={() => {
+                      if (bgmEnabled) {
+                        stopBgm();
+                        setTestingBgm(false);
+                        setBgmEnabled(false);
+                      } else {
+                        setBgmEnabled(true);
+                      }
+                    }}
                     className={cn(
                       "px-3.5 py-1.5 rounded-xl font-display font-black text-xs uppercase border-[2px] border-candy-ink transition-all shadow-[2px_2px_0_0_#2B2D42] cursor-pointer",
                       bgmEnabled

@@ -44,7 +44,7 @@ export function DailyQuestionCard({
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
           <span className="font-mono text-xs font-black uppercase tracking-wider text-candy-ink bg-white border-[2px] border-candy-ink shadow-[1px_1px_0_0_#2B2D42] px-2.5 py-0.5 rounded-lg">
-            Câu {questionNumber}/{totalQuestions}
+            {t("questionProgress", { questionNumber, totalQuestions })}
           </span>
           <span className="font-mono text-xs font-bold uppercase tracking-wider text-candy-ink/80 bg-candy-cloud border-[2px] border-candy-ink/30 px-2.5 py-0.5 rounded-lg">
             {question.category}

@@ -261,9 +261,12 @@ export default function DailyPage() {
           </div>
 
           <div className="flex flex-wrap gap-2.5 items-center">
-            {result ? (
+            {result ||
+            (data?.currentStreak != null && data.currentStreak > 0) ? (
               <DailyStreakBadge
-                streak={result.streakAfter}
+                streak={
+                  result ? result.streakAfter : (data?.currentStreak ?? 0)
+                }
                 label={t("streak")}
               />
             ) : null}
@@ -400,7 +403,9 @@ export default function DailyPage() {
           {/* Side Column (Streak Rewards & Leaderboard) */}
           <div className="lg:col-span-5 xl:col-span-4 space-y-6">
             <DailyStreakRewardsWidget
-              currentStreak={result ? result.streakAfter : 0}
+              currentStreak={
+                result ? result.streakAfter : (data?.currentStreak ?? 0)
+              }
             />
 
             <section className="space-y-3">

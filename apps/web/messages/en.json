@@ -157,6 +157,8 @@
       "backToHome": "Return to Deck",
       "devHint": "Default development credentials configured via environment variables",
       "success": "Admin authentication successful!",
+      "successDesc": "Logged in as {username} ({role})",
+      "failedTitle": "Login Failed",
       "error": "Invalid admin credentials."
     },
     "units": {
@@ -521,6 +523,11 @@
       "weekly": "THIS WEEK",
       "all": "ALL-TIME"
     },
+    "podium": {
+      "top1": "TOP 1 • CHAMPION",
+      "top2": "TOP 2 • RUNNER-UP",
+      "top3": "TOP 3 • 3RD PLACE"
+    },
     "tableTitle": "NEXT TOP RANKED PLAYERS",
     "columns": {
       "rank": "Rank",
@@ -561,6 +568,7 @@
       "callsignHint": "This name appears on the global leaderboard and during 100-player matches.",
       "saveCallsign": "SAVE CALLSIGN",
       "callsignSaved": "Battle callsign saved!",
+      "callsignSaveFailed": "Failed to save callsign.",
       "avatarShowcase": "Active Sprite Avatar",
       "avatarGallery": "Sprite Roster",
       "chooseTip": "Click any avatar below to switch your character instantly"
@@ -618,7 +626,8 @@
       "clearCacheTitle": "Clear Local Cache",
       "clearCacheDesc": "Purge cached browser data if you experience connection or rendering glitches",
       "clearCacheBtn": "Clear Cache",
-      "clearCacheSuccess": "Local browser cache cleared successfully!"
+      "clearCacheSuccess": "Local browser cache cleared successfully!",
+      "clearCacheFailed": "Failed to clear local cache."
     },
     "saveButton": "Save Settings",
     "saveSuccess": "Settings saved to browser storage!",
@@ -775,6 +784,7 @@
     "submit": "Submit",
     "alreadyDone": "You've already completed today's challenge.",
     "progressLabel": "Daily Challenge progress",
+    "questionProgress": "Question {questionNumber}/{totalQuestions}",
     "speedBonus": {
       "none": "No speed bonus",
       "awarded": "Completed in {seconds}s"
@@ -810,6 +820,7 @@
     "leaderboard": {
       "title": "Today's Leaderboard",
       "topBanner": "Top Players Today",
+      "playerCount": "{count, plural, one {# Player} other {# Players}}",
       "error": "Leaderboard unavailable.",
       "empty": "No scores yet today — be the first.",
       "cardsThisWeek": "Cards played this week",
@@ -849,6 +860,9 @@
       "skipped": "(skipped)",
       "correctAnswer": "Correct: {answer}",
       "questionLabel": "Q{index}",
+      "pts": "PTS",
+      "questionDetails": "Question Details",
+      "explanation": "Explanation:",
       "srCorrect": "Correct answer",
       "srIncorrect": "Incorrect answer"
     },

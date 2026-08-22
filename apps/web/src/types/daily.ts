@@ -17,6 +17,7 @@ export interface DailyTodayResponse {
   serverTime: string;
   nextResetAt: string;
   alreadyAttempted: boolean;
+  currentStreak?: number;
 }
 
 export interface DailyAnswerInput {

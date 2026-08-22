@@ -39,6 +39,7 @@ interface PodiumStepProps {
 }
 
 function ChampionPodiumCard({ entry, rank }: Readonly<PodiumStepProps>) {
+  const t = useTranslations("rankings");
   const avatar = isValidAvatarSeed(entry.avatar)
     ? findAvatarBySeed(entry.avatar)
     : (avatars[0] ?? null);
@@ -59,7 +60,7 @@ function ChampionPodiumCard({ entry, rank }: Readonly<PodiumStepProps>) {
       spriteScale: 0.52,
       spriteW: "98px",
       spriteH: "104px",
-      pedestalLabel: "TOP 1 • CHAMPION",
+      pedestalLabel: t("podium.top1"),
       badgeIcon: <Top1CrownBadgeSvg size={28} />,
     },
     2: {
@@ -72,7 +73,7 @@ function ChampionPodiumCard({ entry, rank }: Readonly<PodiumStepProps>) {
       spriteScale: 0.42,
       spriteW: "78px",
       spriteH: "84px",
-      pedestalLabel: "TOP 2 • Á QUÂN",
+      pedestalLabel: t("podium.top2"),
       badgeIcon: <Top2SilverBadgeSvg size={26} />,
     },
     3: {
@@ -85,7 +86,7 @@ function ChampionPodiumCard({ entry, rank }: Readonly<PodiumStepProps>) {
       spriteScale: 0.38,
       spriteW: "70px",
       spriteH: "76px",
-      pedestalLabel: "TOP 3 • HẠNG BA",
+      pedestalLabel: t("podium.top3"),
       badgeIcon: <Top3BronzeBadgeSvg size={26} />,
     },
   }[rank];
@@ -519,25 +520,27 @@ export default function RankingsPage() {
                                     #{item.rank}
                                   </span>
                                 </td>
-                                <td className="p-4 flex items-center gap-3 border-r-[2px] border-candy-ink">
-                                  <div className="w-10 h-10 rounded-xl bg-white border-[2px] border-candy-ink shadow-[1.5px_1.5px_0_0_#2B2D42] flex items-center justify-center overflow-hidden shrink-0">
-                                    <SpriteFrame
-                                      src={avatar?.spritesheet}
-                                      scale={0.18}
-                                      width="35px"
-                                      height="37px"
-                                      frameClassName="w-10 h-10 rounded-xl border-0 shadow-none"
-                                      skeletonSize="28px"
-                                    />
-                                  </div>
-                                  <div className="min-w-0">
-                                    <span className="font-display font-black text-candy-ink truncate block text-sm">
-                                      {item.username}
-                                    </span>
-                                    <span className="text-[11px] font-mono font-black text-candy-ink/60 uppercase">
-                                      {item.wins} W • {t("accuracyShort")}{" "}
-                                      {formatPercent(item.accuracy)}
-                                    </span>
+                                <td className="p-4 border-r-[2px] border-candy-ink">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-white border-[2px] border-candy-ink shadow-[1.5px_1.5px_0_0_#2B2D42] flex items-center justify-center overflow-hidden shrink-0">
+                                      <SpriteFrame
+                                        src={avatar?.spritesheet}
+                                        scale={0.18}
+                                        width="35px"
+                                        height="37px"
+                                        frameClassName="w-10 h-10 rounded-xl border-0 shadow-none"
+                                        skeletonSize="28px"
+                                      />
+                                    </div>
+                                    <div className="min-w-0">
+                                      <span className="font-display font-black text-candy-ink truncate block text-sm">
+                                        {item.username}
+                                      </span>
+                                      <span className="text-[11px] font-mono font-black text-candy-ink/60 uppercase">
+                                        {item.wins} W • {t("accuracyShort")}{" "}
+                                        {formatPercent(item.accuracy)}
+                                      </span>
+                                    </div>
                                   </div>
                                 </td>
                                 <td className="p-4 hidden md:table-cell text-center border-r-[2px] border-candy-ink">

@@ -53,7 +53,9 @@ export function DailyLeaderboard({ items }: Readonly<DailyLeaderboardProps>) {
     <div className="bg-candy-cloud border-[3px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42] rounded-2xl overflow-hidden">
       <div className="bg-candy-ink text-white px-4 py-2 flex items-center justify-between text-[11px] font-mono font-black uppercase tracking-wider">
         <span>{t("leaderboard.topBanner")}</span>
-        <span className="text-candy-yellow">{items.length} Đấu thủ</span>
+        <span className="text-candy-yellow">
+          {t("leaderboard.playerCount", { count: items.length })}
+        </span>
       </div>
 
       <ol className="divide-y-[2px] divide-candy-ink/15">

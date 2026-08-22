@@ -743,13 +743,19 @@ export default function ProfilePage() {
   const profile = statsQuery.data;
   const activeName = profile?.user.username || username || "Khách_Đấu_Thủ";
   const activeAvatar = getActiveAvatar(profile, avatars);
-  const uid = `G-${(activeName.length * 342).toString(16).toUpperCase()}`;
+  const uid = profile?.user.id ?? null;
 
   const handleCopyUid = useCallback(() => {
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(uid);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+    if (uid && typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard
+        .writeText(uid)
+        .then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        })
+        .catch(() => {
+          // ignore rejected clipboard writes
+        });
     }
   }, [uid]);
 
@@ -835,24 +841,26 @@ export default function ProfilePage() {
                 {t("registeredToday")}
               </span>
 
-              <button
-                type="button"
-                onClick={handleCopyUid}
-                className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-xl border border-candy-ink shadow-[1.5px_1.5px_0_0_#2B2D42] text-candy-pink hover:bg-candy-pink hover:text-white transition-colors cursor-pointer"
-                title={t("hero.copyUid")}
-              >
-                {copied ? (
-                  <>
-                    <CheckmarkCheckSvg size={14} />
-                    <span>{t("hero.copied")}</span>
-                  </>
-                ) : (
-                  <>
-                    <CopyClipboardSvg size={14} />
-                    <span>UID: {uid}</span>
-                  </>
-                )}
-              </button>
+              {uid && (
+                <button
+                  type="button"
+                  onClick={handleCopyUid}
+                  className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-xl border border-candy-ink shadow-[1.5px_1.5px_0_0_#2B2D42] text-candy-pink hover:bg-candy-pink hover:text-white transition-colors cursor-pointer"
+                  title={t("hero.copyUid")}
+                >
+                  {copied ? (
+                    <>
+                      <CheckmarkCheckSvg size={14} />
+                      <span>{t("hero.copied")}</span>
+                    </>
+                  ) : (
+                    <>
+                      <CopyClipboardSvg size={14} />
+                      <span>UID: {uid}</span>
+                    </>
+                  )}
+                </button>
+              )}
 
               <Link
                 href="/settings"

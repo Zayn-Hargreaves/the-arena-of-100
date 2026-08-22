@@ -103,9 +103,7 @@ const sampleQuestions = [
 // sequence repeated across the error-path tests below.
 function completeQuiz() {
   for (let i = 0; i < sampleQuestions.length; i++) {
-    fireEvent.click(
-      screen.getByRole("button", { name: sampleQuestions[i].options[0] }),
-    );
+    fireEvent.click(screen.getByText(sampleQuestions[i].options[0]));
     if (i < sampleQuestions.length - 1) {
       fireEvent.click(screen.getByText(/^next$/i));
     } else {
@@ -188,7 +186,7 @@ describe("DailyPage", () => {
 
     for (let i = 0; i < sampleQuestions.length; i++) {
       const q = sampleQuestions[i];
-      const button = screen.getByRole("button", { name: q.options[0] });
+      const button = screen.getByText(q.options[0]);
       fireEvent.click(button);
       if (i < sampleQuestions.length - 1) {
         fireEvent.click(screen.getByText(/^next$/i));
@@ -250,6 +248,7 @@ describe("DailyPage", () => {
     getDailyToday.mockResolvedValue({
       ...todayResponse,
       alreadyAttempted: true,
+      currentStreak: 5,
     });
 
     renderPage();
@@ -257,6 +256,7 @@ describe("DailyPage", () => {
     await waitFor(() =>
       expect(screen.getByText("alreadyDone")).toBeInTheDocument(),
     );
+    expect(screen.getByText("rewards.title")).toBeInTheDocument();
   });
 
   it("shows 409 error message when submit returns conflict", async () => {

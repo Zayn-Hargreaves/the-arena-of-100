@@ -157,6 +157,8 @@
       "backToHome": "Về trang chính",
       "devHint": "Thông tin đăng nhập phát triển mặc định được cấu hình qua biến môi trường",
       "success": "Đăng nhập Quản trị viên thành công!",
+      "successDesc": "Đã đăng nhập với tư cách {username} ({role})",
+      "failedTitle": "Đăng nhập thất bại",
       "error": "Mật khẩu quản trị không chính xác."
     },
     "units": {
@@ -521,6 +523,11 @@
       "weekly": "TUẦN NÀY",
       "all": "ALL-TIME"
     },
+    "podium": {
+      "top1": "TOP 1 • QUÁN QUÂN",
+      "top2": "TOP 2 • Á QUÂN",
+      "top3": "TOP 3 • HẠNG BA"
+    },
     "tableTitle": "TOP PHÂN HẠNG TIẾP THEO",
     "columns": {
       "rank": "Hạng",
@@ -561,6 +568,7 @@
       "callsignHint": "Tên này sẽ hiển thị trong bảng xếp hạng và các trận đấu sinh tồn 100 người.",
       "saveCallsign": "LƯU BIỆT DANH",
       "callsignSaved": "Đã lưu biệt danh thi đấu!",
+      "callsignSaveFailed": "Lỗi lưu biệt danh.",
       "avatarShowcase": "Linh Thú Đang Chọn",
       "avatarGallery": "Bộ Sưu Tập Linh Thú",
       "chooseTip": "Nhấp vào một linh thú bên dưới để đổi đại diện ngay lập tức"
@@ -618,7 +626,8 @@
       "clearCacheTitle": "Dọn Dẹp Bộ Nhớ Đệm",
       "clearCacheDesc": "Xoá cache trình duyệt cục bộ nếu gặp sự cố kết nối hoặc giao diện",
       "clearCacheBtn": "Xoá Bộ Nhớ Đệm",
-      "clearCacheSuccess": "Đã dọn dẹp bộ nhớ đệm thành công!"
+      "clearCacheSuccess": "Đã dọn dẹp bộ nhớ đệm thành công!",
+      "clearCacheFailed": "Không thể dọn dẹp bộ nhớ đệm."
     },
     "saveButton": "Lưu Cài Đặt",
     "saveSuccess": "Đã lưu cài đặt vào bộ nhớ trình duyệt!",
@@ -775,6 +784,7 @@
     "submit": "Nộp bài",
     "alreadyDone": "Bạn đã hoàn thành thử thách hôm nay rồi.",
     "progressLabel": "Tiến trình Thử Thách Hằng Ngày",
+    "questionProgress": "Câu {questionNumber}/{totalQuestions}",
     "speedBonus": {
       "none": "Không có thưởng tốc độ",
       "awarded": "Hoàn thành trong {seconds}s"
@@ -810,6 +820,7 @@
     "leaderboard": {
       "title": "Bảng Xếp Hạng Hôm Nay",
       "topBanner": "Top Cao Thủ Hôm Nay",
+      "playerCount": "{count} Đấu thủ",
       "error": "Không tải được bảng xếp hạng.",
       "empty": "Hôm nay chưa có điểm — hãy là người đầu tiên.",
       "cardsThisWeek": "Lá bài đã chơi trong tuần",
@@ -849,6 +860,9 @@
       "skipped": "(bỏ qua)",
       "correctAnswer": "Đáp án: {answer}",
       "questionLabel": "Câu {index}",
+      "pts": "PTS",
+      "questionDetails": "Chi tiết câu hỏi",
+      "explanation": "Giải thích:",
       "srCorrect": "Trả lời đúng",
       "srIncorrect": "Trả lời sai"
     },

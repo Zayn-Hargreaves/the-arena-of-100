@@ -124,7 +124,7 @@ export default function AdminLoginPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          password: password.trim(),
+          password,
         }),
       });
 
@@ -159,24 +159,18 @@ export default function AdminLoginPage() {
         isAuthenticated: true,
       });
 
-      // Save token locally for session persistence
-      try {
-        localStorage.setItem("arena-access-token", payload.accessToken);
-        localStorage.setItem("arena-user-role", payload.user.role);
-        localStorage.setItem("arena-username", payload.user.username);
-      } catch {
-        // ignore localStorage failures
-      }
-
       toast({
         title: t("success"),
-        description: `Logged in as ${payload.user.username} (${payload.user.role})`,
+        description: t("successDesc", {
+          username: payload.user.username,
+          role: payload.user.role,
+        }),
       });
 
       router.push("/admin");
     } catch (err) {
       toast({
-        title: "Login Failed",
+        title: t("failedTitle"),
         description: err instanceof Error ? err.message : t("error"),
         variant: "error",
       });
