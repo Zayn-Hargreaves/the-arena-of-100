@@ -638,7 +638,7 @@ export class MatchService implements OnModuleDestroy {
             parsed.data
           ) {
             const data = restoreMatchDates(parsed.data);
-            if (data.status !== "FINISHED" && Array.isArray(data.answers)) {
+            if (data.status !== "FINISHED") {
               data.answers = [];
             }
             return data;
@@ -944,10 +944,18 @@ export class MatchService implements OnModuleDestroy {
     // Collect elimination rounds from event log for Battle Royale rank calculation
     const eliminatedRoundByUser = new Map<string, number>();
     for (const entry of stateMachine.getEventLog()) {
-      if (entry.type === MatchEventType.PLAYER_ELIMINATED) {
-        const payload = entry.payload as { playerId: string; roundNo: number };
-        if (payload?.playerId && typeof payload.roundNo === "number") {
-          eliminatedRoundByUser.set(payload.playerId, payload.roundNo);
+      if (entry.type === "ROUND_EVALUATED") {
+        const payload = entry.payload as {
+          roundNo?: number;
+          eliminatedIds?: string[];
+        };
+        if (
+          typeof payload?.roundNo === "number" &&
+          Array.isArray(payload?.eliminatedIds)
+        ) {
+          for (const playerId of payload.eliminatedIds) {
+            eliminatedRoundByUser.set(playerId, payload.roundNo);
+          }
         }
       }
     }

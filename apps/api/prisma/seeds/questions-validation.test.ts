@@ -86,4 +86,44 @@ describe("Questions Seed Validation - Tags", () => {
       /Options contain duplicates/,
     );
   });
+
+  it("should throw error when correctAnswer is not in options", () => {
+    const questionWithInvalidAnswer: Question = {
+      ...baseValidQuestion,
+      correctAnswer: "Hải Phòng",
+    };
+    expect(() => validateQuestions([questionWithInvalidAnswer])).toThrowError(
+      /Correct answer "Hải Phòng" is not in options/,
+    );
+  });
+
+  it("should throw error when difficulty is invalid", () => {
+    const questionWithInvalidDifficulty = {
+      ...baseValidQuestion,
+      difficulty: "EXTREME" as any,
+    };
+    expect(() =>
+      validateQuestions([questionWithInvalidDifficulty]),
+    ).toThrowError(/Invalid difficulty "EXTREME"/);
+  });
+
+  it("should throw error when category is missing", () => {
+    const questionWithMissingCategory = {
+      ...baseValidQuestion,
+    };
+    delete (questionWithMissingCategory as Partial<Question>).category;
+    expect(() => validateQuestions([questionWithMissingCategory])).toThrowError(
+      /Missing category for question/,
+    );
+  });
+
+  it("should throw error when category is invalid", () => {
+    const questionWithInvalidCategory = {
+      ...baseValidQuestion,
+      category: "MATH" as any,
+    };
+    expect(() => validateQuestions([questionWithInvalidCategory])).toThrowError(
+      /Invalid category "MATH"/,
+    );
+  });
 });

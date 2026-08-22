@@ -102,14 +102,14 @@ export const questionSeeds: Question[] = [
       "Bản đồ đất liền nước Việt Nam trải dài với đường bờ biển uốn lượn hình chữ S.",
   },
   {
-    content: "Sa mạc cát lớn nhất thế giới là gì?",
-    options: ["Gobi", "Sahara", "Kalahari", "Atacama"],
-    correctAnswer: "Sahara",
+    content: "Sa mạc cát liên tục lớn nhất thế giới là gì?",
+    options: ["Gobi", "Rub’ al-Khali", "Kalahari", "Atacama"],
+    correctAnswer: "Rub’ al-Khali",
     difficulty: "MEDIUM",
     category: "GEOGRAPHY",
-    tags: ["sa mạc", "châu Phi"],
+    tags: ["sa mạc", "châu Á"],
     explanation:
-      "Sahara là sa mạc cát nhiệt đới lớn nhất hành tinh nằm ở Bắc Phi.",
+      "Rub’ al-Khali (Empty Quarter) trên bán đảo Ả Rập là sa mạc cát liên tục lớn nhất thế giới.",
   },
   {
     content: "Hòn đảo lớn nhất thế giới theo diện tích là đảo nào?",
@@ -502,14 +502,19 @@ export const questionSeeds: Question[] = [
   },
   {
     content:
-      "Trong y học truyền máu, nhóm máu nào được coi là nhóm máu 'chuyên cho' phổ biến?",
-    options: ["Nhóm máu O", "Nhóm máu A", "Nhóm máu B", "Nhóm máu AB"],
-    correctAnswer: "Nhóm máu O",
+      "Trong y học truyền máu hồng cầu, nhóm máu nào được coi là nhóm 'chuyên cho' phổ quát?",
+    options: [
+      "Nhóm máu O âm tính (O-)",
+      "Nhóm máu A",
+      "Nhóm máu B",
+      "Nhóm máu AB",
+    ],
+    correctAnswer: "Nhóm máu O âm tính (O-)",
     difficulty: "HARD",
     category: "SCIENCE",
     tags: ["y học", "máu"],
     explanation:
-      "Hồng cầu nhóm máu O không có kháng nguyên A và B nên có thể truyền cho người mang các nhóm máu khác.",
+      "Hồng cầu nhóm máu O âm tính (O-) không có kháng nguyên A, B và Rh nên có thể truyền hồng cầu cho hầu hết mọi người nhận.",
   },
 
   // ==========================================
@@ -704,7 +709,7 @@ export const questionSeeds: Question[] = [
     category: "TECHNOLOGY",
     tags: ["bảo mật", "web"],
     explanation:
-      "HTTPS mã hóa dữ liệu truyền qua mạng bằng giao thức SSL/TLS để bảo vệ thông tin người dùng.",
+      "HTTPS mã hóa dữ liệu truyền qua mạng bằng giao thức TLS để bảo vệ thông tin người dùng.",
   },
   {
     content:
@@ -2154,6 +2159,12 @@ function validateQuestion(question: Question): void {
   }
 
   // Ensure category is valid
+  if (!question.category) {
+    throw new Error(
+      `Invalid question: Missing category for question "${question.content}"`,
+    );
+  }
+
   if (
     ![
       "GENERAL",
@@ -2167,7 +2178,7 @@ function validateQuestion(question: Question): void {
     ].includes(question.category)
   ) {
     throw new Error(
-      `Invalid question: Missing category for question "${question.content}"`,
+      `Invalid question: Invalid category "${question.category}" for question "${question.content}"`,
     );
   }
 
