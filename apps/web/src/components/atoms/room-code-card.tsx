@@ -104,7 +104,7 @@ export const RoomCodeCard: React.FC<RoomCodeCardProps> = ({ roomCode }) => {
           type="button"
           onClick={handleCopyCode}
           className={cn(
-            "w-11 h-11 rounded-xl border-[2.5px] border-candy-ink flex items-center justify-center transition-all outline-none cursor-pointer shrink-0 shadow-[2px_2px_0_0_#2B2D42]",
+            "w-11 h-11 rounded-xl border-[2.5px] border-candy-ink flex items-center justify-center transition-all outline-none cursor-pointer shrink-0 shadow-[2px_2px_0_0_#2B2D42] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-candy-ink focus-visible:ring-offset-2",
             copiedCode
               ? "bg-candy-mint text-candy-ink shadow-[1px_1px_0_0_#2B2D42]"
               : "bg-candy-yellow text-candy-ink hover:translate-y-[-1.5px] hover:shadow-[3px_3px_0_0_#2B2D42] active:translate-y-[1px]",
@@ -133,7 +133,7 @@ export const RoomCodeCard: React.FC<RoomCodeCardProps> = ({ roomCode }) => {
         type="button"
         onClick={handleCopyLink}
         className={cn(
-          "w-full py-2.5 px-4 rounded-xl border-[2.5px] border-candy-ink text-candy-ink font-display font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 hover:translate-y-[-1px] hover:shadow-[3px_3px_0_0_#2B2D42] active:translate-y-[1px] active:shadow-[1px_1px_0_0_#2B2D42] shadow-[2px_2px_0_0_#2B2D42] transition-all cursor-pointer outline-none",
+          "w-full py-2.5 px-4 rounded-xl border-[2.5px] border-candy-ink text-candy-ink font-display font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 hover:translate-y-[-1px] hover:shadow-[3px_3px_0_0_#2B2D42] active:translate-y-[1px] active:shadow-[1px_1px_0_0_#2B2D42] shadow-[2px_2px_0_0_#2B2D42] transition-all cursor-pointer outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-candy-ink focus-visible:ring-offset-2",
           copiedLink ? "bg-candy-mint" : "bg-white hover:bg-candy-cloud",
         )}
       >

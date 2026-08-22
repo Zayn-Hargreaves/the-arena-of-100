@@ -42,9 +42,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const mobileToggleRef = useRef<HTMLButtonElement>(null);
   const resolvedNickname = nickname.trim();
   const displayName = resolvedNickname || t("guestName");
   const subtitleKey = resolvedNickname ? "playerRole" : "guestRole";
+
+  const closeMobileMenu = () => {
+    setMobileOpen(false);
+    mobileToggleRef.current?.focus();
+  };
 
   const [resolvedAvatarSeed, setResolvedAvatarSeed] = useState<AvatarSeed>(
     () => {
@@ -100,7 +106,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape" && mobileOpen) {
-        setMobileOpen(false);
+        closeMobileMenu();
       }
     };
     window.addEventListener("keydown", handleEscape);
@@ -290,8 +296,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="flex items-center gap-2">
           <LanguageToggle showIcon={false} />
           <button
+            ref={mobileToggleRef}
             type="button"
-            onClick={() => setMobileOpen(!mobileOpen)}
+            onClick={() =>
+              mobileOpen ? closeMobileMenu() : setMobileOpen(true)
+            }
             className="p-2 rounded-xl bg-candy-cloud border-3 border-candy-ink hover:bg-candy-yellow text-candy-ink transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-candy-yellow shadow-[2px_2px_0_0_#2B2D42] cursor-pointer"
             aria-label={mobileOpen ? t("closeMenu") : t("openMenu")}
           >
@@ -314,18 +323,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className="md:hidden fixed inset-0 top-16 z-40 flex flex-col p-5 animate-fade-in border-t-4 border-candy-ink select-none w-full h-[calc(100vh-4rem)] max-w-none max-h-none m-0 bg-[#FFFDF5]"
           onClick={(e) => {
             if (e.target === dialogRef.current) {
-              setMobileOpen(false);
+              closeMobileMenu();
             }
           }}
-          onClose={() => setMobileOpen(false)}
+          onClose={closeMobileMenu}
         >
           <button
             type="button"
             aria-hidden="true"
             tabIndex={-1}
-            onClick={() => setMobileOpen(false)}
+            onClick={closeMobileMenu}
             className="absolute inset-0 -z-10 cursor-default"
           />
+
+          <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-candy-ink/20">
+            <span className="font-display font-black text-sm tracking-wider text-candy-pink">
+              ARENA OF 100
+            </span>
+            <button
+              type="button"
+              onClick={closeMobileMenu}
+              className="p-1.5 rounded-xl bg-candy-cloud border-2 border-candy-ink hover:bg-candy-yellow text-candy-ink transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-candy-yellow shadow-[2px_2px_0_0_#2B2D42] cursor-pointer"
+              aria-label={t("closeMenu")}
+            >
+              <ArcadeCloseIcon size={18} />
+            </button>
+          </div>
 
           <nav className="flex-1 space-y-2.5 overflow-y-auto no-scrollbar">
             {navItems.map((item) => {
@@ -340,7 +363,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <Link
                   key={item.key}
                   href={item.href}
-                  onClick={() => setMobileOpen(false)}
+                  onClick={closeMobileMenu}
                   className={cn(
                     "flex items-center gap-3.5 p-3.5 rounded-2xl border-3 border-candy-ink transition-all duration-200 cursor-pointer",
                     isActive

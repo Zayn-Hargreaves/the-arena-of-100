@@ -122,7 +122,7 @@ export const ProfessorDialogueBox: React.FC<ProfessorDialogueBoxProps> = ({
         <button
           type="button"
           onClick={onDismiss}
-          className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-candy-ink text-white text-[10px] font-mono flex items-center justify-center hover:bg-candy-red transition-colors"
+          className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-candy-ink text-white text-[10px] font-mono flex items-center justify-center hover:bg-candy-red transition-colors"
           aria-label={t("closeDialogue")}
         >
           ✕

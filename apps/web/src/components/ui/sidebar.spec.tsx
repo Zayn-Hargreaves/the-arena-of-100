@@ -33,6 +33,14 @@ vi.mock("@/i18n/routing", async () => {
   };
 });
 
+let mockUserRole: string | undefined = undefined;
+vi.mock("@/stores/socket-store", () => ({
+  useSocketStore: (selector?: (state: { userRole?: string }) => unknown) => {
+    const state = { userRole: mockUserRole };
+    return selector ? selector(state) : state;
+  },
+}));
+
 import { Sidebar } from "./sidebar";
 
 const SIDEBAR_TRANSLATIONS: Record<string, string> = {
@@ -43,6 +51,7 @@ const SIDEBAR_TRANSLATIONS: Record<string, string> = {
 };
 
 beforeEach(() => {
+  mockUserRole = undefined;
   mockUsePathname.mockReturnValue("/");
   vi.mocked(useTranslations).mockImplementation(((namespace?: string) =>
     (key: string, params?: Record<string, string | number>) => {
@@ -71,6 +80,18 @@ describe("Sidebar — desktop", () => {
     expect(screen.getByText("nav.settings")).toBeInTheDocument();
     expect(screen.getByText("nav.profile")).toBeInTheDocument();
     expect(screen.queryByText("nav.admin")).not.toBeInTheDocument();
+  });
+
+  it("renders nav.admin when userRole is ADMIN", () => {
+    mockUserRole = "ADMIN";
+    render(<Sidebar nickname="Alice" />);
+    expect(screen.getByText("nav.admin")).toBeInTheDocument();
+  });
+
+  it("does NOT render nav.admin when userRole is PLAYER", () => {
+    mockUserRole = "PLAYER";
+    render(<Sidebar nickname="Alice" />);
+    expect(screen.queryByText("nav.admin")).toBeNull();
   });
 
   it("does NOT render the disabled 'arena' nav item", () => {
@@ -165,7 +186,7 @@ describe("Sidebar — mobile", () => {
       screen.getByRole("dialog", { name: "Mobile navigation menu" }),
     ).toBeInTheDocument();
 
-    const closeButton = screen.getByRole("button", {
+    const closeButton = within(screen.getByRole("banner")).getByRole("button", {
       name: "Close menu",
     });
     await user.click(closeButton);
@@ -285,17 +306,20 @@ describe("Sidebar — mobile", () => {
   it("closes the mobile overlay when the dialog close button is clicked", async () => {
     const user = userEvent.setup();
     render(<Sidebar nickname="Alice" />);
-    await user.click(screen.getByRole("button", { name: "Open menu" }));
-    expect(
-      screen.getByRole("dialog", { name: "Mobile navigation menu" }),
-    ).toBeInTheDocument();
+    const menuButton = screen.getByRole("button", { name: "Open menu" });
+    await user.click(menuButton);
+    const dialog = screen.getByRole("dialog", {
+      name: "Mobile navigation menu",
+    });
+    expect(dialog).toBeInTheDocument();
 
-    const closeButton = screen.getByRole("button", {
+    const closeButton = within(dialog).getByRole("button", {
       name: "Close menu",
     });
     await user.click(closeButton);
     expect(
       screen.queryByRole("dialog", { name: "Mobile navigation menu" }),
     ).not.toBeInTheDocument();
+    expect(menuButton).toHaveFocus();
   });
 });

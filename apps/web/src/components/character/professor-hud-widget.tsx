@@ -13,7 +13,6 @@ export interface ProfessorHudWidgetProps {
   hasAnswered?: boolean;
   isCorrect?: boolean | null;
   isEliminated?: boolean;
-  locale?: string;
 }
 
 export const ProfessorHudWidget: React.FC<ProfessorHudWidgetProps> = ({
@@ -28,6 +27,7 @@ export const ProfessorHudWidget: React.FC<ProfessorHudWidgetProps> = ({
   const [mood, setMood] = useState<ProfessorMood>("teaching");
   const [dialogueKey, setDialogueKey] = useState<string>("defaultRoundHint");
   const lastPokeTimeRef = useRef<number>(0);
+  const lastSecondsTriggeredRef = useRef<boolean>(false);
 
   const isLastSeconds = typeof timeLeft === "number" && timeLeft <= 4;
 
@@ -62,14 +62,25 @@ export const ProfessorHudWidget: React.FC<ProfessorHudWidgetProps> = ({
       setMood("teaching");
       setDialogueKey("defaultRoundHint");
     }
-  }, [isEliminated, hasAnswered, isCorrect, isLastSeconds]);
+  }, [
+    isEliminated,
+    hasAnswered,
+    isCorrect,
+    isLastSeconds, // Triggers restoring defaultRoundHint when exiting countdown state
+  ]);
 
-  // Countdown effect
+  // Countdown effect - triggers only once per countdown cycle
   useEffect(() => {
-    if (isLastSeconds && !hasAnswered && !isEliminated) {
+    if (!isLastSeconds) {
+      lastSecondsTriggeredRef.current = false;
+      return;
+    }
+
+    if (!lastSecondsTriggeredRef.current && !hasAnswered && !isEliminated) {
       if (Date.now() - lastPokeTimeRef.current < 4000) {
         return;
       }
+      lastSecondsTriggeredRef.current = true;
       const d = getRandomProfessorDialogue("game_last_seconds");
       setMood("ticking_panic");
       setDialogueKey(d.key);

@@ -50,8 +50,11 @@ export function LanguageToggle({
 
   const handleSwitch = (newLocale: "vi" | "en") => {
     if (newLocale === locale || isPending) return;
+    const search = typeof window !== "undefined" ? window.location.search : "";
+    const hash = typeof window !== "undefined" ? window.location.hash : "";
+    const targetUrl = `${pathname}${search}${hash}`;
     startTransition(() => {
-      router.replace(pathname, { locale: newLocale });
+      router.replace(targetUrl, { locale: newLocale });
     });
   };
 

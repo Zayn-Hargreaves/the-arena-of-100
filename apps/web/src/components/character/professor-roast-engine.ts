@@ -1,7 +1,5 @@
 "use client";
 
-import { useLocale } from "next-intl";
-
 export type ProfessorMood =
   | "idle"
   | "thinking"
@@ -105,9 +103,4 @@ export function getRandomProfessorDialogue(
   const list = PROFESSOR_DIALOGUES[context];
   const item = list[Math.floor(Math.random() * list.length)] ?? list[0]!;
   return item;
-}
-
-export function useSafeLocale(fallback = "vi"): string {
-  const locale = useLocale();
-  return locale || fallback;
 }
