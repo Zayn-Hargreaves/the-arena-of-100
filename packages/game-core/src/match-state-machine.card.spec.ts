@@ -113,6 +113,17 @@ describe("classAssignment — server-side random per-match", () => {
     const result = m.classAssignment(["p1", "ghost"], "seed-D");
     expect(result.length).toBe(2);
   });
+
+  it("hasClassAssignments returns false initially and true after assignment or deserialization", () => {
+    const m = makeMachine();
+    expect(m.hasClassAssignments()).toBe(false);
+    m.classAssignment(["p1", "p2"], "seed-E");
+    expect(m.hasClassAssignments()).toBe(true);
+
+    const serialized = m.serialize();
+    const restored = MatchStateMachine.deserialize(serialized);
+    expect(restored.hasClassAssignments()).toBe(true);
+  });
 });
 
 describe("pickOffer — milestone card offer", () => {

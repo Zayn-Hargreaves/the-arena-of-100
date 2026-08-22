@@ -40,8 +40,14 @@ describe("LeaderboardQueryDto & Schema", () => {
       expect(parsed.limit).toBe(10);
     });
 
-    it("should throw if limit is less than 1 or greater than 100", () => {
+    it("should throw if limit is not in allowed cache limits", () => {
       expect(() => leaderboardQuerySchema.parse({ limit: 0 })).toThrow(
+        ZodError,
+      );
+      expect(() => leaderboardQuerySchema.parse({ limit: 1 })).toThrow(
+        ZodError,
+      );
+      expect(() => leaderboardQuerySchema.parse({ limit: 42 })).toThrow(
         ZodError,
       );
       expect(() => leaderboardQuerySchema.parse({ limit: 101 })).toThrow(
@@ -49,8 +55,10 @@ describe("LeaderboardQueryDto & Schema", () => {
       );
     });
 
-    it("should accept boundary limits 1 and 100", () => {
-      expect(leaderboardQuerySchema.parse({ limit: 1 }).limit).toBe(1);
+    it("should accept valid cache limits 10, 25, 50, and 100", () => {
+      expect(leaderboardQuerySchema.parse({ limit: 10 }).limit).toBe(10);
+      expect(leaderboardQuerySchema.parse({ limit: 25 }).limit).toBe(25);
+      expect(leaderboardQuerySchema.parse({ limit: 50 }).limit).toBe(50);
       expect(leaderboardQuerySchema.parse({ limit: 100 }).limit).toBe(100);
     });
 

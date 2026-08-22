@@ -26,6 +26,7 @@ import {
   PlayerStatus,
   ErrorCode,
   DEFAULT_ELO,
+  BOT_GUEST_ID_PREFIX,
   type CardEffectEvent,
   type ClassAssignedEvent,
   type PlayerInfo,
@@ -85,15 +86,26 @@ function restoreMatchDates<T>(data: T): T {
             : null,
         }))
       : [],
+    answers: Array.isArray(match.answers) ? match.answers : [],
   } as T;
 }
 
 export type MatchWithDetails = Prisma.MatchGetPayload<{
   include: {
     players: {
-      include: { user: { select: { id: true; username: true } } };
+      include: {
+        user: { select: { id: true; username: true; avatar: true } };
+      };
     };
     rounds: true;
+    answers: {
+      select: {
+        userId: true;
+        isCorrect: true;
+        responseTimeMs: true;
+        roundId: true;
+      };
+    };
   };
 }>;
 
@@ -254,7 +266,7 @@ export class MatchService implements OnModuleDestroy {
       where: {
         matchId,
         user: {
-          guestId: { startsWith: "bot_" },
+          guestId: { startsWith: BOT_GUEST_ID_PREFIX },
         },
       },
       select: { userId: true },
@@ -625,7 +637,11 @@ export class MatchService implements OnModuleDestroy {
             parsed.gen === currentGen &&
             parsed.data
           ) {
-            return restoreMatchDates(parsed.data);
+            const data = restoreMatchDates(parsed.data);
+            if (data.status !== "FINISHED") {
+              data.answers = [];
+            }
+            return data;
           }
         }
       } catch (err) {
@@ -637,15 +653,30 @@ export class MatchService implements OnModuleDestroy {
       where: { id: matchId },
       include: {
         players: {
-          include: { user: { select: { id: true, username: true } } },
+          include: {
+            user: { select: { id: true, username: true, avatar: true } },
+          },
         },
         rounds: true,
+        // Per-player answer correctness/timing is only safe after the match
+        // finishes — live matches must not leak grading data publicly.
+        answers: {
+          select: {
+            userId: true,
+            isCorrect: true,
+            responseTimeMs: true,
+            roundId: true,
+          },
+        },
       },
     });
 
     if (!match) {
       throw new NotFoundException(ErrorCode.MATCH_NOT_FOUND);
     }
+
+    const sanitized: MatchWithDetails =
+      match.status === "FINISHED" ? match : { ...match, answers: [] };
 
     if (
       capturedGen !== null &&
@@ -654,7 +685,7 @@ export class MatchService implements OnModuleDestroy {
       try {
         const payload = JSON.stringify({
           gen: capturedGen,
-          data: match,
+          data: sanitized,
         });
         await this.redis.setIfGenMatches(
           genKey,
@@ -668,7 +699,7 @@ export class MatchService implements OnModuleDestroy {
       }
     }
 
-    return match;
+    return sanitized;
   }
 
   // Save match result
@@ -910,12 +941,42 @@ export class MatchService implements OnModuleDestroy {
       userRows.map((u) => [u.id, u.elo]),
     );
 
+    // Collect elimination rounds from event log for Battle Royale rank calculation
+    const eliminatedRoundByUser = new Map<string, number>();
+    for (const entry of stateMachine.getEventLog()) {
+      if (entry.type === "ROUND_EVALUATED") {
+        const payload = entry.payload as {
+          roundNo?: number;
+          eliminatedIds?: string[];
+        };
+        if (
+          typeof payload?.roundNo === "number" &&
+          Array.isArray(payload?.eliminatedIds)
+        ) {
+          for (const playerId of payload.eliminatedIds) {
+            eliminatedRoundByUser.set(playerId, payload.roundNo);
+          }
+        }
+      }
+    }
+
+    const winnerId = stateMachine.getState().winnerId;
+    const totalRounds =
+      stateMachine.getState().totalRounds ??
+      stateMachine.getState().currentRoundNo;
+
     const placedPlayers = assignPlacements(
       playerScores.map((p) => ({
         userId: p.userId,
         score: p.score,
         avgResponseMs: p.avgResponseMs,
+        survivedRounds:
+          p.userId === winnerId
+            ? totalRounds
+            : (eliminatedRoundByUser.get(p.userId) ?? 0),
+        isWinner: p.userId === winnerId,
       })),
+      winnerId,
     );
 
     const eloInputs: EloPlayerInput[] = placedPlayers.map((p) => ({

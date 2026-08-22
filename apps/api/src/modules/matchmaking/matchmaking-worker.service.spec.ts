@@ -19,7 +19,7 @@ import type { GameLoopService } from "../match/game-loop.service";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { RedisService } from "../redis/redis.service";
 import type { ClusterService } from "../cluster/cluster.service";
-import { MATCHMAKING_CONFIG, ServerEvent } from "@arena/shared";
+import { MATCHMAKING_CONFIG, RoomStatus, ServerEvent } from "@arena/shared";
 
 describe("MatchmakingWorkerService", () => {
   let worker: MatchmakingWorkerService;
@@ -30,7 +30,9 @@ describe("MatchmakingWorkerService", () => {
     >
   >;
   let mockBotService: Mocked<Pick<BotService, "ensureBotUsers">>;
-  let mockRoomService: Mocked<Pick<RoomService, "createRoom">>;
+  let mockRoomService: Mocked<
+    Pick<RoomService, "createRoom" | "updateRoomStatus">
+  >;
   let mockGameLoopService: Mocked<Pick<GameLoopService, "forceStartRoomMatch">>;
   let mockPrisma: {
     roomPlayer: {
@@ -47,7 +49,7 @@ describe("MatchmakingWorkerService", () => {
   >;
   let mockClusterService: Pick<ClusterService, "nodeId">;
   let socketEmitters: Map<string, { emit: ReturnType<typeof vi.fn> }>;
-  let mockServer: Pick<Server, "to">;
+  let mockServer: Pick<Server, "to" | "in">;
 
   beforeEach(() => {
     mockQueueStore = {
@@ -79,6 +81,7 @@ describe("MatchmakingWorkerService", () => {
         id: "room_123",
         code: "ARENA1",
       }),
+      updateRoomStatus: vi.fn().mockResolvedValue({}),
     };
 
     mockGameLoopService = {
@@ -116,6 +119,9 @@ describe("MatchmakingWorkerService", () => {
         }
         return emitter;
       }),
+      in: vi.fn().mockImplementation(() => ({
+        socketsJoin: vi.fn().mockResolvedValue(undefined),
+      })),
     };
 
     worker = new MatchmakingWorkerService(
@@ -308,7 +314,7 @@ describe("MatchmakingWorkerService", () => {
     expect(mockQueueStore.addTicket).toHaveBeenCalledTimes(2);
   });
 
-  it("does not re-enqueue tickets into queueStore if forceStartRoomMatch fails after room creation", async () => {
+  it("re-enqueues tickets, cleans up room players, and closes room if forceStartRoomMatch fails after room creation", async () => {
     const tickets: MatchmakingTicket[] = [
       {
         userId: "u1",
@@ -333,7 +339,49 @@ describe("MatchmakingWorkerService", () => {
 
     await expect(worker.tick()).resolves.toBeUndefined();
     expect(mockRoomService.createRoom).toHaveBeenCalledTimes(1);
-    expect(mockQueueStore.addTicket).not.toHaveBeenCalled();
+    expect(mockQueueStore.addTicket).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.roomPlayer.deleteMany).toHaveBeenCalled();
+    expect(mockRedis.srem).toHaveBeenCalled();
+    expect(mockRoomService.updateRoomStatus).toHaveBeenCalledWith(
+      "room_123",
+      RoomStatus.FINISHED,
+    );
+    expect(socketEmitters.get("s1")?.emit).not.toHaveBeenCalledWith(
+      ServerEvent.MATCHMAKING_MATCHED,
+      expect.anything(),
+    );
+  });
+
+  it("compensates players and closes room if socketsJoin fails", async () => {
+    const tickets: MatchmakingTicket[] = [
+      {
+        userId: "u1",
+        username: "Alice",
+        elo: 1200,
+        socketId: "s1",
+        joinedAt: Date.now() - (MATCHMAKING_CONFIG.MAX_WAIT_TIME_MS + 5000),
+      },
+    ];
+
+    mockQueueStore.getAllTickets.mockResolvedValueOnce(tickets);
+    mockServer.in = vi.fn().mockImplementation(() => ({
+      socketsJoin: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Socket join failed")),
+    }));
+
+    await expect(worker.tick()).resolves.toBeUndefined();
+    expect(mockRoomService.createRoom).toHaveBeenCalledTimes(1);
+    expect(mockQueueStore.addTicket).toHaveBeenCalledTimes(1);
+    expect(mockRoomService.updateRoomStatus).toHaveBeenCalledWith(
+      "room_123",
+      RoomStatus.FINISHED,
+    );
+    expect(mockGameLoopService.forceStartRoomMatch).not.toHaveBeenCalled();
+    expect(socketEmitters.get("s1")?.emit).not.toHaveBeenCalledWith(
+      ServerEvent.MATCHMAKING_MATCHED,
+      expect.anything(),
+    );
   });
 
   it("proceeds with match notification and forceStartRoomMatch even if ensureBotUsers fails", async () => {

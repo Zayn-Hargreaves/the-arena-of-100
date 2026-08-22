@@ -17,6 +17,7 @@ import {
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import helmet from "@fastify/helmet";
 import { RedisIoAdapter } from "./adapters/redis-io.adapter";
+import { resolveCorsOrigins } from "./common/cors";
 
 const APP_CLOSE_TIMEOUT_MS = 10000;
 
@@ -46,9 +47,21 @@ async function bootstrap() {
     },
   });
 
+  const corsOrigins = resolveCorsOrigins(process.env.CORS_ORIGIN);
+
   // Enable CORS
   app.enableCors({
-    origin: process.env.CORS_ORIGIN || "http://localhost:3000",
+    origin: corsOrigins,
+    methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Accept",
+      "X-Requested-With",
+      "x-csrf-token",
+      "x-session-id",
+      "x-guest-id",
+    ],
     credentials: true,
   });
 

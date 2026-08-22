@@ -951,6 +951,11 @@ export class MatchStateMachine {
     return assignments;
   }
 
+  // Returns true if player classes have been assigned in this match.
+  hasClassAssignments(): boolean {
+    return this.playerClasses.size > 0;
+  }
+
   // `pickOffer` — milestone card offer (Q5/12/20). Runs the
   // canonical sampling (spec §3.3) + emits a `CARD_OFFER` event
   // + populates the player's hand. The 3-tuple size is
@@ -1073,6 +1078,12 @@ export class MatchStateMachine {
       : 0;
     const remainingMs = isTemporary ? expiresAtServer - serverNow : 0;
 
+    const currentRoundNo = this.currentRound?.roundNo ?? 0;
+    const targetRoundNo =
+      resolvedEffect.kind === "SHIELD"
+        ? resolvedEffect.expiresAtRound
+        : currentRoundNo;
+
     // `logEvent` returns the allocated seqNo — we mirror it into
     // the payload here (the only call site that exposes seqNo on
     // the payload itself; rehydrate reducers / replay log readers
@@ -1082,7 +1093,8 @@ export class MatchStateMachine {
     const payload: Record<string, unknown> = {
       seqNo,
       matchId: this.state.id,
-      roundNo: this.currentRound?.roundNo ?? 0,
+      roundNo: currentRoundNo,
+      targetRoundNo,
       cardId,
       offerSeqNo,
       playedByPlayerId,
