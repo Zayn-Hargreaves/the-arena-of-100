@@ -51,9 +51,9 @@ export {
   MATCHMAKING_CONFIG,
   BOT_GUEST_ID_PREFIX,
 } from "./game-config";
-// Daily Challenge Constants (own file for the same reason as
-// game-config: the API's Zod DTOs import it directly).
+// Daily Challenge Constants and Contracts
 export { DAILY_QUESTION_COUNT } from "./daily-config";
+export * from "./daily";
 import { GAME_CONFIG } from "./game-config";
 
 export type QuestionCategory =

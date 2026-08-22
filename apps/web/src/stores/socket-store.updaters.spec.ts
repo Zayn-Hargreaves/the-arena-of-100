@@ -146,6 +146,7 @@ function makeState(overrides: Partial<SocketState> = {}): SocketState {
     connect: () => Promise.resolve(),
     disconnect: () => {},
     authenticate: () => Promise.resolve(),
+    updateAuth: () => Promise.resolve(),
     refreshAccessToken: () => Promise.resolve(null),
     createRoom: () => Promise.resolve("ROOM"),
     joinRoom: () => Promise.resolve(),

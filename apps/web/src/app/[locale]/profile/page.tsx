@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { useLocale, useTranslations } from "next-intl";
+import { useFormatter, useLocale, useTranslations } from "next-intl";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import { MessageCard } from "@/components/ui/message-card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -123,10 +123,6 @@ function QueryErrorCard({
   );
 }
 
-// -----------------------------------------------------------------------
-// Profile Section Title with Neo-brutalist icon frame
-// -----------------------------------------------------------------------
-
 function ProfileSectionHeader({
   title,
   icon,
@@ -146,10 +142,6 @@ function ProfileSectionHeader({
   );
 }
 
-// -----------------------------------------------------------------------
-// Stats Section
-// -----------------------------------------------------------------------
-
 interface StatsSectionProps {
   isUnauthorized: boolean;
   statsQuery: ReturnType<typeof useProfileStats>;
@@ -163,6 +155,7 @@ function StatsSection({
   profile,
   t,
 }: Readonly<StatsSectionProps>) {
+  const format = useFormatter();
   const handleRetry = useCallback(() => {
     statsQuery.refetch();
   }, [statsQuery]);
@@ -177,9 +170,7 @@ function StatsSection({
 
   return (
     <div className="space-y-4">
-      {/* 4 Primary Highlight Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Total Matches */}
         <div className="bg-white border-[3px] border-candy-ink rounded-3xl p-4 md:p-5 flex flex-col justify-between shadow-[5px_5px_0_0_#2B2D42] hover:-translate-y-1 transition-transform relative overflow-hidden group">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-mono font-black uppercase text-candy-ink/75 tracking-wider">
@@ -197,7 +188,6 @@ function StatsSection({
           </div>
         </div>
 
-        {/* Victories */}
         <div className="bg-candy-yellow border-[3px] border-candy-ink rounded-3xl p-4 md:p-5 flex flex-col justify-between shadow-[5px_5px_0_0_#2B2D42] hover:-translate-y-1 transition-transform relative overflow-hidden group">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-mono font-black uppercase text-candy-ink tracking-wider">
@@ -215,7 +205,6 @@ function StatsSection({
           </div>
         </div>
 
-        {/* Avg Response Time */}
         <div className="bg-white border-[3px] border-candy-ink rounded-3xl p-4 md:p-5 flex flex-col justify-between shadow-[5px_5px_0_0_#2B2D42] hover:-translate-y-1 transition-transform relative overflow-hidden group">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-mono font-black uppercase text-candy-ink/75 tracking-wider">
@@ -233,7 +222,6 @@ function StatsSection({
           </div>
         </div>
 
-        {/* Accuracy Rate */}
         <div className="bg-white border-[3px] border-candy-ink rounded-3xl p-4 md:p-5 flex flex-col justify-between shadow-[5px_5px_0_0_#2B2D42] hover:-translate-y-1 transition-transform relative overflow-hidden group">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-mono font-black uppercase text-candy-ink/75 tracking-wider">
@@ -252,12 +240,11 @@ function StatsSection({
         </div>
       </div>
 
-      {/* 4 Secondary Secondary Summary Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           {
             label: t("stats.footer.totalScore"),
-            value: (profile?.stats.totalScore ?? 0).toLocaleString(),
+            value: format.number(profile?.stats.totalScore ?? 0),
             icon: <MedalRibbonSvg size={18} />,
             color: "text-candy-blue",
           },
@@ -275,7 +262,7 @@ function StatsSection({
           },
           {
             label: t("stats.footer.correctAnswers"),
-            value: (profile?.stats.totalCorrectAnswers ?? 0).toLocaleString(),
+            value: format.number(profile?.stats.totalCorrectAnswers ?? 0),
             icon: <CheckmarkCheckSvg size={18} />,
             color: "text-candy-ink",
           },
@@ -314,16 +301,77 @@ interface ClassStatsSectionProps {
   t: ReturnType<typeof useTranslations>;
 }
 
-const CLASS_BADGE: Record<string, { className: string; label: string }> = {
+const CLASS_BADGE: Record<ClassId, { className: string }> = {
   ATTACK: {
     className: "bg-candy-red text-white border-candy-ink",
-    label: "ATTACK",
   },
   DEFENSE: {
     className: "bg-candy-blue text-white border-candy-ink",
-    label: "DEFENSE",
   },
 };
+
+interface ClassStatCardProps {
+  classId: ClassId;
+  stats?: { plays: number; wins: number; winRate: number };
+  isLoading: boolean;
+  icon: React.ReactNode;
+  colorClass: {
+    badge: string;
+    text: string;
+    meter: string;
+  };
+  t: ReturnType<typeof useTranslations>;
+}
+
+function ClassStatCard({
+  classId,
+  stats,
+  isLoading,
+  icon,
+  colorClass,
+  t,
+}: Readonly<ClassStatCardProps>) {
+  return (
+    <div className="bg-candy-cloud/70 border-2 border-candy-ink rounded-2xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div
+            className={`w-8 h-8 rounded-xl ${colorClass.badge} text-white border-2 border-candy-ink shadow-[1.5px_1.5px_0_0_#2B2D42] flex items-center justify-center`}
+          >
+            {icon}
+          </div>
+          <div>
+            <span
+              className={`px-2 py-0.5 rounded-lg ${colorClass.badge} text-white border border-candy-ink text-[10px] font-mono font-black`}
+            >
+              {t(`classStats.class.${classId}`)}
+            </span>
+            <p className="text-[11px] font-mono font-bold text-candy-ink/70 mt-0.5">
+              {stats
+                ? `${stats.wins} / ${stats.plays} ${t("classStats.matchesWon")}`
+                : isLoading
+                  ? "..."
+                  : t("classStats.noClassMatches")}
+            </p>
+          </div>
+        </div>
+        <span className={`font-display font-black text-2xl ${colorClass.text}`}>
+          {stats ? formatPercent(stats.winRate) : isLoading ? "--" : "0%"}
+        </span>
+      </div>
+
+      {/* Winrate Progress Meter */}
+      <div className="w-full h-3 bg-white border-2 border-candy-ink rounded-full overflow-hidden p-0.5">
+        <div
+          className={`h-full ${colorClass.meter} rounded-full transition-all duration-500`}
+          style={{
+            width: `${Math.min(100, Math.max(0, stats ? stats.winRate * 100 : 0))}%`,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
 
 function pickBestClass(
   classWinrate: ClassStats["classWinrate"],
@@ -452,85 +500,30 @@ function ClassStatsSection({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Attack Class Row */}
-          <div className="bg-candy-cloud/70 border-2 border-candy-ink rounded-2xl p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-candy-red text-white border-2 border-candy-ink shadow-[1.5px_1.5px_0_0_#2B2D42] flex items-center justify-center">
-                  <SwordsClashSvg size={18} />
-                </div>
-                <div>
-                  <span className="px-2 py-0.5 rounded-lg bg-candy-red text-white border border-candy-ink text-[10px] font-mono font-black">
-                    {t("classStats.class.ATTACK")}
-                  </span>
-                  <p className="text-[11px] font-mono font-bold text-candy-ink/70 mt-0.5">
-                    {attack
-                      ? `${attack.wins} / ${attack.plays} ${t("classStats.matchesWon")}`
-                      : classStatsQuery.isLoading
-                        ? "..."
-                        : t("classStats.noClassMatches")}
-                  </p>
-                </div>
-              </div>
-              <span className="font-display font-black text-2xl text-candy-red">
-                {attack
-                  ? formatPercent(attack.winRate)
-                  : classStatsQuery.isLoading
-                    ? "--"
-                    : "0%"}
-              </span>
-            </div>
-
-            {/* Winrate Progress Meter */}
-            <div className="w-full h-3 bg-white border-2 border-candy-ink rounded-full overflow-hidden p-0.5">
-              <div
-                className="h-full bg-candy-red rounded-full transition-all duration-500"
-                style={{
-                  width: `${Math.min(100, Math.max(0, attack ? attack.winRate * 100 : 0))}%`,
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Defense Class Row */}
-          <div className="bg-candy-cloud/70 border-2 border-candy-ink rounded-2xl p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-candy-blue text-white border-2 border-candy-ink shadow-[1.5px_1.5px_0_0_#2B2D42] flex items-center justify-center">
-                  <ShieldGuardianSvg size={18} />
-                </div>
-                <div>
-                  <span className="px-2 py-0.5 rounded-lg bg-candy-blue text-white border border-candy-ink text-[10px] font-mono font-black">
-                    {t("classStats.class.DEFENSE")}
-                  </span>
-                  <p className="text-[11px] font-mono font-bold text-candy-ink/70 mt-0.5">
-                    {defense
-                      ? `${defense.wins} / ${defense.plays} ${t("classStats.matchesWon")}`
-                      : classStatsQuery.isLoading
-                        ? "..."
-                        : t("classStats.noClassMatches")}
-                  </p>
-                </div>
-              </div>
-              <span className="font-display font-black text-2xl text-candy-blue">
-                {defense
-                  ? formatPercent(defense.winRate)
-                  : classStatsQuery.isLoading
-                    ? "--"
-                    : "0%"}
-              </span>
-            </div>
-
-            {/* Winrate Progress Meter */}
-            <div className="w-full h-3 bg-white border-2 border-candy-ink rounded-full overflow-hidden p-0.5">
-              <div
-                className="h-full bg-candy-blue rounded-full transition-all duration-500"
-                style={{
-                  width: `${Math.min(100, Math.max(0, defense ? defense.winRate * 100 : 0))}%`,
-                }}
-              />
-            </div>
-          </div>
+          <ClassStatCard
+            classId="ATTACK"
+            stats={attack}
+            isLoading={classStatsQuery.isLoading}
+            icon={<SwordsClashSvg size={18} />}
+            colorClass={{
+              badge: "bg-candy-red",
+              text: "text-candy-red",
+              meter: "bg-candy-red",
+            }}
+            t={t}
+          />
+          <ClassStatCard
+            classId="DEFENSE"
+            stats={defense}
+            isLoading={classStatsQuery.isLoading}
+            icon={<ShieldGuardianSvg size={18} />}
+            colorClass={{
+              badge: "bg-candy-blue",
+              text: "text-candy-blue",
+              meter: "bg-candy-blue",
+            }}
+            t={t}
+          />
         </div>
       </div>
     </div>
@@ -620,12 +613,10 @@ function HistorySection({
             {/* Left: Category & Meta */}
             <div className="flex items-center gap-4">
               <div
-                className={`w-13 h-13 p-3 rounded-2xl border-[2.5px] border-candy-ink shadow-[2.5px_2.5px_0_0_#2B2D42] shrink-0 flex items-center justify-center ${
+                className={`w-[3.25rem] h-[3.25rem] p-3 rounded-2xl border-[2.5px] border-candy-ink shadow-[2.5px_2.5px_0_0_#2B2D42] shrink-0 flex items-center justify-center ${
                   isWon
                     ? "bg-candy-yellow text-candy-ink"
-                    : isEliminated
-                      ? "bg-candy-cloud text-candy-ink"
-                      : "bg-candy-cloud text-candy-ink"
+                    : "bg-candy-cloud text-candy-ink"
                 }`}
               >
                 {isWon ? (
@@ -645,7 +636,7 @@ function HistorySection({
                   </h4>
                   {isWon && (
                     <span className="px-2 py-0.5 rounded-lg bg-candy-yellow text-candy-ink border border-candy-ink text-[10px] font-mono font-black uppercase shadow-[1px_1px_0_0_#000]">
-                      TOP 1
+                      {t("history.top1")}
                     </span>
                   )}
                 </div>
@@ -672,7 +663,7 @@ function HistorySection({
                   {t("history.score")}
                 </p>
                 <p className="font-mono text-lg font-black text-candy-blue">
-                  {item.score.toLocaleString()} PTS
+                  {item.score.toLocaleString(locale)} {t("history.pointsUnit")}
                 </p>
                 {item.eloDelta !== null && item.eloDelta !== undefined && (
                   <span
@@ -765,7 +756,7 @@ export default function ProfilePage() {
   }, []);
 
   const profile = statsQuery.data;
-  const activeName = profile?.user.username || username || "Khách_Đấu_Thủ";
+  const activeName = profile?.user.username || username || t("hero.guestName");
   const activeAvatar = getActiveAvatar(profile, avatars);
   const uid = profile?.user.id ?? null;
 
@@ -795,29 +786,16 @@ export default function ProfilePage() {
   const handleCopyUid = useCallback(() => {
     if (!uid) return;
 
-    const onCopySuccess = () => {
+    const setCopyStatus = (success: boolean) => {
       if (!isMountedRef.current) return;
-      setCopied(true);
-      setCopyFailed(false);
+      setCopied(success);
+      setCopyFailed(!success);
       if (copyTimerRef.current != null) {
         clearTimeout(copyTimerRef.current);
       }
       copyTimerRef.current = setTimeout(() => {
         if (!isMountedRef.current) return;
         setCopied(false);
-        copyTimerRef.current = null;
-      }, 2000);
-    };
-
-    const onCopyFailure = () => {
-      if (!isMountedRef.current) return;
-      setCopied(false);
-      setCopyFailed(true);
-      if (copyTimerRef.current != null) {
-        clearTimeout(copyTimerRef.current);
-      }
-      copyTimerRef.current = setTimeout(() => {
-        if (!isMountedRef.current) return;
         setCopyFailed(false);
         copyTimerRef.current = null;
       }, 2000);
@@ -831,25 +809,15 @@ export default function ProfilePage() {
       navigator.clipboard
         .writeText(uid)
         .then(() => {
-          if (!isMountedRef.current) return;
-          onCopySuccess();
+          setCopyStatus(true);
         })
         .catch(() => {
-          if (!isMountedRef.current) return;
           const fallbackSuccess = copyWithFallback(uid);
-          if (fallbackSuccess) {
-            onCopySuccess();
-          } else {
-            onCopyFailure();
-          }
+          setCopyStatus(fallbackSuccess);
         });
     } else {
       const fallbackSuccess = copyWithFallback(uid);
-      if (fallbackSuccess) {
-        onCopySuccess();
-      } else {
-        onCopyFailure();
-      }
+      setCopyStatus(fallbackSuccess);
     }
   }, [uid, copyWithFallback]);
 
@@ -932,34 +900,43 @@ export default function ProfilePage() {
             <div className="flex flex-wrap items-center justify-center md:justify-start gap-3 text-xs font-mono font-black text-candy-ink/80 pt-1">
               <span className="flex items-center gap-1.5 bg-white/80 px-2.5 py-1 rounded-xl border border-candy-ink shadow-[1.5px_1.5px_0_0_#2B2D42]">
                 <ClockTimerSvg size={14} />
-                {t("registeredToday")}
+                {profile?.user.createdAt
+                  ? formatPlayedAt(profile.user.createdAt, locale)
+                  : t("registeredToday")}
               </span>
 
-              {uid && hasClipboard && (
-                <button
-                  type="button"
-                  onClick={handleCopyUid}
-                  className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-xl border border-candy-ink shadow-[1.5px_1.5px_0_0_#2B2D42] text-candy-pink hover:bg-candy-pink hover:text-white transition-colors cursor-pointer"
-                  title={t("hero.copyUid")}
-                >
-                  {copied ? (
-                    <>
-                      <CheckmarkCheckSvg size={14} />
-                      <span>{t("hero.copied")}</span>
-                    </>
-                  ) : copyFailed ? (
-                    <>
-                      <SkullDefeatSvg size={14} />
-                      <span>UID: {uid}</span>
-                    </>
-                  ) : (
-                    <>
-                      <CopyClipboardSvg size={14} />
-                      <span>UID: {uid}</span>
-                    </>
-                  )}
-                </button>
-              )}
+              {uid ? (
+                hasClipboard ? (
+                  <button
+                    type="button"
+                    onClick={handleCopyUid}
+                    className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-xl border border-candy-ink shadow-[1.5px_1.5px_0_0_#2B2D42] text-candy-pink hover:bg-candy-pink hover:text-white transition-colors cursor-pointer"
+                    title={t("hero.copyUid")}
+                  >
+                    {copied ? (
+                      <>
+                        <CheckmarkCheckSvg size={14} />
+                        <span>{t("hero.copied")}</span>
+                      </>
+                    ) : copyFailed ? (
+                      <>
+                        <SkullDefeatSvg size={14} />
+                        <span>{t("hero.copyFailed")}</span>
+                      </>
+                    ) : (
+                      <>
+                        <CopyClipboardSvg size={14} />
+                        <span>UID: {uid}</span>
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  <span className="flex items-center gap-1.5 bg-white/80 px-2.5 py-1 rounded-xl border border-candy-ink shadow-[1.5px_1.5px_0_0_#2B2D42] text-candy-ink">
+                    <CopyClipboardSvg size={14} />
+                    <span>UID: {uid}</span>
+                  </span>
+                )
+              ) : null}
 
               <Link
                 href="/settings"

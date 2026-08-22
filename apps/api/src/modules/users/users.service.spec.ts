@@ -65,6 +65,7 @@ describe("UsersService", () => {
           avatar: true,
           role: true,
           elo: true,
+          createdAt: true,
         },
       });
     });
@@ -656,6 +657,7 @@ describe("UsersService", () => {
           avatar: true,
           role: true,
           elo: true,
+          createdAt: true,
         },
       });
     });

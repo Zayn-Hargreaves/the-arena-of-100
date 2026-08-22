@@ -51,6 +51,8 @@ const items: DailyLeaderboardItem[] = [
     avatar: "azure",
     score: 600,
     correctCount: 3,
+    streakAfter: 1,
+    completedAt: "2026-08-09T10:13:00.000Z",
     cardsPlayedThisWeek: 20,
   },
 ];

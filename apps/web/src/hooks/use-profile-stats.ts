@@ -12,6 +12,7 @@ export interface UserSummary {
   role: "GUEST" | "ADMIN";
   elo: number;
   rankTier: RankTier;
+  createdAt?: string;
 }
 
 export interface ProfileStats {

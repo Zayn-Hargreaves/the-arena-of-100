@@ -894,6 +894,31 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     }
   },
 
+  // Update Auth (e.g. after Admin login)
+  updateAuth: async (auth: {
+    accessToken: string;
+    userId: string;
+    username: string;
+    userRole: string;
+  }): Promise<void> => {
+    set({
+      accessToken: auth.accessToken,
+      userId: auth.userId,
+      username: auth.username,
+      userRole: auth.userRole,
+      isAuthenticated: true,
+    });
+
+    const socket = get().socket;
+    if (socket?.connected) {
+      socket.emit(ClientEvent.AUTHENTICATE, { token: auth.accessToken });
+    } else {
+      await get()
+        .connect()
+        .catch(() => {});
+    }
+  },
+
   // Authenticate
   authenticate: async (nickname: string): Promise<void> => {
     const socket = requireSocket(get().socket);

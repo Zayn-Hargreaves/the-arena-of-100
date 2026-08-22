@@ -151,12 +151,11 @@ export default function AdminLoginPage() {
       }
 
       // Update global socket & auth state
-      useSocketStore.setState({
+      await useSocketStore.getState().updateAuth({
         accessToken: payload.accessToken,
         userId: payload.user.id,
         userRole: payload.user.role,
         username: payload.user.username,
-        isAuthenticated: true,
       });
 
       toast({

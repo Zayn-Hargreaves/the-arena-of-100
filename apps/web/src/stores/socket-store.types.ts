@@ -182,6 +182,12 @@ export interface SocketState extends ConnectionState {
   connect: () => Promise<void>;
   disconnect: () => void;
   authenticate: (nickname: string) => Promise<void>;
+  updateAuth: (auth: {
+    accessToken: string;
+    userId: string;
+    username: string;
+    userRole: string;
+  }) => Promise<void>;
   refreshAccessToken: () => Promise<string | null>;
   createRoom: (config: {
     roomType: RoomType;

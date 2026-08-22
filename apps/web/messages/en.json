@@ -449,6 +449,8 @@
       "editAvatar": "CHANGE AVATAR",
       "copyUid": "COPY",
       "copied": "COPIED!",
+      "copyFailed": "COPY FAILED",
+      "guestName": "Guest Challenger",
       "eloPoints": "ELO POINTS",
       "tierProgress": "RANK PROGRESS"
     },
@@ -476,7 +478,9 @@
       "duration": "DURATION",
       "empty": "No recent battle history yet — join your first match!",
       "playNow": "ENTER THE ARENA",
-      "loadMore": "LOAD MORE"
+      "loadMore": "LOAD MORE",
+      "top1": "TOP 1",
+      "pointsUnit": "PTS"
     },
     "status": {
       "WON": "VICTORY",
@@ -577,9 +581,14 @@
       "title": "Audio Settings",
       "sfx": "Sound Effects (SFX)",
       "sfxDesc": "Chimes, button clicks, and gameplay interaction sounds",
+      "sfxVolume": "SFX Volume",
       "testSfx": "Test SFX",
       "bgm": "Background Music (BGM)",
       "bgmDesc": "Lobby atmosphere and high-energy battle music",
+      "bgmVolume": "BGM Volume",
+      "muted": "0% (Off)",
+      "testBgm": "Test BGM",
+      "stopTestBgm": "Stop Test BGM",
       "on": "ON",
       "off": "OFF"
     },

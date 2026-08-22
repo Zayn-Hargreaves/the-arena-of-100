@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { useTranslations } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import { MessageCard } from "@/components/ui/message-card";
@@ -40,6 +40,7 @@ interface PodiumStepProps {
 
 function ChampionPodiumCard({ entry, rank }: Readonly<PodiumStepProps>) {
   const t = useTranslations("rankings");
+  const format = useFormatter();
   const avatar = isValidAvatarSeed(entry.avatar)
     ? findAvatarBySeed(entry.avatar)
     : (avatars[0] ?? null);
@@ -152,7 +153,7 @@ function ChampionPodiumCard({ entry, rank }: Readonly<PodiumStepProps>) {
 
           <div className="flex items-center justify-center gap-1.5 flex-wrap">
             <span className="font-mono text-xs font-black text-candy-ink bg-white/90 border-[1.5px] border-candy-ink px-2.5 py-0.5 rounded-lg shadow-[1px_1px_0_0_#2B2D42]">
-              {entry.totalScore.toLocaleString()} PTS
+              {format.number(entry.totalScore)} PTS
             </span>
             <RankBadge
               tier={entry.rankTier ?? "SILVER"}
@@ -220,6 +221,7 @@ function LeaderboardLoading() {
 
 export default function RankingsPage() {
   const t = useTranslations("rankings");
+  const format = useFormatter();
   const [period, setPeriod] = React.useState<LeaderboardPeriod>("weekly");
   const { data, error, isLoading, refetch } = useLeaderboard({
     period,
@@ -239,6 +241,26 @@ export default function RankingsPage() {
     enabled: shouldVirtualizeRows,
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
+
+  const reportedMissingRef = React.useRef<Set<number>>(new Set());
+
+  React.useEffect(() => {
+    if (!shouldVirtualizeRows) return;
+    for (const row of virtualRows) {
+      if (!remaining[row.index] && !reportedMissingRef.current.has(row.index)) {
+        reportedMissingRef.current.add(row.index);
+        reportError(
+          new Error("rankings: missing virtual row", {
+            cause: {
+              index: row.index,
+              remaining: remaining.length,
+              virtualCount: virtualRows.length,
+            },
+          }),
+        );
+      }
+    }
+  }, [shouldVirtualizeRows, virtualRows, remaining]);
 
   return (
     <AppShellLayout>
@@ -267,6 +289,7 @@ export default function RankingsPage() {
           <div className="shrink-0 flex items-center p-1.5 bg-candy-ink/5 border-[2.5px] border-candy-ink rounded-2xl shadow-[3px_3px_0_0_#2B2D42] gap-1.5">
             <button
               type="button"
+              aria-pressed={period === "weekly"}
               onClick={() => setPeriod("weekly")}
               className={cn(
                 "px-4 py-2 rounded-xl font-display font-black text-xs uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer",
@@ -280,6 +303,7 @@ export default function RankingsPage() {
             </button>
             <button
               type="button"
+              aria-pressed={period === "all"}
               onClick={() => setPeriod("all")}
               className={cn(
                 "px-4 py-2 rounded-xl font-display font-black text-xs uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer",
@@ -350,31 +374,57 @@ export default function RankingsPage() {
                     }
                   >
                     {shouldVirtualizeRows ? (
-                      <div className="w-full text-left min-w-[640px]">
+                      <div
+                        role="table"
+                        aria-label={t("tableTitle")}
+                        className="w-full text-left min-w-[640px]"
+                      >
                         {/* Virtualized Header */}
-                        <div className="flex border-b-[3px] border-candy-ink bg-candy-mint font-display font-black text-xs uppercase text-candy-ink tracking-wider sticky top-0 z-10">
-                          <div className="p-4 w-20 text-center border-r-[2px] border-candy-ink shrink-0">
+                        <div
+                          role="row"
+                          className="flex border-b-[3px] border-candy-ink bg-candy-mint font-display font-black text-xs uppercase text-candy-ink tracking-wider sticky top-0 z-10"
+                        >
+                          <div
+                            role="columnheader"
+                            className="p-4 w-20 text-center border-r-[2px] border-candy-ink shrink-0"
+                          >
                             {t("columns.rank")}
                           </div>
-                          <div className="p-4 flex-1 min-w-0 border-r-[2px] border-candy-ink">
+                          <div
+                            role="columnheader"
+                            className="p-4 flex-1 min-w-0 border-r-[2px] border-candy-ink"
+                          >
                             {t("columns.player")}
                           </div>
-                          <div className="p-4 w-44 text-center shrink-0 hidden md:block border-r-[2px] border-candy-ink">
+                          <div
+                            role="columnheader"
+                            className="p-4 w-44 text-center shrink-0 hidden md:block border-r-[2px] border-candy-ink"
+                          >
                             {t("columns.elo")}
                           </div>
-                          <div className="p-4 w-32 text-right shrink-0 border-r-[2px] border-candy-ink">
+                          <div
+                            role="columnheader"
+                            className="p-4 w-32 text-right shrink-0 border-r-[2px] border-candy-ink"
+                          >
                             {t("columns.score")}
                           </div>
-                          <div className="p-4 w-32 text-right shrink-0 hidden sm:block border-r-[2px] border-candy-ink">
+                          <div
+                            role="columnheader"
+                            className="p-4 w-32 text-right shrink-0 hidden sm:block border-r-[2px] border-candy-ink"
+                          >
                             {t("columns.speed")}
                           </div>
-                          <div className="p-4 w-32 text-right shrink-0">
+                          <div
+                            role="columnheader"
+                            className="p-4 w-32 text-right shrink-0"
+                          >
                             {t("columns.accuracy")}
                           </div>
                         </div>
 
                         {/* Virtualized Body */}
                         <div
+                          role="rowgroup"
                           className="relative font-body text-sm text-candy-ink font-semibold"
                           style={{
                             height: `${rowVirtualizer.getTotalSize()}px`,
@@ -384,27 +434,19 @@ export default function RankingsPage() {
                             const item = remaining[virtualRow.index];
 
                             if (!item) {
-                              const context = {
-                                index: virtualRow.index,
-                                remaining: remaining.length,
-                                virtualCount: virtualRows.length,
-                              };
-                              const rowError = new Error(
-                                "rankings: missing virtual row",
-                                { cause: context },
-                              );
-
-                              reportError(rowError);
-
                               return (
                                 <div
                                   key={virtualRow.key}
+                                  role="row"
+                                  aria-rowindex={virtualRow.index + 4}
                                   className="absolute left-0 top-0 w-full border-b-[2px] border-candy-ink bg-candy-yellow/10 px-4 py-5 text-xs font-mono font-black text-candy-ink/70"
                                   style={{
                                     transform: `translateY(${virtualRow.start}px)`,
                                   }}
                                 >
-                                  {t("error.rowUnavailable")}
+                                  <div role="cell" className="w-full">
+                                    {t("error.rowUnavailable")}
+                                  </div>
                                 </div>
                               );
                             }
@@ -416,17 +458,25 @@ export default function RankingsPage() {
                             return (
                               <div
                                 key={virtualRow.key}
+                                role="row"
+                                aria-rowindex={virtualRow.index + 4}
                                 className="absolute left-0 top-0 w-full flex items-center hover:bg-candy-yellow/15 transition-colors duration-150 border-b-[2px] border-candy-ink bg-candy-cloud"
                                 style={{
                                   transform: `translateY(${virtualRow.start}px)`,
                                 }}
                               >
-                                <div className="p-4 w-20 text-center font-mono font-black text-candy-ink border-r-[2px] border-candy-ink shrink-0">
+                                <div
+                                  role="cell"
+                                  className="p-4 w-20 text-center font-mono font-black text-candy-ink border-r-[2px] border-candy-ink shrink-0"
+                                >
                                   <span className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-white border-[1.5px] border-candy-ink shadow-[1px_1px_0_0_#2B2D42] text-xs">
                                     #{item.rank}
                                   </span>
                                 </div>
-                                <div className="p-4 flex-1 min-w-0 border-r-[2px] border-candy-ink">
+                                <div
+                                  role="cell"
+                                  className="p-4 flex-1 min-w-0 border-r-[2px] border-candy-ink"
+                                >
                                   <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-xl bg-white border-[2px] border-candy-ink shadow-[1.5px_1.5px_0_0_#2B2D42] flex items-center justify-center overflow-hidden shrink-0">
                                       <SpriteFrame
@@ -449,7 +499,10 @@ export default function RankingsPage() {
                                     </div>
                                   </div>
                                 </div>
-                                <div className="p-4 w-44 hidden md:flex items-center justify-center shrink-0 border-r-[2px] border-candy-ink">
+                                <div
+                                  role="cell"
+                                  className="p-4 w-44 hidden md:flex items-center justify-center shrink-0 border-r-[2px] border-candy-ink"
+                                >
                                   <RankBadge
                                     tier={item.rankTier ?? "SILVER"}
                                     elo={item.elo ?? 1200}
@@ -457,18 +510,27 @@ export default function RankingsPage() {
                                     showElo={true}
                                   />
                                 </div>
-                                <div className="p-4 w-32 text-right font-mono font-black text-candy-pink border-r-[2px] border-candy-ink shrink-0">
+                                <div
+                                  role="cell"
+                                  className="p-4 w-32 text-right font-mono font-black text-candy-pink border-r-[2px] border-candy-ink shrink-0"
+                                >
                                   <span className="bg-candy-pink/10 border border-candy-pink/30 px-2 py-0.5 rounded-lg text-candy-pink font-mono text-xs">
-                                    {item.totalScore.toLocaleString()} PTS
+                                    {format.number(item.totalScore)} PTS
                                   </span>
                                 </div>
-                                <div className="p-4 w-32 text-right hidden sm:flex shrink-0 items-center justify-end border-r-[2px] border-candy-ink">
+                                <div
+                                  role="cell"
+                                  className="p-4 w-32 text-right hidden sm:flex shrink-0 items-center justify-end border-r-[2px] border-candy-ink"
+                                >
                                   <div className="inline-flex items-center gap-1 font-mono text-xs font-bold text-cyan-800 bg-cyan-50 border border-cyan-300 px-2 py-0.5 rounded-lg">
                                     <SpeedClockSvg size={12} />
                                     {formatResponseMs(item.avgResponseMs)}
                                   </div>
                                 </div>
-                                <div className="p-4 w-32 text-right shrink-0">
+                                <div
+                                  role="cell"
+                                  className="p-4 w-32 text-right shrink-0"
+                                >
                                   <div className="inline-flex items-center gap-1 font-mono text-xs font-bold text-rose-800 bg-rose-50 border border-rose-300 px-2 py-0.5 rounded-lg">
                                     <TargetAccuracySvg size={12} />
                                     {formatPercent(item.accuracy)}
@@ -553,7 +615,7 @@ export default function RankingsPage() {
                                 </td>
                                 <td className="p-4 text-right font-mono font-black text-candy-pink border-r-[2px] border-candy-ink">
                                   <span className="bg-candy-pink/10 border border-candy-pink/30 px-2 py-0.5 rounded-lg text-candy-pink font-mono text-xs">
-                                    {item.totalScore.toLocaleString()} PTS
+                                    {format.number(item.totalScore)} PTS
                                   </span>
                                 </td>
                                 <td className="p-4 text-right font-mono text-xs hidden sm:table-cell border-r-[2px] border-candy-ink">

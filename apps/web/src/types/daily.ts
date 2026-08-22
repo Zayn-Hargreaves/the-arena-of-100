@@ -1,24 +1,17 @@
-import type { UnlockableCardVariantKey } from "@arena/shared";
+import type {
+  UnlockableCardVariantKey,
+  DailyDifficulty,
+  PublicDailyQuestion,
+  DailyQuestionPublic,
+  DailyTodayResponse,
+} from "@arena/shared";
 
-export type DailyDifficulty = "EASY" | "MEDIUM" | "HARD";
-
-export interface DailyQuestionPublic {
-  content: string;
-  options: string[];
-  difficulty: DailyDifficulty;
-  category: string;
-}
-
-export interface DailyTodayResponse {
-  dateKey: string;
-  version: number;
-  questions: DailyQuestionPublic[];
-  sessionToken: string;
-  serverTime: string;
-  nextResetAt: string;
-  alreadyAttempted: boolean;
-  currentStreak?: number;
-}
+export type {
+  DailyDifficulty,
+  PublicDailyQuestion,
+  DailyQuestionPublic,
+  DailyTodayResponse,
+};
 
 export interface DailyAnswerInput {
   answer: string;

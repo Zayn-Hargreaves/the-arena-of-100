@@ -88,7 +88,7 @@ export function AdminAccessDenied({
       <div className="max-w-md mx-auto w-full text-center space-y-6 pt-12 select-none">
         <div className="bg-candy-red border-[3.5px] border-candy-ink rounded-3xl p-8 shadow-[6px_6px_0_0_#2B2D42] text-white space-y-4">
           <div className="flex justify-center animate-bounce">
-            <WarningTriangleSvg className="w-18 h-18 drop-shadow-[2px_2px_0_#000]" />
+            <WarningTriangleSvg className="w-[4.5rem] h-[4.5rem] drop-shadow-[2px_2px_0_#000]" />
           </div>
           <h1 className="font-display font-black text-2xl tracking-wider uppercase">
             {title}

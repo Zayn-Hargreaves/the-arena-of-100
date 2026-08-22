@@ -103,11 +103,15 @@ const sampleQuestions = [
 // sequence repeated across the error-path tests below.
 function completeQuiz() {
   for (let i = 0; i < sampleQuestions.length; i++) {
-    fireEvent.click(screen.getByText(sampleQuestions[i].options[0]));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(`^A\\s+${sampleQuestions[i].options[0]}`, "i"),
+      }),
+    );
     if (i < sampleQuestions.length - 1) {
-      fireEvent.click(screen.getByText(/^next$/i));
+      fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
     } else {
-      fireEvent.click(screen.getByText(/^submit$/i));
+      fireEvent.click(screen.getByRole("button", { name: /^submit$/i }));
     }
   }
 }
@@ -120,6 +124,7 @@ const todayResponse = {
   serverTime: "2026-08-09T12:00:00.000Z",
   nextResetAt: "2026-08-10T00:00:00.000Z",
   alreadyAttempted: false,
+  currentStreak: 5,
 };
 
 function renderPage() {
@@ -186,12 +191,14 @@ describe("DailyPage", () => {
 
     for (let i = 0; i < sampleQuestions.length; i++) {
       const q = sampleQuestions[i];
-      const button = screen.getByText(q.options[0]);
+      const button = screen.getByRole("button", {
+        name: new RegExp(`^A\\s+${q.options[0]}`, "i"),
+      });
       fireEvent.click(button);
       if (i < sampleQuestions.length - 1) {
-        fireEvent.click(screen.getByText(/^next$/i));
+        fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
       } else {
-        fireEvent.click(screen.getByText(/^submit$/i));
+        fireEvent.click(screen.getByRole("button", { name: /^submit$/i }));
       }
     }
 
@@ -257,6 +264,7 @@ describe("DailyPage", () => {
       expect(screen.getByText("alreadyDone")).toBeInTheDocument(),
     );
     expect(screen.getByText("rewards.title")).toBeInTheDocument();
+    expect(screen.getAllByText(/5\/7/)[0]).toBeInTheDocument();
   });
 
   it("shows 409 error message when submit returns conflict", async () => {

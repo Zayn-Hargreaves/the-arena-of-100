@@ -199,12 +199,14 @@ describe("StatsDto & Schema", () => {
       dto.role = "GUEST";
       dto.elo = 1200;
       dto.rankTier = "SILVER";
+      dto.createdAt = "2026-08-01T00:00:00.000Z";
       expect(dto.id).toBe("u1");
       expect(dto.username).toBe("Alice");
       expect(dto.avatar).toBe("jellyfrog");
       expect(dto.role).toBe("GUEST");
       expect(dto.elo).toBe(1200);
       expect(dto.rankTier).toBe("SILVER");
+      expect(dto.createdAt).toBe("2026-08-01T00:00:00.000Z");
     });
 
     it("StatsDto should instantiate and preserve properties", () => {

@@ -18,6 +18,7 @@ export const userSummarySchema = z.object({
   role: z.enum(["GUEST", "ADMIN"]),
   elo: z.number().int().nonnegative().default(1200),
   rankTier: rankTierSchema.default("SILVER"),
+  createdAt: z.string().optional(),
 });
 
 export const statsSchema = z.object({
@@ -69,6 +70,13 @@ export class UserSummaryDto implements UserSummary {
     example: "SILVER",
   })
   rankTier!: RankTier;
+
+  @ApiProperty({
+    example: "2026-08-01T00:00:00.000Z",
+    required: false,
+    description: "Account creation timestamp in ISO 8601",
+  })
+  createdAt?: string;
 }
 
 export class StatsDto implements Stats {

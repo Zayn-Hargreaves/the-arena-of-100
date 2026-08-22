@@ -115,7 +115,14 @@ export class UsersService {
   async getMyStats(userId: string): Promise<StatsResponse> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, username: true, avatar: true, role: true, elo: true },
+      select: {
+        id: true,
+        username: true,
+        avatar: true,
+        role: true,
+        elo: true,
+        createdAt: true,
+      },
     });
     if (!user) {
       throw new NotFoundException("USER_NOT_FOUND");
@@ -184,6 +191,14 @@ export class UsersService {
         role: user.role,
         elo: user.elo,
         rankTier: getRankTier(user.elo),
+        ...(user.createdAt
+          ? {
+              createdAt:
+                user.createdAt instanceof Date
+                  ? user.createdAt.toISOString()
+                  : String(user.createdAt),
+            }
+          : {}),
       },
       stats: {
         matchesPlayed,
@@ -302,11 +317,28 @@ export class UsersService {
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: { avatar },
-      select: { id: true, username: true, avatar: true, role: true, elo: true },
+      select: {
+        id: true,
+        username: true,
+        avatar: true,
+        role: true,
+        elo: true,
+        createdAt: true,
+      },
     });
     await this.invalidateLeaderboardCache();
     return {
-      ...user,
+      id: user.id,
+      username: user.username,
+      avatar: user.avatar,
+      role: user.role,
+      elo: user.elo,
+      createdAt:
+        user.createdAt instanceof Date
+          ? user.createdAt.toISOString()
+          : user.createdAt
+            ? String(user.createdAt)
+            : undefined,
       rankTier: getRankTier(user.elo),
     };
   }

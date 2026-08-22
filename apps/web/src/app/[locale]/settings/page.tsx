@@ -227,6 +227,8 @@ export default function SettingsPage() {
       return;
     }
 
+    const previousSeed = selectedAvatarSeed;
+
     // Optimistically update UI & localStorage immediately
     setSelectedAvatarSeed(seed);
     syncLocalAvatar(seed);
@@ -237,6 +239,8 @@ export default function SettingsPage() {
         toast({ description: tAvatar("updated"), variant: "success" });
       },
       onError: (error) => {
+        setSelectedAvatarSeed(previousSeed);
+        syncLocalAvatar(previousSeed);
         toast({
           description:
             error instanceof Error ? error.message : tAvatar("updateFailed"),
@@ -608,8 +612,10 @@ export default function SettingsPage() {
 
                 <div className="space-y-3 pt-2">
                   <div className="flex items-center justify-between font-mono text-xs font-black text-candy-ink">
-                    <span>Âm Lượng SFX</span>
-                    <span>{sfxEnabled ? `${sfxVolume}%` : "0% (Tắt)"}</span>
+                    <span>{t("sound.sfxVolume")}</span>
+                    <span>
+                      {sfxEnabled ? `${sfxVolume}%` : t("sound.muted")}
+                    </span>
                   </div>
                   <input
                     type="range"
@@ -676,8 +682,10 @@ export default function SettingsPage() {
 
                 <div className="space-y-3 pt-2">
                   <div className="flex items-center justify-between font-mono text-xs font-black text-candy-ink">
-                    <span>Âm Lượng BGM</span>
-                    <span>{bgmEnabled ? `${bgmVolume}%` : "0% (Tắt)"}</span>
+                    <span>{t("sound.bgmVolume")}</span>
+                    <span>
+                      {bgmEnabled ? `${bgmVolume}%` : t("sound.muted")}
+                    </span>
                   </div>
                   <input
                     type="range"
@@ -703,9 +711,7 @@ export default function SettingsPage() {
                     )}
                   >
                     <MusicNoteSvg className="w-4 h-4" />
-                    {testingBgm
-                      ? "Dừng Thử Nhạc Nền"
-                      : "Thử Nhạc Nền (Test BGM)"}
+                    {testingBgm ? t("sound.stopTestBgm") : t("sound.testBgm")}
                   </button>
                 </div>
               </div>

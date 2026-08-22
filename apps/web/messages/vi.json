@@ -449,6 +449,8 @@
       "editAvatar": "ĐỔI LINH THÚ",
       "copyUid": "SAO CHÉP",
       "copied": "ĐÃ CHÉP!",
+      "copyFailed": "SAO CHÉP THẤT BẠI",
+      "guestName": "Khách_Đấu_Thủ",
       "eloPoints": "ĐIỂM ELO",
       "tierProgress": "TIẾN TRÌNH HẠNG"
     },
@@ -476,7 +478,9 @@
       "duration": "THỜI LƯỢNG",
       "empty": "Chưa có lịch sử thi đấu — hãy tham gia trận đầu tiên!",
       "playNow": "THAM GIA CHIẾN TRƯỜNG",
-      "loadMore": "TẢI THÊM"
+      "loadMore": "TẢI THÊM",
+      "top1": "TOP 1",
+      "pointsUnit": "PTS"
     },
     "status": {
       "WON": "CHIẾN THẮNG",
@@ -577,9 +581,14 @@
       "title": "Cài Đặt Âm Thanh",
       "sfx": "Hiệu Ứng Âm Thanh (SFX)",
       "sfxDesc": "Tiếng chuông, nút bấm và âm thanh tương tác trong trận đấu",
+      "sfxVolume": "Âm Lượng SFX",
       "testSfx": "Thử Âm",
       "bgm": "Nhạc Nền (BGM)",
       "bgmDesc": "Nhạc không khí sôi động trong phòng chờ và sàn đấu",
+      "bgmVolume": "Âm Lượng BGM",
+      "muted": "0% (Tắt)",
+      "testBgm": "Thử Nhạc Nền (Test BGM)",
+      "stopTestBgm": "Dừng Thử Nhạc Nền",
       "on": "BẬT",
       "off": "TẮT"
     },

@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import { useToast } from "@/hooks/use-toast";
 import { useSocketStore } from "@/stores/socket-store";
-import { API_URL, apiFetch } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { ApiError, apiSendJson } from "@/lib/api-client";
 import { Link } from "@/i18n/routing";
 import { Modal } from "@/components/ui/modal";
@@ -69,7 +69,7 @@ export default function AdminPage() {
   useEffect(() => {
     const fetchMonitoring = async () => {
       try {
-        const response = await fetch(`${API_URL}/api/v1/health/monitoring`, {
+        const response = await apiFetch("/api/v1/health/monitoring", {
           credentials: "include",
           headers: {
             ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
@@ -95,7 +95,7 @@ export default function AdminPage() {
       setRedisStatusState("loading");
 
       try {
-        const response = await fetch(`${API_URL}/api/v1/health`, {
+        const response = await apiFetch("/api/v1/health", {
           credentials: "include",
           headers: {
             ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
