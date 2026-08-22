@@ -1,17 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import {
-  getAudioSettings,
-  updateAudioSettings,
-  invalidateAudioSettingsCache,
-  normalizeAudioSettings,
-  playSfx,
-  startBgm,
-  stopBgm,
-  isBgmPlaying,
-  isSoundEffectType,
-  SOUND_EFFECT_TYPES,
-  type SoundEffectType,
-} from "./sound-engine";
+import type { SoundEffectType } from "./sound-engine";
+
+interface MockGainNode {
+  gain: {
+    setValueAtTime: ReturnType<typeof vi.fn>;
+    exponentialRampToValueAtTime: ReturnType<typeof vi.fn>;
+  };
+  connect: ReturnType<typeof vi.fn>;
+  disconnect: ReturnType<typeof vi.fn>;
+}
 
 interface MockOscillator {
   type: string;
@@ -22,22 +19,29 @@ interface MockOscillator {
   connect: ReturnType<typeof vi.fn>;
   start: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
+  onended?: (() => void) | null;
 }
 
 let createdOscillators: MockOscillator[] = [];
+let createdGainNodes: MockGainNode[] = [];
 
 class MockAudioContext {
   state: AudioContextState = "running";
   currentTime = 0;
   destination = {};
 
-  createGain = vi.fn(() => ({
-    gain: {
-      setValueAtTime: vi.fn(),
-      exponentialRampToValueAtTime: vi.fn(),
-    },
-    connect: vi.fn(),
-  }));
+  createGain = vi.fn(() => {
+    const gainNode: MockGainNode = {
+      gain: {
+        setValueAtTime: vi.fn(),
+        exponentialRampToValueAtTime: vi.fn(),
+      },
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    createdGainNodes.push(gainNode);
+    return gainNode;
+  });
 
   createOscillator = vi.fn(() => {
     const osc: MockOscillator = {
@@ -49,6 +53,7 @@ class MockAudioContext {
       connect: vi.fn(),
       start: vi.fn(),
       stop: vi.fn(),
+      onended: null,
     };
     createdOscillators.push(osc);
     return osc;
@@ -97,11 +102,14 @@ class MockAudio {
 }
 
 describe("sound-engine", () => {
-  beforeEach(() => {
+  let engine: typeof import("./sound-engine");
+
+  beforeEach(async () => {
+    vi.resetModules();
     localStorage.clear();
-    invalidateAudioSettingsCache();
     vi.restoreAllMocks();
     createdOscillators = [];
+    createdGainNodes = [];
     MockAudio.playBehavior = "resolve";
     MockAudio.playSpy.mockClear();
     MockAudio.pauseSpy.mockClear();
@@ -112,10 +120,13 @@ describe("sound-engine", () => {
     (window as unknown as { Audio: unknown }).Audio = vi
       .fn()
       .mockImplementation((src?: string) => new MockAudio(src));
+
+    engine = await import("./sound-engine");
+    engine.invalidateAudioSettingsCache();
   });
 
   it("returns default settings when localStorage is empty", () => {
-    const settings = getAudioSettings();
+    const settings = engine.getAudioSettings();
     expect(settings.sfxEnabled).toBe(true);
     expect(settings.sfxVolume).toBe(80);
     expect(settings.bgmEnabled).toBe(true);
@@ -124,10 +135,10 @@ describe("sound-engine", () => {
   });
 
   it("returns a copy of defaultSettings so mutations do not affect subsequent reads", () => {
-    const settings = getAudioSettings();
+    const settings = engine.getAudioSettings();
     settings.sfxVolume = 10;
-    invalidateAudioSettingsCache();
-    const fresh = getAudioSettings();
+    engine.invalidateAudioSettingsCache();
+    const fresh = engine.getAudioSettings();
     expect(fresh.sfxVolume).toBe(80);
   });
 
@@ -136,9 +147,9 @@ describe("sound-engine", () => {
       "arena-settings",
       JSON.stringify({ sfxEnabled: false, sfxVolume: 40, soundConsent: true }),
     );
-    invalidateAudioSettingsCache();
+    engine.invalidateAudioSettingsCache();
 
-    const settings = getAudioSettings();
+    const settings = engine.getAudioSettings();
     expect(settings.sfxEnabled).toBe(false);
     expect(settings.sfxVolume).toBe(40);
     expect(settings.soundConsent).toBe(true);
@@ -146,14 +157,14 @@ describe("sound-engine", () => {
 
   describe("normalizeAudioSettings", () => {
     it("returns defaults for null or non-object values", () => {
-      expect(normalizeAudioSettings(null)).toEqual({
+      expect(engine.normalizeAudioSettings(null)).toEqual({
         sfxEnabled: true,
         sfxVolume: 80,
         bgmEnabled: true,
         bgmVolume: 60,
         soundConsent: false,
       });
-      expect(normalizeAudioSettings("invalid")).toEqual({
+      expect(engine.normalizeAudioSettings("invalid")).toEqual({
         sfxEnabled: true,
         sfxVolume: 80,
         bgmEnabled: true,
@@ -163,7 +174,7 @@ describe("sound-engine", () => {
     });
 
     it("clamps volume values between 0 and 100", () => {
-      const normalized = normalizeAudioSettings({
+      const normalized = engine.normalizeAudioSettings({
         sfxVolume: 150,
         bgmVolume: -20,
       });
@@ -172,7 +183,7 @@ describe("sound-engine", () => {
     });
 
     it("falls back to default for invalid types or non-finite numbers", () => {
-      const normalized = normalizeAudioSettings({
+      const normalized = engine.normalizeAudioSettings({
         sfxEnabled: "true",
         bgmEnabled: 123,
         soundConsent: "yes",
@@ -189,7 +200,7 @@ describe("sound-engine", () => {
 
   describe("updateAudioSettings", () => {
     it("normalizes and persists updated settings to localStorage", () => {
-      const updated = updateAudioSettings({
+      const updated = engine.updateAudioSettings({
         sfxVolume: 120,
         soundConsent: true,
       });
@@ -211,16 +222,16 @@ describe("sound-engine", () => {
       "arena-settings",
       JSON.stringify({ sfxEnabled: false, sfxVolume: 80, soundConsent: true }),
     );
-    invalidateAudioSettingsCache();
-    playSfx("click");
+    engine.invalidateAudioSettingsCache();
+    engine.playSfx("click");
     expect(audioContextSpy).not.toHaveBeenCalled();
 
     localStorage.setItem(
       "arena-settings",
       JSON.stringify({ sfxEnabled: true, sfxVolume: 80, soundConsent: false }),
     );
-    invalidateAudioSettingsCache();
-    playSfx("click");
+    engine.invalidateAudioSettingsCache();
+    engine.playSfx("click");
     expect(audioContextSpy).not.toHaveBeenCalled();
   });
 
@@ -234,9 +245,9 @@ describe("sound-engine", () => {
         bgmVolume: 55,
       }),
     );
-    invalidateAudioSettingsCache();
+    engine.invalidateAudioSettingsCache();
 
-    const settings = getAudioSettings();
+    const settings = engine.getAudioSettings();
     expect(settings.soundConsent).toBe(false);
     expect(settings.sfxVolume).toBe(75);
     expect(settings.bgmVolume).toBe(55);
@@ -248,7 +259,7 @@ describe("sound-engine", () => {
         "arena-settings",
         JSON.stringify({ sfxEnabled: true, sfxVolume: 50, soundConsent: true }),
       );
-      invalidateAudioSettingsCache();
+      engine.invalidateAudioSettingsCache();
 
       const expectedOscillatorCounts: Record<SoundEffectType, number> = {
         click: 1,
@@ -263,11 +274,46 @@ describe("sound-engine", () => {
         eliminated: 1,
       };
 
-      SOUND_EFFECT_TYPES.forEach((type) => {
+      engine.SOUND_EFFECT_TYPES.forEach((type) => {
         createdOscillators = [];
-        playSfx(type);
+        engine.playSfx(type);
         expect(createdOscillators.length).toBe(expectedOscillatorCounts[type]);
       });
+    });
+
+    it("disconnects masterGain when the final oscillator ends", () => {
+      localStorage.setItem(
+        "arena-settings",
+        JSON.stringify({ sfxEnabled: true, sfxVolume: 50, soundConsent: true }),
+      );
+      engine.invalidateAudioSettingsCache();
+
+      engine.playSfx("click");
+      const masterGain = createdGainNodes[0];
+      const osc = createdOscillators[0];
+
+      expect(masterGain.disconnect).not.toHaveBeenCalled();
+      osc.onended?.();
+      expect(masterGain.disconnect).toHaveBeenCalledTimes(1);
+    });
+
+    it("disconnects masterGain on final oscillator for multi-tone sfx", () => {
+      localStorage.setItem(
+        "arena-settings",
+        JSON.stringify({ sfxEnabled: true, sfxVolume: 50, soundConsent: true }),
+      );
+      engine.invalidateAudioSettingsCache();
+
+      engine.playSfx("correct");
+      const masterGain = createdGainNodes[0];
+      const firstOsc = createdOscillators[0];
+      const lastOsc = createdOscillators[createdOscillators.length - 1];
+
+      expect(masterGain.disconnect).not.toHaveBeenCalled();
+      firstOsc.onended?.();
+      expect(masterGain.disconnect).not.toHaveBeenCalled();
+      lastOsc.onended?.();
+      expect(masterGain.disconnect).toHaveBeenCalledTimes(1);
     });
 
     it("logs a warning and exits gracefully on unsupported sound effect type", () => {
@@ -275,10 +321,11 @@ describe("sound-engine", () => {
         "arena-settings",
         JSON.stringify({ sfxEnabled: true, sfxVolume: 50, soundConsent: true }),
       );
-      invalidateAudioSettingsCache();
+      engine.invalidateAudioSettingsCache();
 
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-      playSfx("invalid_type" as SoundEffectType);
+      engine.playSfx("invalid_type" as SoundEffectType);
+      expect(createdGainNodes[0].disconnect).toHaveBeenCalledTimes(1);
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining("Unsupported sound effect type: invalid_type"),
       );
@@ -296,12 +343,12 @@ describe("sound-engine", () => {
           soundConsent: false,
         }),
       );
-      invalidateAudioSettingsCache();
+      engine.invalidateAudioSettingsCache();
 
-      startBgm("/audio/test.mp3");
+      engine.startBgm("/audio/test.mp3");
       expect(MockAudio.playSpy).not.toHaveBeenCalled();
       expect(MockAudio.pauseSpy).toHaveBeenCalled();
-      expect(isBgmPlaying()).toBe(false);
+      expect(engine.isBgmPlaying()).toBe(false);
     });
 
     it("pauses BGM when bgmVolume is 0", () => {
@@ -309,9 +356,9 @@ describe("sound-engine", () => {
         "arena-settings",
         JSON.stringify({ bgmEnabled: true, bgmVolume: 0, soundConsent: true }),
       );
-      invalidateAudioSettingsCache();
+      engine.invalidateAudioSettingsCache();
 
-      startBgm("/audio/test.mp3");
+      engine.startBgm("/audio/test.mp3");
       expect(MockAudio.playSpy).not.toHaveBeenCalled();
       expect(MockAudio.pauseSpy).toHaveBeenCalled();
     });
@@ -321,11 +368,11 @@ describe("sound-engine", () => {
         "arena-settings",
         JSON.stringify({ bgmEnabled: true, bgmVolume: 50, soundConsent: true }),
       );
-      invalidateAudioSettingsCache();
+      engine.invalidateAudioSettingsCache();
 
-      startBgm("/audio/test.mp3");
+      engine.startBgm("/audio/test.mp3");
       expect(MockAudio.playSpy).toHaveBeenCalled();
-      expect(isBgmPlaying()).toBe(true);
+      expect(engine.isBgmPlaying()).toBe(true);
     });
 
     it("updates the src on existing BGM audio element when startBgm is called with a new URL", () => {
@@ -333,12 +380,12 @@ describe("sound-engine", () => {
         "arena-settings",
         JSON.stringify({ bgmEnabled: true, bgmVolume: 50, soundConsent: true }),
       );
-      invalidateAudioSettingsCache();
+      engine.invalidateAudioSettingsCache();
 
-      startBgm("/audio/track-1.mp3");
+      engine.startBgm("/audio/track-1.mp3");
       expect(MockAudio.lastInstance?.src).toBe("/audio/track-1.mp3");
 
-      startBgm("/audio/track-2.mp3");
+      engine.startBgm("/audio/track-2.mp3");
       expect(MockAudio.lastInstance?.src).toBe("/audio/track-2.mp3");
     });
 
@@ -347,12 +394,12 @@ describe("sound-engine", () => {
         "arena-settings",
         JSON.stringify({ bgmEnabled: true, bgmVolume: 50, soundConsent: true }),
       );
-      invalidateAudioSettingsCache();
+      engine.invalidateAudioSettingsCache();
 
-      startBgm("/audio/test.mp3");
-      stopBgm();
+      engine.startBgm("/audio/test.mp3");
+      engine.stopBgm();
       expect(MockAudio.pauseSpy).toHaveBeenCalled();
-      expect(isBgmPlaying()).toBe(false);
+      expect(engine.isBgmPlaying()).toBe(false);
     });
 
     it("syncs BGM state via syncBgmWithSettings when settings change", () => {
@@ -360,12 +407,12 @@ describe("sound-engine", () => {
         "arena-settings",
         JSON.stringify({ bgmEnabled: true, bgmVolume: 50, soundConsent: true }),
       );
-      invalidateAudioSettingsCache();
+      engine.invalidateAudioSettingsCache();
 
-      startBgm("/audio/test.mp3");
+      engine.startBgm("/audio/test.mp3");
       expect(MockAudio.playSpy).toHaveBeenCalled();
 
-      updateAudioSettings({ bgmVolume: 0 });
+      engine.updateAudioSettings({ bgmVolume: 0 });
       expect(MockAudio.pauseSpy).toHaveBeenCalled();
     });
 
@@ -374,12 +421,12 @@ describe("sound-engine", () => {
         "arena-settings",
         JSON.stringify({ bgmEnabled: true, bgmVolume: 50, soundConsent: true }),
       );
-      invalidateAudioSettingsCache();
+      engine.invalidateAudioSettingsCache();
 
       MockAudio.playBehavior = "reject";
       const addEventSpy = vi.spyOn(window, "addEventListener");
 
-      startBgm("/audio/test.mp3");
+      engine.startBgm("/audio/test.mp3");
       await Promise.resolve();
 
       expect(addEventSpy).toHaveBeenCalledWith(
@@ -398,7 +445,7 @@ describe("sound-engine", () => {
       ).length;
 
       // Subsequent startBgm while listener is bound should not attach duplicate listeners
-      startBgm("/audio/test.mp3");
+      engine.startBgm("/audio/test.mp3");
       await Promise.resolve();
       const pointerdownCallCountAfter = addEventSpy.mock.calls.filter(
         (call) => call[0] === "pointerdown",
@@ -409,7 +456,7 @@ describe("sound-engine", () => {
       MockAudio.playBehavior = "resolve";
       window.dispatchEvent(new Event("pointerdown"));
 
-      expect(isBgmPlaying()).toBe(true);
+      expect(engine.isBgmPlaying()).toBe(true);
       addEventSpy.mockRestore();
     });
 
@@ -418,12 +465,12 @@ describe("sound-engine", () => {
         "arena-settings",
         JSON.stringify({ bgmEnabled: true, bgmVolume: 50, soundConsent: true }),
       );
-      invalidateAudioSettingsCache();
+      engine.invalidateAudioSettingsCache();
 
       MockAudio.playBehavior = "throw";
       const addEventSpy = vi.spyOn(window, "addEventListener");
 
-      startBgm("/audio/test.mp3");
+      engine.startBgm("/audio/test.mp3");
 
       expect(addEventSpy).toHaveBeenCalledWith(
         "pointerdown",
@@ -440,7 +487,7 @@ describe("sound-engine", () => {
       MockAudio.playBehavior = "resolve";
       window.dispatchEvent(new Event("keydown"));
 
-      expect(isBgmPlaying()).toBe(true);
+      expect(engine.isBgmPlaying()).toBe(true);
       addEventSpy.mockRestore();
     });
 
@@ -449,14 +496,14 @@ describe("sound-engine", () => {
         "arena-settings",
         JSON.stringify({ bgmEnabled: true, bgmVolume: 0, soundConsent: true }),
       );
-      invalidateAudioSettingsCache();
+      engine.invalidateAudioSettingsCache();
 
-      startBgm("/audio/test.mp3");
+      engine.startBgm("/audio/test.mp3");
 
       MockAudio.playBehavior = "reject";
       const addEventSpy = vi.spyOn(window, "addEventListener");
 
-      updateAudioSettings({ bgmVolume: 50 });
+      engine.updateAudioSettings({ bgmVolume: 50 });
       await Promise.resolve();
 
       expect(addEventSpy).toHaveBeenCalledWith(
@@ -467,7 +514,7 @@ describe("sound-engine", () => {
 
       MockAudio.playBehavior = "resolve";
       window.dispatchEvent(new Event("pointerdown"));
-      expect(isBgmPlaying()).toBe(true);
+      expect(engine.isBgmPlaying()).toBe(true);
       addEventSpy.mockRestore();
     });
   });
@@ -478,8 +525,8 @@ describe("sound-engine", () => {
         "arena-settings",
         JSON.stringify({ sfxEnabled: true, sfxVolume: 50, soundConsent: true }),
       );
-      invalidateAudioSettingsCache();
-      const initial = getAudioSettings();
+      engine.invalidateAudioSettingsCache();
+      const initial = engine.getAudioSettings();
       expect(initial.sfxVolume).toBe(50);
 
       localStorage.setItem(
@@ -487,25 +534,25 @@ describe("sound-engine", () => {
         JSON.stringify({ sfxEnabled: true, sfxVolume: 90, soundConsent: true }),
       );
       // Cache still has old value
-      expect(getAudioSettings().sfxVolume).toBe(50);
+      expect(engine.getAudioSettings().sfxVolume).toBe(50);
 
       // Trigger storage event
       window.dispatchEvent(
         new StorageEvent("storage", { key: "arena-settings" }),
       );
-      expect(getAudioSettings().sfxVolume).toBe(90);
+      expect(engine.getAudioSettings().sfxVolume).toBe(90);
     });
   });
 
   describe("isSoundEffectType guard and constants", () => {
     it("identifies valid and invalid sound effect types", () => {
-      SOUND_EFFECT_TYPES.forEach((type) => {
-        expect(isSoundEffectType(type)).toBe(true);
+      engine.SOUND_EFFECT_TYPES.forEach((type) => {
+        expect(engine.isSoundEffectType(type)).toBe(true);
       });
-      expect(isSoundEffectType("non_existent")).toBe(false);
-      expect(isSoundEffectType(null)).toBe(false);
-      expect(isSoundEffectType(undefined)).toBe(false);
-      expect(isSoundEffectType(123)).toBe(false);
+      expect(engine.isSoundEffectType("non_existent")).toBe(false);
+      expect(engine.isSoundEffectType(null)).toBe(false);
+      expect(engine.isSoundEffectType(undefined)).toBe(false);
+      expect(engine.isSoundEffectType(123)).toBe(false);
     });
   });
 });

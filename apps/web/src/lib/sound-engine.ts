@@ -317,6 +317,9 @@ export function playSfx(
 
         osc.start(now);
         osc.stop(now + 0.04);
+        osc.onended = () => {
+          masterGain.disconnect();
+        };
         break;
       }
 
@@ -336,6 +339,9 @@ export function playSfx(
 
         osc.start(now);
         osc.stop(now + 0.07);
+        osc.onended = () => {
+          masterGain.disconnect();
+        };
         break;
       }
 
@@ -355,6 +361,9 @@ export function playSfx(
 
         osc.start(now);
         osc.stop(now + 0.06);
+        osc.onended = () => {
+          masterGain.disconnect();
+        };
         break;
       }
 
@@ -365,7 +374,7 @@ export function playSfx(
           { freq: 659.25, time: 0.05, duration: 0.12 },
         ];
 
-        notes.forEach(({ freq, time, duration }) => {
+        notes.forEach(({ freq, time, duration }, idx) => {
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.type = "sine";
@@ -379,6 +388,11 @@ export function playSfx(
 
           osc.start(now + time);
           osc.stop(now + time + duration);
+          if (idx === notes.length - 1) {
+            osc.onended = () => {
+              masterGain.disconnect();
+            };
+          }
         });
         break;
       }
@@ -399,6 +413,9 @@ export function playSfx(
 
         osc.start(now);
         osc.stop(now + 0.2);
+        osc.onended = () => {
+          masterGain.disconnect();
+        };
         break;
       }
 
@@ -411,7 +428,7 @@ export function playSfx(
           { freq: 1046.5, time: 0.22, duration: 0.25 }, // C6
         ];
 
-        notes.forEach(({ freq, time, duration }) => {
+        notes.forEach(({ freq, time, duration }, idx) => {
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.type = "sine";
@@ -425,6 +442,11 @@ export function playSfx(
 
           osc.start(now + time);
           osc.stop(now + time + duration);
+          if (idx === notes.length - 1) {
+            osc.onended = () => {
+              masterGain.disconnect();
+            };
+          }
         });
         break;
       }
@@ -436,7 +458,7 @@ export function playSfx(
           { freq: 180, time: 0.1, duration: 0.2 },
         ];
 
-        notes.forEach(({ freq, time, duration }) => {
+        notes.forEach(({ freq, time, duration }, idx) => {
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.type = "sawtooth";
@@ -450,6 +472,11 @@ export function playSfx(
 
           osc.start(now + time);
           osc.stop(now + time + duration);
+          if (idx === notes.length - 1) {
+            osc.onended = () => {
+              masterGain.disconnect();
+            };
+          }
         });
         break;
       }
@@ -469,6 +496,9 @@ export function playSfx(
 
         osc.start(now);
         osc.stop(now + 0.03);
+        osc.onended = () => {
+          masterGain.disconnect();
+        };
         break;
       }
 
@@ -481,7 +511,7 @@ export function playSfx(
           { freq: 1046.5, time: 0.3, duration: 0.4 },
         ];
 
-        notes.forEach(({ freq, time, duration }) => {
+        notes.forEach(({ freq, time, duration }, idx) => {
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.type = "triangle";
@@ -495,6 +525,11 @@ export function playSfx(
 
           osc.start(now + time);
           osc.stop(now + time + duration);
+          if (idx === notes.length - 1) {
+            osc.onended = () => {
+              masterGain.disconnect();
+            };
+          }
         });
         break;
       }
@@ -515,10 +550,14 @@ export function playSfx(
 
         osc.start(now);
         osc.stop(now + 0.45);
+        osc.onended = () => {
+          masterGain.disconnect();
+        };
         break;
       }
 
       default: {
+        masterGain.disconnect();
         console.warn(
           `[sound-engine] Unsupported sound effect type: ${type as string}`,
         );
