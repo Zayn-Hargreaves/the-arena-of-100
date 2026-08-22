@@ -144,7 +144,7 @@
       "submit": "ĐĂNG NHẬP HỆ THỐNG",
       "submitting": "ĐANG XÁC THỰC...",
       "backToHome": "Về trang chính",
-      "devHint": "Mật khẩu dev mặc định: arena100admin",
+      "devHint": "Thông tin đăng nhập phát triển mặc định được cấu hình qua biến môi trường",
       "success": "Đăng nhập Quản trị viên thành công!",
       "error": "Mật khẩu quản trị không chính xác."
     },
@@ -238,6 +238,9 @@
     "guestName": "Người chơi khách",
     "guestRole": "Người chơi khách",
     "playerRole": "Người chơi",
+    "expandSidebar": "Mở rộng thanh điều hướng",
+    "collapseSidebar": "Thu gọn thanh điều hướng",
+    "openMenu": "Mở menu",
     "closeMenu": "Đóng menu",
     "nav": {
       "createRoom": "Tạo Phòng",
@@ -654,6 +657,7 @@
     },
     "roomCodeCard": {
       "label": "MÃ PHÒNG ĐẤU",
+      "pinAndLink": "Mã PIN & Liên kết",
       "copyCode": "Sao chép mã",
       "copyLink": "Sao chép liên kết mời",
       "copiedCode": "Đã chép mã phòng!",
@@ -942,11 +946,79 @@
     "pokeRulesTitle": "Nhấp để nghe thầy giáo phổ biến quy chế!",
     "pokeGameTitle": "Nhấp để nghe thầy giáo nhắc bài!",
     "closeDialogue": "Đóng lời thoại",
+    "defaultRoundHint": "Đọc kỹ câu hỏi trước khi chọn nhé trò!",
     "grades": {
       "valedictorian": "THỦ KHOA (A+)",
       "honor": "HỌC SINH GIỎI (A)",
-      "remedial": "CẦN CỐ GẮNG (F)",
+      "remedial": "CẦN CỐ GẮNG (D)",
       "eliminated": "ĐIỂM F: BỊ LOẠI"
+    },
+    "dialogues": {
+      "home_greeting": {
+        "0": "Trò mới tới à? Mau ghi danh vào sổ điểm danh để thầy xếp phòng thi!",
+        "1": "Hôm nay có 100 học sinh tranh tài. Trò liệu trụ được mấy câu?",
+        "2": "Đừng run tay! Hãy chứng minh cho thầy thấy não trò không chỉ để trưng bày!"
+      },
+      "home_nickname_empty": {
+        "0": "Ủa trò định thi giấu tên à? Đặt một cái tên thật kêu vào!",
+        "1": "Không có tên thì thầy biết ghi ai vào sổ đầu bài bây giờ?"
+      },
+      "home_nickname_typed": {
+        "0": "Biệt danh chiến đấy! Sẵn sàng vào đấu trường chưa?",
+        "1": "Cái tên nghe có vẻ nhiều chữ, hy vọng não cũng tỉ lệ thuận!"
+      },
+      "matchmaking_waiting": {
+        "0": "Đang gom đủ 100 trò... Đừng có đứa nào tranh thủ trốn tiết nhé!",
+        "1": "Thầy đang lật sổ tìm phòng thi phù hợp cho trò...",
+        "2": "Sắp xếp thí sinh vào bàn... Trò nhớ thắt chặt nơ cổ áo lại!"
+      },
+      "matchmaking_matched": {
+        "0": "Đã tìm thấy phòng thi! 100 thí sinh đã có mặt. Chuẩn bị nộp não!"
+      },
+      "lobby_briefing": {
+        "0": "Quy chế thi: Sai một câu là xách cặp ra khỏi phòng ngay lập tức! Rõ chưa?",
+        "1": "Tuyệt đối không liếc bài bạn bên cạnh! Thầy có mắt sau gáy đấy!",
+        "2": "Sĩ số đang lấp đầy. Hít thở sâu và kích hoạt nơ-ron não bộ nào!"
+      },
+      "game_round_start": {
+        "0": "Đề bài đã phát! Đọc kỹ câu hỏi, đừng vội tay nhanh hơn não!",
+        "1": "Tập trung cao độ! Đồng hồ đang tích tắc trôi!"
+      },
+      "game_last_seconds": {
+        "0": "SẮP HẾT GIỜ! Mau chọn đáp án đi, đứng ngơ ra thế làm gì?!",
+        "1": "3... 2... 1... Quyết định nhanh lên!"
+      },
+      "game_correct_answer": {
+        "0": "Chính xác! Trò làm thầy nở mũi đấy!",
+        "1": "Tốt lắm! Tiếp tục phong độ này nhé!",
+        "2": "Đáp án chuẩn không cần chỉnh! Một điểm cộng cho trò!"
+      },
+      "game_wrong_answer": {
+        "0": "Sai bét rồi! Tôi tưởng câu này học sinh mẫu giáo cũng biết chứ?!",
+        "1": "Não trò vừa ấn nút tạm dừng hoạt động à?",
+        "2": "Về chỗ đứng úp mặt vào tường tự kiểm điểm cho thầy!",
+        "3": "Chọn đáp án tự tin lắm, mà trật lất!"
+      },
+      "game_mass_elimination": {
+        "0": "Một pha thanh trừng ngoạn mục! Mấy chục trò vừa dắt tay nhau ra đảo!",
+        "1": "Cả lớp cùng dính bẫy câu này à? Thầy cạn lời luôn!"
+      },
+      "game_eliminated": {
+        "0": "Rất tiếc! Trò đã bị truất quyền thi đấu. Hẹn gặp lại ở kỳ thi phụ!",
+        "1": "Học bạ ghi nhận: Trượt vỏ chuối! Mai mời phụ huynh lên gặp thầy!"
+      },
+      "game_eliminated_timeout": {
+        "0": "Hết giờ mà chưa chọn đáp án? Trò ngủ gật trong giờ thi à?!"
+      },
+      "result_winner": {
+        "0": "THỦ KHOA CỦA 100 HỌC SINH! Thầy xin ngả mũ thán phục trí tuệ của trò!"
+      },
+      "result_top10": {
+        "0": "Lọt vào Top 10 học sinh giỏi! Xứng đáng được nhận giấy khen của thầy!"
+      },
+      "result_early_elim": {
+        "0": "Lời phê của giáo viên: Cần nạp thêm nơ-ron và ôn bài kỹ trước khi tái đấu!"
+      }
     }
   }
 }

@@ -5,14 +5,16 @@ import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import type { ProfessorMood } from "./professor-roast-engine";
 
+export type ProfessorAvatarSize = "sm" | "md" | "lg" | "xl";
+
 export interface ProfessorAvatarProps extends React.HTMLAttributes<HTMLDivElement> {
   mood?: ProfessorMood;
-  size?: "sm" | "md" | "lg" | "xl";
+  size?: ProfessorAvatarSize;
   showNameplate?: boolean;
   animated?: boolean;
 }
 
-const SIZE_MAP = {
+const SIZE_MAP: Record<ProfessorAvatarSize, string> = {
   sm: "w-16 h-16",
   md: "w-24 h-24",
   lg: "w-36 h-36",
@@ -37,64 +39,6 @@ export const ProfessorAvatar: React.FC<ProfessorAvatarProps> = ({
       )}
       {...props}
     >
-      <style>{`
-        @keyframes drlabo-idle-breathe {
-          0%, 100% { transform: translateY(0px) scale(1, 1); }
-          50% { transform: translateY(-3px) scale(1.02, 0.98); }
-        }
-        @keyframes drlabo-tassel-swing {
-          0%, 100% { transform: rotate(0deg); }
-          50% { transform: rotate(12deg); }
-        }
-        @keyframes drlabo-eyes-blink {
-          0%, 88%, 94%, 100% { transform: scaleY(1); }
-          91% { transform: scaleY(0.1); }
-        }
-        @keyframes drlabo-pointer-wave {
-          0%, 100% { transform: rotate(-5deg); }
-          50% { transform: rotate(12deg); }
-        }
-        @keyframes drlabo-mouth-talk {
-          0%, 100% { transform: scaleY(0.5); }
-          50% { transform: scaleY(1.1); }
-        }
-        @keyframes drlabo-panic-shake {
-          0%, 100% { transform: translate(0, 0) rotate(0deg); }
-          25% { transform: translate(-2px, 1px) rotate(-2deg); }
-          75% { transform: translate(2px, -1px) rotate(2deg); }
-        }
-        @keyframes drlabo-cheer-bounce {
-          0%, 100% { transform: translateY(0) scale(1); }
-          50% { transform: translateY(-6px) scale(1.05); }
-        }
-        .drlabo-animated-body {
-          transform-origin: bottom center;
-          animation: drlabo-idle-breathe 2.4s ease-in-out infinite;
-        }
-        .drlabo-animated-tassel {
-          transform-origin: 75px 16px;
-          animation: drlabo-tassel-swing 2.4s ease-in-out infinite;
-        }
-        .drlabo-animated-eyes {
-          transform-origin: center 54px;
-          animation: drlabo-eyes-blink 3.6s infinite;
-        }
-        .drlabo-animated-pointer {
-          transform-origin: 18px 75px;
-          animation: drlabo-pointer-wave 1.8s ease-in-out infinite;
-        }
-        .drlabo-animated-mouth {
-          transform-origin: center 74px;
-          animation: drlabo-mouth-talk 0.8s ease-in-out infinite;
-        }
-        .drlabo-panic {
-          animation: drlabo-panic-shake 0.15s infinite;
-        }
-        .drlabo-cheer {
-          animation: drlabo-cheer-bounce 0.6s ease-in-out infinite;
-        }
-      `}</style>
-
       {/* Mood Effect FX Overlay (Vector SVG Graphics) */}
       {mood === "proud_cheer" && (
         <div className="absolute -top-3 -right-2 w-6 h-6 animate-bounce pointer-events-none z-20">
@@ -165,6 +109,8 @@ export const ProfessorAvatar: React.FC<ProfessorAvatarProps> = ({
           className="w-full h-full overflow-visible"
           fill="none"
           xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
+          focusable="false"
         >
           {/* Shadow */}
           <ellipse

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { Copy, Check, Link as LinkIcon, Sparkles } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
@@ -13,6 +13,18 @@ export const RoomCodeCard: React.FC<RoomCodeCardProps> = ({ roomCode }) => {
   const t = useTranslations("lobby.roomCodeCard");
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const codeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const linkTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (codeTimeoutRef.current) clearTimeout(codeTimeoutRef.current);
+      if (linkTimeoutRef.current) clearTimeout(linkTimeoutRef.current);
+    };
+  }, []);
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -28,11 +40,13 @@ export const RoomCodeCard: React.FC<RoomCodeCardProps> = ({ roomCode }) => {
       textarea.style.opacity = "0";
       textarea.style.pointerEvents = "none";
       document.body.appendChild(textarea);
-      textarea.focus();
-      textarea.select();
-      const successful = document.execCommand("copy");
-      document.body.removeChild(textarea);
-      return successful;
+      try {
+        textarea.focus();
+        textarea.select();
+        return document.execCommand("copy");
+      } finally {
+        document.body.removeChild(textarea);
+      }
     } catch {
       return false;
     }
@@ -40,9 +54,15 @@ export const RoomCodeCard: React.FC<RoomCodeCardProps> = ({ roomCode }) => {
 
   const handleCopyCode = async () => {
     const success = await copyToClipboard(roomCode);
+    if (!isMountedRef.current) return;
     if (success) {
       setCopiedCode(true);
-      setTimeout(() => setCopiedCode(false), 2000);
+      if (codeTimeoutRef.current) clearTimeout(codeTimeoutRef.current);
+      codeTimeoutRef.current = setTimeout(() => {
+        if (!isMountedRef.current) return;
+        setCopiedCode(false);
+        codeTimeoutRef.current = null;
+      }, 2000);
     }
   };
 
@@ -50,9 +70,15 @@ export const RoomCodeCard: React.FC<RoomCodeCardProps> = ({ roomCode }) => {
     const url = typeof window !== "undefined" ? window.location.href : "";
     if (!url) return;
     const success = await copyToClipboard(url);
+    if (!isMountedRef.current) return;
     if (success) {
       setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2000);
+      if (linkTimeoutRef.current) clearTimeout(linkTimeoutRef.current);
+      linkTimeoutRef.current = setTimeout(() => {
+        if (!isMountedRef.current) return;
+        setCopiedLink(false);
+        linkTimeoutRef.current = null;
+      }, 2000);
     }
   };
 
@@ -65,7 +91,7 @@ export const RoomCodeCard: React.FC<RoomCodeCardProps> = ({ roomCode }) => {
           {t("label")}
         </span>
         <span className="font-mono text-[11px] font-bold text-candy-ink/60 uppercase">
-          Pin & Link
+          {t("pinAndLink")}
         </span>
       </div>
 

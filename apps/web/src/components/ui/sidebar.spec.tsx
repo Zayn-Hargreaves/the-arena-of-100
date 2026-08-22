@@ -35,8 +35,23 @@ vi.mock("@/i18n/routing", async () => {
 
 import { Sidebar } from "./sidebar";
 
+const SIDEBAR_TRANSLATIONS: Record<string, string> = {
+  collapseSidebar: "Collapse sidebar",
+  expandSidebar: "Expand sidebar",
+  openMenu: "Open menu",
+  closeMenu: "Close menu",
+};
+
 beforeEach(() => {
   mockUsePathname.mockReturnValue("/");
+  vi.mocked(useTranslations).mockImplementation(((namespace?: string) =>
+    (key: string, params?: Record<string, string | number>) => {
+      if (namespace === "Sidebar" && SIDEBAR_TRANSLATIONS[key]) {
+        return SIDEBAR_TRANSLATIONS[key];
+      }
+      if (!params) return key;
+      return key.replace(/\{(\w+)\}/g, (_, name) => String(params[name] ?? ""));
+    }) as never);
 });
 
 describe("Sidebar — desktop", () => {
@@ -107,7 +122,9 @@ describe("Sidebar — desktop", () => {
 
   it("renders a focusable skip link for keyboard navigation on the toggle", () => {
     render(<Sidebar nickname="Alice" />);
-    const button = screen.getByRole("button", { name: "Collapse sidebar" });
+    const button = screen.getByRole("button", {
+      name: "Collapse sidebar",
+    });
     expect(button).toHaveClass("focus-visible:ring-2");
   });
 });
@@ -124,7 +141,9 @@ describe("Sidebar — mobile", () => {
     const user = userEvent.setup();
     render(<Sidebar nickname="Alice" />);
 
-    const menuButton = screen.getByRole("button", { name: "Open menu" });
+    const menuButton = screen.getByRole("button", {
+      name: "Open menu",
+    });
     await user.click(menuButton);
 
     const dialog = screen.getByRole("dialog", {
@@ -138,13 +157,17 @@ describe("Sidebar — mobile", () => {
     const user = userEvent.setup();
     render(<Sidebar nickname="Alice" />);
 
-    const menuButton = screen.getByRole("button", { name: "Open menu" });
+    const menuButton = screen.getByRole("button", {
+      name: "Open menu",
+    });
     await user.click(menuButton);
     expect(
       screen.getByRole("dialog", { name: "Mobile navigation menu" }),
     ).toBeInTheDocument();
 
-    const closeButton = screen.getByRole("button", { name: "Close menu" });
+    const closeButton = screen.getByRole("button", {
+      name: "Close menu",
+    });
     await user.click(closeButton);
     expect(
       screen.queryByRole("dialog", { name: "Mobile navigation menu" }),
@@ -261,38 +284,18 @@ describe("Sidebar — mobile", () => {
 
   it("closes the mobile overlay when the dialog close button is clicked", async () => {
     const user = userEvent.setup();
-    const previousImpl = vi.mocked(useTranslations).getMockImplementation();
-    // Localize the Sidebar translator so the dialog close button exposes its
-    // resolved accessible name ("Close menu") instead of the key path.
-    vi.mocked(useTranslations).mockImplementation(((namespace?: string) =>
-      (key: string, params?: Record<string, string | number>) => {
-        if (namespace === "Sidebar" && key === "closeMenu") {
-          return "Close menu";
-        }
-        if (!params) return key;
-        return key.replace(/\{(\w+)\}/g, (_, name) =>
-          String(params[name] ?? ""),
-        );
-      }) as never);
+    render(<Sidebar nickname="Alice" />);
+    await user.click(screen.getByRole("button", { name: "Open menu" }));
+    expect(
+      screen.getByRole("dialog", { name: "Mobile navigation menu" }),
+    ).toBeInTheDocument();
 
-    try {
-      render(<Sidebar nickname="Alice" />);
-      await user.click(screen.getByRole("button", { name: "Open menu" }));
-      expect(
-        screen.getByRole("dialog", { name: "Mobile navigation menu" }),
-      ).toBeInTheDocument();
-
-      const closeButton = screen.getByRole("button", {
-        name: "Close menu",
-      });
-      await user.click(closeButton);
-      expect(
-        screen.queryByRole("dialog", { name: "Mobile navigation menu" }),
-      ).not.toBeInTheDocument();
-    } finally {
-      if (previousImpl) {
-        vi.mocked(useTranslations).mockImplementation(previousImpl);
-      }
-    }
+    const closeButton = screen.getByRole("button", {
+      name: "Close menu",
+    });
+    await user.click(closeButton);
+    expect(
+      screen.queryByRole("dialog", { name: "Mobile navigation menu" }),
+    ).not.toBeInTheDocument();
   });
 });

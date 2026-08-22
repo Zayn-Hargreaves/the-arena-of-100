@@ -144,7 +144,7 @@
       "submit": "AUTHENTICATE TERMINAL",
       "submitting": "AUTHENTICATING...",
       "backToHome": "Return to Deck",
-      "devHint": "Default development password: arena100admin",
+      "devHint": "Default development credentials configured via environment variables",
       "success": "Admin authentication successful!",
       "error": "Invalid admin credentials."
     },
@@ -238,6 +238,9 @@
     "guestName": "Guest Player",
     "guestRole": "Guest Player",
     "playerRole": "Player",
+    "expandSidebar": "Expand sidebar",
+    "collapseSidebar": "Collapse sidebar",
+    "openMenu": "Open menu",
     "closeMenu": "Close menu",
     "nav": {
       "createRoom": "Create Room",
@@ -654,6 +657,7 @@
     },
     "roomCodeCard": {
       "label": "ROOM CODE",
+      "pinAndLink": "Pin & Link",
       "copyCode": "Copy code",
       "copyLink": "Copy invite link",
       "copiedCode": "Room code copied!",
@@ -942,11 +946,79 @@
     "pokeRulesTitle": "Click to hear exam regulations!",
     "pokeGameTitle": "Click to hear teacher's hint!",
     "closeDialogue": "Close dialogue",
+    "defaultRoundHint": "Read the question carefully before picking!",
     "grades": {
       "valedictorian": "VALEDICTORIAN (A+)",
       "honor": "HONOR ROLL (A)",
-      "remedial": "NEEDS IMPROVEMENT (F)",
+      "remedial": "NEEDS IMPROVEMENT (D)",
       "eliminated": "GRADE F: ELIMINATED"
+    },
+    "dialogues": {
+      "home_greeting": {
+        "0": "New student? Quick, sign into the attendance book so I can assign your exam hall!",
+        "1": "100 students competing today. How many questions do you think you can survive?",
+        "2": "Don't shake! Prove to me that your brain isn't just for decoration!"
+      },
+      "home_nickname_empty": {
+        "0": "Are you taking the exam incognito? Give yourself a fierce nickname!",
+        "1": "Without a name, whose name am I supposed to write in the detention log?"
+      },
+      "home_nickname_typed": {
+        "0": "Fierce nickname! Are you ready to enter the arena?",
+        "1": "Smart-sounding name! Let's hope your brainpower matches it!"
+      },
+      "matchmaking_waiting": {
+        "0": "Gathering 100 students... Nobody skip class while I'm not looking!",
+        "1": "Checking my records to find the right exam room for you...",
+        "2": "Assigning exam seats... Straighten your tie, young student!"
+      },
+      "matchmaking_matched": {
+        "0": "Exam room located! All 100 candidates present. Prepare your brain!"
+      },
+      "lobby_briefing": {
+        "0": "Exam rule: One wrong answer and you are ejected immediately! Understood?",
+        "1": "No peeking at your neighbor's screen! I have eyes in the back of my head!",
+        "2": "The room is filling up. Take a deep breath and fire up your neurons!"
+      },
+      "game_round_start": {
+        "0": "Questions distributed! Read carefully, don't let hands be faster than brain!",
+        "1": "Full focus! The clock is ticking!"
+      },
+      "game_last_seconds": {
+        "0": "TIME ALMOST UP! Pick an answer, why are you freezing?!",
+        "1": "3... 2... 1... Make your choice now!"
+      },
+      "game_correct_answer": {
+        "0": "Spot on! You make your teacher proud!",
+        "1": "Excellent! Keep up that momentum!",
+        "2": "Flawless answer! Bonus point for you!"
+      },
+      "game_wrong_answer": {
+        "0": "Completely wrong! I thought even preschoolers knew this one?!",
+        "1": "Did your brain just press the pause button?",
+        "2": "Go stand in the corner and reflect on what you just answered!",
+        "3": "Such confidence in clicking, such disaster in correctness!"
+      },
+      "game_mass_elimination": {
+        "0": "A spectacular mass purge! Dozens of students just walked out together!",
+        "1": "Did the whole class fall for that trap? I am speechless!"
+      },
+      "game_eliminated": {
+        "0": "Alas! You have been disqualified. See you in remedial class!",
+        "1": "Academic record: Slipped on a banana peel! Bring your parents tomorrow!"
+      },
+      "game_eliminated_timeout": {
+        "0": "Time ran out without answering? Did you fall asleep in the exam?!"
+      },
+      "result_winner": {
+        "0": "VALEDICTORIAN OF 100 CANDIDATES! I tip my hat to your brilliant mind!"
+      },
+      "result_top10": {
+        "0": "Made it into the Top 10 Honor Roll! Well deserving of a certificate!"
+      },
+      "result_early_elim": {
+        "0": "Teacher's remarks: Needs more brainpower and serious studying before rematch!"
+      }
     }
   }
 }

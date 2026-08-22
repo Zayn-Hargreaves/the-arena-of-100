@@ -51,7 +51,7 @@ const Toast = React.forwardRef<
       ref={ref}
       className={cn(
         toastVariants({ variant }),
-        variant === "error" && "error",
+        (variant === "error" || variant === "destructive") && "error",
         className,
       )}
       {...props}

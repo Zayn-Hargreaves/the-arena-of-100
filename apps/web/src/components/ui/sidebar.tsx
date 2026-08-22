@@ -66,9 +66,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
         const stored = localStorage.getItem("avatarSeed");
         if (stored && isValidAvatarSeed(stored)) {
           setResolvedAvatarSeed(stored as AvatarSeed);
+        } else {
+          setResolvedAvatarSeed(DEFAULT_AVATAR_SEED);
         }
       } catch {
-        // Ignore localStorage read errors in SSR/sandboxed environments
+        // Reset to default on storage errors
+        setResolvedAvatarSeed(DEFAULT_AVATAR_SEED);
       }
     };
 
@@ -132,7 +135,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             "absolute top-5 -right-3.5 p-1 rounded-xl bg-white border-3 border-candy-ink hover:bg-candy-yellow text-candy-ink shadow-[2.5px_2.5px_0_0_#2B2D42] hover:shadow-[1px_1px_0_0_#2B2D42] hover:translate-x-[1px] hover:translate-y-[1px] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-candy-yellow z-50 cursor-pointer",
             "flex items-center justify-center",
           )}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label={collapsed ? t("expandSidebar") : t("collapseSidebar")}
         >
           <ArcadeChevronIcon
             size={14}
@@ -290,7 +293,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             type="button"
             onClick={() => setMobileOpen(!mobileOpen)}
             className="p-2 rounded-xl bg-candy-cloud border-3 border-candy-ink hover:bg-candy-yellow text-candy-ink transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-candy-yellow shadow-[2px_2px_0_0_#2B2D42] cursor-pointer"
-            aria-label={mobileOpen ? "Close menu" : "Open menu"}
+            aria-label={mobileOpen ? t("closeMenu") : t("openMenu")}
           >
             {mobileOpen ? (
               <ArcadeCloseIcon size={20} />

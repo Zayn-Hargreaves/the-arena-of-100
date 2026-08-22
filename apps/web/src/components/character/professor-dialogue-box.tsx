@@ -11,6 +11,42 @@ export interface ProfessorDialogueBoxProps extends React.HTMLAttributes<HTMLDivE
   onDismiss?: () => void;
 }
 
+const variantStyles: Record<
+  NonNullable<ProfessorDialogueBoxProps["variant"]>,
+  string
+> = {
+  paper:
+    "bg-white text-candy-ink border-candy-ink shadow-[4px_4px_0_0_#2B2D42]",
+  chalkboard:
+    "bg-[#1E293B] text-white border-[#334155] shadow-[4px_4px_0_0_#0F172A]",
+  warning:
+    "bg-[#FEF2F2] text-[#991B1B] border-[#DC2626] shadow-[4px_4px_0_0_#991B1B]",
+};
+
+const variantTailColors: Record<
+  NonNullable<ProfessorDialogueBoxProps["variant"]>,
+  { left: string; right: string; bottom: string; top: string }
+> = {
+  paper: {
+    left: "border-r-candy-ink",
+    right: "border-l-candy-ink",
+    bottom: "border-t-candy-ink",
+    top: "border-b-candy-ink",
+  },
+  chalkboard: {
+    left: "border-r-[#334155]",
+    right: "border-l-[#334155]",
+    bottom: "border-t-[#334155]",
+    top: "border-b-[#334155]",
+  },
+  warning: {
+    left: "border-r-[#DC2626]",
+    right: "border-l-[#DC2626]",
+    bottom: "border-t-[#DC2626]",
+    top: "border-b-[#DC2626]",
+  },
+};
+
 export const ProfessorDialogueBox: React.FC<ProfessorDialogueBoxProps> = ({
   text,
   tailPosition = "left",
@@ -20,15 +56,6 @@ export const ProfessorDialogueBox: React.FC<ProfessorDialogueBoxProps> = ({
   ...props
 }) => {
   const t = useTranslations("Professor");
-
-  const variantStyles = {
-    paper:
-      "bg-white text-candy-ink border-candy-ink shadow-[4px_4px_0_0_#2B2D42]",
-    chalkboard:
-      "bg-[#1E293B] text-white border-[#334155] shadow-[4px_4px_0_0_#0F172A]",
-    warning:
-      "bg-[#FEF2F2] text-[#991B1B] border-[#DC2626] shadow-[4px_4px_0_0_#991B1B]",
-  };
 
   return (
     <div
@@ -41,16 +68,36 @@ export const ProfessorDialogueBox: React.FC<ProfessorDialogueBoxProps> = ({
     >
       {/* Speech Bubble Arrow Tail */}
       {tailPosition === "left" && (
-        <div className="absolute top-1/2 -left-2 -translate-y-1/2 w-0 h-0 border-y-[6px] border-y-transparent border-r-[8px] border-r-candy-ink" />
+        <div
+          className={cn(
+            "absolute top-1/2 -left-2 -translate-y-1/2 w-0 h-0 border-y-[6px] border-y-transparent border-r-[8px]",
+            variantTailColors[variant].left,
+          )}
+        />
       )}
       {tailPosition === "right" && (
-        <div className="absolute top-1/2 -right-2 -translate-y-1/2 w-0 h-0 border-y-[6px] border-y-transparent border-l-[8px] border-l-candy-ink" />
+        <div
+          className={cn(
+            "absolute top-1/2 -right-2 -translate-y-1/2 w-0 h-0 border-y-[6px] border-y-transparent border-l-[8px]",
+            variantTailColors[variant].right,
+          )}
+        />
       )}
       {tailPosition === "bottom" && (
-        <div className="absolute -bottom-2.5 left-6 w-0 h-0 border-x-[6px] border-x-transparent border-t-[8px] border-t-candy-ink" />
+        <div
+          className={cn(
+            "absolute -bottom-2.5 left-6 w-0 h-0 border-x-[6px] border-x-transparent border-t-[8px]",
+            variantTailColors[variant].bottom,
+          )}
+        />
       )}
       {tailPosition === "top" && (
-        <div className="absolute -top-2.5 left-6 w-0 h-0 border-x-[6px] border-x-transparent border-b-[8px] border-b-candy-ink" />
+        <div
+          className={cn(
+            "absolute -top-2.5 left-6 w-0 h-0 border-x-[6px] border-x-transparent border-b-[8px]",
+            variantTailColors[variant].top,
+          )}
+        />
       )}
 
       <div className="flex items-start gap-2">
@@ -66,7 +113,7 @@ export const ProfessorDialogueBox: React.FC<ProfessorDialogueBoxProps> = ({
             strokeWidth="2"
           />
         </svg>
-        <p className="flex-1 font-sans font-bold text-xs md:text-sm text-candy-ink leading-relaxed tracking-normal">
+        <p className="flex-1 font-sans font-bold text-xs md:text-sm leading-relaxed tracking-normal">
           &ldquo;{text}&rdquo;
         </p>
       </div>
