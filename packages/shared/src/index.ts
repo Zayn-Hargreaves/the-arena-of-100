@@ -53,6 +53,8 @@ export {
   GAME_CONFIG,
   MATCHMAKING_CONFIG,
   BOT_GUEST_ID_PREFIX,
+  ANSWER_CODES,
+  type AnswerCode,
 } from "./game-config";
 // Daily Challenge Constants and Contracts
 export { DAILY_QUESTION_COUNT } from "./daily-config";

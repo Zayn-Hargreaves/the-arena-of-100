@@ -5,6 +5,11 @@ import type {
   Match,
   PendingAnswer,
 } from "@/stores/socket-store.types";
+import {
+  calculateRemainingSeconds,
+  determineTileVariant,
+  resolveRevealedCorrectAnswer,
+} from "@/lib/game-round-helpers";
 
 interface UseGameRoundStateOptions {
   matchId: string;
@@ -38,6 +43,7 @@ export function useGameRoundState({
       options: currentQuestion?.options ?? [],
     };
   }, [match?.currentQuestion]);
+
   const activeRoundNo = match?.currentRoundNo;
   const activePendingAnswer =
     pendingAnswer?.matchId === matchId &&
@@ -63,27 +69,6 @@ export function useGameRoundState({
     activeAnswerResult?.submittedAnswer ??
     null;
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const roundResultRevealRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-  const roundResultContinueRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-
-  const clearTimers = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-    if (roundResultRevealRef.current) {
-      clearTimeout(roundResultRevealRef.current);
-      roundResultRevealRef.current = null;
-    }
-    if (roundResultContinueRef.current) {
-      clearTimeout(roundResultContinueRef.current);
-      roundResultContinueRef.current = null;
-    }
-  }, []);
 
   const clearCountdownTimer = useCallback(() => {
     if (intervalRef.current) {
@@ -124,10 +109,10 @@ export function useGameRoundState({
     activeAnswerResult?.submittedAnswer,
   ]);
 
-  const calculateTimeLeft = useCallback(() => {
-    if (!match?.roundEndTime) return roundDuration;
-    return Math.max(0, Math.floor((match.roundEndTime - Date.now()) / 1000));
-  }, [match?.roundEndTime, roundDuration]);
+  const calculateTimeLeft = useCallback(
+    () => calculateRemainingSeconds(match?.roundEndTime, roundDuration),
+    [match?.roundEndTime, roundDuration],
+  );
 
   // Countdown timer: runs whenever status is ROUND_ACTIVE
   useEffect(() => {
@@ -165,35 +150,19 @@ export function useGameRoundState({
       return;
     }
 
-    const answerCodes = ["A", "B", "C", "D"];
-    const rawAnswer = activeAnswerResult?.correctAnswer?.trim();
-
-    if (rawAnswer) {
-      if (answerCodes.includes(rawAnswer.toUpperCase())) {
-        setRevealedCorrectAnswer(rawAnswer.toUpperCase());
-        return;
-      }
-      const matchedIndex = options.findIndex(
-        (opt) => opt.trim().toLowerCase() === rawAnswer.toLowerCase(),
-      );
-      if (matchedIndex >= 0 && answerCodes[matchedIndex]) {
-        setRevealedCorrectAnswer(answerCodes[matchedIndex]);
-        return;
-      }
-    }
-
-    // Fallback: if server confirmed user's answer is correct, we know the correct answer code
-    if (activeAnswerResult?.isCorrect && effectiveSelectedAnswer) {
-      setRevealedCorrectAnswer(effectiveSelectedAnswer);
-    }
+    setRevealedCorrectAnswer(
+      resolveRevealedCorrectAnswer(
+        activeAnswerResult,
+        options,
+        effectiveSelectedAnswer,
+      ),
+    );
   }, [
     isRoundResultPhase,
     activeAnswerResult,
     options,
     effectiveSelectedAnswer,
   ]);
-
-  useEffect(() => clearTimers, [clearTimers]);
 
   const handleSelectAnswer = useCallback(
     (option: string) => {
@@ -227,38 +196,16 @@ export function useGameRoundState({
   );
 
   const getTileVariant = useCallback(
-    (answerCode: string) => {
-      if (!roundCompleted) {
-        if (effectiveSelectedAnswer === answerCode) {
-          return "selected";
-        }
-        if (
-          !hasSecondChance &&
-          (effectiveSelectedAnswer !== null ||
-            activePendingAnswer !== null ||
-            activeAnswerResult !== null)
-        ) {
-          return "disabled";
-        }
-        return "default";
-      }
-
-      // During round results:
-      const isThisCorrect =
-        (revealedCorrectAnswer && answerCode === revealedCorrectAnswer) ||
-        (activeAnswerResult?.isCorrect &&
-          answerCode === effectiveSelectedAnswer);
-
-      if (isThisCorrect) {
-        return "correct";
-      }
-
-      if (answerCode === effectiveSelectedAnswer) {
-        return "incorrect";
-      }
-
-      return "disabled";
-    },
+    (answerCode: string) =>
+      determineTileVariant({
+        answerCode,
+        roundCompleted,
+        hasSecondChance,
+        revealedCorrectAnswer,
+        effectiveSelectedAnswer,
+        activePendingAnswer,
+        activeAnswerResult,
+      }),
     [
       roundCompleted,
       hasSecondChance,
@@ -272,7 +219,7 @@ export function useGameRoundState({
   return {
     activeAnswerResult,
     activePendingAnswer,
-    clearTimers,
+    clearCountdownTimer,
     getTileVariant,
     handleSelectAnswer,
     hasCurrentQuestion,

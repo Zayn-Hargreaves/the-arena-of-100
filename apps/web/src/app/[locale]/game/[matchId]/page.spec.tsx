@@ -119,6 +119,27 @@ vi.mock("@/components/game", () => ({
   CardHand: () => <div data-testid="card-hand" />,
   CardOfferOverlay: () => <div data-testid="card-offer-overlay" />,
   CardTargetPicker: () => <div data-testid="card-target-picker" />,
+  GameActiveBuffs: () => <div data-testid="game-active-buffs" />,
+  GameSidebarPanel: (p: {
+    players: unknown[];
+    userId: string | null;
+    onLeaveClick: () => void;
+    roundCompleted?: boolean;
+    matchStatus?: string;
+  }) => (
+    <div data-testid="game-sidebar-panel">
+      <div
+        data-testid="opponents"
+        data-count={p.players.length}
+        data-userid={String(p.userId)}
+      />
+      <button
+        data-testid="leave-btn"
+        disabled={Boolean(p.roundCompleted || p.matchStatus === "FINISHED")}
+        onClick={p.onLeaveClick}
+      />
+    </div>
+  ),
 }));
 
 import GamePage from "./page";

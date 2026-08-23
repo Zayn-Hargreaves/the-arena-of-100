@@ -11,7 +11,7 @@ interface UseGamePageLifecycleOptions {
   roomTerminated: boolean;
   roomTerminationMessage: string | null;
   requestSnapshot: (matchId: string, lastSeenSeqNo: number) => void;
-  clearTimers: () => void;
+  clearCountdownTimer: () => void;
 }
 
 export function useGamePageLifecycle({
@@ -20,7 +20,7 @@ export function useGamePageLifecycle({
   roomTerminated,
   roomTerminationMessage,
   requestSnapshot,
-  clearTimers,
+  clearCountdownTimer,
 }: UseGamePageLifecycleOptions) {
   const router = useRouter();
   const { toast } = useToast();
@@ -45,7 +45,7 @@ export function useGamePageLifecycle({
   useEffect(() => {
     if (!roomTerminated || terminationNotifiedRef.current) return;
     terminationNotifiedRef.current = true;
-    clearTimers();
+    clearCountdownTimer();
     if (resultRedirectRef.current !== null) {
       window.clearTimeout(resultRedirectRef.current);
       resultRedirectRef.current = null;
@@ -65,7 +65,7 @@ export function useGamePageLifecycle({
     router,
     toast,
     tTermination,
-    clearTimers,
+    clearCountdownTimer,
   ]);
 
   useEffect(

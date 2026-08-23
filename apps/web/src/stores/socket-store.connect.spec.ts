@@ -8,9 +8,10 @@ import {
   type SnapshotPayload,
   type VoteBanTopicPayload,
 } from "@arena/shared";
-import { INITIAL_CARD_STATE } from "./socket-store.types";
+import { INITIAL_CARD_STATE, createInitialCardState } from "./socket-store.types";
 import { hasSecondChancePermission } from "./socket-store.helpers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { resetSocketStateMaps } from "./socket-store.state-maps";
 
 const waitForSocketAckMock = vi.hoisted(() => vi.fn());
 
@@ -117,6 +118,7 @@ function createMockSocket() {
 
 describe("socket-store connect heartbeat ownership", () => {
   beforeEach(async () => {
+    resetSocketStateMaps();
     vi.resetModules();
     ({ useSocketStore } = await import("./socket-store"));
     vi.clearAllMocks();

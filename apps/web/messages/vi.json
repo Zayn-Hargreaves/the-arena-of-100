@@ -129,6 +129,27 @@
     "ramCaption": "Mức sử dụng RAM Fastify (TỐI ĐA: 1024MB)",
     "activeLobbies": "PHÒNG ĐANG HOẠT ĐỘNG",
     "lobbiesCaption": "Kênh Redis pub/sub đang hoạt động",
+    "postgresql": "PostgreSQL",
+    "primaryDatabase": "CƠ SỞ DỮ LIỆU CHÍNH",
+    "pgDescription": "PostgreSQL lưu trữ dữ liệu quan hệ chính cho câu hỏi, người chơi và lịch sử trận.",
+    "redis": "Redis",
+    "cacheAndPubsub": "CACHE & PUB/SUB",
+    "redisDescription": "Redis lưu trữ bộ nhớ trong cho trạng thái phiên chơi, phòng chờ và kênh pub/sub.",
+    "dangerZoneTitle": "VÙNG NGUY HIỂM",
+    "dangerZoneSubtitle": "Các thao tác bảo trì hệ thống quyền cao",
+    "dbSyncTitle": "ĐỒNG BỘ CƠ SỞ DỮ LIỆU",
+    "dbSyncDesc": "Seed 100 câu hỏi tiêu chuẩn hoặc đồng bộ Prisma migrations với cơ sở dữ liệu chính.",
+    "syncBtn": "SEED CÂU HỎI",
+    "syncing": "ĐANG SEED...",
+    "systemResetTitle": "RESET KHẨN CẤP HỆ THỐNG",
+    "systemResetDesc": "Xóa toàn bộ phòng đang chạy, ngắt kết nối các phiên và dọn sạch cache Redis.",
+    "resetBtn": "RESET HỆ THỐNG",
+    "resetting": "ĐANG RESET...",
+    "resetModalTitle": "RESET KHẨN CẤP HỆ THỐNG",
+    "resetModalWarning": "CẢNH BÁO: Bạn sắp giải phóng toàn bộ phòng chờ đang hoạt động và các trận đấu đang chạy.",
+    "resetModalDetails": "Toàn bộ người chơi đang kết nối sẽ bị ngắt kết nối ngay lập tức, cache Redis sẽ bị xóa sạch và tiến trình trận đấu sẽ bị mất.",
+    "cancelBtn": "HỦY BỎ",
+    "confirmResetBtn": "XÁC NHẬN RESET",
     "dbAdministrationTitle": "QUẢN TRỊ CƠ SỞ DỮ LIỆU (POSTGRESQL)",
     "prismaStatusLabel": "TRẠNG THÁI PRISMA:",
     "redisOperationsTitle": "VẬN HÀNH MÁY CHỦ REDIS",
@@ -179,17 +200,19 @@
     },
     "terminateRoom": {
       "title": "KILL SWITCH — ĐÓNG PHÒNG ĐƠN LẺ",
+      "subtitle": "Đóng phòng khẩn cấp và hủy trận đấu đang diễn ra",
       "label": "NHẬP MÃ HOẶC ID PHÒNG",
       "roomIdPlaceholder": "VD: 6 ký tự mã phòng hoặc UUID",
       "messageLabel": "LÝ DO ĐÓNG (TÙY CHỌN, TỐI ĐA 200 KÝ TỰ)",
+      "messageOptional": "TÙY CHỌN",
       "messagePlaceholder": "VD: Bỏ hoang, vi phạm, bảo trì...",
       "submit": "ĐÓNG PHÒNG NGAY",
       "submitting": "ĐANG ĐÓNG PHÒNG...",
       "warning": "CẢNH BÁO: Hành động này sẽ kick toàn bộ người chơi trong phòng ra ngoài, hủy match đang chạy, xóa phòng khỏi database và Redis. Không thể hoàn tác.",
-      "modal": {
-        "title": "Xác nhận Kill Switch?",
-        "description": "Bạn sắp đóng phòng này vĩnh viễn. Tất cả người chơi sẽ bị đá ra ngay lập tức."
-      },
+      "confirmModalTitle": "Xác nhận Kill Switch?",
+      "confirmModalWarning": "Bạn có chắc chắn muốn đóng phòng {roomId}?",
+      "confirmModalDetails": "Tất cả người chơi trong phòng sẽ bị đẩy ra ngoài ngay lập tức, trận đấu đang diễn ra sẽ bị hủy và trạng thái phòng sẽ bị xóa.",
+      "confirmModalMessagePreview": "Lý do đóng phòng:",
       "errors": {
         "roomIdRequired": "Vui lòng nhập mã phòng hoặc ID.",
         "rateLimited": "Bạn thao tác quá nhanh. Vui lòng đợi 1 phút rồi thử lại."
@@ -524,6 +547,7 @@
     "title": "BẢNG VÀNG CAO THỦ",
     "subtitle": "Vinh danh những bộ óc siêu việt sống sót lâu nhất trong đấu trường",
     "period": {
+      "label": "Khoảng thời gian",
       "weekly": "TUẦN NÀY",
       "all": "ALL-TIME"
     },
@@ -544,6 +568,7 @@
     "accuracyShort": "Chính xác",
     "pointsUnit": "PTS",
     "empty": "Chưa có dữ liệu xếp hạng.",
+    "loading": "Đang tải bảng xếp hạng...",
     "cardsThisWeek": "Lá bài đã chơi trong tuần",
     "cardsLabel": "{count, plural, one {# lá bài} other {# lá bài}}",
     "cardsTier": {
@@ -558,8 +583,9 @@
     }
   },
   "settings": {
-    "title": "CẤU HÌNH ĐẤU TRƯỜNG",
-    "subtitle": "Tinh chỉnh âm thanh, linh thú đại diện, hiệu ứng và trải nghiệm thi đấu của bạn",
+    "title": "CÀI ĐẶT HỆ THỐNG",
+    "subtitle": "Tùy chỉnh âm thanh, diện mạo nhân vật, hiệu ứng hình ảnh và phím điều khiển",
+    "cancel": "Hủy",
     "tabs": {
       "profile": "Hồ Sơ & Linh Thú",
       "sound": "Âm Thanh & Nhạc",
@@ -576,7 +602,10 @@
       "callsignSaveFailed": "Lỗi lưu biệt danh.",
       "avatarShowcase": "Linh Thú Đang Chọn",
       "avatarGallery": "Bộ Sưu Tập Linh Thú",
-      "chooseTip": "Nhấp vào một linh thú bên dưới để đổi đại diện ngay lập tức"
+      "chooseTip": "Nhấp vào một linh thú bên dưới để đổi đại diện ngay lập tức",
+      "avatarFallback": "Linh Thú",
+      "selected": "Đã chọn",
+      "seedLabel": "SEED:"
     },
     "sound": {
       "title": "Cài Đặt Âm Thanh",
@@ -633,11 +662,13 @@
       "resetDesc": "Đưa toàn bộ âm thanh, đồ họa và phím tắt về thiết lập mặc định",
       "resetBtn": "Khôi Phục Mặc Định",
       "resetSuccess": "Đã khôi phục cài đặt mặc định thành công!",
+      "confirmReset": "Bạn có chắc chắn muốn khôi phục cài đặt mặc định?",
       "clearCacheTitle": "Dọn Dẹp Bộ Nhớ Đệm",
       "clearCacheDesc": "Xoá cache trình duyệt cục bộ nếu gặp sự cố kết nối hoặc giao diện",
       "clearCacheBtn": "Xoá Bộ Nhớ Đệm",
       "clearCacheSuccess": "Đã dọn dẹp bộ nhớ đệm thành công!",
-      "clearCacheFailed": "Không thể dọn dẹp bộ nhớ đệm."
+      "clearCacheFailed": "Không thể dọn dẹp bộ nhớ đệm.",
+      "confirmClearCache": "Bạn có chắc chắn muốn xóa bộ nhớ đệm cục bộ?"
     },
     "saveButton": "Lưu Cài Đặt",
     "saveSuccess": "Đã lưu cài đặt vào bộ nhớ trình duyệt!",

@@ -61,3 +61,6 @@ export const MATCHMAKING_CONFIG = {
   MIN_BOT_ANSWER_DELAY_MS: 2_000,
   MAX_BOT_ANSWER_DELAY_MS: 12_000,
 } as const;
+
+export const ANSWER_CODES = ["A", "B", "C", "D"] as const;
+export type AnswerCode = (typeof ANSWER_CODES)[number];

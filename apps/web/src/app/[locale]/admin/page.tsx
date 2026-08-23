@@ -7,24 +7,16 @@ import { useToast } from "@/hooks/use-toast";
 import { useSocketStore } from "@/stores/socket-store";
 import { apiFetch } from "@/lib/api";
 import { ApiError, apiSendJson } from "@/lib/api-client";
-import { Link } from "@/i18n/routing";
-import { Modal } from "@/components/ui/modal";
-import { Button } from "@/components/ui/button";
 import { AdminAccessDenied } from "@/components/admin/admin-access-denied";
+import { AdminHeader } from "@/components/admin/admin-header";
+import { AdminMetricsGrid } from "@/components/admin/admin-metrics-grid";
 import {
-  Server,
-  Database,
-  RefreshCw,
-  Cpu,
-  Activity,
-  AlertTriangle,
-  ShieldCheck,
-  Terminal,
-  Skull,
-  ScrollText,
-} from "lucide-react";
-
-// ── Response Types (mirrors API) ───────────────────────────
+  AdminServiceStatus,
+  type ServiceStatus,
+} from "@/components/admin/admin-service-status";
+import { AdminKillSwitch } from "@/components/admin/admin-kill-switch";
+import { AdminDangerZone } from "@/components/admin/admin-danger-zone";
+import { AdminConfirmModals } from "@/components/admin/admin-confirm-modals";
 
 interface MonitoringResponse {
   cpuUsage?: number;
@@ -39,8 +31,6 @@ interface HealthCheckResponse {
     redis?: { status?: string };
   };
 }
-
-type ServiceStatus = "loading" | "connected" | "disconnected" | "error";
 
 export default function AdminPage() {
   const t = useTranslations("admin");
@@ -207,9 +197,6 @@ export default function AdminPage() {
     }
   };
 
-  // Phase 4 of the admin kill-switch: open the confirm modal only when
-  // a roomId is provided. The actual terminate call lives in
-  // `performTerminateRoom` so the user must explicitly confirm.
   const handleTerminateRoomClick = () => {
     if (!terminateRoomId.trim()) {
       toast({
@@ -227,14 +214,6 @@ export default function AdminPage() {
 
     setTerminating(true);
     try {
-      // apiSendJson throws ApiError on non-2xx, including 429 from the
-      // backend throttle (5/min). We catch it explicitly to surface a
-      // localized rate-limit message instead of a raw error string.
-      // A 2xx response may still carry `partial: true` if the backend's
-      // DB disband step failed after the room channel was already notified
-      // and timers/Redis were cleaned — that case needs a different toast
-      // AND must preserve the inputs so the operator can retry once the
-      // underlying DB issue is resolved.
       const response = await apiSendJson<{
         success: boolean;
         partial?: boolean;
@@ -258,15 +237,10 @@ export default function AdminPage() {
             error: response.cleanupError ?? "unknown",
           }),
         });
-        // Preserve inputs on partial failure so the operator can
-        // investigate the DB inconsistency and retry without retyping
-        // the roomId / message.
       } else {
         toast({
           title: tTerminate("success"),
         });
-        // Clear inputs only on full success so the next call does not
-        // accidentally re-target the same room.
         setTerminateRoomId("");
         setTerminateMessage("");
       }
@@ -300,325 +274,44 @@ export default function AdminPage() {
   return (
     <AppShellLayout>
       <div className="max-w-5xl mx-auto w-full space-y-8 pt-2 select-none">
-        {/* Header Block */}
-        <div className="relative bg-candy-red border-[3px] border-candy-ink rounded-3xl p-6 md:p-8 shadow-[6px_6px_0_0_#2B2D42] overflow-hidden text-white flex flex-col md:flex-row items-center md:justify-between gap-6">
-          <div className="absolute top-0 left-0 right-0 h-3 bg-white/20 z-0" />
+        <AdminHeader />
 
-          <div className="space-y-2 relative z-10 text-center md:text-left">
-            <h1 className="font-display font-black text-3xl md:text-4xl tracking-wider uppercase flex items-center justify-center md:justify-start gap-3">
-              <Terminal className="w-8 h-8 text-candy-yellow animate-pulse" />
-              {t("title")}
-            </h1>
-            <p className="font-mono text-xs font-black uppercase text-white/90">
-              {t("subtitle")}
-            </p>
-          </div>
+        <AdminMetricsGrid metrics={metrics} />
 
-          <div className="shrink-0 relative z-10 flex flex-col sm:flex-row items-center gap-3">
-            <Link
-              href="/admin/audit"
-              className="inline-flex items-center gap-2 px-4 py-2 bg-white border-[3px] border-candy-ink rounded-2xl text-candy-ink font-display font-black text-xs shadow-[3px_3px_0_0_#000] uppercase tracking-wider hover:bg-candy-cloud active:translate-y-0.5 active:shadow-[1px_1px_0_0_#000] transition-all"
-            >
-              <ScrollText className="w-4 h-4 text-candy-blue" />
-              {t("auditLog")}
-            </Link>
-            <span className="px-4 py-2 bg-candy-yellow border-[3px] border-candy-ink rounded-2xl text-candy-ink font-display font-black text-xs shadow-[3px_3px_0_0_#000] uppercase tracking-wider">
-              {t("rootAccess")}
-            </span>
-          </div>
-        </div>
+        <AdminServiceStatus
+          dbStatusState={dbStatusState}
+          redisStatusState={redisStatusState}
+        />
 
-        {/* Resources Metrics & Node statuses */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* CPU Metric Card */}
-          <div className="bg-white border-[3px] border-candy-ink rounded-2xl p-5 space-y-4 shadow-[4px_4px_0_0_#2B2D42]">
-            <div className="flex justify-between items-center">
-              <span className="text-xs font-mono font-black uppercase text-candy-ink flex items-center gap-1.5">
-                <Cpu className="w-4 h-4 text-candy-red" />
-                {t("cpuCoreLoad")}
-              </span>
-              <span className="font-mono font-black text-sm text-candy-red">
-                {metrics.cpuUsage.toFixed(1)}%
-              </span>
-            </div>
+        <AdminKillSwitch
+          terminateRoomId={terminateRoomId}
+          setTerminateRoomId={setTerminateRoomId}
+          terminateMessage={terminateMessage}
+          setTerminateMessage={setTerminateMessage}
+          terminating={terminating}
+          onTerminateClick={handleTerminateRoomClick}
+        />
 
-            {/* Custom 3D Progress Bar */}
-            <div className="w-full bg-candy-cloud h-5 rounded-xl border-[2.5px] border-candy-ink overflow-hidden p-0.5 shadow-inner">
-              <div
-                className="bg-candy-red border-r-[2px] border-candy-ink h-full rounded-lg shadow-[0_0_4px_rgba(0,0,0,0.15)]"
-                style={{
-                  width: `${Math.max(0, Math.min(100, metrics.cpuUsage))}%`,
-                }}
-              />
-            </div>
+        <AdminDangerZone
+          seeding={seeding}
+          resetting={resetting}
+          onSeedQuestions={handleSeedQuestions}
+          onResetSystem={handleResetSystem}
+        />
 
-            <span className="block font-mono text-[10px] font-black text-candy-ink/50 uppercase">
-              {t("cpuCaption")}
-            </span>
-          </div>
-
-          {/* Ram Metric Card */}
-          <div className="bg-white border-[3px] border-candy-ink rounded-2xl p-5 space-y-4 shadow-[4px_4px_0_0_#2B2D42]">
-            <div className="flex justify-between items-center">
-              <span className="text-xs font-mono font-black uppercase text-candy-ink flex items-center gap-1.5">
-                <Activity className="w-4 h-4 text-candy-blue" />
-                {t("ramAllocation")}
-              </span>
-              <span className="font-mono font-black text-sm text-candy-blue">
-                {metrics.memoryUsageMb} {t("units.mb")} /{" "}
-                {metrics.totalMemoryMb || "?"} {t("units.mb")}
-              </span>
-            </div>
-
-            {/* Custom 3D Progress Bar */}
-            <div className="w-full bg-candy-cloud h-5 rounded-xl border-[2.5px] border-candy-ink overflow-hidden p-0.5 shadow-inner">
-              <div
-                className="bg-candy-blue border-r-[2px] border-candy-ink h-full rounded-lg shadow-[0_0_4px_rgba(0,0,0,0.15)]"
-                style={{
-                  width: `${Math.max(0, Math.min(100, (metrics.memoryUsageMb / (metrics.totalMemoryMb || 1024)) * 100))}%`,
-                }}
-              />
-            </div>
-
-            <span className="block font-mono text-[10px] font-black text-candy-ink/50 uppercase">
-              {t("ramCaption")}
-            </span>
-          </div>
-
-          {/* Database Connections */}
-          <div className="bg-white border-[3px] border-candy-ink rounded-2xl p-5 space-y-4 shadow-[4px_4px_0_0_#2B2D42]">
-            <div className="flex justify-between items-center">
-              <span className="text-xs font-mono font-black uppercase text-candy-ink flex items-center gap-1.5">
-                <Database className="w-4 h-4 text-candy-mint" />
-                {t("activeLobbies")}
-              </span>
-              <span className="font-mono font-black text-sm text-candy-mint">
-                {metrics.roomCount} {t("units.rooms")}
-              </span>
-            </div>
-
-            {/* Custom 3D Progress Bar */}
-            <div className="w-full bg-candy-cloud h-5 rounded-xl border-[2.5px] border-candy-ink overflow-hidden p-0.5 shadow-inner">
-              <div
-                className="bg-candy-mint border-r-[2px] border-candy-ink h-full rounded-lg shadow-[0_0_4px_rgba(0,0,0,0.15)]"
-                style={{
-                  width: `${Math.max(0, Math.min(100, metrics.roomCount))}%`,
-                }}
-              />
-            </div>
-
-            <span className="block font-mono text-[10px] font-black text-candy-ink/50 uppercase">
-              {t("lobbiesCaption")}
-            </span>
-          </div>
-        </div>
-
-        {/* Database & Infrastructure operations */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* DB Administration */}
-          <div className="bg-white border-[3px] border-candy-ink rounded-3xl p-6 space-y-6 shadow-[6px_6px_0_0_#2B2D42]">
-            <h3 className="font-display font-black text-base text-candy-ink uppercase tracking-wider flex items-center gap-2 border-b-[3px] border-candy-ink pb-3">
-              <Database className="w-5 h-5 text-candy-blue" />
-              {t("dbAdministrationTitle")}
-            </h3>
-
-            {/* DB status bar */}
-            <div className="flex justify-between items-center p-4 bg-candy-cloud rounded-2xl border-[2.5px] border-candy-ink shadow-[2.5px_2.5px_0_0_#000]">
-              <span className="text-xs font-mono font-black text-candy-ink/80 uppercase">
-                {t("prismaStatusLabel")}
-              </span>
-              <span className="px-3 py-1 rounded-xl bg-candy-mint border-[2.5px] border-candy-ink text-white text-xs font-mono font-black shadow-[2px_2px_0_0_#000]">
-                {t(`status.${dbStatusState}`)}
-              </span>
-            </div>
-
-            {/* Actions */}
-            <div className="space-y-4">
-              <button
-                disabled={seeding}
-                onClick={handleSeedQuestions}
-                className="w-full flex items-center justify-center h-12 bg-candy-yellow border-[3px] border-candy-ink rounded-2xl font-display font-black text-sm uppercase text-candy-ink shadow-[4px_4px_0_0_#000] hover:bg-yellow-300 active:translate-y-0.5 active:shadow-[2px_2px_0_0_#000] transition-all disabled:opacity-50 disabled:pointer-events-none"
-              >
-                <RefreshCw
-                  className={`w-4 h-4 mr-3 shrink-0 ${seeding && "animate-spin"}`}
-                />
-                {seeding ? t("syncingQuestions") : t("syncQuestions")}
-              </button>
-
-              <button
-                onClick={() =>
-                  toast({
-                    title: t("checkMigrations"),
-                    description: t("alerts.migrationsUpToDate"),
-                  })
-                }
-                className="w-full flex items-center justify-center h-12 bg-white border-[3px] border-candy-ink rounded-2xl font-display font-black text-xs uppercase text-candy-ink shadow-[4px_4px_0_0_#000] hover:bg-candy-cloud active:translate-y-0.5 active:shadow-[2px_2px_0_0_#000] transition-all"
-              >
-                <ShieldCheck className="w-4 h-4 mr-2 text-candy-mint shrink-0" />
-                {t("checkMigrations")}
-              </button>
-            </div>
-          </div>
-
-          {/* Redis Server Operations */}
-          <div className="bg-white border-[3px] border-candy-ink rounded-3xl p-6 space-y-6 shadow-[6px_6px_0_0_#2B2D42]">
-            <h3 className="font-display font-black text-base text-candy-ink uppercase tracking-wider flex items-center gap-2 border-b-[3px] border-candy-ink pb-3">
-              <Server className="w-5 h-5 text-candy-red" />
-              {t("redisOperationsTitle")}
-            </h3>
-
-            {/* Redis status bar */}
-            <div className="flex justify-between items-center p-4 bg-candy-cloud rounded-2xl border-[2.5px] border-candy-ink shadow-[2.5px_2.5px_0_0_#000]">
-              <span className="text-xs font-mono font-black text-candy-ink/80 uppercase">
-                {t("redisStatusLabel")}
-              </span>
-              <span className="px-3 py-1 rounded-xl bg-candy-mint border-[2.5px] border-candy-ink text-white text-xs font-mono font-black shadow-[2px_2px_0_0_#000]">
-                {t(`status.${redisStatusState}`)}
-              </span>
-            </div>
-
-            {/* Actions */}
-            <div className="space-y-4">
-              <button
-                disabled={resetting}
-                onClick={handleResetSystem}
-                className="w-full flex items-center justify-center h-12 bg-candy-red border-[3px] border-candy-ink rounded-2xl font-display font-black text-sm uppercase text-white shadow-[4px_4px_0_0_#000] hover:bg-red-600 active:translate-y-0.5 active:shadow-[2px_2px_0_0_#000] transition-all disabled:opacity-50 disabled:pointer-events-none"
-              >
-                {resetting ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 mr-3 animate-spin shrink-0" />
-                    RESETTING SYSTEM...
-                  </>
-                ) : (
-                  <>
-                    <AlertTriangle className="w-4 h-4 mr-3 animate-pulse shrink-0" />
-                    {t("resetActiveLobbies")}
-                  </>
-                )}
-              </button>
-
-              <div className="p-4 bg-candy-red/5 border-[2.5px] border-candy-ink rounded-2xl shadow-[2.5px_2.5px_0_0_#000]">
-                <p className="text-[11px] leading-relaxed text-candy-ink font-mono font-black uppercase">
-                  {t("warning")}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Kill Switch — terminate a single room (Phase 4) */}
-        <div className="bg-white border-[3px] border-candy-ink rounded-3xl p-6 space-y-6 shadow-[6px_6px_0_0_#2B2D42]">
-          <h3 className="font-display font-black text-base text-candy-ink uppercase tracking-wider flex items-center gap-2 border-b-[3px] border-candy-ink pb-3">
-            <Skull className="w-5 h-5 text-candy-red" />
-            {tTerminate("title")}
-          </h3>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <label
-                htmlFor="terminate-room-id"
-                className="block text-xs font-mono font-black uppercase text-candy-ink/80"
-              >
-                {tTerminate("label")}
-              </label>
-              <input
-                id="terminate-room-id"
-                type="text"
-                value={terminateRoomId}
-                onChange={(e) => setTerminateRoomId(e.target.value)}
-                placeholder={tTerminate("roomIdPlaceholder")}
-                disabled={terminating}
-                className="w-full h-12 px-4 bg-candy-cloud border-[3px] border-candy-ink rounded-2xl font-mono text-sm font-bold uppercase text-candy-ink shadow-[2.5px_2.5px_0_0_#000] outline-none focus:ring-2 focus:ring-candy-ink focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label
-                htmlFor="terminate-message"
-                className="block text-xs font-mono font-black uppercase text-candy-ink/80"
-              >
-                {tTerminate("messageLabel")}
-              </label>
-              <input
-                id="terminate-message"
-                type="text"
-                maxLength={200}
-                value={terminateMessage}
-                onChange={(e) => setTerminateMessage(e.target.value)}
-                placeholder={tTerminate("messagePlaceholder")}
-                disabled={terminating}
-                className="w-full h-12 px-4 bg-candy-cloud border-[3px] border-candy-ink rounded-2xl font-mono text-sm text-candy-ink shadow-[2.5px_2.5px_0_0_#000] outline-none focus:ring-2 focus:ring-candy-ink focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
-            <div className="p-4 bg-candy-red/5 border-[2.5px] border-candy-ink rounded-2xl shadow-[2.5px_2.5px_0_0_#000] flex-1">
-              <p className="text-[11px] leading-relaxed text-candy-ink font-mono font-black uppercase">
-                {tTerminate("warning")}
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={handleTerminateRoomClick}
-              disabled={terminating}
-              className="shrink-0 flex items-center justify-center h-12 px-6 bg-candy-red border-[3px] border-candy-ink rounded-2xl font-display font-black text-sm uppercase text-white shadow-[4px_4px_0_0_#000] hover:bg-red-600 active:translate-y-0.5 active:shadow-[2px_2px_0_0_#000] transition-all disabled:opacity-50 disabled:pointer-events-none"
-            >
-              <Skull
-                className={`w-4 h-4 mr-3 shrink-0 ${terminating ? "animate-pulse" : ""}`}
-              />
-              {terminating ? tTerminate("submitting") : tTerminate("submit")}
-            </button>
-          </div>
-        </div>
+        <AdminConfirmModals
+          showResetModal={showResetModal}
+          setShowResetModal={setShowResetModal}
+          resetting={resetting}
+          onPerformReset={performResetSystem}
+          showTerminateModal={showTerminateModal}
+          setShowTerminateModal={setShowTerminateModal}
+          terminating={terminating}
+          terminateRoomId={terminateRoomId}
+          terminateMessage={terminateMessage}
+          onPerformTerminate={performTerminateRoom}
+        />
       </div>
-      <Modal
-        open={showResetModal}
-        onOpenChange={setShowResetModal}
-        title="Confirm Reset"
-        description={t("alerts.resetConfirm")}
-      >
-        <div className="flex gap-3 mt-4">
-          <Button
-            variant="danger"
-            onClick={performResetSystem}
-            className="flex-1"
-          >
-            Confirm
-          </Button>
-          <Button
-            variant="ghost"
-            onClick={() => setShowResetModal(false)}
-            className="flex-1"
-          >
-            Cancel
-          </Button>
-        </div>
-      </Modal>
-      <Modal
-        open={showTerminateModal}
-        onOpenChange={setShowTerminateModal}
-        title={tTerminate("modal.title")}
-        description={tTerminate("modal.description")}
-      >
-        <div className="flex gap-3 mt-4">
-          <Button
-            variant="danger"
-            onClick={performTerminateRoom}
-            className="flex-1"
-          >
-            Confirm
-          </Button>
-          <Button
-            variant="ghost"
-            onClick={() => setShowTerminateModal(false)}
-            className="flex-1"
-          >
-            Cancel
-          </Button>
-        </div>
-      </Modal>
     </AppShellLayout>
   );
 }
