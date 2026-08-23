@@ -4,9 +4,9 @@ import {
   ServerEvent,
   PlayerStatus,
   MatchStatus,
+  type CardEffectEvent,
   type SnapshotPayload,
   type VoteBanTopicPayload,
-  type CardEffectEvent,
 } from "@arena/shared";
 import { INITIAL_CARD_STATE } from "./socket-store.types";
 import { hasSecondChancePermission } from "./socket-store.helpers";

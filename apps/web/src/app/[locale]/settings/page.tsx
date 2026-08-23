@@ -1,8 +1,12 @@
 "use client";
 
-import React, { useEffect, useState, useTransition } from "react";
+import React, { useEffect, useRef, useState, useTransition } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { DEFAULT_AVATAR_SEED, type AvatarSeed } from "@arena/shared";
+import {
+  DEFAULT_AVATAR_SEED,
+  isValidAvatarSeed,
+  type AvatarSeed,
+} from "@arena/shared";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SpriteFrame } from "@/components/ui/sprite-frame";
@@ -15,6 +19,7 @@ import {
   invalidateAudioSettingsCache,
   startBgm,
   stopBgm,
+  updateAudioSettings,
 } from "@/lib/sound-engine";
 import { usePathname, useRouter } from "@/i18n/routing";
 import { cn } from "@/lib/utils";
@@ -132,21 +137,40 @@ export default function SettingsPage() {
 
   const currentAvatar = findAvatarBySeed(selectedAvatarSeed);
 
+  const initializedCallsignRef = useRef(false);
+  const initializedAvatarRef = useRef(false);
+
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
+
   // Load from localStorage on mount
   useEffect(() => {
     try {
-      const savedCallsign = window.localStorage.getItem("callsign");
-      if (savedCallsign) {
-        setCallsign(savedCallsign);
-      } else if (profileQuery.data?.user.username) {
-        setCallsign(profileQuery.data.user.username);
+      if (!initializedCallsignRef.current) {
+        const savedCallsign = window.localStorage.getItem("callsign");
+        if (savedCallsign) {
+          setCallsign(savedCallsign);
+          initializedCallsignRef.current = true;
+        } else if (profileQuery.data?.user.username) {
+          setCallsign((prev) =>
+            prev ? prev : profileQuery.data.user.username,
+          );
+          initializedCallsignRef.current = true;
+        }
       }
 
-      const savedSeed = window.localStorage.getItem("avatarSeed");
-      if (savedSeed) {
-        setSelectedAvatarSeed(savedSeed as AvatarSeed);
-      } else if (profileQuery.data?.user.avatar) {
-        setSelectedAvatarSeed(profileQuery.data.user.avatar as AvatarSeed);
+      if (!initializedAvatarRef.current) {
+        const savedSeed = window.localStorage.getItem("avatarSeed");
+        const profileAvatar = profileQuery.data?.user.avatar;
+        if (typeof savedSeed === "string" && isValidAvatarSeed(savedSeed)) {
+          setSelectedAvatarSeed(savedSeed);
+          initializedAvatarRef.current = true;
+        } else if (
+          typeof profileAvatar === "string" &&
+          isValidAvatarSeed(profileAvatar)
+        ) {
+          setSelectedAvatarSeed(profileAvatar);
+          initializedAvatarRef.current = true;
+        }
       }
 
       const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -168,11 +192,15 @@ export default function SettingsPage() {
       setAutoFocus(parsed.autoFocus ?? defaultSettings.autoFocus);
     } catch (error) {
       console.error("Failed to parse settings from localStorage:", error);
+    } finally {
+      setSettingsHydrated(true);
     }
   }, [profileQuery.data?.user.username, profileQuery.data?.user.avatar]);
 
   // Persist settings changes
   useEffect(() => {
+    if (!settingsHydrated) return;
+
     const settings: SettingsState = {
       sfxEnabled,
       sfxVolume,
@@ -186,12 +214,27 @@ export default function SettingsPage() {
     };
 
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+      const existingRaw = window.localStorage.getItem(STORAGE_KEY);
+      let existingObj: Record<string, unknown> = {};
+      if (existingRaw) {
+        try {
+          const parsed = JSON.parse(existingRaw);
+          if (typeof parsed === "object" && parsed !== null) {
+            existingObj = parsed as Record<string, unknown>;
+          }
+        } catch {}
+      }
+      const payload = {
+        ...existingObj,
+        ...settings,
+      };
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
       invalidateAudioSettingsCache();
     } catch (err) {
       console.warn("Failed to save settings:", err);
     }
   }, [
+    settingsHydrated,
     sfxEnabled,
     sfxVolume,
     bgmEnabled,
@@ -259,6 +302,7 @@ export default function SettingsPage() {
     if (!sfxEnabled) {
       setSfxEnabled(true);
     }
+    updateAudioSettings({ sfxEnabled: true, sfxVolume });
     playCandyChime(sfxVolume);
   };
 
@@ -270,6 +314,7 @@ export default function SettingsPage() {
       if (!bgmEnabled) {
         setBgmEnabled(true);
       }
+      updateAudioSettings({ bgmEnabled: true, bgmVolume });
       startBgm();
       setTestingBgm(true);
     }

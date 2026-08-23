@@ -153,7 +153,7 @@ function ChampionPodiumCard({ entry, rank }: Readonly<PodiumStepProps>) {
 
           <div className="flex items-center justify-center gap-1.5 flex-wrap">
             <span className="font-mono text-xs font-black text-candy-ink bg-white/90 border-[1.5px] border-candy-ink px-2.5 py-0.5 rounded-lg shadow-[1px_1px_0_0_#2B2D42]">
-              {format.number(entry.totalScore)} PTS
+              {format.number(entry.totalScore)} {t("pointsUnit")}
             </span>
             <RankBadge
               tier={entry.rankTier ?? "SILVER"}
@@ -517,7 +517,8 @@ export default function RankingsPage() {
                                   className="p-4 w-32 text-right font-mono font-black text-candy-pink border-r-[2px] border-candy-ink shrink-0"
                                 >
                                   <span className="bg-candy-pink/10 border border-candy-pink/30 px-2 py-0.5 rounded-lg text-candy-pink font-mono text-xs">
-                                    {format.number(item.totalScore)} PTS
+                                    {format.number(item.totalScore)}{" "}
+                                    {t("pointsUnit")}
                                   </span>
                                 </div>
                                 <div
@@ -617,7 +618,8 @@ export default function RankingsPage() {
                                 </td>
                                 <td className="p-4 text-right font-mono font-black text-candy-pink border-r-[2px] border-candy-ink">
                                   <span className="bg-candy-pink/10 border border-candy-pink/30 px-2 py-0.5 rounded-lg text-candy-pink font-mono text-xs">
-                                    {format.number(item.totalScore)} PTS
+                                    {format.number(item.totalScore)}{" "}
+                                    {t("pointsUnit")}
                                   </span>
                                 </td>
                                 <td className="p-4 text-right font-mono text-xs hidden sm:table-cell border-r-[2px] border-candy-ink">

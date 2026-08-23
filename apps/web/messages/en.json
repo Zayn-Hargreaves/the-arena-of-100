@@ -542,6 +542,7 @@
       "accuracy": "Accuracy"
     },
     "accuracyShort": "Accuracy",
+    "pointsUnit": "PTS",
     "empty": "No leaderboard data yet.",
     "cardsThisWeek": "Cards played this week",
     "cardsLabel": "{count, plural, one {# card} other {# cards}}",

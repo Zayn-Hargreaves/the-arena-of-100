@@ -124,6 +124,8 @@ describe("DailyLeaderboard", () => {
     for (let i = 1; i <= 10; i++) {
       expect(screen.getByText(`Player_${i}`)).toBeInTheDocument();
     }
-    expect(screen.queryByText("Player_11")).not.toBeInTheDocument();
+    for (let i = 11; i <= 15; i++) {
+      expect(screen.queryByText(`Player_${i}`)).not.toBeInTheDocument();
+    }
   });
 });

@@ -542,6 +542,7 @@
       "accuracy": "Tỉ Lệ Đúng"
     },
     "accuracyShort": "Chính xác",
+    "pointsUnit": "PTS",
     "empty": "Chưa có dữ liệu xếp hạng.",
     "cardsThisWeek": "Lá bài đã chơi trong tuần",
     "cardsLabel": "{count, plural, one {# lá bài} other {# lá bài}}",

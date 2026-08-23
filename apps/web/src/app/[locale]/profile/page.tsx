@@ -551,6 +551,7 @@ function HistorySection({
   locale,
   t,
 }: Readonly<HistorySectionProps>) {
+  const format = useFormatter();
   const handleRetry = useCallback(() => {
     historyQuery.refetch();
   }, [historyQuery]);
@@ -663,7 +664,7 @@ function HistorySection({
                   {t("history.score")}
                 </p>
                 <p className="font-mono text-lg font-black text-candy-blue">
-                  {item.score.toLocaleString(locale)} {t("history.pointsUnit")}
+                  {format.number(item.score)} {t("history.pointsUnit")}
                 </p>
                 {item.eloDelta !== null && item.eloDelta !== undefined && (
                   <span

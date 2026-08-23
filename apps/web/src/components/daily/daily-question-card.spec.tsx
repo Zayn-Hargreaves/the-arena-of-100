@@ -1,5 +1,6 @@
 "use client";
 
+import "@testing-library/jest-dom/vitest";
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
@@ -28,7 +29,9 @@ describe("DailyQuestionCard", () => {
 
     expect(screen.getByText(question.content)).toBeInTheDocument();
     for (const option of question.options) {
-      expect(screen.getByRole("button", { name: option })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: new RegExp(option) }),
+      ).toBeInTheDocument();
     }
   });
 
@@ -45,7 +48,7 @@ describe("DailyQuestionCard", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Venus" }));
+    fireEvent.click(screen.getByRole("button", { name: /Venus/ }));
     expect(handleSelect).toHaveBeenCalledWith("Venus");
   });
 
@@ -64,9 +67,11 @@ describe("DailyQuestionCard", () => {
     );
 
     for (const option of question.options) {
-      expect(screen.getByRole("button", { name: option })).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: new RegExp(option) }),
+      ).toBeDisabled();
     }
-    fireEvent.click(screen.getByRole("button", { name: "Mars" }));
+    fireEvent.click(screen.getByRole("button", { name: /Mars/ }));
     expect(handleSelect).not.toHaveBeenCalled();
   });
 });
