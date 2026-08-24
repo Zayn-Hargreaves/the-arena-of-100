@@ -13,12 +13,18 @@
 > **High-Concurrency Benchmark**: Validated up to **8,000 concurrent WebSocket VUs** (80 concurrent rooms x 100 players) across a 3-node distributed cluster with 0 connect failures, 99.6% match completion rate, and sub-second answer latency (201ms @ 800 VU, 866ms @ 8,000 VU).
 >
 > **Recruiter & Engineering Review**: Read the 3-minute executive summary & STAR stories in [`memory-bank/recruiter-summary.md`](memory-bank/recruiter-summary.md).
+>
+> **Gameplay Demo Video**: [Watch Live Match Recording](https://github.com/user-attachments/assets/9f14d0f6-7d81-4014-8b74-3158dc4e2719)
 
 ---
 
 ## Overview
 
 **Arena of 100** is a real-time multiplayer battle royale quiz platform where **100 players enter a match simultaneously**. Players answer timed trivia questions in rapid-fire rounds (15s). A single wrong answer or expired timer results in **instant elimination**, transitioning players into an interactive **Spectator Mode** until only one champion remains standing.
+
+### Live Gameplay Demo
+
+https://github.com/user-attachments/assets/9f14d0f6-7d81-4014-8b74-3158dc4e2719
 
 ---
 
