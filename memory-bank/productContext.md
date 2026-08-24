@@ -1,91 +1,72 @@
 # Product Context: Arena of 100
 
-> **Core memory-bank file 1/4**
-> Read order: `AGENTS.md` → `productContext.md` → `systemPatterns.md` → `progress.md` → `activeContext.md`
-> Other docs in `memory-bank/` are supplementary only.
+> **Core memory-bank file 1/4**  
+> Read order: `AGENTS.md` -> `productContext.md` -> `systemPatterns.md` -> `progress.md` -> `activeContext.md`  
+> Recruiter & System Design overview: see `recruiter-summary.md`
 
-## Why This Product Exists
+## Product Overview
 
-Arena of 100 là game quiz battle royale real-time: 100 người chơi cùng vào trận, trả lời sai hoặc không trả lời đúng hạn thì bị loại, người cuối cùng còn sống thắng.
+**Arena of 100** is a real-time multiplayer quiz battle royale game where 100 players enter the arena simultaneously, answering timed trivia questions under high-stakes pressure (15s per round). An incorrect or missed answer results in immediate elimination. The last player standing wins the match.
 
-Mục tiêu sản phẩm:
+### Core Value Propositions:
 
-- tạo trải nghiệm quiz có căng thẳng và nhịp độ thật
-- cho phép guest onboarding nhanh, không cần tạo tài khoản
-- giữ eliminated players ở lại trận bằng spectator/watch-only UX
-- chứng minh product-engineering quality: resilience, fairness, operations, test coverage
+- **High-Stakes Thrill**: Fast-paced battle royale tension with instant elimination.
+- **Zero-Friction Onboarding**: Instant guest onboarding (nickname + avatar seed) with zero password or signup friction.
+- **Engaging Spectator Mode**: Eliminated players transition smoothly into a real-time watch-only spectator view with live reactions.
+- **Deep Tactical Gameplay**: A dual-class system (Offense / Defense) paired with 18 tactical cards brings strategic depth to traditional trivia games.
+- **Fair Play & Competitive Ranking**: Precise Elo rating engine, strict server-authoritative anti-cheat validation, and Daily Challenge streaks.
+
+---
 
 ## Core User Journey
 
-1. Người dùng vào landing page
-2. Nhập nickname + avatar seed nhanh
-3. Tạo phòng hoặc join bằng code/link
-4. Public room auto-start; private room do host control
-5. Match chạy server-authoritative với 15s/round
-6. Sai hoặc không trả lời đúng hạn => bị loại
-7. Player bị loại tiếp tục xem trận ở spectator UI
-8. Match kết thúc, xem result/stats
+1. **Landing & Onboarding**: Player visits the web app, inputs a nickname, and selects a generated avatar.
+2. **Matchmaking & Room Discovery**:
+   - Queue up for ranked matchmaking via Elo rating (Redis ZSET queue with intelligent bot backfill).
+   - Or create/join custom private and public rooms via 6-character room codes or direct links.
+3. **Class & Tactical Card Allocation**: Players are randomly assigned to Offense or Defense classes and receive tactical cards.
+4. **Real-time Match Loop**:
+   - 15s round window: synchronized trivia question delivery across all connected clients.
+   - Play tactical cards (Shields, Double Points, Freeze opponents, Reveal hints).
+   - Submit answers with instant optimistic client UI backed by server-side validation.
+5. **Instant Elimination & Spectating**: Wrong or expired answers eliminate players immediately; eliminated players continue watching in real-time spectator mode.
+6. **Tie-Break & Victory Screen**: Determines the winner based on response timestamp precision and accuracy, awards Elo points, and provides shareable match statistics.
 
-## Product Decisions Locked
+---
 
-### 1. Onboarding
+## Locked Product Decisions
 
-- **Guest-only** cho MVP
-- nickname + avatar seed là identity bề mặt
-- persistent guest identity / device fingerprint là follow-up sau MVP
+### 1. Onboarding & Identity
 
-### 2. Match semantics
+- **Guest-First**: Instant passwordless authentication; sessions tracked via stateless JWT tokens with Redis session state.
+- **Sanitized Identity**: Automatic profanity filtering and sanitization on player nicknames prior to room entry.
 
-- **Wrong answer OR no answer before round deadline = ELIMINATED ngay round đó**
-- Sau khi bị loại, player vẫn nhận update và client render ở **spectator/watch-only UI**
-- Đây là semantics thật của game-core; core docs không dùng lại rule cũ "2 missed rounds" nữa
+### 2. Match & Elimination Semantics
 
-### 3. Spectator semantics
+- **Strict Elimination Rule**: Wrong answer OR missed round deadline = **ELIMINATED IN THAT ROUND**.
+- **Spectator UI**: Sockets remain connected to receive match state updates in watch-only mode; spectators cannot submit answers.
 
-- Người chơi bị loại => spectator UI trong cùng match
-- Late join match `IN_GAME`/`FINISHED` => `JoinMode = "SPECTATOR"`
-- Spectator không được submit answer
+### 3. Tactical Depth: Class & Cards Hybrid
 
-### 4. Moderation direction
+- **Two Classes**: Offense and Defense classes allocated randomly server-side.
+- **18 Tactical Cards**: Card effects are batch-resolved immediately (`CARD_RESOLVED_BATCH` <= 50ms) to ensure fairness and clock-drift resilience.
+- **Cosmetics & Progression**: Daily Challenge streaks (>= 7 days) unlock Neon and Gold cosmetic card variants.
 
-- **MVP moderation chỉ làm vừa đủ**:
-  - nickname profanity filtering + safe replacement
-  - admin terminate message sanitize hoặc fallback message mặc định
-- Các phần sau defer:
-  - device fingerprint enforcement
-  - violation counter
-  - shadow ban
-  - richer multilingual dictionaries
+### 4. Competitive Integrity
 
-### 5. Scaling direction
+- **Server-Authoritative Anti-Cheat**: Clients send _intent_ only; all countdown timers, answer validations, and scoring are computed server-side.
+- **Monotonic Replay Hydration**: Reconnecting players automatically catch up missing events through the Delta Replay contract (`EVENT_BATCH`) without match disruption.
 
-- **Monolithic-first**
-- Chưa ưu tiên spectator transport distributed/SSE riêng cho tới khi có load evidence
-- `k6` là workstream riêng để tạo evidence trước
+---
 
-## UX Principles
+## Completed Feature Matrix
 
-- **Fairness**: toàn bộ timing/validation ở server
-- **Clarity**: trạng thái active / eliminated / spectator / finished phải rõ
-- **Low friction**: onboarding nhanh, không reject cứng trừ khi thật sự cần
-- **Resilience**: reconnect, snapshot, graceful exit, admin kill-switch
-- **Safety**: moderation ở mức MVP trước, deepen sau
-
-## Near-Term Product Queue
-
-1. k6 load test 100 concurrent WS (separate PR)
-2. AFK docs + UX hardening bám semantics hiện tại
-3. Admin audit panel UI (optional closeout)
-4. Spectator transport decision chỉ sau khi có load evidence
-
-## Deferred After MVP or After Evidence
-
-- Mass-spectator SSE/distributed transport
-- Full device fingerprint + shadow ban
-- Full WCAG sweep
-- Playwright browser E2E
-- Post-match rematch + share
-
-## Supplementary / Legacy Docs
-
-Các file như `projectbrief.md`, `issue.md`, `career-assessment.md`, `frontend-enterprise-followups.md`, `techContext.md` vẫn được giữ lại, nhưng không còn là nguồn truth mặc định cho agent.
+| Feature Area                 | Status     | Key Characteristics                                                        |
+| :--------------------------- | :--------- | :------------------------------------------------------------------------- |
+| **100-Player Battle Royale** | Production | 15s round loop, instant elimination, sudden-death tiebreak                 |
+| **Class + Card System**      | Production | 2 classes, 18 cards, batch resolution, streak variants                     |
+| **Elo & Matchmaking**        | Production | Dynamic K-factor, Redis ZSET queue, bot auto-backfill                      |
+| **Daily Challenge Mode**     | Production | Daily curated sets, streak tracking, unlockable cosmetics                  |
+| **Spectator Experience**     | Production | Drop-in watch mode, real-time match state observation                      |
+| **Resilience & Reconnect**   | Production | Monotonic `seqNo` delta replay, Redis Sentinel automatic failover          |
+| **Anti-Cheat & Security**    | Production | Server authority, idempotent submissions (`submissionId`), profanity guard |
