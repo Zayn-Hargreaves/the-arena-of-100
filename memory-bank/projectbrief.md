@@ -9,7 +9,7 @@
 
 **Arena of 100** is an enterprise-grade, real-time multiplayer quiz battle royale game where 100 players compete concurrently. Players must answer trivia questions within tight countdown windows (15s); wrong or missed answers lead to immediate elimination, transitioning players into an engaging spectator mode until a single champion emerges.
 
-The project serves as a **production-ready showcase of modern full-stack & distributed systems engineering**, featuring sub-second p95 latency under 3,200 concurrent WebSocket connections, automated Redis Sentinel failover, monotonic delta state synchronization, and 2,398+ automated tests.
+The project serves as a **production-ready showcase of modern full-stack & distributed systems engineering**, featuring sub-second p95 latency under 8,000 concurrent WebSocket connections, automated Redis Sentinel failover, monotonic delta state synchronization, and 2,398+ automated tests.
 
 ---
 
@@ -23,7 +23,7 @@ The project serves as a **production-ready showcase of modern full-stack & distr
 
 ### 2. Deep Tactical Mechanics (Class & Card Hybrid)
 
-- [x] **Dynamic Class Allocation**: Players are assigned to Offense (_Công_) or Defense (_Thủ_) classes.
+- [x] **Dynamic Class Allocation**: Players are assigned to Offense or Defense classes.
 - [x] **18 Strategic Cards**: Tactical modifiers (Shields, Point Doublers, Freeze, Reveal) resolved via deterministic batch processing (`CARD_RESOLVED_BATCH` <= 50ms).
 - [x] **Cosmetic Progression**: Daily Challenge streaks (>=7 days) unlock Neon and Gold card variants.
 
@@ -45,5 +45,5 @@ The project serves as a **production-ready showcase of modern full-stack & distr
 ## Quality & Testing Verification
 
 - **2,398+ Automated Tests** passing across unit, integration, and chaos test suites.
-- **k6 Distributed Load Testing**: Validated up to **3,200 concurrent WebSocket users** with **0 connection errors** and sub-second p95 answer latency.
+- **k6 Distributed Load Testing**: Validated up to **8,000 concurrent WebSocket users** (80 rooms x 100 players) with **0 connection failures** and sub-second p95 answer latency.
 - **Strict Monorepo Isolation**: Type-safe shared contracts across `@arena/shared`, `@arena/game-core`, `apps/api`, and `apps/web`.

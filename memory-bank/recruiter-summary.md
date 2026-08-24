@@ -77,7 +77,7 @@ graph TD
 ## 4. Feature Landscape
 
 - **100-Player Battle Royale**: 15s rapid-fire rounds, instant elimination, and sudden-death tie-breaking by response timestamp.
-- **Class & Card Hybrid System**: Players are assigned into _Offense (Công)_ or _Defense (Thủ)_ classes, unlocking 18 tactical cards (Shields, Double Points, Freeze, Reveal) resolved via deterministic batch processing (`CARD_RESOLVED_BATCH`).
+- **Class & Card Hybrid System**: Players are assigned into _Offense_ or _Defense_ classes, unlocking 18 tactical cards (Shields, Double Points, Freeze, Reveal) resolved via deterministic batch processing (`CARD_RESOLVED_BATCH`).
 - **Elo & Matchmaking Queue**: Dynamic K-factor rating system with Redis ZSET matchmaking pools and background bot backfill.
 - **Daily Challenge & Streaks**: Daily curated quiz sets with streak tracking and progressive cosmetic card variant unlocks (Default, Neon, Gold).
 - **Drop-in Spectating**: Eliminated or late-joining players smoothly transition to real-time spectator view with micro-interactions.
@@ -112,8 +112,9 @@ graph TD
 ## 6. Quick Start & Verification
 
 ```bash
-# 1. Start Infrastructure (PostgreSQL + Redis Sentinel Cluster)
+# 1. Start Standard Infrastructure (PostgreSQL + Redis for local dev)
 docker compose -f infrastructure/docker-compose.yml up -d
+# (Or use infrastructure/docker-compose.sentinel.yml for in-network Sentinel HA cluster)
 
 # 2. Install dependencies
 pnpm install

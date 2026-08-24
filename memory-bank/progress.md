@@ -21,7 +21,7 @@
 
 ### Phase 2: Class + Tactical Card Hybrid Engine (Completed 2026-07-30)
 
-- **Tactical Roles**: Random assignment into Offense (_Công_) vs Defense (_Thủ_) classes.
+- **Tactical Roles**: Random assignment into Offense vs Defense classes.
 - **18 Tactical Cards**: High-speed batch resolution pipeline (`CARD_RESOLVED_BATCH` <= 50ms) with clock-drift resilience.
 - **Anti-Cheat & Event Persistence**: Card effects committed to monotonic event-log before state application.
 

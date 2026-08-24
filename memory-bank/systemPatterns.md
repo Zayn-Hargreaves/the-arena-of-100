@@ -1,7 +1,7 @@
 # System Patterns: Arena of 100
 
 > **Core memory-bank file 2/4**  
-> Ghi lại kiến trúc và design patterns đang vận hành thực tế trong codebase.  
+> Documentation of production architecture and implemented design patterns in the codebase.  
 > Recruiter & System Design overview: see `recruiter-summary.md`
 
 ---

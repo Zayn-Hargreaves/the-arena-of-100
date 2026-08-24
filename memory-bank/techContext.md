@@ -22,15 +22,15 @@
 
 ### Backend API & Real-time Services (`apps/api`)
 
-| Technology       | Version    | Purpose                                                              |
-| :--------------- | :--------- | :------------------------------------------------------------------- |
-| **NestJS**       | 10.x       | Structured backend application framework                             |
-| **Fastify**      | via NestJS | High-performance HTTP engine (replacing default Express)             |
-| **Socket.io**    | 4.x        | Multi-node WebSocket gateway with Redis Adapter                      |
-| **Prisma ORM**   | 6.x        | Type-safe database queries & migration management                    |
-| **ioredis**      | 5.x        | High-throughput Redis client with Sentinel HA & cluster support      |
-| **Zod**          | 3.x        | Strict runtime boundary validation for HTTP payloads & socket events |
-| **JWT & Bcrypt** | 9.x        | Session tokens and guest identification                              |
+| Technology       | Version               | Purpose                                                              |
+| :--------------- | :-------------------- | :------------------------------------------------------------------- |
+| **NestJS**       | 10.x                  | Structured backend application framework                             |
+| **Fastify**      | via NestJS            | High-performance HTTP engine (replacing default Express)             |
+| **Socket.io**    | 4.x                   | Multi-node WebSocket gateway with Redis Adapter                      |
+| **Prisma ORM**   | 6.x                   | Type-safe database queries & migration management                    |
+| **ioredis**      | 5.x                   | High-throughput Redis client with Sentinel HA & cluster support      |
+| **Zod**          | 3.x                   | Strict runtime boundary validation for HTTP payloads & socket events |
+| **jsonwebtoken** | ^9.0.2 (locked 9.0.3) | Stateless guest session tokens (no bcrypt/password required)         |
 
 ### Shared Core Packages
 
@@ -65,11 +65,11 @@ CORS_ORIGIN="http://localhost:3000"
 DATABASE_URL="postgresql://arena:arena123@localhost:5432/arena_of_100?connection_limit=20"
 DB_POOL_MAX=20
 
-# Redis Standalone
+# Redis Standalone (Default for host-run pnpm dev)
 REDIS_URL="redis://localhost:6379"
 
-# Redis Sentinel HA (Optional / Production)
-# REDIS_SENTINELS="localhost:26379,localhost:26380,localhost:26381"
+# Redis Sentinel HA (In-network Compose deployments only; container DNS required)
+# REDIS_SENTINELS="redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379"
 # REDIS_SENTINEL_MASTER_NAME="mymaster"
 
 # Auth
@@ -82,11 +82,10 @@ JWT_EXPIRES_IN="24h"
 ## 3. Local Development & Quick Start
 
 ```bash
-# 1. Start Infrastructure (PostgreSQL + Redis)
+# 1. Start Standard Dev Infrastructure (PostgreSQL + Redis for host-run pnpm dev)
 docker compose -f infrastructure/docker-compose.yml up -d
 
-# (Or for Redis Sentinel HA cluster)
-# docker compose -f infrastructure/docker-compose.sentinel.yml up -d
+# (Note: infrastructure/docker-compose.sentinel.yml is designed for in-network Compose API deployments)
 
 # 2. Install all dependencies
 pnpm install

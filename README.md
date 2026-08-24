@@ -25,7 +25,7 @@
 ## Key Engineering & Product Highlights
 
 - **100-Player Server-Authoritative Loop**: Anti-cheat by design. All timers, answer evaluations, and winner logic are strictly server-authoritative (`MatchStateMachine`).
-- **Class & Tactical Card Hybrid Engine**: Offense (_Công_) vs Defense (_Thủ_) classes with 18 distinct tactical cards (Shields, Point Doublers, Freeze, Reveal) resolved via deterministic batch processing (`CARD_RESOLVED_BATCH` <= 50ms).
+- **Class & Tactical Card Hybrid Engine**: Offense vs Defense classes with 18 distinct tactical cards (Shields, Point Doublers, Freeze, Reveal) resolved via deterministic batch processing (`CARD_RESOLVED_BATCH` <= 50ms).
 - **Elo Matchmaking & Rating Engine**: Dynamic K-factor ranking system with Redis ZSET matchmaking pools and background bot backfill.
 - **Daily Challenge Mode**: Timezone-aware daily trivia sets with streak tracking and unlockable cosmetic card variants (Neon / Gold).
 - **Delta Replay State Sync (`EVENT_BATCH`)**: Monotonic `seqNo` event-log enables zero-flicker re-hydration for mobile/reconnecting players without full snapshot overhead.
@@ -70,7 +70,7 @@ graph TD
 
 ## Monorepo Structure
 
-```
+```text
 arena-of-100/
 ├── apps/
 │   ├── api/          # NestJS + Fastify + Socket.io backend
@@ -109,11 +109,11 @@ arena-of-100/
 ### 1. Start Infrastructure
 
 ```bash
-# Start PostgreSQL & Redis
+# Start Standard Development Infrastructure (PostgreSQL & Redis for host-run pnpm dev)
 docker compose -f infrastructure/docker-compose.yml up -d
 
-# (Or for Redis Sentinel HA Cluster)
-# docker compose -f infrastructure/docker-compose.sentinel.yml up -d
+# Note: Redis Sentinel HA (infrastructure/docker-compose.sentinel.yml) is designed for
+# in-network Compose API deployments and requires container DNS resolution.
 ```
 
 ### 2. Install Dependencies
