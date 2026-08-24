@@ -26,14 +26,18 @@ import {
   type TopicVotingFinishedPayload,
   type MatchmakingStatusPayload,
   type MatchmakingMatchedPayload,
+  type CardId,
+  type ClassId,
+  type CardEffectEvent,
   ReplayEventSchema,
 } from "@arena/shared";
 
-import type {
-  LastAnswerResult,
-  Player,
-  SocketState,
-  TopicVotingState,
+import {
+  createInitialCardState,
+  type LastAnswerResult,
+  type Player,
+  type SocketState,
+  type TopicVotingState,
 } from "./socket-store.types";
 
 function mapSocketPlayers(
@@ -64,8 +68,11 @@ export function applyRoomCreatedState(
 ): Partial<SocketState> {
   return {
     match: null,
+    cardState: createInitialCardState(),
     lastAnswerResult: null,
+    pendingAnswer: null,
     remainingCount: null,
+    lastSeenSeqNo: 0,
     isEliminated: false,
     eliminationReason: null,
     room: {
@@ -88,8 +95,11 @@ export function applyRoomJoinedState(
 ): Partial<SocketState> {
   return {
     match: null,
+    cardState: createInitialCardState(),
     lastAnswerResult: null,
+    pendingAnswer: null,
     remainingCount: null,
+    lastSeenSeqNo: 0,
     isEliminated: false,
     eliminationReason: null,
     room: {
@@ -247,6 +257,7 @@ export function applyMatchStartingState(
 ): Partial<SocketState> {
   return {
     remainingCount: null,
+    cardState: createInitialCardState(),
     lastAnswerResult: null,
     pendingAnswer: null,
     room: state.room
@@ -310,12 +321,17 @@ export function applyRoundStartedState(
   const activeMatchId = state.room?.currentMatchId ?? state.match?.id ?? null;
   if (activeMatchId === null || activeMatchId !== data.matchId) return {};
 
-  // Treat `state.match` as current only when its id matches the event.
-  // During the transition window the room can already point at the new
-  // match while `state.match` still reflects the previous one; in that
-  // case we must not spread the stale match object.
   const currentMatch = state.match?.id === data.matchId ? state.match : null;
   const basePlayers = currentMatch?.players ?? state.room?.players ?? [];
+
+  // Activate pending card effects targeted for this round
+  const pendingEffects = state.cardState?.pendingNextRoundEffects ?? [];
+  const activatingEffects = pendingEffects.filter(
+    (e) => (e.targetRoundNo ?? e.roundNo + 1) <= data.roundNo,
+  );
+  const remainingPending = pendingEffects.filter(
+    (e) => (e.targetRoundNo ?? e.roundNo + 1) > data.roundNo,
+  );
 
   return {
     match: currentMatch
@@ -335,6 +351,15 @@ export function applyRoundStartedState(
           currentQuestion: data.question,
           roundEndTime: data.endsAt,
         },
+    ...(state.cardState
+      ? {
+          cardState: {
+            ...state.cardState,
+            activeRoundEffects: activatingEffects,
+            pendingNextRoundEffects: remainingPending,
+          },
+        }
+      : {}),
     topicVoting: null,
     lastAnswerResult: null,
     pendingAnswer: null,
@@ -369,37 +394,66 @@ export function applyRoundEndedState(
   const currentMatch = state.match?.id === data.matchId ? state.match : null;
   const basePlayers = currentMatch?.players ?? state.room?.players ?? [];
   const eliminatedSet = new Set(data.eliminatedPlayerIds);
-  const updatedPlayers = basePlayers.map((player) =>
-    eliminatedSet.has(player.id)
-      ? { ...player, status: PlayerStatus.ELIMINATED }
-      : player,
-  );
+  const survivingSet =
+    "survivingPlayerIds" in data && Array.isArray(data.survivingPlayerIds)
+      ? new Set(data.survivingPlayerIds)
+      : null;
+
+  const updatedPlayers = basePlayers.map((player) => {
+    if (eliminatedSet.has(player.id)) {
+      return { ...player, status: PlayerStatus.ELIMINATED };
+    }
+    if (survivingSet !== null) {
+      if (!survivingSet.has(player.id)) {
+        return { ...player, status: PlayerStatus.ELIMINATED };
+      }
+      return player.status === PlayerStatus.ELIMINATED
+        ? { ...player, status: PlayerStatus.ACTIVE }
+        : player;
+    }
+    return player;
+  });
 
   const survivingCount =
     "survivingCount" in data && typeof data.survivingCount === "number"
       ? data.survivingCount
       : (data.survivingPlayerIds?.length ?? null);
 
+  const updatedMatch = currentMatch
+    ? {
+        ...currentMatch,
+        id: data.matchId,
+        players: updatedPlayers,
+        status: MatchStatus.ROUND_RESULT,
+        roundEndTime: null,
+      }
+    : {
+        id: data.matchId,
+        status: MatchStatus.ROUND_RESULT,
+        currentRoundNo: data.roundNo,
+        players: updatedPlayers,
+        currentQuestion: null,
+        roundEndTime: null,
+      };
+
+  const selfEliminated =
+    state.userId && data.eliminatedPlayerIds?.includes(state.userId)
+      ? true
+      : computeIsEliminated(state.userId, updatedMatch, state.isEliminated);
+
   return {
-    match: currentMatch
-      ? {
-          ...currentMatch,
-          id: data.matchId,
-          players: updatedPlayers,
-          status: MatchStatus.ROUND_RESULT,
-          roundEndTime: null,
-        }
-      : {
-          id: data.matchId,
-          status: MatchStatus.ROUND_RESULT,
-          currentRoundNo: data.roundNo,
-          players: updatedPlayers,
-          currentQuestion: null,
-          roundEndTime: null,
-        },
+    match: updatedMatch,
+    isEliminated: selfEliminated,
+    eliminationReason: selfEliminated ? state.eliminationReason : null,
     lastAnswerResult: {
       matchId: data.matchId,
       roundNo: data.roundNo,
+      ...(priorForThisRound?.submissionId !== undefined && {
+        submissionId: priorForThisRound.submissionId,
+      }),
+      ...(priorForThisRound?.submittedAnswer !== undefined && {
+        submittedAnswer: priorForThisRound.submittedAnswer,
+      }),
       ...(priorForThisRound?.isCorrect !== undefined && {
         isCorrect: priorForThisRound.isCorrect,
       }),
@@ -456,6 +510,7 @@ export function applyMatchFinishedState(
   const currentMatch = state.match?.id === data.matchId ? state.match : null;
 
   return {
+    cardState: createInitialCardState(),
     room: state.room
       ? {
           ...state.room,
@@ -691,10 +746,9 @@ function computeIsEliminated(
   fallback: boolean,
 ): boolean {
   if (!userId) return fallback;
-  return (
-    match.players.find((p) => p.id === userId)?.status ===
-    PlayerStatus.ELIMINATED
-  );
+  const player = match.players.find((p) => p.id === userId);
+  if (!player) return fallback;
+  return player.status === PlayerStatus.ELIMINATED;
 }
 
 // Plan D — delta replay. Fold an EVENT_BATCH onto the current match,
@@ -770,8 +824,30 @@ export function applyAnswerResultState(
     state.pendingAnswer?.matchId === data.matchId &&
     state.pendingAnswer.roundNo === data.roundNo &&
     state.pendingAnswer.submissionId === data.submissionId;
+  const submittedAnswer = isPendingAnswer
+    ? state.pendingAnswer?.answer
+    : state.lastAnswerResult?.matchId === data.matchId &&
+        state.lastAnswerResult?.roundNo === data.roundNo
+      ? state.lastAnswerResult.submittedAnswer
+      : undefined;
+
+  const isRetry = Boolean(
+    state.lastAnswerResult &&
+    state.lastAnswerResult.matchId === data.matchId &&
+    state.lastAnswerResult.roundNo === data.roundNo &&
+    state.lastAnswerResult.submissionId !== data.submissionId,
+  );
+
+  const consumed = isRetry
+    ? applyConsumeSecondChance(state, state.userId ?? undefined)
+    : {};
+
   return {
-    lastAnswerResult: data,
+    ...consumed,
+    lastAnswerResult: {
+      ...data,
+      submittedAnswer,
+    },
     pendingAnswer: isPendingAnswer ? null : state.pendingAnswer,
   };
 }
@@ -782,6 +858,7 @@ export function applyRoomTerminatedState(
   return {
     room: null,
     match: null,
+    cardState: createInitialCardState(),
     remainingCount: null,
     lastAnswerResult: null,
     pendingAnswer: null,
@@ -806,6 +883,7 @@ export function applyUnauthorizedErrorState(
     username: null,
     room: null,
     match: null,
+    cardState: createInitialCardState(),
     topicVoting: null,
     remainingCount: null,
     lastAnswerResult: null,
@@ -823,6 +901,7 @@ export function applyUnauthorizedErrorState(
       playersInQueue: 0,
       matchedRoomCode: state.matchmaking.matchedRoomCode,
       matchedRoomId: state.matchmaking.matchedRoomId,
+      matchedMatchId: state.matchmaking.matchedMatchId,
     },
     // Include the error message in the SAME set call that resets the
     // socket/heartbeat state. A separate follow-up `set({ error })`
@@ -837,8 +916,20 @@ export function applyTopicVotingStartedState(
   state: SocketState,
   data: TopicVotingStartedPayload,
 ): Partial<SocketState> {
-  const currentMatchId = state.room?.currentMatchId ?? state.match?.id;
-  if (currentMatchId && currentMatchId !== data.matchId) {
+  // If the room already tracks a different active match, drop stale payload
+  if (
+    state.room?.currentMatchId &&
+    state.room.currentMatchId !== data.matchId
+  ) {
+    return {};
+  }
+  // If an ongoing (non-finished) match is already active with a different ID, drop stale payload
+  if (
+    state.match?.id &&
+    state.match.id !== data.matchId &&
+    state.match.status !== MatchStatus.FINISHED &&
+    !state.room?.currentMatchId
+  ) {
     return {};
   }
   const initialCounts: Record<string, number> = {};
@@ -847,6 +938,13 @@ export function applyTopicVotingStartedState(
   }
   const isSameMatch = state.match?.id === data.matchId;
   return {
+    room: state.room
+      ? {
+          ...state.room,
+          currentMatchId: data.matchId,
+          status: RoomStatus.IN_GAME,
+        }
+      : null,
     match:
       isSameMatch && state.match
         ? {
@@ -864,10 +962,10 @@ export function applyTopicVotingStartedState(
     topicVoting: {
       matchId: data.matchId,
       candidateTopics: data.candidateTopics,
+      voteCounts: initialCounts,
+      myVotedTopic: null,
       endsAt: data.endsAt,
       durationMs: data.durationMs,
-      myVotedTopic: null,
-      voteCounts: initialCounts,
       totalVotes: 0,
       bannedTopics: [],
       activeTopics: [],
@@ -924,6 +1022,7 @@ export function applyMatchmakingStatusState(
       playersInQueue: data.playersInQueue,
       matchedRoomCode: state.matchmaking.matchedRoomCode,
       matchedRoomId: state.matchmaking.matchedRoomId,
+      matchedMatchId: state.matchmaking.matchedMatchId,
     },
   };
 }
@@ -932,7 +1031,31 @@ export function applyMatchmakingMatchedState(
   state: SocketState,
   data: MatchmakingMatchedPayload,
 ): Partial<SocketState> {
+  const isSameMatch = Boolean(data.matchId && state.match?.id === data.matchId);
+  const isSameTopicVoting = Boolean(
+    data.matchId && state.topicVoting?.matchId === data.matchId,
+  );
+
   return {
+    match: isSameMatch
+      ? state.match
+      : data.matchId
+        ? {
+            id: data.matchId,
+            status: MatchStatus.TOPIC_VOTING,
+            currentRoundNo: 0,
+            players: state.room?.players ?? [],
+            currentQuestion: null,
+            roundEndTime: null,
+          }
+        : null,
+    topicVoting: isSameTopicVoting ? state.topicVoting : null,
+    cardState: createInitialCardState(),
+    lastAnswerResult: null,
+    pendingAnswer: null,
+    remainingCount: null,
+    isEliminated: false,
+    eliminationReason: null,
     matchmaking: {
       isQueued: false,
       queuedAt: null,
@@ -941,6 +1064,224 @@ export function applyMatchmakingMatchedState(
       playersInQueue: state.matchmaking?.playersInQueue ?? 0,
       matchedRoomCode: data.roomCode,
       matchedRoomId: data.roomId,
+      matchedMatchId: data.matchId ?? null,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Card & Class Updaters (Phase 2)
+// ---------------------------------------------------------------------------
+
+export function applyClassAssignedState(
+  state: SocketState,
+  data: {
+    matchId: string;
+    assignments: Array<{ playerId: string; classId: ClassId }>;
+    seedUsed: string;
+  },
+): Partial<SocketState> {
+  const ownAssignment = data.assignments.find(
+    (a) => a.playerId === state.userId,
+  );
+  const classId = ownAssignment?.classId ?? state.cardState.classId;
+
+  // Independently map room and match player rosters
+  const updatedRoomPlayers = state.room?.players.map((p) => {
+    const assign = data.assignments.find((a) => a.playerId === p.id);
+    return assign ? { ...p, classId: assign.classId } : p;
+  });
+
+  const updatedMatchPlayers = state.match?.players.map((p) => {
+    const assign = data.assignments.find((a) => a.playerId === p.id);
+    return assign ? { ...p, classId: assign.classId } : p;
+  });
+
+  return {
+    cardState: {
+      ...state.cardState,
+      classId,
+    },
+    room:
+      state.room && updatedRoomPlayers
+        ? { ...state.room, players: updatedRoomPlayers }
+        : state.room,
+    match:
+      state.match && updatedMatchPlayers
+        ? { ...state.match, players: updatedMatchPlayers }
+        : state.match,
+  };
+}
+
+export function applyCardOfferState(
+  state: SocketState,
+  data: {
+    matchId: string;
+    roundNo: number;
+    playerId: string;
+    offeredCardIds: readonly [CardId, CardId, CardId];
+    offerSeqNo: number;
+    seedUsed: string;
+    durationMs?: number;
+    expiresAt?: number;
+  },
+): Partial<SocketState> {
+  const activeMatchId = state.room?.currentMatchId ?? state.match?.id ?? null;
+  if (activeMatchId === null || data.matchId !== activeMatchId) {
+    return {};
+  }
+  // Only apply to the designated player
+  if (state.userId && data.playerId !== state.userId) {
+    return {};
+  }
+
+  // If there is an existing offer, only accept newer/matching sequence
+  if (
+    state.cardState.currentOffer &&
+    data.offerSeqNo < state.cardState.currentOffer.offerSeqNo
+  ) {
+    return {};
+  }
+
+  const serverExpiresAt = data.expiresAt;
+  const serverDurationMs = data.durationMs;
+  const fallbackDurationMs = GAME_CONFIG.CARD_OFFER_DURATION_MS;
+  const expiresAt =
+    serverExpiresAt ??
+    (serverDurationMs
+      ? Date.now() + serverDurationMs
+      : Date.now() + fallbackDurationMs);
+
+  return {
+    cardState: {
+      ...state.cardState,
+      currentOffer: {
+        matchId: data.matchId,
+        roundNo: data.roundNo,
+        offeredCardIds: data.offeredCardIds,
+        offerSeqNo: data.offerSeqNo,
+        seedUsed: data.seedUsed,
+        expiresAt,
+      },
+    },
+  };
+}
+
+export function applyCardPickedState(
+  state: SocketState,
+  data: {
+    matchId: string;
+    roundNo: number;
+    playerId: string;
+    selectedCardId: CardId;
+    offerSeqNo: number;
+  },
+): Partial<SocketState> {
+  const activeMatchId = state.room?.currentMatchId ?? state.match?.id ?? null;
+  if (activeMatchId === null || data.matchId !== activeMatchId) {
+    return {};
+  }
+  if (state.userId && data.playerId !== state.userId) {
+    return {};
+  }
+
+  // If currentOffer is active and offerSeqNo does not match, ignore stale pick
+  if (
+    state.cardState.currentOffer &&
+    data.offerSeqNo !== state.cardState.currentOffer.offerSeqNo
+  ) {
+    return {};
+  }
+
+  const currentHand = state.cardState.hand;
+  const isAlreadyInHand = currentHand.includes(data.selectedCardId);
+  const nextHand = isAlreadyInHand
+    ? currentHand
+    : [...currentHand, data.selectedCardId];
+
+  return {
+    cardState: {
+      ...state.cardState,
+      hand: nextHand,
+      offerSeqNoByCardId: {
+        ...(state.cardState.offerSeqNoByCardId ?? {}),
+        [data.selectedCardId]: data.offerSeqNo,
+      },
+      currentOffer: null, // dismiss active offer
+    },
+  };
+}
+
+export function applyCardResolvedState(
+  state: SocketState,
+  data: CardEffectEvent,
+): Partial<SocketState> {
+  const activeMatchId = state.room?.currentMatchId ?? state.match?.id ?? null;
+  if (activeMatchId === null || data.matchId !== activeMatchId) {
+    return {};
+  }
+
+  const isPlayedBySelf = state.userId && data.playedByPlayerId === state.userId;
+  const currentPlayed = state.cardState.playedCardIds;
+  const nextPlayed =
+    isPlayedBySelf && data.cardId && !currentPlayed.includes(data.cardId)
+      ? [...currentPlayed, data.cardId]
+      : currentPlayed;
+
+  const currentRoundNo = state.match?.currentRoundNo ?? data.roundNo;
+  const targetRoundNo = data.targetRoundNo ?? data.roundNo;
+
+  const isCurrentRound = targetRoundNo <= currentRoundNo;
+
+  const currentActive = state.cardState.activeRoundEffects ?? [];
+  const currentPending = state.cardState.pendingNextRoundEffects ?? [];
+
+  const nextActive = isCurrentRound ? [...currentActive, data] : currentActive;
+  const nextPending = isCurrentRound
+    ? currentPending
+    : [...currentPending, data];
+
+  return {
+    cardState: {
+      ...state.cardState,
+      playedCardIds: nextPlayed,
+      lastResolvedEffect: data,
+      activeRoundEffects: nextActive,
+      pendingNextRoundEffects: nextPending,
+    },
+  };
+}
+
+export function applyConsumeSecondChance(
+  state: SocketState,
+  playerId?: string,
+): Partial<SocketState> {
+  const targetId = playerId ?? state.userId;
+  if (!targetId) return {};
+
+  const currentActive = state.cardState.activeRoundEffects ?? [];
+  const nextActive = currentActive.filter(
+    (e) =>
+      !(
+        (e.playedByPlayerId === targetId ||
+          e.targetPlayerIds?.includes(targetId)) &&
+        e.effect.kind === "SECOND_CHANCE"
+      ),
+  );
+  const nextLastResolved =
+    (state.cardState.lastResolvedEffect?.playedByPlayerId === targetId ||
+      state.cardState.lastResolvedEffect?.targetPlayerIds?.includes(
+        targetId,
+      )) &&
+    state.cardState.lastResolvedEffect?.effect.kind === "SECOND_CHANCE"
+      ? null
+      : state.cardState.lastResolvedEffect;
+
+  return {
+    cardState: {
+      ...state.cardState,
+      activeRoundEffects: nextActive,
+      lastResolvedEffect: nextLastResolved,
     },
   };
 }

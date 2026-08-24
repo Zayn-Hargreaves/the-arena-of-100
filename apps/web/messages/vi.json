@@ -264,7 +264,9 @@
     }
   },
   "Timer": {
-    "seconds": "giây"
+    "seconds": "giây",
+    "secondsAdded": "{count, plural, one {Đã cộng thêm # giây} other {Đã cộng thêm # giây}}",
+    "secondsRemoved": "{count, plural, one {Đã trừ # giây} other {Đã trừ # giây}}"
   },
   "NotFoundPage": {
     "title": "CÂU HỎI SINH TỬ • ROUND 404",
@@ -283,8 +285,26 @@
     "roundComplexity": "Độ Phức Tạp Vòng",
     "roundLevelExtreme": "Cấp độ: Cực Hạn",
     "remainingLabel": "Còn Lại",
+    "shieldActive": "KHIÊN HOẠT ĐỘNG",
+    "scoreMultiplier": "x{factor} ĐIỂM",
+    "secondChance": "CƠ HỘI 2",
+    "classLabel": "HỆ PHÁI:",
+    "cardsInHand": "THẺ BÀI ĐANG CÓ ({count})",
+    "cardActivationPrompt": "Bấm để kích hoạt trong lượt này",
     "rulesHeader": "QUY TẮC // CÂU HỎI",
     "lockedAnswer": "ĐÃ KHÓA ĐÁP ÁN",
+    "lockedBadge": "ĐÃ KHÓA",
+    "fakeFlagBadge": "GỢI Ý?",
+    "effects": {
+      "fogTitle": "SƯƠNG MÙ TRÍ NÃO (CB-5)",
+      "fogDesc": "Câu hỏi đang bị che phủ trong màn sương mờ...",
+      "delayTitle": "PHÁ HOẠI CÂU HỎI (CB-2)",
+      "delayDesc": "Nội dung câu hỏi đang bị đối thủ trì hoãn hiển thị!",
+      "flipWarning": "LẬT NGỮ NGHĨA (CB-7): Câu hỏi đã bị quay ngược 180°!",
+      "flipBadge": "ĐÃ LẬT",
+      "hintTitle": "GỢI Ý TỪ THẺ BÀI (TN-3)",
+      "hintPrefix": "Đáp án bắt đầu bằng ký tự: "
+    },
     "answerSubmitted": "ĐÃ CHỌN ĐÁP ÁN",
     "waiting": "ĐANG ĐỢI...",
     "fallbackQuestion": "Quy tắc tie-break: khi hai người cùng trả lời đúng một câu, ai sống sót qua vòng tiếp theo?",
@@ -308,7 +328,7 @@
       "title": "CHẾ ĐỘ KHÁN GIẢ",
       "subtitle": "Bạn đã bị loại. Hãy theo dõi những người chơi còn lại để xem ai sẽ là quán quân!",
       "observingBadge": "Chỉ quan sát",
-      "practiceHint": "Chế độ khán giả: Bạn có thể chọn đáp án để tự kiểm tra (không tính điểm)."
+      "practiceHint": "Chế độ khán giả: Bạn đang theo dõi trận đấu ở chế độ chỉ đọc."
     },
     "leaveMatchButton": "RỜI TRẬN ĐẤU",
     "matchFinishedOverlay": {
@@ -841,11 +861,33 @@
   "Cards": {
     "hand": "Bộ bài",
     "offer": "Chọn một lá bài",
+    "burning": "BỊ THIÊU HỦY!",
+    "milestoneRound": "VÒNG CỘT MỐC {round}",
+    "offerTitle": "CHỌN 1 THẺ BÀI VIỆN TRỢ",
+    "offerFooter": "Thẻ bài sẽ được lưu vào bộ bài để bạn sử dụng trong lượt thi đấu.",
     "select": "Chọn mục tiêu",
     "cancel": "Hủy",
     "play": "Sử dụng",
     "noCards": "Không có lá bài nào",
-    "milestoneOffer": "Round cột mốc — chọn một lá bài để sử dụng",
+    "milestoneOffer": "Vòng cột mốc — chọn một lá bài để sử dụng",
+    "picker": {
+      "randomTarget": "MỤC TIÊU NGẪU NHIÊN",
+      "searchPlaceholder": "Tìm tên đối thủ ({count} người)...",
+      "searchLabel": "Tìm kiếm đối thủ",
+      "clearSearch": "Xóa tìm kiếm",
+      "noMatches": "Không tìm thấy đối thủ phù hợp",
+      "prompt": "Chọn 1 mục tiêu để thi triển"
+    },
+    "animation": {
+      "opponent": "Đối thủ",
+      "you": "Bạn",
+      "round": "VÒNG {round}",
+      "youActivatedOn": "Bạn đã kích hoạt lên: {targets}",
+      "youActivated": "Bạn đã kích hoạt hiệu ứng",
+      "opponentTargetedYou": "⚠️ {name} vừa tung chiêu lên Bạn!",
+      "opponentActivatedOn": "{name} đã kích hoạt lên {targets}",
+      "opponentActivated": "{name} đã kích hoạt hiệu ứng"
+    },
     "classes": {
       "ATTACK": "Tấn công",
       "DEFENSE": "Phòng thủ"

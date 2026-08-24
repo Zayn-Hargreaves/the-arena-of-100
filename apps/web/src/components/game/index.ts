@@ -39,6 +39,16 @@ export {
 export { CardAnimation, type CardAnimationProps } from "./card-animation";
 export { ClassBadge, type ClassBadgeProps } from "./class-badge";
 export {
+  CardOfferOverlay,
+  type CardOfferOverlayProps,
+} from "./card-offer-overlay";
+export {
   AoeCapIndicator,
   type AoeCapIndicatorProps,
 } from "./aoe-cap-indicator";
+export {
+  CardGlyph,
+  getGlyphForCardId,
+  type CardGlyphProps,
+  type CardGlyphVariant,
+} from "./card-glyphs";

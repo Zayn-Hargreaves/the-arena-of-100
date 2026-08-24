@@ -1,4 +1,3 @@
-
 export type ProfessorMood =
   | "idle"
   | "thinking"
@@ -137,4 +136,20 @@ export function getRandomProfessorDialogue(
   const list = PROFESSOR_DIALOGUES[context];
   const item = list[Math.floor(Math.random() * list.length)] ?? list[0]!;
   return item;
+}
+
+export function getDeterministicProfessorDialogue(
+  context: DialogueContext,
+  seed: string,
+): DialogueData {
+  const list = PROFESSOR_DIALOGUES[context];
+  if (!list || list.length === 0) {
+    return { key: "dialogues.home_greeting.0", mood: "idle" };
+  }
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  }
+  const idx = hash % list.length;
+  return list[idx] ?? list[0]!;
 }

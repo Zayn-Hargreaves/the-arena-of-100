@@ -51,4 +51,19 @@ describe("QuestionCard", () => {
     );
     expect(screen.getByText("lockedAnswer")).toBeInTheDocument();
   });
+
+  it("applies 180° flip styles when isSemanticFlipped is active", () => {
+    const { container } = render(
+      <QuestionCard
+        hasCurrentQuestion={true}
+        questionText="Flipped Question Text"
+        roundCompleted={false}
+        isSemanticFlipped={true}
+      />,
+    );
+    const heading = screen.getByText("Flipped Question Text");
+    expect(heading.className).toContain("rotate-180");
+    expect(heading.className).not.toContain("scale-y-[-1]");
+    expect(container.textContent).toContain("effects.flipWarning");
+  });
 });

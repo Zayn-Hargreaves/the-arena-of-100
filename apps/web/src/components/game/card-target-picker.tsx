@@ -4,6 +4,8 @@ import React from "react";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import { type CardId, getCardDefinition } from "@arena/shared";
+import { CardGlyph, getGlyphForCardId } from "./card-glyphs";
+import { MiniGlyph } from "@/components/ui/mini-glyph";
 
 export interface CardTargetPickerProps {
   cardId: CardId;
@@ -51,22 +53,6 @@ export function CardTargetPicker({
     (def.effectTemplate as { targetCount?: number }).targetCount !== 1 &&
     (def.effectTemplate as { targetCount?: number }).targetCount !== undefined;
 
-  // Auto-bypass: fire-and-forget. Both branches guard with a ref
-  // keyed by `offerSeqNo` so the effect runs at most once per
-  // offer — the parent can re-render with new `targets` / `onPick`
-  // references (e.g. after a roster update) without re-firing.
-  // A later offer carrying the same `cardId` starts a fresh
-  // session and triggers `onPick` again.
-  //
-  // Self-only Defensive/DEFENSE cards: the dialog is bypassed and
-  // `onPick` is invoked with no target so the wire payload
-  // omits `targetPlayerId` (server rejects any target on a
-  // self-only play). Full selection, timing, and validation
-  // remain the server's responsibility.
-  //
-  // AOE Offensive/ATTACK cards: the client sends only the initial
-  // eligible target; full AOE roster expansion is the server's
-  // responsibility.
   const firedRef = React.useRef<Set<number>>(new Set());
   React.useEffect(() => {
     if (firedRef.current.has(offerSeqNo)) return;
@@ -81,6 +67,86 @@ export function CardTargetPicker({
     onPick(targets[0]!.playerId);
   }, [isSelfOnly, isAoe, cardId, offerSeqNo, targets, onPick]);
 
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const dialogRef = React.useRef<HTMLDivElement>(null);
+  const previousActiveElement = React.useRef<HTMLElement | null>(null);
+  const onCancelRef = React.useRef(onCancel);
+  onCancelRef.current = onCancel;
+
+  React.useEffect(() => {
+    if (isSelfOnly || isAoe) return;
+    previousActiveElement.current =
+      document.activeElement as HTMLElement | null;
+    if (dialogRef.current) {
+      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusable.length > 0) {
+        focusable[0]?.focus();
+      } else {
+        dialogRef.current.focus();
+      }
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCancelRef.current();
+        return;
+      }
+      if (e.key !== "Tab" || !dialogRef.current) return;
+
+      const focusable = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) {
+        e.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
+
+      const firstElement = focusable[0];
+      const lastElement = focusable[focusable.length - 1];
+
+      if (e.shiftKey) {
+        if (
+          document.activeElement === firstElement ||
+          document.activeElement === dialogRef.current
+        ) {
+          e.preventDefault();
+          lastElement?.focus();
+        }
+      } else {
+        if (
+          document.activeElement === lastElement ||
+          document.activeElement === dialogRef.current
+        ) {
+          e.preventDefault();
+          firstElement?.focus();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      if (
+        previousActiveElement.current &&
+        typeof previousActiveElement.current.focus === "function"
+      ) {
+        previousActiveElement.current.focus();
+      }
+    };
+  }, [isSelfOnly, isAoe]);
+
+  const filteredTargets = React.useMemo(() => {
+    if (!searchQuery.trim()) return targets;
+    const q = searchQuery.toLowerCase().trim();
+    return targets.filter((t) => t.name.toLowerCase().includes(q));
+  }, [targets, searchQuery]);
+
   if (isSelfOnly) {
     return null;
   }
@@ -89,38 +155,159 @@ export function CardTargetPicker({
     return null;
   }
 
+  const handleRandomPick = () => {
+    if (targets.length === 0) return;
+    const randomTarget = targets[Math.floor(Math.random() * targets.length)];
+    if (randomTarget) {
+      onPick(randomTarget.playerId);
+    }
+  };
+
+  const cardName = t.has(`byId.${cardId}.name`)
+    ? t(`byId.${cardId}.name`)
+    : def.name;
+
+  const cardDesc = t.has(`byId.${cardId}.description`)
+    ? t(`byId.${cardId}.description`)
+    : def.description;
+
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
+      tabIndex={-1}
       aria-label={t("select")}
       className={cn(
-        "fixed inset-0 z-50 flex items-center justify-center bg-black/40",
+        "fixed inset-0 z-50 flex items-center justify-center bg-candy-ink/60 backdrop-blur-sm p-4 animate-fade-in outline-none",
         className,
       )}
     >
-      <div className="rounded-lg border-2 border-candy-ink bg-white p-6 shadow-[6px_6px_0_0_#2B2D42]">
-        <h2 className="mb-4 text-lg font-bold">{t("select")}</h2>
-        <ul className="space-y-2">
-          {targets.map((target) => (
-            <li key={target.playerId}>
+      <div className="w-full max-w-lg rounded-3xl border-[3.5px] border-candy-ink bg-white shadow-[8px_8px_0_0_#2B2D42] overflow-hidden flex flex-col max-h-[85vh] animate-scale-up">
+        {/* Header with Card Info */}
+        <div className="bg-candy-yellow border-b-[3px] border-candy-ink p-4 sm:p-5 flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-white border-2 border-candy-ink shadow-[2px_2px_0_0_#2B2D42] flex items-center justify-center shrink-0 text-candy-ink">
+              <CardGlyph variant={getGlyphForCardId(cardId)} size={24} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-display font-black text-sm sm:text-base text-candy-ink uppercase tracking-wider">
+                  {cardName}
+                </span>
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-lg border-[1.5px] border-candy-ink bg-candy-pink/30 text-candy-ink">
+                  {def.tier}
+                </span>
+              </div>
+              <p className="text-xs text-candy-ink/75 font-medium mt-0.5 line-clamp-1">
+                {cardDesc}
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onCancel}
+            className="w-8 h-8 rounded-xl bg-white hover:bg-candy-red hover:text-white border-2 border-candy-ink shadow-[2px_2px_0_0_#2B2D42] flex items-center justify-center font-black text-sm shrink-0 transition-colors"
+            aria-label={t("cancel")}
+          >
+            <MiniGlyph variant="close" className="w-3.5 h-3.5 stroke-[2.5]" />
+          </button>
+        </div>
+
+        {/* Action Bar: Quick Random Target + Search */}
+        <div className="p-4 bg-candy-cloud/40 border-b-2 border-candy-ink/15 space-y-3">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleRandomPick}
+              className="flex-1 flex items-center justify-center gap-2 bg-candy-orange hover:bg-candy-orange/90 text-white font-display font-black text-xs sm:text-sm py-2.5 px-4 rounded-2xl border-2 border-candy-ink shadow-[3px_3px_0_0_#2B2D42] active:translate-y-0.5 active:shadow-[1px_1px_0_0_#2B2D42] transition-all"
+            >
+              <MiniGlyph
+                variant="target"
+                className="w-4 h-4 text-white stroke-[2.5]"
+              />
+              <span>{t("picker.randomTarget")}</span>
+            </button>
+          </div>
+
+          <div className="relative">
+            <input
+              type="text"
+              aria-label={t("picker.searchLabel")}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t("picker.searchPlaceholder", {
+                count: targets.length,
+              })}
+              className="w-full bg-white border-2 border-candy-ink rounded-xl px-3.5 py-2 text-xs sm:text-sm text-candy-ink placeholder:text-candy-ink/40 font-medium focus:outline-none focus:ring-2 focus:ring-candy-pink/50 shadow-[2px_2px_0_0_#2B2D42]"
+            />
+            {searchQuery && (
               <button
                 type="button"
-                onClick={() => onPick(target.playerId)}
-                className="w-full rounded border-2 border-candy-ink px-3 py-2 text-left hover:bg-candy-pink/20"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-candy-ink/50 hover:text-candy-ink text-xs font-bold"
+                aria-label={t("picker.clearSearch")}
               >
-                {target.name}
+                <MiniGlyph variant="close" className="w-3 h-3 stroke-[2.5]" />
               </button>
-            </li>
-          ))}
-        </ul>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="mt-4 w-full rounded border-2 border-candy-ink bg-candy-cloud px-3 py-2"
-        >
-          {t("cancel")}
-        </button>
+            )}
+          </div>
+        </div>
+
+        {/* Scrollable Target Grid (2 columns) */}
+        <div className="p-4 overflow-y-auto flex-1 max-h-[300px]">
+          {filteredTargets.length === 0 ? (
+            <div className="text-center py-8 text-candy-ink/50 text-xs font-bold">
+              {t("picker.noMatches")}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {filteredTargets.map((target) => (
+                <button
+                  key={target.playerId}
+                  type="button"
+                  aria-label={target.name}
+                  onClick={() => onPick(target.playerId)}
+                  className="flex items-center gap-2.5 w-full rounded-2xl border-2 border-candy-ink bg-white p-2.5 text-left hover:bg-candy-yellow/40 hover:border-candy-ink hover:-translate-y-0.5 hover:shadow-[3px_3px_0_0_#2B2D42] active:translate-y-0 active:shadow-none shadow-[2px_2px_0_0_#2B2D42] transition-all group"
+                >
+                  <div
+                    aria-hidden="true"
+                    className="w-8 h-8 rounded-xl bg-candy-cloud border-[1.5px] border-candy-ink flex items-center justify-center font-bold text-xs shrink-0 group-hover:bg-candy-pink/30 group-hover:rotate-3 transition-transform"
+                  >
+                    {target.name.charAt(0).toUpperCase()}
+                  </div>
+                  <span className="font-display font-bold text-xs sm:text-sm text-candy-ink truncate flex-1">
+                    {target.name}
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className="text-candy-ink/40 group-hover:text-candy-ink group-hover:translate-x-0.5 transition-all text-xs"
+                  >
+                    <MiniGlyph
+                      variant="arrowRight"
+                      className="w-3.5 h-3.5 stroke-[2.5]"
+                    />
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-3.5 bg-candy-cloud/30 border-t-2 border-candy-ink/20 flex items-center justify-between gap-3">
+          <span className="text-[11px] text-candy-ink/60 font-medium">
+            {t("picker.prompt")}
+          </span>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-xl border-2 border-candy-ink bg-white hover:bg-candy-cloud px-4 py-1.5 text-xs font-bold text-candy-ink shadow-[2px_2px_0_0_#2B2D42] transition-colors"
+          >
+            {t("cancel")}
+          </button>
+        </div>
       </div>
     </div>
   );

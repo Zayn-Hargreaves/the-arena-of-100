@@ -1,27 +1,23 @@
-import {
-  Home,
-  Hourglass,
-  RotateCcw,
-  Shield,
-  Swords,
-  Target,
-  Trophy,
-  Zap,
-} from "lucide-react";
-import type { ComponentType, ReactNode } from "react";
+import { type ReactNode, useMemo } from "react";
 import { useTranslations } from "next-intl";
+import { MiniGlyph } from "@/components/ui/mini-glyph";
 import { AnimatedSprite } from "@/components/ui/animated-sprite";
 import { Avatar } from "@/components/ui/avatar";
 import type {
   PerformanceViewModel,
   WinnerViewModel,
 } from "@/hooks/use-match-results";
+import { ProfessorAvatar } from "@/components/character/professor-avatar";
+import {
+  type ProfessorMood,
+  getDeterministicProfessorDialogue,
+} from "@/components/character/professor-roast-engine";
 
-interface ResultContentProps {
+export interface ResultContentProps {
   matchId: string;
   winner: WinnerViewModel;
   performance: PerformanceViewModel;
-  opponents: number;
+  opponents?: number;
   onRematch: () => void;
   onHome: () => void;
 }
@@ -30,11 +26,45 @@ export function ResultContent({
   matchId,
   winner,
   performance,
-  opponents,
+  opponents = 0,
   onRematch,
   onHome,
 }: ResultContentProps) {
   const t = useTranslations("Result");
+  const tProf = useTranslations("Professor");
+
+  const isWinner =
+    performance.isWinner ||
+    (performance.rank === 1 && !performance.eliminatedRound);
+  const isEliminated = performance.eliminatedRound != null;
+  const rank = performance.rank;
+  const isTop10 =
+    !isWinner && typeof rank === "number" && rank >= 2 && rank <= 10;
+
+  const evaluationMood: ProfessorMood =
+    isWinner || isTop10 ? "proud_cheer" : "angry_roast";
+
+  const evaluationText = useMemo(() => {
+    if (isWinner) {
+      return tProf(
+        getDeterministicProfessorDialogue("result_winner", matchId).key,
+      );
+    }
+    if (isTop10) {
+      return tProf(
+        getDeterministicProfessorDialogue("result_top10", matchId).key,
+      );
+    }
+    return tProf(
+      getDeterministicProfessorDialogue("result_early_elim", matchId).key,
+    );
+  }, [isWinner, isTop10, matchId, tProf]);
+
+  const gradeBadge = isWinner
+    ? tProf("grades.valedictorian")
+    : isTop10
+      ? tProf("grades.honor")
+      : tProf("grades.remedial");
 
   return (
     <div className="max-w-4xl mx-auto w-full space-y-8 pt-2 select-none animate-slide-up">
@@ -50,16 +80,22 @@ export function ResultContent({
         </p>
       </div>
 
-      <div className="p-6 md:p-8 rounded-3xl border-[3.5px] border-candy-ink bg-white shadow-[6px_6px_0_0_#2B2D42] flex flex-col md:flex-row items-center gap-6 relative overflow-hidden transition-all hover:translate-y-[-2px] hover:shadow-[8px_8px_0_0_#2B2D42]">
-        <div className="bg-candy-yellow text-candy-ink border-[2.5px] border-candy-ink px-3 py-1 text-[9px] font-display font-black tracking-wider rounded-lg absolute top-3 right-3 shadow-[2px_2px_0_0_#2B2D42]">
-          {t("championBadge")}
+      <div className="p-6 pt-9 md:p-8 rounded-3xl border-[3.5px] border-candy-ink bg-white shadow-[6px_6px_0_0_#2B2D42] flex flex-col md:flex-row items-center gap-6 relative overflow-hidden transition-all hover:translate-y-[-2px] hover:shadow-[8px_8px_0_0_#2B2D42]">
+        <div className="bg-candy-yellow text-candy-ink border-[2.5px] border-candy-ink px-3 py-1 text-[10px] font-display font-black tracking-wider rounded-xl absolute top-3 right-3 shadow-[2px_2px_0_0_#2B2D42] flex items-center gap-1.5 z-10">
+          <MiniGlyph
+            variant="trophy"
+            className="w-3.5 h-3.5 text-candy-ink stroke-[2.5] shrink-0"
+          />
+          <span>{t("championBadge")}</span>
         </div>
-        <div className="relative shrink-0">
+        <div className="relative shrink-0 mt-1 md:mt-0">
           {winner.isAnimated && winner.spritesheet ? (
             <div className="w-24 h-24 border-[3.5px] border-candy-ink rounded-2xl bg-candy-cloud overflow-hidden flex items-center justify-center relative shadow-[4px_4px_0_0_#2B2D42]">
               <AnimatedSprite
                 src={winner.spritesheet}
-                scale={3.8}
+                width="96px"
+                height="96px"
+                scale={0.5}
                 row={0}
                 speed={120}
               />
@@ -71,9 +107,6 @@ export function ResultContent({
               className="border-[3.5px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42]"
             />
           )}
-          <div className="absolute -top-3 -right-3 w-10 h-10 rounded-full bg-candy-yellow text-candy-ink flex items-center justify-center border-[3px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42]">
-            <Trophy className="w-5 h-5 fill-candy-ink stroke-[2.5]" />
-          </div>
         </div>
         <div className="flex-1 space-y-4 text-center md:text-left">
           <div className="space-y-1">
@@ -112,15 +145,31 @@ export function ResultContent({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="p-6 rounded-3xl border-[3.5px] border-candy-ink bg-white shadow-[6px_6px_0_0_#2B2D42] space-y-4 md:col-span-2">
           <h3 className="font-display font-black text-base text-candy-ink uppercase tracking-wider flex items-center gap-2 border-b-[3px] border-candy-ink pb-2">
-            <Swords className="w-5 h-5 text-candy-pink stroke-[2.5]" />
+            <MiniGlyph
+              variant="swords"
+              className="w-5 h-5 text-candy-pink stroke-[2.5]"
+            />
             {t("performance.title")} · {performance.name}
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             <PerformanceCard
               label={t("performance.rank")}
-              value={performance.rank === null ? "--" : `#${performance.rank}`}
+              value={
+                isWinner
+                  ? "#1"
+                  : performance.rank !== null && performance.rank !== undefined
+                    ? `#${performance.rank}`
+                    : isEliminated
+                      ? t("performance.eliminated")
+                      : "--"
+              }
               color="pink"
-              icon={<Trophy className="w-4 h-4 text-candy-pink stroke-[2.5]" />}
+              icon={
+                <MiniGlyph
+                  variant="trophy"
+                  className="w-4 h-4 text-candy-pink stroke-[2.5]"
+                />
+              }
             />
             <PerformanceCard
               label={t("performance.score")}
@@ -142,7 +191,12 @@ export function ResultContent({
                     ? "pink"
                     : "cloud"
               }
-              icon={<Shield className="w-4 h-4 text-candy-blue stroke-[2.5]" />}
+              icon={
+                <MiniGlyph
+                  variant="shield"
+                  className="w-4 h-4 text-candy-blue stroke-[2.5]"
+                />
+              }
             />
             <PerformanceCard
               label={t("performance.eliminatedRound")}
@@ -155,7 +209,10 @@ export function ResultContent({
               }
               color="blue"
               icon={
-                <Hourglass className="w-4 h-4 text-candy-blue stroke-[2.5]" />
+                <MiniGlyph
+                  variant="hourglass"
+                  className="w-4 h-4 text-candy-blue stroke-[2.5]"
+                />
               }
             />
             <PerformanceCard
@@ -163,23 +220,60 @@ export function ResultContent({
               value={performance.accuracy}
               color="yellow"
               icon={
-                <Target className="w-4 h-4 text-candy-orange stroke-[2.5]" />
+                <MiniGlyph
+                  variant="target"
+                  className="w-4 h-4 text-candy-orange stroke-[2.5]"
+                />
               }
             />
             <PerformanceCard
               label={t("performance.reactionSpeed")}
               value={performance.speed}
               color="mint"
-              icon={<Zap className="w-4 h-4 text-candy-mint stroke-[2.5]" />}
+              icon={
+                <MiniGlyph
+                  variant="zap"
+                  className="w-4 h-4 text-candy-mint stroke-[2.5]"
+                />
+              }
             />
+          </div>
+
+          {/* Professor Academic Evaluation / Sổ liên lạc của Giáo sư */}
+          <div className="p-4 sm:p-5 rounded-3xl border-[3.5px] border-candy-ink bg-[#FFFDF5] shadow-[4px_4px_0_0_#2B2D42] flex flex-col sm:flex-row items-center sm:items-start gap-4 overflow-hidden">
+            <div className="shrink-0 pt-0.5">
+              <ProfessorAvatar mood={evaluationMood} size="md" showNameplate />
+            </div>
+
+            <div className="flex-1 text-center sm:text-left space-y-2 min-w-0 w-full">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b-2 border-candy-ink/15 pb-1.5">
+                <span className="font-display font-black text-xs text-candy-pink uppercase tracking-wide">
+                  {tProf("evalLabel")}
+                </span>
+                <span
+                  className={`self-center sm:self-auto inline-block border-[2px] border-candy-ink px-3 py-0.5 rounded-lg font-display font-black text-[10px] uppercase tracking-wider shadow-[2px_2px_0_0_#2B2D42] shrink-0 ${
+                    isWinner
+                      ? "bg-candy-yellow text-candy-ink"
+                      : isTop10
+                        ? "bg-candy-mint text-candy-ink"
+                        : "bg-candy-red text-white"
+                  }`}
+                >
+                  {gradeBadge}
+                </span>
+              </div>
+              <p className="font-sans font-bold text-xs sm:text-sm text-candy-ink leading-relaxed tracking-normal">
+                &ldquo;{evaluationText}&rdquo;
+              </p>
+            </div>
           </div>
         </div>
 
         <div className="p-6 rounded-3xl border-[3.5px] border-candy-ink bg-candy-cloud flex flex-col justify-center gap-4 shadow-[6px_6px_0_0_#2B2D42]">
-          <ActionButton onClick={onRematch} color="pink" icon={RotateCcw}>
+          <ActionButton onClick={onRematch} color="pink" glyph="rematch">
             {t("actions.rematch")}
           </ActionButton>
-          <ActionButton onClick={onHome} color="blue" icon={Home}>
+          <ActionButton onClick={onHome} color="blue" glyph="home">
             {t("actions.home")}
           </ActionButton>
         </div>
@@ -232,15 +326,26 @@ function PerformanceCard({
     yellow: "bg-candy-yellow/10",
     mint: "bg-candy-mint/10",
   }[color];
+
+  const valueStr = String(value);
+  const fontSize =
+    valueStr.length > 8
+      ? "text-xs sm:text-sm tracking-tight"
+      : valueStr.length > 5
+        ? "text-sm sm:text-base tracking-tight"
+        : "text-2xl";
+
   return (
     <div
-      className={`p-4 ${background} border-[3px] border-candy-ink rounded-2xl shadow-[3px_3px_0_0_#2B2D42] space-y-1`}
+      className={`p-3.5 sm:p-4 ${background} border-[3px] border-candy-ink rounded-2xl shadow-[3px_3px_0_0_#2B2D42] flex flex-col justify-between overflow-hidden min-h-[84px]`}
     >
-      <span className="text-[10px] text-candy-ink/75 font-display font-black uppercase flex items-center gap-1.5 leading-none">
+      <span className="text-[10px] text-candy-ink/75 font-display font-black uppercase flex items-center gap-1.5 leading-none shrink-0 truncate">
         {icon}
         {label}
       </span>
-      <span className="font-display font-black text-2xl text-candy-ink block pt-1">
+      <span
+        className={`font-display font-black text-candy-ink block pt-1 leading-tight break-words uppercase ${fontSize}`}
+      >
         {value}
       </span>
     </div>
@@ -250,23 +355,22 @@ function PerformanceCard({
 function ActionButton({
   onClick,
   color,
-  icon,
+  glyph,
   children,
 }: {
   onClick: () => void;
   color: "pink" | "blue";
-  icon: ComponentType<{ className?: string }>;
+  glyph: "rematch" | "home";
   children: ReactNode;
 }) {
-  const Icon = icon;
   const background = color === "pink" ? "bg-candy-pink" : "bg-candy-blue";
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`w-full h-12 ${background} text-candy-ink border-[3px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42] rounded-2xl hover:translate-y-[-1.5px] hover:shadow-[5px_5px_0_0_#2B2D42] active:translate-y-[2.5px] active:shadow-[1.5px_1.5px_0_0_#2B2D42] font-display font-black text-xs tracking-wider uppercase flex items-center justify-center cursor-pointer transition-all outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-candy-ink focus-visible:ring-offset-2 focus-visible:ring-offset-candy-bg`}
+      className={`w-full h-12 ${background} text-candy-ink border-[3px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42] rounded-2xl hover:translate-y-[-1.5px] hover:shadow-[5px_5px_0_0_#2B2D42] active:translate-y-[2.5px] active:shadow-[1.5px_1.5px_0_0_#2B2D42] font-display font-black text-xs tracking-wider uppercase flex items-center justify-center gap-2 cursor-pointer transition-all outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-candy-ink focus-visible:ring-offset-2 focus-visible:ring-offset-candy-bg`}
     >
-      <Icon className="w-4 h-4 mr-2 stroke-[2.5]" />
+      <MiniGlyph variant={glyph} className="w-4 h-4 stroke-[2.5]" />
       {children}
     </button>
   );

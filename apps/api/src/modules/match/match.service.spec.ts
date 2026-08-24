@@ -2200,11 +2200,15 @@ describe("MatchService", () => {
       const sm = await service.getStateMachine("m1");
       sm!.classAssignment(["u1", "u2"], "seed-1");
 
-      // Play one round normally to get scores
-      await playRound("m1", [
-        { playerId: "u1", answer: "A", isCorrect: true, responseTimeMs: 200 },
-        { playerId: "u2", answer: "A", isCorrect: true, responseTimeMs: 8000 },
-      ]);
+      // Start round 1 and play card while round is active
+      sm!.transition(MatchStatus.COUNTDOWN);
+      sm!.transition(MatchStatus.ROUND_ACTIVE);
+      const round = sm!.startRound({
+        id: "q-m1-0",
+        content: "?",
+        options: ["A", "B"],
+        correctAnswer: "A",
+      });
 
       // Manually inject CARD_RESOLVED events via playCard.
       // `playCard` takes a `CardId` (string) and a `CardEffect` keyed
@@ -2233,6 +2237,13 @@ describe("MatchService", () => {
       const payload = resolved!.payload as Record<string, unknown>;
       expect(payload.expiresAtServer ?? null).toBeNull();
       expect(payload.remainingMs ?? null).toBeNull();
+
+      // Submit answers and complete the round
+      sm!.submitAnswer("u1", "A", round.startedAt + 200);
+      sm!.submitAnswer("u2", "A", round.startedAt + 8000);
+      sm!.transition(MatchStatus.ROUND_EVALUATING);
+      sm!.evaluateRound();
+      sm!.transition(MatchStatus.ROUND_RESULT);
 
       await service.finishMatch("m1", "u1", "r1");
 

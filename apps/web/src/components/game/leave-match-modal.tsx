@@ -2,7 +2,7 @@
 
 import React from "react";
 import { Modal } from "@/components/ui/modal";
-import { AlertCircle } from "lucide-react";
+import { MiniGlyph } from "@/components/ui/mini-glyph";
 import { useTranslations } from "next-intl";
 
 interface LeaveMatchModalProps {
@@ -28,7 +28,10 @@ export const LeaveMatchModal: React.FC<LeaveMatchModalProps> = ({
     >
       <div className="flex flex-col gap-4 mt-4">
         <div className="flex items-start gap-3 p-3 rounded-xl bg-candy-cloud border-[3px] border-candy-ink">
-          <AlertCircle className="w-5 h-5 text-candy-yellow shrink-0 mt-0.5 stroke-[2.5]" />
+          <MiniGlyph
+            variant="alert"
+            className="w-5 h-5 text-candy-yellow shrink-0 mt-0.5 stroke-[2.5]"
+          />
           <p className="text-sm font-semibold leading-relaxed text-candy-ink">
             {t("warning")}
           </p>

@@ -35,6 +35,7 @@ export const GAME_CONFIG = {
   // Topic Ban Voting (Pre-match Crowd Draft)
   TOPIC_VOTING_DURATION_MS: 10_000, // 10 seconds for crowd ban voting
   TOPIC_VOTING_BANNED_COUNT: 2, // Top 2 voted topics get banned
+  CARD_OFFER_DURATION_MS: 8_000, // 8 seconds for milestone card selection
   TOPIC_VOTING_CANDIDATE_POOL: [
     "SCIENCE",
     "HISTORY",

@@ -1,10 +1,9 @@
-"use client";
-
+import "@testing-library/jest-dom/vitest";
 import React from "react";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { DailyLeaderboard } from "./daily-leaderboard";
-import type { DailyLeaderboardItem } from "@/types/daily";
+import type { DailyLeaderboardItem } from "../../types/daily";
 
 const items: DailyLeaderboardItem[] = [
   {
@@ -16,6 +15,7 @@ const items: DailyLeaderboardItem[] = [
     correctCount: 5,
     streakAfter: 7,
     completedAt: "2026-08-09T10:15:00.000Z",
+    cardsPlayedThisWeek: 12,
   },
   {
     rank: 2,
@@ -26,6 +26,7 @@ const items: DailyLeaderboardItem[] = [
     correctCount: 4,
     streakAfter: 2,
     completedAt: "2026-08-09T10:14:00.000Z",
+    cardsPlayedThisWeek: 4,
   },
   {
     rank: 3,
@@ -36,6 +37,7 @@ const items: DailyLeaderboardItem[] = [
     correctCount: 3,
     streakAfter: 0,
     completedAt: "2026-08-09T10:13:00.000Z",
+    cardsPlayedThisWeek: 20,
   },
 ];
 
@@ -71,6 +73,7 @@ describe("DailyLeaderboard", () => {
             correctCount: 1,
             streakAfter: 0,
             completedAt: "2026-08-09T10:15:00.000Z",
+            cardsPlayedThisWeek: 0,
           },
         ]}
       />,

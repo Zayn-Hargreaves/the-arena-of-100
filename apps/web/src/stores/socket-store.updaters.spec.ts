@@ -5,8 +5,12 @@ import {
   type SnapshotPayload,
   type RoomCreatedPayload,
   type RoomJoinedPayload,
+  type JoinMode,
+  type RoomType,
+  type CardId,
+  type ClassId,
+  type CardEffectEvent,
 } from "@arena/shared";
-import type { JoinMode, RoomType } from "@arena/shared";
 import { describe, expect, it } from "vitest";
 import {
   applyAnswerResultState,
@@ -34,9 +38,19 @@ import {
   applyTopicVotingFinishedState,
   applyMatchmakingStatusState,
   applyMatchmakingMatchedState,
+  applyClassAssignedState,
+  applyCardOfferState,
+  applyCardPickedState,
+  applyCardResolvedState,
+  applyConsumeSecondChance,
 } from "./socket-store.updaters";
 
-import type { Match, Room, SocketState } from "./socket-store.types";
+import {
+  INITIAL_CARD_STATE,
+  type Match,
+  type Room,
+  type SocketState,
+} from "./socket-store.types";
 import type { EventBatchPayload } from "@arena/shared";
 
 const basePlayers = [
@@ -116,7 +130,9 @@ function makeState(overrides: Partial<SocketState> = {}): SocketState {
       playersInQueue: 0,
       matchedRoomCode: null,
       matchedRoomId: null,
+      matchedMatchId: null,
     },
+    cardState: INITIAL_CARD_STATE,
     lastAnswerResult: null,
     pendingAnswer: null,
     remainingCount: null,
@@ -139,6 +155,11 @@ function makeState(overrides: Partial<SocketState> = {}): SocketState {
     leaveMatchmaking: () => {},
     clearMatchmakingMatched: () => {},
     voteBanTopic: () => {},
+    pickCard: () => {},
+    playCard: () => {},
+    dismissCardOffer: () => {},
+    clearResolvedCardEffect: () => {},
+    consumeSecondChance: () => {},
     submitAnswer: () => null,
     requestSnapshot: () => {},
     ...overrides,
@@ -463,6 +484,61 @@ describe("applyAnswerResultState", () => {
     });
 
     expect(result.lastAnswerResult).toMatchObject({ submissionId: "s1" });
+    expect(result.pendingAnswer).toBeNull();
+  });
+
+  it("consumes SECOND_CHANCE effect when receiving an answer result for a retry submission", () => {
+    const scEffect: CardEffectEvent = {
+      matchId: "m1",
+      roundNo: 2,
+      targetRoundNo: 2,
+      cardId: "TN-6",
+      offerSeqNo: 1,
+      playedByPlayerId: "p1",
+      targetPlayerIds: ["p1"],
+      effect: { kind: "SECOND_CHANCE" },
+      resolution: "MUTATION",
+      serverTimestamp: 1000,
+      expiresAtServer: null,
+      remainingMs: null,
+    };
+    const state = makeState({
+      userId: "p1",
+      lastAnswerResult: {
+        matchId: "m1",
+        roundNo: 2,
+        submissionId: "s1",
+        isCorrect: false,
+        responseTimeMs: 1200,
+      },
+      pendingAnswer: {
+        matchId: "m1",
+        roundNo: 2,
+        answer: "B",
+        submissionId: "s2",
+      },
+      cardState: {
+        ...INITIAL_CARD_STATE,
+        activeRoundEffects: [scEffect],
+        lastResolvedEffect: scEffect,
+      },
+    });
+
+    const result = applyAnswerResultState(state, {
+      matchId: "m1",
+      roundNo: 2,
+      submissionId: "s2",
+      isCorrect: true,
+      responseTimeMs: 500,
+    });
+
+    expect(result.lastAnswerResult).toMatchObject({
+      submissionId: "s2",
+      isCorrect: true,
+      submittedAnswer: "B",
+    });
+    expect(result.cardState?.activeRoundEffects).toEqual([]);
+    expect(result.cardState?.lastResolvedEffect).toBeNull();
     expect(result.pendingAnswer).toBeNull();
   });
 });
@@ -2257,6 +2333,7 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
           playersInQueue: 0,
           matchedRoomCode: "PREV_CODE",
           matchedRoomId: "prev-id",
+          matchedMatchId: null,
         },
       });
       const res = applyMatchmakingStatusState(state, {
@@ -2275,6 +2352,7 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         playersInQueue: 5,
         matchedRoomCode: "PREV_CODE",
         matchedRoomId: "prev-id",
+        matchedMatchId: null,
       });
     });
 
@@ -2288,6 +2366,7 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
           playersInQueue: 10,
           matchedRoomCode: null,
           matchedRoomId: null,
+          matchedMatchId: null,
         },
       });
       const res = applyMatchmakingMatchedState(state, {
@@ -2303,7 +2382,468 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
         playersInQueue: 10,
         matchedRoomCode: "MATCH1",
         matchedRoomId: "r-123",
+        matchedMatchId: "m-123",
       });
+    });
+
+    it("applyClassAssignedState updates player class and roster", () => {
+      const state = makeState({
+        userId: "p1",
+        room: makeRoom({
+          id: "r1",
+          code: "ROOM1",
+          hostId: "p1",
+          status: RoomStatus.WAITING,
+          players: [
+            {
+              id: "p1",
+              name: "P1",
+              status: PlayerStatus.ACTIVE,
+              score: 0,
+              isOnline: true,
+            },
+            {
+              id: "p2",
+              name: "P2",
+              status: PlayerStatus.ACTIVE,
+              score: 0,
+              isOnline: true,
+            },
+          ],
+        }),
+        match: makeMatch({
+          id: "m1",
+          status: MatchStatus.COUNTDOWN,
+          currentRoundNo: 1,
+          players: [
+            {
+              id: "p1",
+              name: "P1",
+              status: PlayerStatus.ACTIVE,
+              score: 100,
+              isOnline: true,
+            },
+            {
+              id: "p2",
+              name: "P2",
+              status: PlayerStatus.ACTIVE,
+              score: 200,
+              isOnline: true,
+            },
+          ],
+        }),
+      });
+
+      const res = applyClassAssignedState(state, {
+        matchId: "m1",
+        assignments: [
+          { playerId: "p1", classId: "ATTACK" as ClassId },
+          { playerId: "p2", classId: "DEFENSE" as ClassId },
+        ],
+        seedUsed: "seed-1",
+      });
+
+      expect(res.cardState?.classId).toBe("ATTACK");
+      expect(res.room?.players.find((p) => p.id === "p1")?.classId).toBe(
+        "ATTACK",
+      );
+      expect(res.room?.players.find((p) => p.id === "p2")?.classId).toBe(
+        "DEFENSE",
+      );
+      const matchP1 = res.match?.players.find((p) => p.id === "p1");
+      const matchP2 = res.match?.players.find((p) => p.id === "p2");
+      expect(matchP1?.classId).toBe("ATTACK");
+      expect(matchP1?.status).toBe(PlayerStatus.ACTIVE);
+      expect(matchP1?.score).toBe(100);
+      expect(matchP2?.classId).toBe("DEFENSE");
+      expect(matchP2?.status).toBe(PlayerStatus.ACTIVE);
+      expect(matchP2?.score).toBe(200);
+    });
+
+    it("applyCardOfferState sets currentOffer for matching player", () => {
+      const state = makeState({
+        userId: "p1",
+        match: makeMatch({ id: "m1" }),
+      });
+
+      const offeredCards: readonly [CardId, CardId, CardId] = [
+        "CB-1",
+        "CB-2",
+        "CB-3",
+      ];
+
+      const res = applyCardOfferState(state, {
+        matchId: "m1",
+        roundNo: 5,
+        playerId: "p1",
+        offeredCardIds: offeredCards,
+        offerSeqNo: 42,
+        seedUsed: "seed-offer",
+      });
+
+      expect(res.cardState?.currentOffer?.roundNo).toBe(5);
+      expect(res.cardState?.currentOffer?.offeredCardIds).toEqual([
+        "CB-1",
+        "CB-2",
+        "CB-3",
+      ]);
+      expect(res.cardState?.currentOffer?.offerSeqNo).toBe(42);
+    });
+
+    it("applyCardOfferState returns empty object when matchId mismatches or is null", () => {
+      const stateWithoutMatch = makeState({ userId: "p1" });
+      const offeredCards: readonly [CardId, CardId, CardId] = [
+        "CB-1",
+        "CB-2",
+        "CB-3",
+      ];
+      expect(
+        applyCardOfferState(stateWithoutMatch, {
+          matchId: "m1",
+          roundNo: 5,
+          playerId: "p1",
+          offeredCardIds: offeredCards,
+          offerSeqNo: 42,
+          seedUsed: "seed-offer",
+        }),
+      ).toEqual({});
+
+      const stateMismatch = makeState({
+        userId: "p1",
+        room: makeRoom({ currentMatchId: "m-other" }),
+      });
+      expect(
+        applyCardOfferState(stateMismatch, {
+          matchId: "m1",
+          roundNo: 5,
+          playerId: "p1",
+          offeredCardIds: offeredCards,
+          offerSeqNo: 42,
+          seedUsed: "seed-offer",
+        }),
+      ).toEqual({});
+    });
+
+    it("applyCardPickedState adds card to hand and clears currentOffer", () => {
+      const offeredCards: readonly [CardId, CardId, CardId] = [
+        "CB-1",
+        "CB-2",
+        "CB-3",
+      ];
+      const state = makeState({
+        userId: "p1",
+        match: makeMatch({ id: "m1" }),
+        cardState: {
+          ...INITIAL_CARD_STATE,
+          classId: "ATTACK" as ClassId,
+          hand: ["CB-1" as CardId],
+          currentOffer: {
+            matchId: "m1",
+            roundNo: 5,
+            offeredCardIds: offeredCards,
+            offerSeqNo: 42,
+            seedUsed: "seed-offer",
+            expiresAt: 9999,
+          },
+        },
+      });
+
+      const res = applyCardPickedState(state, {
+        matchId: "m1",
+        roundNo: 5,
+        playerId: "p1",
+        selectedCardId: "CB-2" as CardId,
+        offerSeqNo: 42,
+      });
+
+      expect(res.cardState?.hand).toEqual(["CB-1", "CB-2"]);
+      expect(res.cardState?.currentOffer).toBeNull();
+    });
+
+    it("applyCardPickedState returns empty object when matchId mismatches or is null", () => {
+      const stateWithoutMatch = makeState({ userId: "p1" });
+      expect(
+        applyCardPickedState(stateWithoutMatch, {
+          matchId: "m1",
+          roundNo: 5,
+          playerId: "p1",
+          selectedCardId: "CB-2" as CardId,
+          offerSeqNo: 42,
+        }),
+      ).toEqual({});
+    });
+
+    it("applyCardResolvedState classifies current-round effects into activeRoundEffects", () => {
+      const state = makeState({
+        userId: "p1",
+        match: makeMatch({ id: "m1" }),
+        cardState: {
+          ...INITIAL_CARD_STATE,
+          classId: "ATTACK" as ClassId,
+          hand: ["CB-1" as CardId, "CB-2" as CardId],
+        },
+      });
+
+      const event: CardEffectEvent = {
+        matchId: "m1",
+        roundNo: 1,
+        targetRoundNo: 1,
+        cardId: "CB-2",
+        offerSeqNo: 42,
+        playedByPlayerId: "p1",
+        targetPlayerIds: ["p2"],
+        effect: { kind: "TIMER_MODIFY", deltaMs: -5000, targetCount: 1 },
+        resolution: "MUTATION",
+        serverTimestamp: 1000,
+        expiresAtServer: null,
+        remainingMs: null,
+      };
+
+      const res = applyCardResolvedState(state, event);
+
+      expect(res.cardState?.playedCardIds).toEqual(["CB-2"]);
+      expect(res.cardState?.lastResolvedEffect).toBeDefined();
+      expect(res.cardState?.activeRoundEffects).toEqual([event]);
+      expect(res.cardState?.pendingNextRoundEffects).toEqual([]);
+    });
+
+    it("applyCardResolvedState classifies next-round effects (targetRoundNo = roundNo + 1) into pendingNextRoundEffects", () => {
+      const state = makeState({
+        userId: "p1",
+        match: makeMatch({ id: "m1" }),
+        cardState: {
+          ...INITIAL_CARD_STATE,
+          classId: "ATTACK" as ClassId,
+          hand: ["CB-1" as CardId, "CB-2" as CardId],
+        },
+      });
+
+      const event: CardEffectEvent = {
+        matchId: "m1",
+        roundNo: 1,
+        targetRoundNo: 2,
+        cardId: "CB-2",
+        offerSeqNo: 42,
+        playedByPlayerId: "p1",
+        targetPlayerIds: ["p2"],
+        effect: { kind: "TIMER_MODIFY", deltaMs: -5000, targetCount: 1 },
+        resolution: "MUTATION",
+        serverTimestamp: 1000,
+        expiresAtServer: null,
+        remainingMs: null,
+      };
+
+      const res = applyCardResolvedState(state, event);
+
+      expect(res.cardState?.playedCardIds).toEqual(["CB-2"]);
+      expect(res.cardState?.lastResolvedEffect).toBeDefined();
+      expect(res.cardState?.activeRoundEffects).toEqual([]);
+      expect(res.cardState?.pendingNextRoundEffects).toEqual([event]);
+    });
+
+    it("applyCardResolvedState returns empty object when matchId mismatches or is null", () => {
+      const event: CardEffectEvent = {
+        matchId: "m1",
+        roundNo: 1,
+        targetRoundNo: 1,
+        cardId: "CB-2",
+        offerSeqNo: 42,
+        playedByPlayerId: "p1",
+        targetPlayerIds: ["p2"],
+        effect: { kind: "TIMER_MODIFY", deltaMs: -5000, targetCount: 1 },
+        resolution: "MUTATION",
+        serverTimestamp: 1000,
+        expiresAtServer: null,
+        remainingMs: null,
+      };
+
+      const stateWithoutMatch = makeState({ userId: "p1" });
+      expect(applyCardResolvedState(stateWithoutMatch, event)).toEqual({});
+
+      const stateMismatch = makeState({
+        userId: "p1",
+        room: makeRoom({ currentMatchId: "m-other" }),
+      });
+      expect(applyCardResolvedState(stateMismatch, event)).toEqual({});
+    });
+
+    it("applyConsumeSecondChance removes matching SECOND_CHANCE effects", () => {
+      const scEvent: CardEffectEvent = {
+        matchId: "m1",
+        roundNo: 1,
+        targetRoundNo: 1,
+        cardId: "TN-6",
+        offerSeqNo: 1,
+        playedByPlayerId: "p1",
+        targetPlayerIds: ["p1"],
+        effect: { kind: "SECOND_CHANCE" },
+        resolution: "MUTATION",
+        serverTimestamp: 1000,
+        expiresAtServer: null,
+        remainingMs: null,
+      };
+      const otherEvent: CardEffectEvent = {
+        matchId: "m1",
+        roundNo: 1,
+        targetRoundNo: 1,
+        cardId: "TN-1",
+        offerSeqNo: 2,
+        playedByPlayerId: "p1",
+        targetPlayerIds: ["p1"],
+        effect: { kind: "SHIELD", expiresAtRound: 1 },
+        resolution: "MUTATION",
+        serverTimestamp: 1000,
+        expiresAtServer: null,
+        remainingMs: null,
+      };
+
+      const state = makeState({
+        userId: "p1",
+        cardState: {
+          ...INITIAL_CARD_STATE,
+          activeRoundEffects: [scEvent, otherEvent],
+          lastResolvedEffect: scEvent,
+        },
+      });
+
+      const res = applyConsumeSecondChance(state, "p1");
+      expect(res.cardState?.activeRoundEffects).toEqual([otherEvent]);
+      expect(res.cardState?.lastResolvedEffect).toBeNull();
+    });
+
+    it("applyRoundEndedState marks unlisted players as ELIMINATED when survivingPlayerIds is provided", () => {
+      const state = makeState({
+        match: {
+          id: "m1",
+          status: MatchStatus.ROUND_ACTIVE,
+          currentRoundNo: 7,
+          players: [
+            {
+              id: "p1",
+              name: "P1",
+              status: PlayerStatus.ACTIVE,
+              score: 10,
+              isOnline: true,
+            },
+            {
+              id: "p2",
+              name: "P2",
+              status: PlayerStatus.ACTIVE,
+              score: 10,
+              isOnline: true,
+            },
+            {
+              id: "p3",
+              name: "P3",
+              status: PlayerStatus.ACTIVE,
+              score: 10,
+              isOnline: true,
+            },
+            {
+              id: "p4",
+              name: "P4",
+              status: PlayerStatus.ACTIVE,
+              score: 10,
+              isOnline: true,
+            },
+            {
+              id: "p5",
+              name: "P5",
+              status: PlayerStatus.ACTIVE,
+              score: 10,
+              isOnline: true,
+            },
+          ],
+          currentQuestion: null,
+          roundEndTime: null,
+        },
+      });
+
+      // Round ended where only p1, p2, p3 survived (p4 and p5 eliminated in earlier or current rounds)
+      const res = applyRoundEndedState(
+        state,
+        {
+          matchId: "m1",
+          roundNo: 7,
+          correctAnswer: "A",
+          survivingPlayerIds: ["p1", "p2", "p3"],
+          eliminatedPlayerIds: ["p5"],
+        },
+        null,
+      );
+
+      expect(res.remainingCount).toBe(3);
+      const alive = res.match?.players?.filter(
+        (p) => p.status !== PlayerStatus.ELIMINATED,
+      );
+      expect(alive?.map((p) => p.id)).toEqual(["p1", "p2", "p3"]);
+      expect(res.match?.players?.find((p) => p.id === "p4")?.status).toBe(
+        PlayerStatus.ELIMINATED,
+      );
+      expect(res.match?.players?.find((p) => p.id === "p5")?.status).toBe(
+        PlayerStatus.ELIMINATED,
+      );
+    });
+
+    it("applyRoundEndedState preserves isEliminated and eliminationReason when userId is absent from updatedMatch.players", () => {
+      const state = makeState({
+        userId: "p_local",
+        isEliminated: true,
+        eliminationReason: "WRONG_ANSWER",
+        match: {
+          id: "m1",
+          status: MatchStatus.ROUND_ACTIVE,
+          currentRoundNo: 2,
+          players: [], // empty roster snapshot
+          currentQuestion: null,
+          roundEndTime: null,
+        },
+      });
+
+      const res = applyRoundEndedState(
+        state,
+        {
+          matchId: "m1",
+          roundNo: 2,
+          correctAnswer: "B",
+          survivingPlayerIds: ["p1"],
+          eliminatedPlayerIds: [],
+        },
+        null,
+      );
+
+      expect(res.isEliminated).toBe(true);
+      expect(res.eliminationReason).toBe("WRONG_ANSWER");
+    });
+
+    it("applyRoundEndedState marks isEliminated as true when eliminatedPlayerIds contains userId even with empty roster", () => {
+      const state = makeState({
+        userId: "p_local",
+        isEliminated: false,
+        eliminationReason: null,
+        match: {
+          id: "m1",
+          status: MatchStatus.ROUND_ACTIVE,
+          currentRoundNo: 2,
+          players: [], // empty roster snapshot
+          currentQuestion: null,
+          roundEndTime: null,
+        },
+      });
+
+      const res = applyRoundEndedState(
+        state,
+        {
+          matchId: "m1",
+          roundNo: 2,
+          correctAnswer: "B",
+          survivingPlayerIds: [],
+          eliminatedPlayerIds: ["p_local"],
+        },
+        null,
+      );
+
+      expect(res.isEliminated).toBe(true);
     });
   });
 });

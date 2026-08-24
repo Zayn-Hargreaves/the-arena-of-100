@@ -1,5 +1,5 @@
 // Unit tests for AnswerPanel (extracted from game page.tsx).
-// Validates: read-only spectator/eliminated branch vs interactive tiles,
+// Validates: practice indicator badge for spectator/eliminated mode,
 // option→letter (A/B/C/D) mapping, onSelect wiring, and disabled state.
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
@@ -26,6 +26,10 @@ describe("AnswerPanel", () => {
     ["A", "B", "C", "D"].forEach((l) =>
       expect(screen.getByText(l)).toBeInTheDocument(),
     );
+    // Practice badge is not rendered for active player
+    expect(
+      screen.queryByTestId("spectator-practice-badge"),
+    ).not.toBeInTheDocument();
   });
 
   it("calls onSelect with the letter code when a tile is clicked", () => {
@@ -60,7 +64,7 @@ describe("AnswerPanel", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it("renders the read-only spectator block (no tiles) for a spectator", () => {
+  it("renders practice badge and answer tiles for a drop-in spectator", () => {
     const onSelect = vi.fn();
     render(
       <AnswerPanel
@@ -72,24 +76,30 @@ describe("AnswerPanel", () => {
         disabled={false}
       />,
     );
-    // Spectator copy (dropInSpectator namespace keys) is shown...
-    expect(screen.getByText("bannerTitle")).toBeInTheDocument();
-    // ...and the answer options are NOT rendered.
-    expect(screen.queryByText("Red")).not.toBeInTheDocument();
+    // Practice badge is shown
+    expect(screen.getByTestId("spectator-practice-badge")).toBeInTheDocument();
+    expect(screen.getByText("spectatorMode.practiceHint")).toBeInTheDocument();
+    // Answer options ARE rendered
+    OPTIONS.forEach((o) => expect(screen.getByText(o)).toBeInTheDocument());
+    // Clicking tile triggers onSelect for local practice prediction
+    fireEvent.click(screen.getByText("Blue"));
+    expect(onSelect).toHaveBeenCalledWith("C");
   });
 
-  it("renders the eliminated read-only block with spectatorMode copy", () => {
+  it("renders practice badge and answer tiles for an eliminated player", () => {
+    const onSelect = vi.fn();
     render(
       <AnswerPanel
         isEliminated={true}
         isSpectator={false}
         options={OPTIONS}
         getTileVariant={() => "default"}
-        onSelect={vi.fn()}
+        onSelect={onSelect}
         disabled={false}
       />,
     );
-    expect(screen.getByText("spectatorMode.title")).toBeInTheDocument();
-    expect(screen.queryByText("Blue")).not.toBeInTheDocument();
+    expect(screen.getByTestId("spectator-practice-badge")).toBeInTheDocument();
+    expect(screen.getByText("spectatorMode.practiceHint")).toBeInTheDocument();
+    OPTIONS.forEach((o) => expect(screen.getByText(o)).toBeInTheDocument());
   });
 });

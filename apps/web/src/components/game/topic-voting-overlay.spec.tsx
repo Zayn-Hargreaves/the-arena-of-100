@@ -31,11 +31,22 @@ describe("TopicVotingOverlay", () => {
     vi.useRealTimers();
   });
 
-  it("renders candidates and voting header", () => {
+  it("renders candidates, percentages, and top danger indicators", () => {
     render(<TopicVotingOverlay />);
-    expect(screen.getByText("SCIENCE")).toBeInTheDocument();
-    expect(screen.getByText("HISTORY")).toBeInTheDocument();
-    expect(screen.getByText("TECH")).toBeInTheDocument();
+    const scienceBtn = screen.getByRole("button", { name: /SCIENCE/i });
+    const historyBtn = screen.getByRole("button", { name: /HISTORY/i });
+    const techBtn = screen.getByRole("button", { name: /TECH/i });
+
+    expect(scienceBtn).toBeInTheDocument();
+    expect(historyBtn).toBeInTheDocument();
+    expect(techBtn).toBeInTheDocument();
+
+    // SCIENCE has 2/3 votes = 67%, HISTORY has 1/3 = 33%
+    expect(scienceBtn).toHaveTextContent("(67%)");
+    expect(scienceBtn).toHaveTextContent("topDanger");
+    expect(historyBtn).toHaveTextContent("(33%)");
+    expect(historyBtn).toHaveTextContent("topDanger");
+    expect(techBtn).not.toHaveTextContent("topDanger");
   });
 
   it("calls voteBanTopic when a topic card is clicked", () => {

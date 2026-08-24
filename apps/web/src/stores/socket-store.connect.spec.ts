@@ -6,7 +6,10 @@ import {
   MatchStatus,
   type SnapshotPayload,
   type VoteBanTopicPayload,
+  type CardEffectEvent,
 } from "@arena/shared";
+import { INITIAL_CARD_STATE } from "./socket-store.types";
+import { hasSecondChancePermission } from "./socket-store.helpers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const waitForSocketAckMock = vi.hoisted(() => vi.fn());
@@ -410,6 +413,196 @@ describe("socket-store connect heartbeat ownership", () => {
       ClientEvent.SUBMIT_ANSWER,
       expect.objectContaining({ submissionId }),
     );
+  });
+
+  it("rejects duplicate submission and does not emit when SECOND_CHANCE targetRoundNo does not match submission round", () => {
+    const emit = vi.fn();
+    const scEffect: CardEffectEvent = {
+      matchId: "m1",
+      roundNo: 1,
+      targetRoundNo: 2,
+      cardId: "TN-6",
+      offerSeqNo: 1,
+      playedByPlayerId: "p1",
+      targetPlayerIds: ["p1"],
+      effect: { kind: "SECOND_CHANCE" },
+      resolution: "MUTATION",
+      serverTimestamp: 1000,
+      expiresAtServer: null,
+      remainingMs: null,
+    };
+    useSocketStore.setState({
+      userId: "p1",
+      socket: {
+        connected: true,
+        emit,
+      } as unknown as ReturnType<typeof useSocketStore.getState>["socket"],
+      lastAnswerResult: {
+        matchId: "m1",
+        roundNo: 1,
+        submissionId: "s1",
+        isCorrect: false,
+        responseTimeMs: 1000,
+      },
+      pendingAnswer: null,
+      cardState: {
+        ...INITIAL_CARD_STATE,
+        activeRoundEffects: [scEffect],
+        lastResolvedEffect: scEffect,
+      },
+    });
+
+    const submissionId = useSocketStore.getState().submitAnswer("m1", 1, "B");
+    expect(submissionId).toBeNull();
+    expect(emit).not.toHaveBeenCalled();
+    expect(useSocketStore.getState().pendingAnswer).toBeNull();
+  });
+
+  it("allows retry submission when local user is in targetPlayerIds of SECOND_CHANCE effect", () => {
+    const emit = vi.fn();
+    const scEffect: CardEffectEvent = {
+      matchId: "m1",
+      roundNo: 1,
+      targetRoundNo: 1,
+      cardId: "TN-6",
+      offerSeqNo: 1,
+      playedByPlayerId: "other-player",
+      targetPlayerIds: ["p1"],
+      effect: { kind: "SECOND_CHANCE" },
+      resolution: "MUTATION",
+      serverTimestamp: 1000,
+      expiresAtServer: null,
+      remainingMs: null,
+    };
+    useSocketStore.setState({
+      userId: "p1",
+      socket: {
+        connected: true,
+        emit,
+      } as unknown as ReturnType<typeof useSocketStore.getState>["socket"],
+      lastAnswerResult: {
+        matchId: "m1",
+        roundNo: 1,
+        submissionId: "s1",
+        isCorrect: false,
+        responseTimeMs: 1000,
+      },
+      cardState: {
+        ...INITIAL_CARD_STATE,
+        activeRoundEffects: [scEffect],
+      },
+    });
+
+    const submissionId = useSocketStore.getState().submitAnswer("m1", 1, "C");
+    expect(submissionId).toBeDefined();
+    expect(emit).toHaveBeenCalledWith(
+      ClientEvent.SUBMIT_ANSWER,
+      expect.objectContaining({
+        matchId: "m1",
+        roundNo: 1,
+        answer: "C",
+      }),
+    );
+  });
+
+  describe("hasSecondChancePermission", () => {
+    const baseEffect: CardEffectEvent = {
+      matchId: "m1",
+      roundNo: 2,
+      targetRoundNo: 2,
+      cardId: "TN-6",
+      offerSeqNo: 1,
+      playedByPlayerId: "p1",
+      targetPlayerIds: ["p1"],
+      effect: { kind: "SECOND_CHANCE" },
+      resolution: "MUTATION",
+      serverTimestamp: 1000,
+      expiresAtServer: null,
+      remainingMs: null,
+    };
+
+    it("returns true when userId matches playedByPlayerId in activeRoundEffects", () => {
+      const cardState = {
+        activeRoundEffects: [
+          { ...baseEffect, playedByPlayerId: "user-1", targetPlayerIds: [] },
+        ],
+        lastResolvedEffect: null,
+      };
+      expect(hasSecondChancePermission(cardState, "user-1", 2)).toBe(true);
+    });
+
+    it("returns true when userId matches targetPlayerIds in activeRoundEffects", () => {
+      const cardState = {
+        activeRoundEffects: [
+          {
+            ...baseEffect,
+            playedByPlayerId: "other",
+            targetPlayerIds: ["user-1"],
+          },
+        ],
+        lastResolvedEffect: null,
+      };
+      expect(hasSecondChancePermission(cardState, "user-1", 2)).toBe(true);
+    });
+
+    it("returns true when effect is in lastResolvedEffect for current round", () => {
+      const cardState = {
+        activeRoundEffects: [],
+        lastResolvedEffect: { ...baseEffect, playedByPlayerId: "user-1" },
+      };
+      expect(hasSecondChancePermission(cardState, "user-1", 2)).toBe(true);
+    });
+
+    it("falls back to roundNo when targetRoundNo is absent", () => {
+      const effectWithoutTargetRound: CardEffectEvent = {
+        ...baseEffect,
+        targetRoundNo: undefined,
+        roundNo: 3,
+        playedByPlayerId: "user-1",
+      };
+      const cardState = {
+        activeRoundEffects: [effectWithoutTargetRound],
+        lastResolvedEffect: null,
+      };
+      expect(hasSecondChancePermission(cardState, "user-1", 3)).toBe(true);
+      expect(hasSecondChancePermission(cardState, "user-1", 2)).toBe(false);
+    });
+
+    it("returns false when round does not match", () => {
+      const cardState = {
+        activeRoundEffects: [
+          { ...baseEffect, targetRoundNo: 3, playedByPlayerId: "user-1" },
+        ],
+        lastResolvedEffect: null,
+      };
+      expect(hasSecondChancePermission(cardState, "user-1", 2)).toBe(false);
+    });
+
+    it("returns false when user is not card player and not in targets", () => {
+      const cardState = {
+        activeRoundEffects: [
+          {
+            ...baseEffect,
+            playedByPlayerId: "user-2",
+            targetPlayerIds: ["user-3"],
+          },
+        ],
+        lastResolvedEffect: null,
+      };
+      expect(hasSecondChancePermission(cardState, "user-1", 2)).toBe(false);
+    });
+
+    it("returns false for null/undefined inputs", () => {
+      expect(hasSecondChancePermission(null, "user-1", 2)).toBe(false);
+      expect(hasSecondChancePermission(undefined, "user-1", 2)).toBe(false);
+      expect(
+        hasSecondChancePermission(
+          { activeRoundEffects: [baseEffect], lastResolvedEffect: null },
+          null,
+          2,
+        ),
+      ).toBe(false);
+    });
   });
 
   it("optimistically hydrates SNAPSHOT UI while preserving lastSeenSeqNo for pending delta", async () => {
@@ -950,6 +1143,7 @@ describe("socket-store connect heartbeat ownership", () => {
           playersInQueue: 0,
           matchedRoomCode: null,
           matchedRoomId: null,
+          matchedMatchId: null,
         },
       });
 

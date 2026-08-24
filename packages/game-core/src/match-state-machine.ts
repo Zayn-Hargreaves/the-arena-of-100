@@ -117,6 +117,8 @@ export class MatchStateMachine {
   // Incremental on `playCard` / `onEndRound`; rebuilt on
   // `rehydrateCardStateFromEventLog`. O(1) reads.
   private readonly aoeCountByRound: Map<number, number> = new Map();
+  // Per-round second chance active players.
+  private readonly secondChancePlayers: Set<string> = new Set();
 
   constructor(matchId: string, roomId: string, players: PlayerInfo[]) {
     this.state = {
@@ -292,6 +294,7 @@ export class MatchStateMachine {
       options: question.options,
       difficulty: question.difficulty ?? "MEDIUM", // Default to MEDIUM if not provided
     };
+    this.secondChancePlayers.clear();
     this.currentRound = {
       matchId: this.state.id,
       roundNo: this.state.currentRoundNo,
@@ -326,7 +329,7 @@ export class MatchStateMachine {
     return this.currentRound;
   }
 
-  // Submit Answer (Command Pattern)
+  // Submit Player Answer
   submitAnswer(
     playerId: string,
     answer: string,
@@ -338,6 +341,7 @@ export class MatchStateMachine {
     }
 
     const existingAnswer = this.currentRound.answers.get(playerId);
+    let isSecondChanceRetry = false;
     if (existingAnswer) {
       if (submissionId && existingAnswer.submissionId === submissionId) {
         // Return a shallow copy so the caller cannot mutate the
@@ -345,7 +349,11 @@ export class MatchStateMachine {
         // the defensive-copy pattern used by `getCurrentRound()`.
         return { ...existingAnswer };
       }
-      throw new RoomError(ErrorCode.ALREADY_ANSWERED);
+      if (this.secondChancePlayers.has(playerId)) {
+        isSecondChanceRetry = true;
+      } else {
+        throw new RoomError(ErrorCode.ALREADY_ANSWERED);
+      }
     }
 
     if (this.currentRound.status !== "ACTIVE") {
@@ -359,6 +367,14 @@ export class MatchStateMachine {
     const player = this.state.players.get(playerId);
     if (player?.status !== PlayerStatus.ACTIVE) {
       throw new RoomError(ErrorCode.PLAYER_NOT_IN_ROOM);
+    }
+
+    if (isSecondChanceRetry) {
+      this.secondChancePlayers.delete(playerId);
+      this.logEvent("SECOND_CHANCE_CONSUMED", {
+        playerId,
+        roundNo: this.currentRound.roundNo,
+      });
     }
 
     const roundWithAnswer = this.currentRound as RoundRuntimeState & {
@@ -1072,6 +1088,14 @@ export class MatchStateMachine {
     expiresAtServer: number | null;
     remainingMs: number | null;
   } {
+    if (
+      this.state.status !== MatchStatus.ROUND_ACTIVE ||
+      !this.currentRound ||
+      this.currentRound.status !== "ACTIVE"
+    ) {
+      throw new RoomError(ErrorCode.ROUND_NOT_ACTIVE);
+    }
+
     const isTemporary = isTemporaryEffectKind(resolvedEffect.kind);
     const expiresAtServer = isTemporary
       ? serverNow + getDurationMs(resolvedEffect)
@@ -1131,12 +1155,20 @@ export class MatchStateMachine {
       this.activeEffects.set(playedByPlayerId, list);
     }
 
+    if (resolvedEffect.kind === "SECOND_CHANCE") {
+      this.secondChancePlayers.add(playedByPlayerId);
+      this.logEvent("SECOND_CHANCE_GRANTED", {
+        playerId: playedByPlayerId,
+        roundNo: this.currentRound.roundNo,
+      });
+    }
+
     // Maintain the per-round AOE counter (incremental, O(1)).
     // Single-target resolutions don't count toward the AOE cap;
     // only resolutions with `targetPlayerIds.length > 1` do,
     // matching the spec's `AOE_CAP_PER_ROUND` rule (spec §3.3).
     if (targetPlayerIds.length > 1) {
-      const roundNo = this.currentRound?.roundNo ?? 0;
+      const roundNo = this.currentRound.roundNo;
       const current = this.aoeCountByRound.get(roundNo) ?? 0;
       this.aoeCountByRound.set(roundNo, current + 1);
     }
@@ -1261,6 +1293,7 @@ export class MatchStateMachine {
     this.playerPlayedCards.clear();
     this.playerPickedCards.clear();
     this.aoeCountByRound.clear();
+    this.secondChancePlayers.clear();
     for (const e of this.eventLog) {
       this.rehydrateEvent(e);
     }
@@ -1273,6 +1306,19 @@ export class MatchStateMachine {
   }): void {
     const payload = (e.payload ?? {}) as Record<string, unknown>;
     switch (e.type) {
+      case "ROUND_STARTED":
+        this.secondChancePlayers.clear();
+        break;
+      case "SECOND_CHANCE_GRANTED":
+        if (payload.playerId) {
+          this.secondChancePlayers.add(payload.playerId as string);
+        }
+        break;
+      case "SECOND_CHANCE_CONSUMED":
+        if (payload.playerId) {
+          this.secondChancePlayers.delete(payload.playerId as string);
+        }
+        break;
       case "CLASS_ASSIGNED":
         this.rehydrateClassAssigned(payload);
         break;

@@ -2,8 +2,8 @@
 
 import React from "react";
 import { useTranslations } from "next-intl";
-import { Users } from "lucide-react";
-import { Timer } from "./timer";
+import { MiniGlyph } from "@/components/ui/mini-glyph";
+import { Timer, type TimeDelta } from "./timer";
 
 export interface GameStateRibbonProps {
   roundNo: number;
@@ -11,6 +11,7 @@ export interface GameStateRibbonProps {
   roundDuration: number;
   livePlayerCount: number;
   maxPlayers: number;
+  timeDelta?: TimeDelta | null;
 }
 
 /**
@@ -23,6 +24,7 @@ export const GameStateRibbon: React.FC<GameStateRibbonProps> = ({
   roundDuration,
   livePlayerCount,
   maxPlayers,
+  timeDelta = null,
 }) => {
   const t = useTranslations("Game");
 
@@ -58,13 +60,17 @@ export const GameStateRibbon: React.FC<GameStateRibbonProps> = ({
           timeLeft={timeLeft}
           size={72}
           height={72}
+          timeDelta={timeDelta}
         />
 
         <div className="h-10 w-[3px] bg-candy-ink/10" />
 
         <div className="text-right">
           <span className="text-[10px] text-candy-ink/65 uppercase font-display font-black tracking-wider flex items-center gap-1 justify-end">
-            <Users className="w-3.5 h-3.5 text-candy-blue stroke-[2.5]" />
+            <MiniGlyph
+              variant="players"
+              className="w-3.5 h-3.5 text-candy-blue stroke-[2.5]"
+            />
             {t("remainingLabel")}
           </span>
           <span className="font-display font-black text-3xl text-candy-blue">

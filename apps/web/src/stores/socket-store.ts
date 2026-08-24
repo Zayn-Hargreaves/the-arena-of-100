@@ -29,14 +29,24 @@ import {
   type TopicVotingFinishedPayload,
   type MatchmakingStatusPayload,
   type MatchmakingMatchedPayload,
+  type CardResolvedBatchEvent,
+  type CardId,
   ErrorCode,
 } from "@arena/shared";
-import { API_URL } from "@/lib/api";
+import { io } from "socket.io-client";
+import { API_URL, apiFetch } from "@/lib/api";
+import { parseErrorPayload } from "@/lib/api-client";
 import { generateId } from "@/lib/id";
-import type { AuthResponse, SocketState } from "./socket-store.types";
+import {
+  createInitialCardState,
+  type AuthResponse,
+  type CardOfferState,
+  type SocketState,
+} from "./socket-store.types";
 import {
   applyClearedTerminationState,
   emitIfConnected,
+  hasSecondChancePermission,
   requireSocket,
   waitForSocketAck,
 } from "./socket-store.helpers";
@@ -67,6 +77,11 @@ import {
   applyTopicVotingFinishedState,
   applyMatchmakingStatusState,
   applyMatchmakingMatchedState,
+  applyClassAssignedState,
+  applyCardOfferState,
+  applyCardPickedState,
+  applyCardResolvedState,
+  applyConsumeSecondChance,
 } from "./socket-store.updaters";
 
 interface PendingTopicVoteCommand {
@@ -75,11 +90,31 @@ interface PendingTopicVoteCommand {
   topic: string;
 }
 
+type PendingCardCommand =
+  | {
+      type: "PICK";
+      commandId: string;
+      matchId: string;
+      cardId: CardId;
+      offerSeqNo: number;
+      addedToHand: boolean;
+      previousOffer: CardOfferState | null;
+    }
+  | {
+      type: "PLAY";
+      commandId: string;
+      matchId: string;
+      cardId: CardId;
+      offerSeqNo: number;
+      addedToPlayed: boolean;
+    };
+
 const pendingTopicVoteCommandsByMatch = new Map<
   string,
   PendingTopicVoteCommand[]
 >();
 const confirmedTopicVoteBaselineByMatch = new Map<string, string | null>();
+const pendingCardCommands = new Map<string, PendingCardCommand>();
 
 function clearTopicVoteState(matchId?: string) {
   if (matchId) {
@@ -88,6 +123,18 @@ function clearTopicVoteState(matchId?: string) {
   } else {
     pendingTopicVoteCommandsByMatch.clear();
     confirmedTopicVoteBaselineByMatch.clear();
+  }
+}
+
+function clearCardCommandState(matchId?: string) {
+  if (matchId) {
+    for (const [cmdId, cmd] of pendingCardCommands.entries()) {
+      if (cmd.matchId === matchId) {
+        pendingCardCommands.delete(cmdId);
+      }
+    }
+  } else {
+    pendingCardCommands.clear();
   }
 }
 
@@ -119,7 +166,9 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     playersInQueue: 0,
     matchedRoomCode: null,
     matchedRoomId: null,
+    matchedMatchId: null,
   },
+  cardState: createInitialCardState(),
   lastAnswerResult: null,
   pendingAnswer: null,
 
@@ -135,19 +184,19 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   // Connect to WebSocket
   connect: async () => {
     const state = get();
-    // socket.connected only proves the WS handshake succeeded, not that
-    // authentication completed. On auth failure the socket can be left
-    // in a connected-but-unauthenticated state, so require the auth
-    // flag as well — otherwise AppShellLayout's retry logic (which only
-    // checks !isConnected) would be permanently bypassed.
+    // Require both transport + auth so a connected-but-unauthenticated
+    // socket does not short-circuit and leave callers without a ready session.
     if (state.socket?.connected && state.isAuthenticated) return;
-
-    const { io } = await import("socket.io-client");
+    if (state.socket) {
+      state.socket.disconnect();
+    }
 
     const newSocket = io(`${API_URL}/game`, {
       transports: ["websocket", "polling"],
       autoConnect: true,
     });
+
+    set({ socket: newSocket });
 
     // Plan D reconnect: capture match/lastSeenSeqNo across the
     // auth handshake, but defer the REQUEST_SNAPSHOT call until the
@@ -182,26 +231,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       const stateToken = get().accessToken;
       if (stateToken) {
         newSocket.emit(ClientEvent.AUTHENTICATE, { token: stateToken });
-        return;
       }
-
-      void get()
-        .refreshAccessToken()
-        .then((token) => {
-          if (!token) {
-            set({ error: "Failed to obtain access token" });
-            return;
-          }
-          newSocket.emit(ClientEvent.AUTHENTICATE, { token });
-        })
-        .catch((err: unknown) => {
-          const message =
-            err instanceof Error
-              ? err.message
-              : "Failed to refresh access token";
-          set({ error: message });
-          console.error("❌ Token refresh error:", err);
-        });
     });
 
     newSocket.on("disconnect", () => {
@@ -361,6 +391,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
     newSocket.on(ServerEvent.MATCH_STARTING, (data) => {
       if (get().socket !== newSocket) return;
+      clearCardCommandState();
       set((state) => applyMatchStartingState(state, data));
       console.log("⚔️ Match starting:", data);
     });
@@ -475,6 +506,103 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       console.log("✅ Answer result:", data);
     });
 
+    // Phase 2: Class & Card Event Listeners
+    newSocket.on(ServerEvent.CLASS_ASSIGNED, (data) => {
+      if (get().socket !== newSocket) return;
+      set((state) => applyClassAssignedState(state, data));
+      console.log("🛡️ Class assigned:", data);
+    });
+
+    newSocket.on(ServerEvent.CARD_OFFER, (data) => {
+      if (get().socket !== newSocket) return;
+      set((state) => applyCardOfferState(state, data));
+      console.log("🃏 Card offer received:", data);
+    });
+
+    newSocket.on(ServerEvent.CARD_PICKED, (data) => {
+      if (get().socket !== newSocket) return;
+      if (data.playerId === get().userId) {
+        if (data.commandId && pendingCardCommands.has(data.commandId)) {
+          pendingCardCommands.delete(data.commandId);
+        } else {
+          for (const [cmdId, cmd] of pendingCardCommands.entries()) {
+            if (
+              cmd.type === "PICK" &&
+              cmd.matchId === data.matchId &&
+              cmd.cardId === data.selectedCardId
+            ) {
+              pendingCardCommands.delete(cmdId);
+              break;
+            }
+          }
+        }
+      }
+      set((state) => applyCardPickedState(state, data));
+      console.log("🎴 Card picked:", data);
+    });
+
+    newSocket.on(ServerEvent.CARD_RESOLVED, (data) => {
+      if (get().socket !== newSocket) return;
+      if (data.playedByPlayerId === get().userId) {
+        if (data.commandId && pendingCardCommands.has(data.commandId)) {
+          pendingCardCommands.delete(data.commandId);
+        } else {
+          for (const [cmdId, cmd] of pendingCardCommands.entries()) {
+            if (
+              cmd.type === "PLAY" &&
+              cmd.matchId === data.matchId &&
+              cmd.cardId === data.cardId
+            ) {
+              pendingCardCommands.delete(cmdId);
+              break;
+            }
+          }
+        }
+      }
+      set((state) => applyCardResolvedState(state, data));
+      console.log("✨ Card resolved:", data);
+    });
+
+    newSocket.on(
+      ServerEvent.CARD_RESOLVED_BATCH,
+      (data: CardResolvedBatchEvent) => {
+        if (get().socket !== newSocket) return;
+        if (data.effects && Array.isArray(data.effects)) {
+          const currentUserId = get().userId;
+          for (const effect of data.effects) {
+            if (effect.playedByPlayerId === currentUserId) {
+              if (
+                effect.commandId &&
+                pendingCardCommands.has(effect.commandId)
+              ) {
+                pendingCardCommands.delete(effect.commandId);
+              } else {
+                for (const [cmdId, cmd] of pendingCardCommands.entries()) {
+                  if (
+                    cmd.type === "PLAY" &&
+                    cmd.matchId === effect.matchId &&
+                    cmd.cardId === effect.cardId
+                  ) {
+                    pendingCardCommands.delete(cmdId);
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          set((state) => {
+            let currentState = state;
+            for (const effect of data.effects) {
+              const partial = applyCardResolvedState(currentState, effect);
+              currentState = { ...currentState, ...partial };
+            }
+            return currentState;
+          });
+        }
+        console.log("✨ Card resolved batch:", data);
+      },
+    );
+
     // Admin kill-switch: server has force-terminated this room (and any
     // active match in it). Clear local room/match state and surface a
     // termination flag so the lobby page can redirect + toast. We do NOT
@@ -484,6 +612,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     // the spectator/ELIMINATED UI would persist on reconnect/join.
     newSocket.on(ServerEvent.ROOM_TERMINATED, (data: RoomTerminatedPayload) => {
       if (get().socket !== newSocket) return;
+      clearCardCommandState();
       set(applyRoomTerminatedState(data));
       console.warn("🛑 Room terminated by server:", data);
     });
@@ -498,6 +627,54 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         submissionId === pendingAnswer.submissionId
       ) {
         set({ pendingAnswer: null });
+      }
+      if (
+        (data.failedEvent === ClientEvent.CARD_PICK ||
+          data.failedEvent === ClientEvent.CARD_PLAY) &&
+        data.commandId
+      ) {
+        const pending = pendingCardCommands.get(data.commandId);
+        if (pending) {
+          pendingCardCommands.delete(data.commandId);
+          const currentMatchId = get().room?.currentMatchId ?? get().match?.id;
+          if (currentMatchId === pending.matchId) {
+            if (pending.type === "PICK") {
+              set((state) => {
+                const nextOfferSeqNo = {
+                  ...(state.cardState.offerSeqNoByCardId ?? {}),
+                };
+                delete nextOfferSeqNo[pending.cardId];
+                return {
+                  cardState: {
+                    ...state.cardState,
+                    hand: pending.addedToHand
+                      ? state.cardState.hand.filter(
+                          (id) => id !== pending.cardId,
+                        )
+                      : state.cardState.hand,
+                    offerSeqNoByCardId: nextOfferSeqNo,
+                    currentOffer:
+                      state.cardState.currentOffer ??
+                      (pending.previousOffer?.matchId === currentMatchId
+                        ? pending.previousOffer
+                        : null),
+                  },
+                };
+              });
+            } else if (pending.type === "PLAY") {
+              set((state) => ({
+                cardState: {
+                  ...state.cardState,
+                  playedCardIds: pending.addedToPlayed
+                    ? state.cardState.playedCardIds.filter(
+                        (id) => id !== pending.cardId,
+                      )
+                    : state.cardState.playedCardIds,
+                },
+              }));
+            }
+          }
+        }
       }
       if (data.failedEvent === ClientEvent.VOTE_BAN_TOPIC && data.commandId) {
         let failedCmd: PendingTopicVoteCommand | null = null;
@@ -562,8 +739,30 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       console.error("❌ Error:", data.message);
     });
 
-    set({ socket: newSocket });
+    const stateToken = get().accessToken;
+    let effectiveToken = stateToken;
+    if (!effectiveToken) {
+      try {
+        effectiveToken = await get().refreshAccessToken();
+      } catch {
+        effectiveToken = null;
+      }
+    }
 
+    if (!effectiveToken) {
+      newSocket.disconnect();
+      if (get().socket === newSocket) {
+        set({
+          socket: null,
+          isConnected: false,
+          isAuthenticated: false,
+          error: "Authentication required",
+        });
+      }
+      throw new Error("Authentication required");
+    }
+
+    newSocket.emit(ClientEvent.AUTHENTICATE, { token: effectiveToken });
     try {
       await authPromise;
     } catch (error) {
@@ -610,6 +809,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     }
     if (socket) {
       clearTopicVoteState();
+      clearCardCommandState();
       socket.disconnect();
       set((state) => ({
         socket: null,
@@ -636,6 +836,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
           playersInQueue: 0,
           matchedRoomCode: state.matchmaking.matchedRoomCode,
           matchedRoomId: state.matchmaking.matchedRoomId,
+          matchedMatchId: state.matchmaking.matchedMatchId,
         },
         // Plan D — reset the delta cursor alongside match/room so a
         // stale seqNo from the previous session cannot qualify for
@@ -649,9 +850,8 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
   refreshAccessToken: async () => {
     try {
-      const response = await fetch(`${API_URL}/auth/refresh`, {
+      const response = await apiFetch("/api/v1/auth/refresh", {
         method: "POST",
-        credentials: "include",
       });
 
       if (!response.ok) {
@@ -665,7 +865,14 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         return null;
       }
 
-      const data = (await response.json()) as AuthResponse;
+      const raw = (await response.json()) as {
+        data?: AuthResponse;
+      } & AuthResponse;
+      const data = raw.data || raw;
+
+      if (!data.user) {
+        throw new Error("Invalid authentication response");
+      }
 
       set({
         accessToken: data.accessToken,
@@ -693,30 +900,71 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
     const AUTH_TIMEOUT_MS = 5000;
 
+    let guestSecret: string | null = null;
+    let storedAvatar: string | null = null;
+    if (typeof window !== "undefined") {
+      try {
+        guestSecret = localStorage.getItem(`guestSecret:${nickname.trim()}`);
+        storedAvatar = localStorage.getItem("avatarSeed");
+      } catch {
+        // ignore storage error
+      }
+    }
+
     let token: string;
     try {
-      const response = await fetch(`${API_URL}/auth/guest`, {
+      const response = await apiFetch("/api/v1/auth/guest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ username: nickname }),
+        body: JSON.stringify({
+          username: nickname,
+          guestSecret: guestSecret || undefined,
+          avatar: storedAvatar || undefined,
+        }),
       });
 
       if (!response.ok) {
         let errorMessage = "Authentication failed";
         try {
-          const errorData = (await response.json()) as { message?: string };
-          if (errorData.message) errorMessage = errorData.message;
+          const errorData = await response.json();
+          const parsed = parseErrorPayload(errorData);
+          if (parsed) {
+            errorMessage = parsed;
+          }
         } catch {
           // Ignore JSON parse failure
         }
         throw new Error(errorMessage);
       }
 
-      const data = (await response.json()) as AuthResponse;
+      const raw = (await response.json()) as {
+        data?: AuthResponse;
+      } & AuthResponse;
+      const data = raw.data || raw;
+
+      if (!data.user) {
+        throw new Error("Invalid authentication response");
+      }
+
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem("userId", data.user.id);
+          localStorage.setItem("callsign", data.user.username);
+          if (data.guestSecret) {
+            localStorage.setItem(
+              `guestSecret:${data.user.username}`,
+              data.guestSecret,
+            );
+          }
+        } catch {
+          // ignore storage error
+        }
+      }
 
       set({
         accessToken: data.accessToken,
+        userId: data.user.id,
+        username: data.user.username,
         userRole: data.user.role,
       });
       token = data.accessToken;
@@ -813,7 +1061,19 @@ export const useSocketStore = create<SocketState>((set, get) => ({
   // Leave Room
   leaveRoom: (roomId: string) => {
     const { socket } = get();
+    clearCardCommandState();
     emitIfConnected(socket, ClientEvent.LEAVE_ROOM, { roomId });
+    set({
+      room: null,
+      match: null,
+      cardState: createInitialCardState(),
+      topicVoting: null,
+      lastAnswerResult: null,
+      pendingAnswer: null,
+      remainingCount: null,
+      isEliminated: false,
+      eliminationReason: null,
+    });
   },
 
   // Start Match
@@ -822,13 +1082,24 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     emitIfConnected(socket, ClientEvent.START_MATCH, { roomId });
   },
 
-  // Matchmaking
   joinMatchmaking: (category?: string) => {
     const socket = get().socket;
     if (!socket?.connected) {
       set({ error: "Socket is not connected" });
       return;
     }
+    clearCardCommandState();
+    set({
+      room: null,
+      match: null,
+      cardState: createInitialCardState(),
+      topicVoting: null,
+      lastAnswerResult: null,
+      pendingAnswer: null,
+      remainingCount: null,
+      isEliminated: false,
+      eliminationReason: null,
+    });
     emitIfConnected(socket, ClientEvent.JOIN_MATCHMAKING, {
       category: category && category !== "ALL" ? category : undefined,
     });
@@ -840,6 +1111,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       emitIfConnected(socket, ClientEvent.LEAVE_MATCHMAKING, {});
     }
     set((state) => ({
+      cardState: createInitialCardState(),
       matchmaking: {
         ...state.matchmaking,
         isQueued: false,
@@ -849,6 +1121,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         playersInQueue: 0,
         matchedRoomCode: null,
         matchedRoomId: null,
+        matchedMatchId: null,
       },
     }));
   },
@@ -859,6 +1132,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         ...state.matchmaking,
         matchedRoomCode: null,
         matchedRoomId: null,
+        matchedMatchId: null,
       },
     }));
   },
@@ -909,20 +1183,147 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     });
   },
 
+  // Phase 2: Card Actions
+  pickCard: (cardId, offerSeqNo) => {
+    const socket = get().socket;
+    const matchId = get().room?.currentMatchId ?? get().match?.id;
+    if (!socket || !matchId) return;
+
+    const commandId = generateId();
+    const currentCardState = get().cardState;
+    const wasAlreadyInHand = currentCardState.hand.includes(cardId);
+    const previousOffer = currentCardState.currentOffer;
+
+    pendingCardCommands.set(commandId, {
+      type: "PICK",
+      commandId,
+      matchId,
+      cardId,
+      offerSeqNo,
+      addedToHand: !wasAlreadyInHand,
+      previousOffer,
+    });
+
+    // Optimistically dismiss offer and put in hand
+    set((state) => ({
+      cardState: {
+        ...state.cardState,
+        hand: state.cardState.hand.includes(cardId)
+          ? state.cardState.hand
+          : [...state.cardState.hand, cardId],
+        offerSeqNoByCardId: {
+          ...(state.cardState.offerSeqNoByCardId ?? {}),
+          [cardId]: offerSeqNo,
+        },
+        currentOffer: null,
+      },
+    }));
+
+    emitIfConnected(socket, ClientEvent.CARD_PICK, {
+      matchId,
+      cardId,
+      offerSeqNo,
+      commandId,
+    });
+  },
+
+  playCard: (cardId, offerSeqNo, targetPlayerId) => {
+    if (!offerSeqNo || offerSeqNo <= 0) return;
+    const socket = get().socket;
+    const matchId = get().room?.currentMatchId ?? get().match?.id;
+    if (!socket || !matchId) return;
+
+    const commandId = generateId();
+    const currentCardState = get().cardState;
+    const wasAlreadyInPlayed = currentCardState.playedCardIds.includes(cardId);
+
+    pendingCardCommands.set(commandId, {
+      type: "PLAY",
+      commandId,
+      matchId,
+      cardId,
+      offerSeqNo,
+      addedToPlayed: !wasAlreadyInPlayed,
+    });
+
+    // Optimistically mark as played
+    set((state) => ({
+      cardState: {
+        ...state.cardState,
+        playedCardIds: state.cardState.playedCardIds.includes(cardId)
+          ? state.cardState.playedCardIds
+          : [...state.cardState.playedCardIds, cardId],
+      },
+    }));
+
+    emitIfConnected(
+      socket,
+      ClientEvent.CARD_PLAY,
+      targetPlayerId
+        ? {
+            matchId,
+            cardId,
+            offerSeqNo,
+            targetPlayerId,
+            commandId,
+          }
+        : {
+            matchId,
+            cardId,
+            offerSeqNo,
+            commandId,
+          },
+    );
+  },
+
+  dismissCardOffer: () => {
+    set((state) => ({
+      cardState: {
+        ...state.cardState,
+        currentOffer: null,
+      },
+    }));
+  },
+
+  clearResolvedCardEffect: () => {
+    set((state) => ({
+      cardState: {
+        ...state.cardState,
+        lastResolvedEffect: null,
+      },
+    }));
+  },
+
+  consumeSecondChance: (playerId?: string) => {
+    set((state) => applyConsumeSecondChance(state, playerId));
+  },
+
   // Submit Answer
 
   submitAnswer: (matchId: string, roundNo: number, answer: string) => {
-    const { socket, pendingAnswer } = get();
+    const { socket, pendingAnswer, lastAnswerResult, cardState, userId } =
+      get();
     if (!socket?.connected) return null;
-    if (
-      pendingAnswer?.matchId === matchId &&
-      pendingAnswer.roundNo === roundNo
-    ) {
+
+    const hasExistingSubmission =
+      (pendingAnswer?.matchId === matchId &&
+        pendingAnswer.roundNo === roundNo) ||
+      (lastAnswerResult?.matchId === matchId &&
+        lastAnswerResult.roundNo === roundNo);
+
+    const hasSecondChance = hasSecondChancePermission(
+      cardState,
+      userId,
+      roundNo,
+    );
+
+    if (hasExistingSubmission && !hasSecondChance) {
       return null;
     }
 
     const submissionId = generateId();
     set({ pendingAnswer: { matchId, roundNo, answer, submissionId } });
+
     emitIfConnected(socket, ClientEvent.SUBMIT_ANSWER, {
       matchId,
       roundNo,
@@ -1016,3 +1417,5 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     }, TIMEOUT_MS);
   },
 }));
+
+export { hasSecondChancePermission } from "./socket-store.helpers";
