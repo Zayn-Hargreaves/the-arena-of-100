@@ -7,6 +7,8 @@ import { MatchmakingModal } from "./matchmaking-modal";
 const mockPush = vi.fn();
 const mockLeaveMatchmaking = vi.fn();
 const mockClearMatchmakingMatched = vi.fn();
+const mockJoinRoom = vi.fn().mockResolvedValue(undefined);
+const mockLeaveRoom = vi.fn();
 
 let mockSocketStore = {
   matchmaking: {
@@ -18,8 +20,12 @@ let mockSocketStore = {
     matchedRoomCode: null as string | null,
     matchedRoomId: null as string | null,
   },
+  room: null as { id?: string; currentMatchId?: string } | null,
+  match: null as { id: string } | null,
   leaveMatchmaking: mockLeaveMatchmaking,
   clearMatchmakingMatched: mockClearMatchmakingMatched,
+  joinRoom: mockJoinRoom,
+  leaveRoom: mockLeaveRoom,
 };
 
 vi.mock("@/i18n/routing", () => ({
@@ -28,9 +34,13 @@ vi.mock("@/i18n/routing", () => ({
   }),
 }));
 
-vi.mock("@/stores/socket-store", () => ({
-  useSocketStore: () => mockSocketStore,
-}));
+vi.mock("@/stores/socket-store", () => {
+  const hook = () => mockSocketStore;
+  hook.getState = () => mockSocketStore;
+  return {
+    useSocketStore: hook,
+  };
+});
 
 vi.mock("@/components/ui/mini-glyph", () => ({
   MiniGlyph: () => <div data-testid="mini-glyph" />,
@@ -48,9 +58,13 @@ vi.mock("next-intl", async () => {
     playersInQueue: "Người đang tìm trận:",
     playerCount: "{count} người",
     cancelSearch: "HỦY TÌM TRẬN",
+    retry: "Thử lại",
+    ROOM_FULL: "Phòng đã đầy người chơi!",
+    UNKNOWN_ERROR: "Đã xảy ra lỗi không xác định. Vui lòng thử lại!",
   };
   return {
     ...actual,
+    useLocale: vi.fn(() => "vi"),
     useTranslations: vi.fn((_ns?: string) =>
       vi.fn((key: string, params?: Record<string, string | number>): string => {
         let msg = viMessages[key] ?? key;
@@ -84,8 +98,12 @@ describe("MatchmakingModal", () => {
         matchedRoomCode: null,
         matchedRoomId: null,
       },
+      room: null,
+      match: null,
       leaveMatchmaking: mockLeaveMatchmaking,
       clearMatchmakingMatched: mockClearMatchmakingMatched,
+      joinRoom: mockJoinRoom,
+      leaveRoom: mockLeaveRoom,
     };
   });
 
@@ -252,12 +270,62 @@ describe("MatchmakingModal", () => {
 
     render(<MatchmakingModal />);
 
-    act(() => {
-      vi.advanceTimersByTime(1250);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
     });
 
     expect(mockClearMatchmakingMatched).toHaveBeenCalledTimes(1);
     expect(mockPush).toHaveBeenCalledWith("/lobby/ROOM999");
+  });
+
+  it("auto redirects directly to /game when match is present", async () => {
+    vi.useFakeTimers();
+    mockSocketStore.matchmaking.matchedRoomCode = "ROOM999";
+    mockSocketStore.match = null;
+    mockJoinRoom.mockImplementationOnce(async () => {
+      mockSocketStore.match = { id: "match_123" };
+    });
+
+    render(<MatchmakingModal />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
+    });
+
+    expect(mockClearMatchmakingMatched).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith("/game/match_123");
+  });
+
+  it("cancels auto redirect if leaveMatchmaking is called while retry is pending", async () => {
+    vi.useFakeTimers();
+    mockSocketStore.matchmaking.matchedRoomCode = "ROOM999";
+    let resolveRetry: () => void = () => {};
+    mockJoinRoom.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRetry = resolve;
+        }),
+    );
+
+    const { unmount } = render(<MatchmakingModal />);
+
+    // Advance retry timer to ensure join attempt is initiated
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(mockJoinRoom).toHaveBeenCalledTimes(1);
+
+    // Unmount (leave matchmaking) while join is pending
+    unmount();
+
+    // Now resolve retry and advance timers
+    resolveRetry();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
+    });
+
+    expect(mockClearMatchmakingMatched).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalled();
   });
 
   it("triggers leaveMatchmaking when close button and bottom cancel button are clicked", () => {
@@ -347,5 +415,194 @@ describe("MatchmakingModal", () => {
 
     render(<MatchmakingModal />);
     expect(screen.getByText("12 người")).toBeInTheDocument();
+  });
+
+  it("handles join room failure, displays translated error, and allows retry", async () => {
+    vi.useFakeTimers();
+    mockJoinRoom.mockRejectedValueOnce(new Error("ROOM_FULL"));
+    mockSocketStore.matchmaking.matchedRoomCode = "ROOM_FAIL";
+
+    render(<MatchmakingModal />);
+
+    // Advance past delay
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
+    });
+
+    expect(screen.getByText("Phòng đã đầy người chơi!")).toBeInTheDocument();
+    const retryButton = screen.getByRole("button", { name: "Thử lại" });
+    expect(retryButton).toBeInTheDocument();
+
+    // Setup pending retry join promise to test concurrent guard
+    let resolveRetry!: (value?: unknown) => void;
+    const pendingRetryPromise = new Promise((resolve) => {
+      resolveRetry = resolve;
+    });
+    mockJoinRoom.mockReturnValueOnce(pendingRetryPromise);
+
+    fireEvent.click(retryButton);
+    fireEvent.click(retryButton);
+
+    expect(mockJoinRoom).toHaveBeenCalledTimes(2);
+
+    resolveRetry();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
+    });
+
+    expect(mockClearMatchmakingMatched).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith("/lobby/ROOM_FAIL");
+  });
+
+  it("clears join error and calls leaveMatchmaking when canceling after join failure", async () => {
+    vi.useFakeTimers();
+    mockJoinRoom.mockRejectedValueOnce(new Error("ROOM_FULL"));
+    mockSocketStore.matchmaking.matchedRoomCode = "ROOM_FAIL";
+
+    render(<MatchmakingModal />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
+    });
+
+    expect(screen.getByText("Phòng đã đầy người chơi!")).toBeInTheDocument();
+    const cancelButton = screen.getByRole("button", { name: "Hủy tìm trận" });
+    expect(cancelButton).toBeInTheDocument();
+
+    fireEvent.click(cancelButton);
+
+    expect(mockLeaveMatchmaking).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not leave newly joined room when a cancelled matchmaking join completes", async () => {
+    vi.useFakeTimers();
+    mockSocketStore.matchmaking.matchedRoomCode = "ROOM_OLD";
+    mockSocketStore.matchmaking.matchedRoomId = "room_old_id";
+
+    let resolveJoin: () => void = () => {};
+    mockJoinRoom.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveJoin = resolve;
+        }),
+    );
+
+    const { unmount } = render(<MatchmakingModal />);
+
+    // Trigger auto join for ROOM_OLD
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(mockJoinRoom).toHaveBeenCalledWith("ROOM_OLD");
+
+    // User cancels / unmounts modal (invalidating attempt)
+    unmount();
+
+    // User joins a new room in the background
+    mockSocketStore.room = { id: "room_new_id", code: "ROOM_NEW" } as {
+      id?: string;
+      currentMatchId?: string;
+      code?: string;
+    };
+    mockSocketStore.matchmaking.matchedRoomCode = null;
+    mockSocketStore.matchmaking.matchedRoomId = null;
+
+    // The old join now resolves
+    resolveJoin();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
+    });
+
+    // Cleanup should leave room_old_id, NOT room_new_id
+    expect(mockLeaveRoom).not.toHaveBeenCalledWith("room_new_id");
+    expect(mockLeaveRoom).toHaveBeenCalledWith("room_old_id");
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("handles leaveRoom returning a rejecting promise during cleanup without throwing", async () => {
+    vi.useFakeTimers();
+    mockSocketStore.matchmaking.matchedRoomCode = "ROOM_OLD";
+    mockSocketStore.matchmaking.matchedRoomId = "room_old_id";
+    mockLeaveRoom.mockRejectedValueOnce(new Error("Leave failed"));
+
+    let resolveJoin: () => void = () => {};
+    mockJoinRoom.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveJoin = resolve;
+        }),
+    );
+
+    const { unmount } = render(<MatchmakingModal />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    unmount();
+
+    resolveJoin();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
+    });
+
+    expect(mockLeaveRoom).toHaveBeenCalledWith("room_old_id");
+  });
+
+  it("serializes joins by room code when matched room changes from room A to room B during an active attempt", async () => {
+    vi.useFakeTimers();
+    mockSocketStore.matchmaking.matchedRoomCode = "ROOM_A";
+    mockSocketStore.matchmaking.matchedRoomId = "room_a_id";
+
+    let resolveJoinA: () => void = () => {};
+    let resolveJoinB: () => void = () => {};
+
+    mockJoinRoom.mockImplementation((roomCode: string) => {
+      if (roomCode === "ROOM_A") {
+        return new Promise<void>((resolve) => {
+          resolveJoinA = resolve;
+        });
+      }
+      if (roomCode === "ROOM_B") {
+        return new Promise<void>((resolve) => {
+          resolveJoinB = resolve;
+        });
+      }
+      return Promise.resolve();
+    });
+
+    const { rerender } = render(<MatchmakingModal />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(mockJoinRoom).toHaveBeenCalledWith("ROOM_A");
+
+    mockSocketStore.matchmaking.matchedRoomCode = "ROOM_B";
+    mockSocketStore.matchmaking.matchedRoomId = "room_b_id";
+    rerender(<MatchmakingModal />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(mockJoinRoom).toHaveBeenCalledWith("ROOM_B");
+
+    resolveJoinA();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
+    });
+
+    expect(mockLeaveRoom).toHaveBeenCalledWith("room_a_id");
+    expect(mockClearMatchmakingMatched).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalled();
+
+    resolveJoinB();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(650);
+    });
+
+    expect(mockClearMatchmakingMatched).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith("/lobby/ROOM_B");
   });
 });

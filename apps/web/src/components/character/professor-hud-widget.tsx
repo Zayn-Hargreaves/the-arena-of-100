@@ -6,6 +6,7 @@ import { ProfessorAvatar } from "./professor-avatar";
 import {
   getRandomProfessorDialogue,
   type ProfessorMood,
+  type ProfessorDialogueKey,
 } from "./professor-roast-engine";
 
 export interface ProfessorHudWidgetProps {
@@ -25,9 +26,11 @@ export const ProfessorHudWidget: React.FC<ProfessorHudWidgetProps> = ({
   const tProf = useTranslations("Professor");
 
   const [mood, setMood] = useState<ProfessorMood>("teaching");
-  const [dialogueKey, setDialogueKey] = useState<string>("defaultRoundHint");
+  const [dialogueKey, setDialogueKey] = useState<
+    ProfessorDialogueKey | "defaultRoundHint"
+  >("defaultRoundHint");
+  const [lastPokeTime, setLastPokeTime] = useState<number>(0);
   const lastPokeTimeRef = useRef<number>(0);
-  const lastSecondsTriggeredRef = useRef<boolean>(false);
 
   const isLastSeconds = typeof timeLeft === "number" && timeLeft <= 4;
 
@@ -53,43 +56,49 @@ export const ProfessorHudWidget: React.FC<ProfessorHudWidgetProps> = ({
       setDialogueKey(d.key);
       return;
     }
+  }, [isEliminated, hasAnswered, isCorrect]);
 
-    // Default teaching mood
-    if (!hasAnswered) {
-      if (Date.now() - lastPokeTimeRef.current < 4000) {
-        return;
-      }
-      setMood("teaching");
-      setDialogueKey("defaultRoundHint");
-    }
-  }, [
-    isEliminated,
-    hasAnswered,
-    isCorrect,
-    isLastSeconds, // Triggers restoring defaultRoundHint when exiting countdown state
-  ]);
-
-  // Countdown effect - triggers only once per countdown cycle
+  // Countdown and normal round timer effect
   useEffect(() => {
-    if (!isLastSeconds) {
-      lastSecondsTriggeredRef.current = false;
-      return;
+    if (hasAnswered || isEliminated) {
+      return undefined;
     }
 
-    if (!lastSecondsTriggeredRef.current && !hasAnswered && !isEliminated) {
-      if (Date.now() - lastPokeTimeRef.current < 4000) {
-        return;
+    if (isLastSeconds) {
+      const remainingCooldown = 4000 - (Date.now() - lastPokeTimeRef.current);
+      if (remainingCooldown > 0) {
+        const timer = setTimeout(() => {
+          const d = getRandomProfessorDialogue("game_last_seconds");
+          setMood("ticking_panic");
+          setDialogueKey(d.key);
+        }, remainingCooldown);
+        return () => clearTimeout(timer);
       }
-      lastSecondsTriggeredRef.current = true;
       const d = getRandomProfessorDialogue("game_last_seconds");
       setMood("ticking_panic");
       setDialogueKey(d.key);
+      return undefined;
     }
-  }, [isLastSeconds, hasAnswered, isEliminated, timeLeft]);
+
+    // Not in last seconds (e.g. timeLeft > 4 or round reset)
+    const remainingCooldown = 4000 - (Date.now() - lastPokeTimeRef.current);
+    if (remainingCooldown > 0) {
+      const timer = setTimeout(() => {
+        setMood("teaching");
+        setDialogueKey("defaultRoundHint");
+      }, remainingCooldown);
+      return () => clearTimeout(timer);
+    }
+    setMood("teaching");
+    setDialogueKey("defaultRoundHint");
+    return undefined;
+  }, [isLastSeconds, hasAnswered, isEliminated, lastPokeTime]);
 
   // Click on professor to hear a witty line
   const handlePokeProfessor = () => {
-    lastPokeTimeRef.current = Date.now();
+    const now = Date.now();
+    lastPokeTimeRef.current = now;
+    setLastPokeTime(now);
     const d = getRandomProfessorDialogue(
       hasAnswered ? "game_correct_answer" : "game_round_start",
     );
@@ -107,7 +116,7 @@ export const ProfessorHudWidget: React.FC<ProfessorHudWidgetProps> = ({
       <button
         type="button"
         onClick={handlePokeProfessor}
-        className="cursor-pointer transition-transform active:scale-95 shrink-0 focus:outline-none"
+        className="cursor-pointer transition-transform active:scale-95 shrink-0 rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-candy-pink focus-visible:ring-offset-2"
         title={tProf("pokeGameTitle")}
         aria-label={tProf("pokeGameTitle")}
       >

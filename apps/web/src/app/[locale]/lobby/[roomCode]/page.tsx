@@ -7,7 +7,7 @@ import { Users, AlertCircle, Eye, Trophy } from "lucide-react";
 import { useSocketStore } from "@/stores/socket-store";
 import { useRouter } from "@/i18n/routing";
 import { useToast } from "@/hooks/use-toast";
-import { RoomStatus } from "@arena/shared";
+import { RoomStatus, GAME_CONFIG } from "@arena/shared";
 import { RoomCodeCard } from "@/components/atoms/room-code-card";
 import {
   LobbyHeader,
@@ -15,6 +15,7 @@ import {
   LeaveRoomModal,
   LobbyCountdownOverlay,
   LobbyStartControls,
+  LobbyProfessorBriefing,
 } from "@/components/lobby";
 import { useLobbyLifecycle } from "@/hooks/use-lobby-lifecycle";
 
@@ -162,15 +163,24 @@ export default function LobbyPage({ params }: Readonly<LobbyPageProps>) {
   // Existing player redirect to /game when a match starts. We do NOT
   // redirect spectators here because the plan keeps them in the lobby
   // until they explicitly click "Vào xem" (or until FINISHED redirects
-  // them to /result). This avoids surprising a spectator who may want
-  // to first read the room code and player list before entering the
-  // live spectator view.
+  // them to /result).
   useEffect(() => {
     if (isSpectator) return;
-    if (match?.id) {
+    if (
+      match?.id &&
+      room?.code === roomCode &&
+      room?.currentMatchId === match.id
+    ) {
       router.push(`/game/${match.id}`);
     }
-  }, [match, router, isSpectator]);
+  }, [
+    match?.id,
+    room?.code,
+    room?.currentMatchId,
+    roomCode,
+    router,
+    isSpectator,
+  ]);
 
   // Server has force-terminated this room (admin kill-switch). Toast once
   // and bounce the user back to the home page. useRef guards against
@@ -267,6 +277,7 @@ export default function LobbyPage({ params }: Readonly<LobbyPageProps>) {
         <LobbyHeader
           roomStatus={roomStatus}
           onLeave={() => setShowLeaveModal(true)}
+          onBack={() => router.back()}
         />
 
         {/* Drop-in spectating banner: shown when the auto-join has
@@ -309,29 +320,29 @@ export default function LobbyPage({ params }: Readonly<LobbyPageProps>) {
         )}
 
         {/* Grid Area */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left panel: Room Details & Actions */}
-          <div className="lg:col-span-1 space-y-6">
-            <div className="jelly-card p-6 space-y-6 rounded-3xl border-[3.5px] border-candy-ink bg-white shadow-[6px_6px_0_0_#2B2D42]">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Left panel: Room Details & Actions (5 cols) */}
+          <div className="lg:col-span-5 space-y-5">
+            <div className="jelly-card p-6 space-y-5 rounded-3xl border-[3.5px] border-candy-ink bg-white shadow-[6px_6px_0_0_#2B2D42]">
               <RoomCodeCard roomCode={roomCode} />
 
               {/* Stats / Player Counts */}
-              <div className="flex items-center justify-between p-4 border-b-[3px] border-candy-ink/10">
-                <span className="text-sm font-bold text-candy-ink/80 flex items-center gap-2">
+              <div className="flex items-center justify-between p-3.5 bg-candy-cloud/40 rounded-2xl border-[2.5px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42]">
+                <span className="text-xs font-display font-black text-candy-ink uppercase flex items-center gap-2">
                   <Users className="w-4 h-4 text-candy-pink stroke-[2.5]" />
                   {t("opponentsCount")}
                 </span>
-                <span className="font-display font-black text-xl text-candy-pink">
-                  {playersList.length} / 100
+                <span className="font-display font-black text-lg px-2.5 py-0.5 rounded-xl bg-candy-pink text-white border-[1.5px] border-candy-ink shadow-[1px_1px_0_0_#2B2D42]">
+                  {playersList.length} / {GAME_CONFIG.MAX_PLAYERS}
                 </span>
               </div>
 
               {/* Connection Status Indicator */}
-              <div className="flex items-center gap-2.5 px-2 py-1 text-xs">
+              <div className="flex items-center gap-2.5 px-3 py-2 bg-white rounded-xl border-[2px] border-candy-ink/20 text-xs">
                 <span
-                  className={`w-3 h-3 rounded-full border border-candy-ink ${isConnected ? "bg-candy-mint animate-pulse" : "bg-candy-red animate-ping"}`}
+                  className={`w-3 h-3 rounded-full border border-candy-ink shrink-0 ${isConnected ? "bg-candy-mint animate-pulse" : "bg-candy-red animate-ping"}`}
                 />
-                <span className="font-sans font-bold text-candy-ink/70">
+                <span className="font-sans font-bold text-candy-ink/80 text-[11px] leading-tight">
                   {getConnectionStatusText(
                     joinError,
                     displayJoinError,
@@ -343,8 +354,7 @@ export default function LobbyPage({ params }: Readonly<LobbyPageProps>) {
                 </span>
               </div>
 
-              {/* Giant Host Launch Action — suppressed for spectators
-                  because they cannot start a match. */}
+              {/* Giant Host Launch Action — suppressed for spectators */}
               {!isSpectator && (
                 <LobbyStartControls
                   isHost={isHost}
@@ -357,9 +367,40 @@ export default function LobbyPage({ params }: Readonly<LobbyPageProps>) {
               )}
             </div>
 
-            {/* Quick Tips — replaced with the spectator tip while a
-                spectator is in the lobby. The pre-game tip is
-                misleading once the match has already started. */}
+            {/* Professor Briefing on Exam Regulations */}
+            <LobbyProfessorBriefing playersCount={playersList.length} />
+
+            {/* Match Rules Card */}
+            <div className="p-5 rounded-3xl border-[3px] border-candy-ink bg-white shadow-[4px_4px_0_0_#2B2D42] space-y-3">
+              <h3 className="font-display font-black text-xs text-candy-ink uppercase tracking-wider flex items-center gap-2">
+                <Trophy className="w-4 h-4 text-candy-yellow fill-candy-yellow shrink-0" />
+                {tPlayerGrid("playerRoster")}
+              </h3>
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div className="p-2.5 rounded-xl bg-candy-cloud/50 border-[1.5px] border-candy-ink/30 space-y-0.5">
+                  <span className="text-candy-ink/60 font-semibold block uppercase text-[9px] font-mono">
+                    {tPlayerGrid("scaleLabel")}
+                  </span>
+                  <span className="font-display font-black text-candy-ink">
+                    {tPlayerGrid("scaleValue", {
+                      count: GAME_CONFIG.MAX_PLAYERS,
+                    })}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-candy-cloud/50 border-[1.5px] border-candy-ink/30 space-y-0.5">
+                  <span className="text-candy-ink/60 font-semibold block uppercase text-[9px] font-mono">
+                    {tPlayerGrid("timeLabel")}
+                  </span>
+                  <span className="font-display font-black text-candy-ink">
+                    {tPlayerGrid("timeValue", {
+                      seconds: Math.round(GAME_CONFIG.ROUND_DURATION_MS / 1000),
+                    })}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Tips */}
             {isSpectator ? (
               <div className="p-4 rounded-2xl border-[3px] border-candy-ink bg-candy-cloud flex gap-3 shadow-[4px_4px_0_0_#2B2D42]">
                 <Eye className="w-5 h-5 text-candy-blue shrink-0 mt-0.5 stroke-[2.5]" />
@@ -378,18 +419,26 @@ export default function LobbyPage({ params }: Readonly<LobbyPageProps>) {
             )}
           </div>
 
-          {/* Right panel: Active Players grid */}
-          <div className="lg:col-span-2 space-y-4">
-            <h3 className="font-display font-black text-lg text-candy-ink uppercase tracking-wider flex items-center gap-2 drop-shadow-[0_2px_0_rgba(0,0,0,0.05)]">
-              <Users className="w-5 h-5 text-candy-pink stroke-[2.5]" />
-              {t("opponentsSection")}
-            </h3>
+          {/* Right panel: Active Players grid (7 cols) */}
+          <div className="lg:col-span-7 space-y-4">
+            <div className="flex items-center justify-between pb-1">
+              <h2 className="font-display font-black text-lg text-candy-ink uppercase tracking-wider flex items-center gap-2 drop-shadow-[0_2px_0_rgba(0,0,0,0.05)]">
+                <Users className="w-5 h-5 text-candy-pink stroke-[2.5]" />
+                {t("opponentsSection")}
+              </h2>
+              <span className="text-xs font-mono font-bold text-candy-ink/60 bg-white px-2.5 py-1 rounded-xl border-[2px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42]">
+                {tPlayerGrid("online", {
+                  count: playersList.filter((p) => p.isOnline).length,
+                })}
+              </span>
+            </div>
 
             <LobbyPlayerGrid
               players={playersList}
               currentUserId={userId}
               hostId={roomHostId}
               emptyStateMessage={tPlayerGrid("empty")}
+              capacity={GAME_CONFIG.MAX_PLAYERS}
             />
           </div>
         </div>

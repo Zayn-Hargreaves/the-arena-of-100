@@ -249,10 +249,71 @@ describe("ProfessorHudWidget", () => {
       (call) => call[0] === "game_last_seconds",
     ).length;
     expect(callsInNewCycle).toBe(2);
+
+    spy.mockRestore();
+  });
+
+  it("re-triggers poke timer when poked while timeLeft is at most 4", () => {
+    render(<ProfessorHudWidget timeLeft={3} hasAnswered={false} />);
+
+    // Initially in panic state because timeLeft=3 (<= 4)
     expect(
       screen.getByText(/dialogues\.game_last_seconds/),
     ).toBeInTheDocument();
 
-    spy.mockRestore();
+    // Poke the professor while already in last seconds
+    const pokeButton = screen.getByRole("button", { name: "pokeGameTitle" });
+    act(() => {
+      pokeButton.click();
+    });
+
+    // Dialogue immediately updates to poked round start dialogue
+    expect(screen.getByText(/dialogues\.game_round_start/)).toBeInTheDocument();
+
+    // Advance 2000ms - poke dialogue persists and is not prematurely overwritten
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(screen.getByText(/dialogues\.game_round_start/)).toBeInTheDocument();
+
+    // Advance remaining 2000ms (total 4000ms) - timer fires and transitions back to last seconds
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(
+      screen.getByText(/dialogues\.game_last_seconds/),
+    ).toBeInTheDocument();
+  });
+
+  it("restores default dialogue when transitioning from timeLeft=3 to timeLeft=10 during active poke cooldown", () => {
+    const { rerender } = render(
+      <ProfessorHudWidget timeLeft={3} hasAnswered={false} />,
+    );
+
+    // Poke professor at timeLeft=3
+    const pokeButton = screen.getByRole("button", { name: "pokeGameTitle" });
+    act(() => {
+      pokeButton.click();
+    });
+    expect(screen.getByText(/dialogues\.game_round_start/)).toBeInTheDocument();
+
+    // Advance 1000ms (3000ms remaining in cooldown)
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    // Next round starts (timeLeft=10)
+    rerender(<ProfessorHudWidget timeLeft={10} hasAnswered={false} />);
+
+    // Poked dialogue is still maintained during the remaining cooldown
+    expect(screen.getByText(/dialogues\.game_round_start/)).toBeInTheDocument();
+
+    // Advance remaining 3000ms cooldown
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    // Default round hint dialogue is restored
+    expect(screen.getByText(/defaultRoundHint/)).toBeInTheDocument();
   });
 });

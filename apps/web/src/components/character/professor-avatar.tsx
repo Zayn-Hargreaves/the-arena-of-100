@@ -41,7 +41,12 @@ export const ProfessorAvatar: React.FC<ProfessorAvatarProps> = ({
     >
       {/* Mood Effect FX Overlay (Vector SVG Graphics) */}
       {mood === "proud_cheer" && (
-        <div className="absolute -top-3 -right-2 w-6 h-6 animate-bounce pointer-events-none z-20">
+        <div
+          className={cn(
+            "absolute -top-3 -right-2 w-6 h-6 pointer-events-none z-20",
+            animated && "animate-bounce motion-reduce:animate-none",
+          )}
+        >
           <svg viewBox="0 0 24 24" className="w-full h-full" fill="none">
             <path
               d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z"
@@ -54,7 +59,12 @@ export const ProfessorAvatar: React.FC<ProfessorAvatarProps> = ({
         </div>
       )}
       {mood === "proud_cheer" && (
-        <div className="absolute -top-2 -left-2 w-5 h-5 animate-pulse pointer-events-none z-20">
+        <div
+          className={cn(
+            "absolute -top-2 -left-2 w-5 h-5 pointer-events-none z-20",
+            animated && "animate-pulse motion-reduce:animate-none",
+          )}
+        >
           <svg viewBox="0 0 24 24" className="w-full h-full" fill="none">
             <polygon
               points="12,2 15,8.5 22,9.5 17,14.5 18.5,21.5 12,18 5.5,21.5 7,14.5 2,9.5 9,8.5"
@@ -67,7 +77,12 @@ export const ProfessorAvatar: React.FC<ProfessorAvatarProps> = ({
         </div>
       )}
       {mood === "ticking_panic" && (
-        <div className="absolute -top-2 right-1 w-5 h-5 animate-bounce pointer-events-none z-20">
+        <div
+          className={cn(
+            "absolute -top-2 right-1 w-5 h-5 pointer-events-none z-20",
+            animated && "animate-bounce motion-reduce:animate-none",
+          )}
+        >
           <svg viewBox="0 0 24 24" className="w-full h-full" fill="none">
             <path
               d="M12 3C12 3 6 11 6 15.5C6 18.8 8.7 21.5 12 21.5C15.3 21.5 18 18.8 18 15.5C18 11 12 3 12 3Z"
@@ -79,7 +94,12 @@ export const ProfessorAvatar: React.FC<ProfessorAvatarProps> = ({
         </div>
       )}
       {mood === "angry_roast" && (
-        <div className="absolute -top-3 left-1 w-6 h-6 animate-bounce pointer-events-none z-20">
+        <div
+          className={cn(
+            "absolute -top-3 left-1 w-6 h-6 pointer-events-none z-20",
+            animated && "animate-bounce motion-reduce:animate-none",
+          )}
+        >
           <svg viewBox="0 0 24 24" className="w-full h-full" fill="none">
             <path
               d="M5 8C9 8 9 4 9 4M15 4C15 4 15 8 19 8M19 16C15 16 15 20 15 20M9 20C9 20 9 16 5 16"
@@ -96,12 +116,16 @@ export const ProfessorAvatar: React.FC<ProfessorAvatarProps> = ({
         className={cn(
           SIZE_MAP[size],
           "relative flex items-center justify-center filter drop-shadow-[0_4px_6px_rgba(0,0,0,0.18)]",
-          animated && mood === "ticking_panic" && "drlabo-panic",
-          animated && mood === "proud_cheer" && "drlabo-cheer",
+          animated &&
+            mood === "ticking_panic" &&
+            "drlabo-panic motion-reduce:animate-none",
+          animated &&
+            mood === "proud_cheer" &&
+            "drlabo-cheer motion-reduce:animate-none",
           animated &&
             mood !== "ticking_panic" &&
             mood !== "proud_cheer" &&
-            "drlabo-animated-body",
+            "drlabo-animated-body motion-reduce:animate-none",
         )}
       >
         <svg
@@ -206,7 +230,13 @@ export const ProfessorAvatar: React.FC<ProfessorAvatarProps> = ({
           </g>
 
           {/* Right Arm & Pointer Stick (Animated waving) */}
-          <g className={animated ? "drlabo-animated-pointer" : ""}>
+          <g
+            className={
+              animated
+                ? "drlabo-animated-pointer motion-reduce:animate-none"
+                : ""
+            }
+          >
             {/* Hand sleeve */}
             <path
               d="M32 94C24 94 20 86 24 80"
@@ -396,7 +426,11 @@ export const ProfessorAvatar: React.FC<ProfessorAvatarProps> = ({
           />
 
           {/* Eyes behind Glasses (with animated blinking!) */}
-          <g className={animated ? "drlabo-animated-eyes" : ""}>
+          <g
+            className={
+              animated ? "drlabo-animated-eyes motion-reduce:animate-none" : ""
+            }
+          >
             {mood === "shocked" || mood === "ticking_panic" ? (
               <>
                 <circle cx="44" cy="52" r="5" fill="#2B2D42" />
@@ -466,7 +500,11 @@ export const ProfessorAvatar: React.FC<ProfessorAvatarProps> = ({
           />
 
           {/* Animated Mouth */}
-          <g className={animated ? "drlabo-animated-mouth" : ""}>
+          <g
+            className={
+              animated ? "drlabo-animated-mouth motion-reduce:animate-none" : ""
+            }
+          >
             {mood === "shocked" || mood === "ticking_panic" ? (
               <ellipse
                 cx="60"
@@ -529,7 +567,13 @@ export const ProfessorAvatar: React.FC<ProfessorAvatarProps> = ({
             />
 
             {/* Swinging Gold Tassel */}
-            <g className={animated ? "drlabo-animated-tassel" : ""}>
+            <g
+              className={
+                animated
+                  ? "drlabo-animated-tassel motion-reduce:animate-none"
+                  : ""
+              }
+            >
               <path
                 d="M60 17C66 16 75 16 75 24V38"
                 stroke="#F59E0B"

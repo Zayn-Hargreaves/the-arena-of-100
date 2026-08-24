@@ -1,4 +1,3 @@
-"use client";
 
 export type ProfessorMood =
   | "idle"
@@ -28,8 +27,43 @@ export type DialogueContext =
   | "result_top10"
   | "result_early_elim";
 
+export type ProfessorDialogueKey =
+  | "dialogues.home_greeting.0"
+  | "dialogues.home_greeting.1"
+  | "dialogues.home_greeting.2"
+  | "dialogues.home_nickname_empty.0"
+  | "dialogues.home_nickname_empty.1"
+  | "dialogues.home_nickname_typed.0"
+  | "dialogues.home_nickname_typed.1"
+  | "dialogues.matchmaking_waiting.0"
+  | "dialogues.matchmaking_waiting.1"
+  | "dialogues.matchmaking_waiting.2"
+  | "dialogues.matchmaking_matched.0"
+  | "dialogues.lobby_briefing.0"
+  | "dialogues.lobby_briefing.1"
+  | "dialogues.lobby_briefing.2"
+  | "dialogues.game_round_start.0"
+  | "dialogues.game_round_start.1"
+  | "dialogues.game_last_seconds.0"
+  | "dialogues.game_last_seconds.1"
+  | "dialogues.game_correct_answer.0"
+  | "dialogues.game_correct_answer.1"
+  | "dialogues.game_correct_answer.2"
+  | "dialogues.game_wrong_answer.0"
+  | "dialogues.game_wrong_answer.1"
+  | "dialogues.game_wrong_answer.2"
+  | "dialogues.game_wrong_answer.3"
+  | "dialogues.game_mass_elimination.0"
+  | "dialogues.game_mass_elimination.1"
+  | "dialogues.game_eliminated.0"
+  | "dialogues.game_eliminated.1"
+  | "dialogues.game_eliminated_timeout.0"
+  | "dialogues.result_winner.0"
+  | "dialogues.result_top10.0"
+  | "dialogues.result_early_elim.0";
+
 export interface DialogueData {
-  key: string;
+  key: ProfessorDialogueKey;
   mood: ProfessorMood;
 }
 

@@ -9,18 +9,26 @@ const mockToast = vi.fn();
 const mockConnect = vi.fn();
 const mockAuthenticate = vi.fn();
 const mockJoinMatchmaking = vi.fn();
+const mockApiSendJson = vi.fn();
 
 let mockSocketStore = {
   username: null as string | null,
+  accessToken: "mock-token" as string | null,
   connect: mockConnect,
   authenticate: mockAuthenticate,
   joinMatchmaking: mockJoinMatchmaking,
 };
 
+vi.mock("@/lib/api-client", () => ({
+  apiSendJson: (...args: unknown[]) => mockApiSendJson(...args),
+}));
+
 vi.mock("@/i18n/routing", () => ({
   useRouter: () => ({
     push: mockPush,
+    replace: vi.fn(),
   }),
+  usePathname: () => "/",
   Link: ({
     children,
     href,
@@ -35,9 +43,14 @@ vi.mock("@/i18n/routing", () => ({
   ),
 }));
 
-vi.mock("@/stores/socket-store", () => ({
-  useSocketStore: () => mockSocketStore,
-}));
+vi.mock("@/stores/socket-store", () => {
+  const storeFn = Object.assign(() => mockSocketStore, {
+    getState: () => mockSocketStore,
+  });
+  return {
+    useSocketStore: storeFn,
+  };
+});
 
 vi.mock("@/hooks/use-toast", () => ({
   useToast: () => ({
@@ -61,14 +74,17 @@ vi.mock("canvas-confetti", () => ({
 
 vi.mock("next-intl", () => ({
   useTranslations: () => (key: string) => key,
+  useLocale: () => "en",
 }));
 
 describe("HomePage - runAuthFlow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    mockApiSendJson.mockResolvedValue({});
     mockSocketStore = {
       username: null,
+      accessToken: "mock-token",
       connect: mockConnect.mockResolvedValue(undefined),
       authenticate: mockAuthenticate.mockResolvedValue(undefined),
       joinMatchmaking: mockJoinMatchmaking,
@@ -91,7 +107,7 @@ describe("HomePage - runAuthFlow", () => {
 
     render(<HomePage />);
 
-    const nicknameInput = screen.getByPlaceholderText(/gõ tên vô tri vào đây/i);
+    const nicknameInput = screen.getByPlaceholderText(/nicknamePlaceholder/i);
     fireEvent.change(nicknameInput, { target: { value: "Warrior99" } });
 
     const form = nicknameInput.closest("form")!;
@@ -102,6 +118,12 @@ describe("HomePage - runAuthFlow", () => {
     });
 
     expect(callOrder).toEqual(["connect", "connect", "authenticate"]);
+    expect(mockApiSendJson).toHaveBeenCalledWith(
+      "/api/v1/users/me/avatar",
+      "PATCH",
+      { avatar: expect.any(String) },
+      "mock-token",
+    );
     expect(mockJoinMatchmaking).toHaveBeenCalled();
   });
 
@@ -118,7 +140,7 @@ describe("HomePage - runAuthFlow", () => {
 
     render(<HomePage />);
 
-    const nicknameInput = screen.getByPlaceholderText(/gõ tên vô tri vào đây/i);
+    const nicknameInput = screen.getByPlaceholderText(/nicknamePlaceholder/i);
     fireEvent.change(nicknameInput, { target: { value: "AsyncPlayer" } });
 
     const form = nicknameInput.closest("form")!;
@@ -132,8 +154,33 @@ describe("HomePage - runAuthFlow", () => {
 
     await waitFor(() => {
       expect(mockAuthenticate).toHaveBeenCalledWith("AsyncPlayer");
+      expect(mockApiSendJson).toHaveBeenCalledWith(
+        "/api/v1/users/me/avatar",
+        "PATCH",
+        { avatar: expect.any(String) },
+        "mock-token",
+      );
       expect(mockJoinMatchmaking).toHaveBeenCalled();
     });
+  });
+
+  it("does not call apiSendJson when accessToken is absent", async () => {
+    mockSocketStore.accessToken = null;
+
+    render(<HomePage />);
+
+    const nicknameInput = screen.getByPlaceholderText(/nicknamePlaceholder/i);
+    fireEvent.change(nicknameInput, { target: { value: "NoTokenPlayer" } });
+
+    const form = nicknameInput.closest("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockAuthenticate).toHaveBeenCalledWith("NoTokenPlayer");
+      expect(mockJoinMatchmaking).toHaveBeenCalled();
+    });
+
+    expect(mockApiSendJson).not.toHaveBeenCalled();
   });
 
   it("shows error toast if authenticate fails and does not proceed with action", async () => {
@@ -141,7 +188,7 @@ describe("HomePage - runAuthFlow", () => {
 
     render(<HomePage />);
 
-    const nicknameInput = screen.getByPlaceholderText(/gõ tên vô tri vào đây/i);
+    const nicknameInput = screen.getByPlaceholderText(/nicknamePlaceholder/i);
     fireEvent.change(nicknameInput, { target: { value: "PlayerFail" } });
 
     const form = nicknameInput.closest("form")!;
@@ -155,13 +202,61 @@ describe("HomePage - runAuthFlow", () => {
       );
     });
 
+    expect(mockApiSendJson).not.toHaveBeenCalled();
     expect(mockJoinMatchmaking).not.toHaveBeenCalled();
+  });
+
+  it("shows error toast if syncAvatarOnServer fails, leaves previous local avatar unchanged, and does not proceed with action", async () => {
+    localStorage.setItem("callsign", "PreviousPlayer");
+    localStorage.setItem("avatarSeed", "prev-seed");
+    localStorage.setItem("avatarName", "Previous Avatar");
+
+    mockApiSendJson.mockRejectedValueOnce(new Error("INTERNAL_ERROR"));
+
+    render(<HomePage />);
+
+    const nicknameInput = screen.getByPlaceholderText(/nicknamePlaceholder/i);
+    fireEvent.change(nicknameInput, { target: { value: "SyncFailPlayer" } });
+
+    const form = nicknameInput.closest("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          variant: "error",
+        }),
+      );
+    });
+
+    expect(mockApiSendJson).toHaveBeenCalled();
+    expect(mockJoinMatchmaking).not.toHaveBeenCalled();
+    expect(localStorage.getItem("callsign")).toBe("PreviousPlayer");
+    expect(localStorage.getItem("avatarSeed")).toBe("prev-seed");
+    expect(localStorage.getItem("avatarName")).toBe("Previous Avatar");
+  });
+
+  it("saves avatar to localStorage after successful sync and proceeds with action", async () => {
+    render(<HomePage />);
+
+    const nicknameInput = screen.getByPlaceholderText(/nicknamePlaceholder/i);
+    fireEvent.change(nicknameInput, { target: { value: "SuccessPlayer" } });
+
+    const form = nicknameInput.closest("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockJoinMatchmaking).toHaveBeenCalled();
+    });
+
+    expect(localStorage.getItem("callsign")).toBe("SuccessPlayer");
+    expect(localStorage.getItem("avatarSeed")).toBeTruthy();
   });
 
   it("prompts to enter nickname if submitted empty", () => {
     render(<HomePage />);
 
-    const nicknameInput = screen.getByPlaceholderText(/gõ tên vô tri vào đây/i);
+    const nicknameInput = screen.getByPlaceholderText(/nicknamePlaceholder/i);
     const form = nicknameInput.closest("form")!;
     fireEvent.submit(form);
 
@@ -171,5 +266,6 @@ describe("HomePage - runAuthFlow", () => {
       }),
     );
     expect(mockAuthenticate).not.toHaveBeenCalled();
+    expect(mockApiSendJson).not.toHaveBeenCalled();
   });
 });

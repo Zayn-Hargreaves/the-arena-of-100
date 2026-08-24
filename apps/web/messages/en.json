@@ -6,6 +6,7 @@
     "english": "English"
   },
   "policies": {
+    "badgeLabel": "Official Rulebook",
     "termsTitle": "Terms of Battle",
     "termsSubtitle": "Official rules and codes of honor for the 100-player arena.",
     "antiCheatTitle": "Anti-Cheat Policy",
@@ -38,6 +39,16 @@
     "brandFull": "ARENA OF 100",
     "taglineBadge": "WILD • NO BRAIN",
     "onlineCount": "{count} PLAYERS ONLINE",
+    "onlineCountShort": "{count} ONLINE",
+    "dailySpeedQuestions": "{count, plural, one {# Speed Question} other {# Speed Questions}}",
+    "dailyUnlockSkins": "Unlock Card Skins",
+    "feature100Players": "{count, plural, one {# PLAYER} other {# PLAYERS}}",
+    "featureOneWrong": "1 wrong = out",
+    "feature5Classes": "{count, plural, one {# CLASS} other {# CLASSES}}",
+    "featureUniquePassives": "Unique passives",
+    "featureCards": "CARDS",
+    "featureShieldSabotage": "Shield & sabotage",
+    "top100Badge": "Top {count}",
     "heroTitle": "THE BRAINLESS ARENA",
     "heroSubtitle": "Get it wrong and you are out!",
     "guestLogin": "GUEST LOGIN OK",
@@ -653,7 +664,13 @@
       "offline": "Offline",
       "waitingSlot": "Waiting for opponent...",
       "inviteSlot": "Invite friends to battle",
-      "playerRoster": "WARRIORS READY"
+      "playerRoster": "WARRIORS READY",
+      "slotNumber": "Slot {slot} / {capacity}",
+      "scaleLabel": "Scale",
+      "scaleValue": "{count} Warriors",
+      "timeLabel": "Time",
+      "timeValue": "{seconds}s / question",
+      "online": "{count} Online"
     },
     "roomCodeCard": {
       "label": "ROOM CODE",
@@ -931,13 +948,16 @@
     "estimatedWait": "Estimated: ~{time}",
     "playersInQueue": "Players searching:",
     "playerCount": "{count} players",
-    "cancelSearch": "CANCEL SEARCH"
+    "cancelSearch": "CANCEL SEARCH",
+    "retry": "Retry"
   },
   "Professor": {
     "name": "Professor BigBrain",
     "supervisorTitle": "EXAM SUPERVISOR",
     "supervisorLabel": "Professor Supervisor Desk",
     "attendanceDesk": "ATTENDANCE DESK",
+    "greetingIdle": "New student? Quick, sign into the attendance book so I can assign your exam hall!",
+    "greetingNickname": "Fierce nickname \"{nickname}\"{avatarNote}! Are you ready to enter the arena?",
     "instructionsLabel": "SUPERVISOR'S REMARKS:",
     "rulesLabel": "EXAM REGULATIONS",
     "roastLabel": "PROFESSOR'S REMARKS:",
