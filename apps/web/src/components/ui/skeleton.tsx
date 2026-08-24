@@ -23,7 +23,7 @@ export const Skeleton = React.forwardRef<HTMLDivElement, SkeletonProps>(
     };
 
     const combinedClassName = cn(
-      "bg-surface-container-high animate-shimmer",
+      "bg-candy-ink/10 animate-pulse",
       shapeClass,
       className,
     );

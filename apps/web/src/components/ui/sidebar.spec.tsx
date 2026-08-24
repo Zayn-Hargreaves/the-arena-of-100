@@ -33,10 +33,34 @@ vi.mock("@/i18n/routing", async () => {
   };
 });
 
+let mockUserRole: string | undefined = undefined;
+vi.mock("@/stores/socket-store", () => ({
+  useSocketStore: (selector?: (state: { userRole?: string }) => unknown) => {
+    const state = { userRole: mockUserRole };
+    return selector ? selector(state) : state;
+  },
+}));
+
 import { Sidebar } from "./sidebar";
 
+const SIDEBAR_TRANSLATIONS: Record<string, string> = {
+  collapseSidebar: "Collapse sidebar",
+  expandSidebar: "Expand sidebar",
+  openMenu: "Open menu",
+  closeMenu: "Close menu",
+};
+
 beforeEach(() => {
+  mockUserRole = undefined;
   mockUsePathname.mockReturnValue("/");
+  vi.mocked(useTranslations).mockImplementation(((namespace?: string) =>
+    (key: string, params?: Record<string, string | number>) => {
+      if (namespace === "Sidebar" && SIDEBAR_TRANSLATIONS[key]) {
+        return SIDEBAR_TRANSLATIONS[key];
+      }
+      if (!params) return key;
+      return key.replace(/\{(\w+)\}/g, (_, name) => String(params[name] ?? ""));
+    }) as never);
 });
 
 describe("Sidebar — desktop", () => {
@@ -46,16 +70,28 @@ describe("Sidebar — desktop", () => {
     expect(screen.getByText("OF 100")).toBeInTheDocument();
   });
 
-  it("renders all enabled nav items with translated labels", () => {
+  it("renders all enabled player nav items with translated labels", () => {
     render(<Sidebar nickname="Alice" />);
-    // nav.daily, nav.createRoom, nav.rankings, nav.settings, nav.profile, nav.admin
-    // (nav.arena is disabled, so the element is not rendered.)
+    // nav.daily, nav.createRoom, nav.rankings, nav.settings, nav.profile
+    // (nav.arena is disabled; nav.admin is hidden for non-admin.)
     expect(screen.getByText("nav.daily")).toBeInTheDocument();
     expect(screen.getByText("nav.createRoom")).toBeInTheDocument();
     expect(screen.getByText("nav.rankings")).toBeInTheDocument();
     expect(screen.getByText("nav.settings")).toBeInTheDocument();
     expect(screen.getByText("nav.profile")).toBeInTheDocument();
+    expect(screen.queryByText("nav.admin")).not.toBeInTheDocument();
+  });
+
+  it("renders nav.admin when userRole is ADMIN", () => {
+    mockUserRole = "ADMIN";
+    render(<Sidebar nickname="Alice" />);
     expect(screen.getByText("nav.admin")).toBeInTheDocument();
+  });
+
+  it("does NOT render nav.admin when userRole is PLAYER", () => {
+    mockUserRole = "PLAYER";
+    render(<Sidebar nickname="Alice" />);
+    expect(screen.queryByText("nav.admin")).toBeNull();
   });
 
   it("does NOT render the disabled 'arena' nav item", () => {
@@ -107,7 +143,9 @@ describe("Sidebar — desktop", () => {
 
   it("renders a focusable skip link for keyboard navigation on the toggle", () => {
     render(<Sidebar nickname="Alice" />);
-    const button = screen.getByRole("button", { name: "Collapse sidebar" });
+    const button = screen.getByRole("button", {
+      name: "Collapse sidebar",
+    });
     expect(button).toHaveClass("focus-visible:ring-2");
   });
 });
@@ -124,7 +162,9 @@ describe("Sidebar — mobile", () => {
     const user = userEvent.setup();
     render(<Sidebar nickname="Alice" />);
 
-    const menuButton = screen.getByRole("button", { name: "Open menu" });
+    const menuButton = screen.getByRole("button", {
+      name: "Open menu",
+    });
     await user.click(menuButton);
 
     const dialog = screen.getByRole("dialog", {
@@ -138,13 +178,17 @@ describe("Sidebar — mobile", () => {
     const user = userEvent.setup();
     render(<Sidebar nickname="Alice" />);
 
-    const menuButton = screen.getByRole("button", { name: "Open menu" });
+    const menuButton = screen.getByRole("button", {
+      name: "Open menu",
+    });
     await user.click(menuButton);
     expect(
       screen.getByRole("dialog", { name: "Mobile navigation menu" }),
     ).toBeInTheDocument();
 
-    const closeButton = screen.getByRole("button", { name: "Close menu" });
+    const closeButton = within(screen.getByRole("banner")).getByRole("button", {
+      name: "Close menu",
+    });
     await user.click(closeButton);
     expect(
       screen.queryByRole("dialog", { name: "Mobile navigation menu" }),
@@ -261,37 +305,21 @@ describe("Sidebar — mobile", () => {
 
   it("closes the mobile overlay when the dialog close button is clicked", async () => {
     const user = userEvent.setup();
-    const previousImpl = vi.mocked(useTranslations).getMockImplementation();
-    // Localize the Sidebar translator so the dialog close button exposes its
-    // resolved accessible name ("Close menu") instead of the key path.
-    vi.mocked(useTranslations).mockImplementation(((namespace?: string) =>
-      (key: string, params?: Record<string, string | number>) => {
-        if (namespace === "Sidebar" && key === "closeMenu") {
-          return "Close menu";
-        }
-        if (!params) return key;
-        return key.replace(/\{(\w+)\}/g, (_, name) =>
-          String(params[name] ?? ""),
-        );
-      }) as never);
+    render(<Sidebar nickname="Alice" />);
+    const menuButton = screen.getByRole("button", { name: "Open menu" });
+    await user.click(menuButton);
+    const dialog = screen.getByRole("dialog", {
+      name: "Mobile navigation menu",
+    });
+    expect(dialog).toBeInTheDocument();
 
-    try {
-      render(<Sidebar nickname="Alice" />);
-      await user.click(screen.getByRole("button", { name: "Open menu" }));
-      const dialog = screen.getByRole("dialog", {
-        name: "Mobile navigation menu",
-      });
-      const closeButton = within(dialog).getByRole("button", {
-        name: "Close menu",
-      });
-      await user.click(closeButton);
-      expect(
-        screen.queryByRole("dialog", { name: "Mobile navigation menu" }),
-      ).not.toBeInTheDocument();
-    } finally {
-      if (previousImpl) {
-        vi.mocked(useTranslations).mockImplementation(previousImpl);
-      }
-    }
+    const closeButton = within(dialog).getByRole("button", {
+      name: "Close menu",
+    });
+    await user.click(closeButton);
+    expect(
+      screen.queryByRole("dialog", { name: "Mobile navigation menu" }),
+    ).not.toBeInTheDocument();
+    expect(menuButton).toHaveFocus();
   });
 });

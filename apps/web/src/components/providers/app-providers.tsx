@@ -7,6 +7,8 @@ import { TooltipProvider } from "@/components/ui/tooltip-provider";
 import { createQueryClient } from "@/lib/query-client";
 import { useSocketStore } from "@/stores/socket-store";
 
+import { SfxProvider } from "./sfx-provider";
+
 interface AppProvidersProps {
   children: React.ReactNode;
 }
@@ -37,9 +39,11 @@ export function AppProviders({ children }: Readonly<AppProvidersProps>) {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <ProfileCacheInvalidator />
-        {children}
-        <Toaster />
+        <SfxProvider>
+          <ProfileCacheInvalidator />
+          {children}
+          <Toaster />
+        </SfxProvider>
       </TooltipProvider>
     </QueryClientProvider>
   );

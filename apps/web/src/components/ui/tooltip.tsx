@@ -35,14 +35,14 @@ const Tooltip = ({
           sideOffset={sideOffset}
           avoidCollisions={avoidCollisions}
           className={cn(
-            "z-50 overflow-hidden rounded-md border border-surface-container-high bg-surface-container px-3 py-1.5 text-sm text-on-background shadow-md animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
+            "z-50 overflow-hidden rounded-xl border-[2.5px] border-candy-ink bg-white px-3 py-1.5 text-xs font-bold text-candy-ink shadow-[3px_3px_0_0_#2B2D42] animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
             "select-none radix-disabled:opacity-50 radix-disabled:pointer-events-none",
             className,
           )}
           {...props}
         >
           {content}
-          <TooltipPrimitive.Arrow className="fill-surface-container-high" />
+          <TooltipPrimitive.Arrow className="fill-candy-ink" />
         </TooltipPrimitive.Content>
       </TooltipPrimitive.Portal>
     </TooltipPrimitive.Root>

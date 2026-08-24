@@ -50,7 +50,7 @@ export const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
               </DialogPrimitive.Title>
 
               {description && (
-                <DialogPrimitive.Description className="mt-2 text-sm text-on-background/70">
+                <DialogPrimitive.Description className="mt-2 text-sm text-candy-ink/70">
                   {description}
                 </DialogPrimitive.Description>
               )}
