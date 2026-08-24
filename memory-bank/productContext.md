@@ -30,7 +30,7 @@
    - Play tactical cards (Shields, Double Points, Freeze opponents, Reveal hints).
    - Submit answers with instant optimistic client UI backed by server-side validation.
 5. **Instant Elimination & Spectating**: Wrong or expired answers eliminate players immediately; eliminated players continue watching in real-time spectator mode.
-6. **Tie-Break & Victory Screen**: Determines the winner based on response timestamp precision and accuracy, awards Elo points, unlocks cosmetic card variants (Neon/Gold), and provides shareable match statistics.
+6. **Tie-Break & Victory Screen**: Determines the winner based on response timestamp precision and accuracy, awards Elo points, and provides shareable match statistics.
 
 ---
 

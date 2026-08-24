@@ -34,9 +34,9 @@ https://github.com/user-attachments/assets/9f14d0f6-7d81-4014-8b74-3158dc4e2719
 - **Class & Tactical Card Hybrid Engine**: Offense vs Defense classes with 18 distinct tactical cards (Shields, Point Doublers, Freeze, Reveal) resolved via deterministic batch processing (`CARD_RESOLVED_BATCH` <= 50ms).
 - **Elo Matchmaking & Rating Engine**: Dynamic K-factor ranking system with Redis ZSET matchmaking pools and background bot backfill.
 - **Daily Challenge Mode**: Timezone-aware daily trivia sets with streak tracking and unlockable cosmetic card variants (Neon / Gold).
-- **Delta Replay State Sync (`EVENT_BATCH`)**: Monotonic `seqNo` event-log enables zero-flicker re-hydration for mobile/reconnecting players without full snapshot overhead.
+- **Delta Replay State Sync (`EVENT_BATCH`)**: Monotonic `seqNo` event-log enables zero-flicker re-hydration when `lastSeenSeqNo` is within the retained history window, falling back to full `SNAPSHOT` for zero or stale cursors.
 - **Zero-Downtime Distributed Runtime**: Redis Socket.IO adapter for multi-node broadcast, fenced owner leases for game-loop failover, and Redis Sentinel HA with automatic `READONLY` master error recovery.
-- **2,398+ Automated Tests**: Comprehensive test suite (Unit, Integration, and Chaos Oracles) with >=90% code coverage across all monorepo packages.
+- **2,398+ Automated Tests**: Comprehensive test suite (Unit, Integration, and Chaos Oracles) with >=90% code coverage across core game logic and API packages (`@arena/game-core` & `@arena/api`).
 
 ---
 

@@ -37,7 +37,7 @@ The project serves as a **production-ready showcase of modern full-stack & distr
 
 - [x] **Multi-Node Redis Adapter**: Seamless cross-worker WebSocket broadcast scaling across multiple backend instances.
 - [x] **Redis Sentinel High Availability**: Automatic master failover with transparent `READONLY` error reconnection.
-- [x] **Delta Replay State Sync (`EVENT_BATCH`)**: Monotonic sequence tracking ensures seamless reconnection over spotty connections without full-state overhead.
+- [x] **Delta Replay State Sync (`EVENT_BATCH`)**: Monotonic sequence tracking enables delta replay within the retained window, falling back to full `SNAPSHOT` for zero or stale cursors.
 - [x] **High-Throughput Concurrency**: Self-rearming event-driven consumer loop drops p95 answer latency from 1,126ms to 201ms (-82%).
 
 ---

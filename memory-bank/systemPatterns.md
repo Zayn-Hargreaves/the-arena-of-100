@@ -61,7 +61,7 @@ graph TD
 stateDiagram-v2
     [*] --> CREATED
     CREATED --> LOBBY_COUNTDOWN: Host Starts / Auto-Start
-    LOBBY_COUNTDOWN --> ROUND_ACTIVE: 15s Round Window
+    LOBBY_COUNTDOWN --> ROUND_ACTIVE: Round starts; 15s answer window
 
     state ROUND_ACTIVE {
         [*] --> QuestionBroadcast
@@ -141,4 +141,4 @@ stateDiagram-v2
 
 1. **Redis Sentinel HA & `reconnectOnError`**: Automatically catches `READONLY` exceptions during Redis master failover and transparently redirects commands to newly elected masters.
 2. **Graceful Degradation**: If third-party question APIs fail, the system falls back to a curated local PostgreSQL question pool.
-3. **Admin Kill-Switch & Audit Event Log**: Immediate operational kill-switch with append-only database audit logs for regulatory compliance and operational security.
+3. **Admin Kill-Switch & Audit Event Log**: Immediate operational kill-switch with append-only database audit logs for operational security and auditability.

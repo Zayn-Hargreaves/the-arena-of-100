@@ -16,16 +16,16 @@ Beyond a game, this project is a **high-concurrency engineering showcase** demon
 
 ## 2. Key Engineering Highlights & Numbers
 
-| Metric / Dimension        | Value / Achievement                                                      | Engineering Significance                                                          |
-| :------------------------ | :----------------------------------------------------------------------- | :-------------------------------------------------------------------------------- |
-| **Max Capacity Ceiling**  | **8,000 concurrent WebSocket VUs** (80 rooms x 100 players)              | Tested on 3-node distributed cluster via k6 multi-room distributed harness        |
-| **Connection Integrity**  | **0 connect failures (100% connect success)**                            | Robust connection lifecycle, backpressure handling, and graceful degradation      |
-| **Match Completion Rate** | **99.6% matches reach finished state** at 8,000 VU                       | Deterministic game-loop completion and presence tracking across distributed nodes |
-| **Answer Latency (p95)**  | **201ms @ 800 VU \| 357ms @ 1,600 VU \| 669ms @ 3,200 VU \| 866ms @ 8k** | Sub-second latency scaling curve across 3 backend worker nodes                    |
-| **Consumer Optimization** | **1,126ms -> 201ms (-82% latency drop)**                                 | Eliminated timer-bound polling bottleneck with event-driven batch processing      |
-| **Test Footprint**        | **2,398+ passing tests** (Vitest / Unit / Integration / Chaos)           | >=90% code coverage gate across game logic, API, socket gateway, and client       |
-| **High Availability**     | **Redis Sentinel (1 Master, 2 Replicas, 3 Sentinels)**                   | Automatic failover with `READONLY` error detection and zero manual intervention   |
-| **State Synchronization** | **Monotonic `seqNo` Delta Replay (`EVENT_BATCH`)**                       | Reconnects resume exactly where left off without full-state re-hydration overhead |
+| Metric / Dimension        | Value / Achievement                                                      | Engineering Significance                                                                             |
+| :------------------------ | :----------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------- |
+| **Max Capacity Ceiling**  | **8,000 concurrent WebSocket VUs** (80 rooms x 100 players)              | Tested on 3-node distributed cluster via k6 multi-room distributed harness                           |
+| **Connection Integrity**  | **0 connect failures (100% connect success)**                            | Robust connection lifecycle, backpressure handling, and graceful degradation                         |
+| **Match Completion Rate** | **99.6% matches reach finished state** at 8,000 VU                       | Deterministic game-loop completion and presence tracking across distributed nodes                    |
+| **Answer Latency (p95)**  | **201ms @ 800 VU \| 357ms @ 1,600 VU \| 669ms @ 3,200 VU \| 866ms @ 8k** | Sub-second latency scaling curve across 3 backend worker nodes                                       |
+| **Consumer Optimization** | **1,126ms -> 201ms (-82% latency drop)**                                 | Eliminated timer-bound polling bottleneck with event-driven batch processing                         |
+| **Test Footprint**        | **2,398+ passing tests** (Vitest / Unit / Integration / Chaos)           | >=90% code coverage gate across core game logic and API packages (`@arena/game-core` & `@arena/api`) |
+| **High Availability**     | **Redis Sentinel (1 Master, 2 Replicas, 3 Sentinels)**                   | Automatic failover with `READONLY` error detection and zero manual intervention                      |
+| **State Synchronization** | **Monotonic `seqNo` Delta Replay (`EVENT_BATCH`)**                       | Delta replay within retained `seqNo` window; falls back to full `SNAPSHOT` for zero/stale cursors    |
 
 ---
 
