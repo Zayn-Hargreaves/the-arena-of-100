@@ -2949,6 +2949,55 @@ describe("MatchCommandService (B4a)", () => {
       );
     });
 
+    it("DUPLICATE_SUBMISSION + ROUND_NOT_ACTIVE when matchStatus is not ROUND_ACTIVE", async () => {
+      const { sm, offerSeqNo } = pickOfferSmForPlay({ pickedCardId: "CB-1" });
+      (sm as unknown as { state: { status: MatchStatus } }).state.status =
+        MatchStatus.TOPIC_VOTING;
+      matchService.getStateMachine.mockResolvedValue(sm);
+      const recorder = makeMockServer();
+
+      const outcome = await applyPlayAuthoritative(
+        service,
+        playEnv("evt-not-active", "cmd-not-active", offerSeqNo),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome).toBe("DUPLICATE_SUBMISSION");
+      const errEmits = recorder.callsByEvent(ServerEvent.ERROR);
+      expect(errEmits.length).toBe(1);
+      expect(errEmits[0]?.[1]).toMatchObject({
+        code: ErrorCode.ROUND_NOT_ACTIVE,
+        failedEvent: ClientEvent.CARD_PLAY,
+        commandId: "cmd-not-active",
+      });
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+    });
+
+    it("DUPLICATE_SUBMISSION + ROUND_NOT_ACTIVE when currentRound is missing or not ACTIVE", async () => {
+      const { sm, offerSeqNo } = pickOfferSmForPlay({ pickedCardId: "CB-1" });
+      vi.spyOn(sm, "getCurrentRound").mockReturnValue(null);
+      matchService.getStateMachine.mockResolvedValue(sm);
+      const recorder = makeMockServer();
+
+      const outcome = await applyPlayAuthoritative(
+        service,
+        playEnv("evt-no-round", "cmd-no-round", offerSeqNo),
+        OWNER,
+        recorder.server,
+      );
+
+      expect(outcome).toBe("DUPLICATE_SUBMISSION");
+      const errEmits = recorder.callsByEvent(ServerEvent.ERROR);
+      expect(errEmits.length).toBe(1);
+      expect(errEmits[0]?.[1]).toMatchObject({
+        code: ErrorCode.ROUND_NOT_ACTIVE,
+        failedEvent: ClientEvent.CARD_PLAY,
+        commandId: "cmd-no-round",
+      });
+      expect(matchService.persistStateMachine).not.toHaveBeenCalled();
+    });
+
     it("DUPLICATE_SUBMISSION on validateCardCommand rejection (card not in offer)", async () => {
       // Build a machine where p1 picked "CB-1" but the env claims CB-2.
       const { sm, offerSeqNo } = pickOfferSmForPlay({ pickedCardId: "CB-1" });

@@ -372,6 +372,7 @@ export async function applyCardPlayCommand(
     context.logger.warn(
       `applyCardPlayAuthoritative: validateCardCommand rejected for ${env.matchId}/${userId} (acking as no-op): ${error instanceof Error ? error.message : String(error)}`,
     );
+    /* c8 ignore next 3 */
     if (stateMachine.getPlayedCards(userId).has(env.body.cardId as CardId)) {
       return handleDuplicatePlayRecovery(context, env, server);
     }

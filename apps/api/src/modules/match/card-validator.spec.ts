@@ -17,7 +17,7 @@ import {
   AOE_CAP_PER_ROUND,
   COMMAND_ID_MAX_LENGTH,
 } from "./card-validator";
-import { ErrorCode, RoomError, type CardId } from "@arena/shared";
+import { ErrorCode, MatchStatus, RoomError, type CardId } from "@arena/shared";
 
 describe("assertValidCommandId", () => {
   it("accepts a non-empty string within length cap", () => {
@@ -291,6 +291,41 @@ describe("validateCardCommand — top-level", () => {
         pickedCards: ["CB-1"] as CardId[],
       }),
     ).toThrow(RoomError);
+  });
+
+  it("rejects when matchStatus is not ROUND_ACTIVE", () => {
+    try {
+      validateCardCommand({
+        ...baseArgs,
+        matchStatus: MatchStatus.COUNTDOWN,
+      });
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(RoomError);
+      expect((err as RoomError).code).toBe(ErrorCode.ROUND_NOT_ACTIVE);
+    }
+  });
+
+  it("rejects when roundStatus is not ACTIVE", () => {
+    try {
+      validateCardCommand({
+        ...baseArgs,
+        roundStatus: "REVEALING",
+      });
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(RoomError);
+      expect((err as RoomError).code).toBe(ErrorCode.ROUND_NOT_ACTIVE);
+    }
+  });
+
+  it("accepts when matchStatus is ROUND_ACTIVE and roundStatus is ACTIVE", () => {
+    const result = validateCardCommand({
+      ...baseArgs,
+      matchStatus: MatchStatus.ROUND_ACTIVE,
+      roundStatus: "ACTIVE",
+    });
+    expect(result.cardId).toBe("CB-1");
   });
 });
 

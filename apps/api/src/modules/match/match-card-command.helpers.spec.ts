@@ -24,6 +24,7 @@ import { MatchStateMachine } from "@arena/game-core";
 import {
   ClientEvent,
   ErrorCode,
+  MatchStatus,
   PlayerStatus,
   RoomError,
   ServerEvent,
@@ -116,6 +117,14 @@ describe("findCanonicalCardEvent", () => {
   it("returns the most recent matching CARD_RESOLVED by (playedByPlayerId, cardId, offerSeqNo)", () => {
     const sm = makeSm();
     sm.classAssignment(["p1"], "seed");
+    sm.transition(MatchStatus.COUNTDOWN);
+    sm.transition(MatchStatus.ROUND_ACTIVE);
+    sm.startRound({
+      id: "q1",
+      content: "Q",
+      options: ["A", "B", "C", "D"],
+      correctAnswer: "A",
+    });
     const cards = sm.pickOffer("p1", 5, "offer-2");
     const pickedCardId = cards[0]!;
     const offerSeqNo = sm.getHeadSeqNo();
