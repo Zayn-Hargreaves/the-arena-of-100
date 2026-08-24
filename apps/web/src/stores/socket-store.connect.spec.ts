@@ -206,6 +206,58 @@ describe("socket-store connect heartbeat ownership", () => {
     }
   });
 
+  it("handles connect() -> disconnect() -> connect() before the original ACK arrives without stale attempt interference", async () => {
+    const auth1 = deferred<void>();
+    const auth2 = deferred<void>();
+    waitForSocketAckMock
+      .mockReturnValueOnce(auth1.promise)
+      .mockReturnValueOnce(auth2.promise);
+
+    let socket1: ReturnType<typeof useSocketStore.getState>["socket"] = null;
+    let socket2: ReturnType<typeof useSocketStore.getState>["socket"] = null;
+
+    try {
+      const firstConnectPromise = useSocketStore.getState().connect();
+      await vi.waitFor(() =>
+        expect(useSocketStore.getState().socket).not.toBeNull(),
+      );
+      socket1 = useSocketStore.getState().socket;
+
+      // Disconnect before auth1 resolves
+      useSocketStore.getState().disconnect();
+      expect(useSocketStore.getState().socket).toBeNull();
+      expect(useSocketStore.getState().isConnected).toBe(false);
+
+      // Supply token and start new connect() before original ACK arrives
+      useSocketStore.setState({ accessToken: "token-2" });
+      const secondConnectPromise = useSocketStore.getState().connect();
+      expect(secondConnectPromise).not.toBe(firstConnectPromise);
+
+      await vi.waitFor(() =>
+        expect(useSocketStore.getState().socket).not.toBeNull(),
+      );
+      socket2 = useSocketStore.getState().socket;
+      expect(socket2).not.toBe(socket1);
+
+      // Stale ACK arrives for the first connect attempt
+      auth1.resolve();
+      await firstConnectPromise;
+
+      // Ensure second connect is still the active in-flight connection and socket is socket2
+      expect(useSocketStore.getState().socket).toBe(socket2);
+
+      // Second connect ACK arrives
+      auth2.resolve();
+      await secondConnectPromise;
+
+      expect(useSocketStore.getState().socket).toBe(socket2);
+      expect(useSocketStore.getState().heartbeatInterval).not.toBeNull();
+    } finally {
+      socket1?.disconnect();
+      socket2?.disconnect();
+    }
+  });
+
   it("fast-paths connect() when socket is already connected and authenticated", async () => {
     const mockSocket = createMockSocket();
     mockSocket.connected = true;

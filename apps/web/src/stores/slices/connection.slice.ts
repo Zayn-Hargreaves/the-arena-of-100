@@ -96,6 +96,7 @@ export const createConnectionSlice: StateCreator<
   ConnectionSlice
 > = (set, get) => {
   let inFlightConnectPromise: Promise<void> | null = null;
+  let connectGeneration = 0;
 
   return {
     socket: null,
@@ -111,6 +112,8 @@ export const createConnectionSlice: StateCreator<
       if (inFlightConnectPromise) {
         return inFlightConnectPromise;
       }
+
+      const generation = ++connectGeneration;
 
       inFlightConnectPromise = (async () => {
         try {
@@ -648,7 +651,9 @@ export const createConnectionSlice: StateCreator<
 
           set({ heartbeatInterval: interval });
         } finally {
-          inFlightConnectPromise = null;
+          if (connectGeneration === generation) {
+            inFlightConnectPromise = null;
+          }
         }
       })();
 
@@ -656,6 +661,9 @@ export const createConnectionSlice: StateCreator<
     },
 
     disconnect: () => {
+      connectGeneration++;
+      inFlightConnectPromise = null;
+
       const { socket, heartbeatInterval } = get();
       if (heartbeatInterval) {
         clearInterval(heartbeatInterval);
