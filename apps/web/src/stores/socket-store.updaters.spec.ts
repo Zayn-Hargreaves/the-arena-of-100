@@ -437,6 +437,7 @@ describe("applyMatchFinishedState — stale state.match guard", () => {
 describe("applyAnswerResultState", () => {
   it("updates lastAnswerResult only for the matching pending answer", () => {
     const state = makeState({
+      match: makeMatch({ id: "m1" }),
       pendingAnswer: {
         matchId: "m1",
         roundNo: 2,
@@ -464,7 +465,10 @@ describe("applyAnswerResultState", () => {
       answer: "A",
       submissionId: "s1",
     };
-    const state = makeState({ pendingAnswer });
+    const state = makeState({
+      match: makeMatch({ id: "m1" }),
+      pendingAnswer,
+    });
 
     const result = applyAnswerResultState(state, {
       matchId: "m1",
@@ -479,7 +483,29 @@ describe("applyAnswerResultState", () => {
   });
 
   it("stores answer result when pending answer is already clear", () => {
-    const result = applyAnswerResultState(makeState(), {
+    const result = applyAnswerResultState(
+      makeState({ match: makeMatch({ id: "m1" }) }),
+      {
+        matchId: "m1",
+        roundNo: 2,
+        submissionId: "s1",
+        isCorrect: true,
+        responseTimeMs: 123,
+      },
+    );
+
+    expect(result.lastAnswerResult).toMatchObject({ submissionId: "s1" });
+    expect(result.pendingAnswer).toBeNull();
+  });
+
+  it("returns empty object when no active match ID exists after leaveRoom cleared state", () => {
+    const state = makeState({
+      room: null,
+      match: null,
+      lastAnswerResult: null,
+    });
+
+    const result = applyAnswerResultState(state, {
       matchId: "m1",
       roundNo: 2,
       submissionId: "s1",
@@ -487,8 +513,8 @@ describe("applyAnswerResultState", () => {
       responseTimeMs: 123,
     });
 
-    expect(result.lastAnswerResult).toMatchObject({ submissionId: "s1" });
-    expect(result.pendingAnswer).toBeNull();
+    expect(result).toEqual({});
+    expect(state.lastAnswerResult).toBeNull();
   });
 
   it("consumes SECOND_CHANCE effect when receiving an answer result for a retry submission", () => {
@@ -508,6 +534,7 @@ describe("applyAnswerResultState", () => {
     };
     const state = makeState({
       userId: "p1",
+      match: makeMatch({ id: "m1" }),
       lastAnswerResult: {
         matchId: "m1",
         roundNo: 2,

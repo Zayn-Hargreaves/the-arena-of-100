@@ -597,8 +597,8 @@ export function applyAnswerResultState(
   state: SocketState,
   data: AnswerResultPayload,
 ): Partial<SocketState> {
-  const activeMatchId = state.room?.currentMatchId ?? state.match?.id;
-  if (activeMatchId && activeMatchId !== data.matchId) return {};
+  const activeMatchId = state.room?.currentMatchId ?? state.match?.id ?? null;
+  if (activeMatchId === null || activeMatchId !== data.matchId) return {};
   const isPendingAnswer =
     state.pendingAnswer?.matchId === data.matchId &&
     state.pendingAnswer.roundNo === data.roundNo &&

@@ -22,6 +22,11 @@ vi.mock("./socket-store.helpers", async () => {
   return {
     ...actual,
     waitForSocketAck: waitForSocketAckMock,
+    waitForAuthAck: (socket: unknown) =>
+      waitForSocketAckMock({
+        socket,
+        successEvent: ServerEvent.AUTHENTICATED,
+      }),
   };
 });
 
@@ -144,92 +149,78 @@ describe("socket-store connect heartbeat ownership", () => {
     });
   });
 
-  it("keeps the heartbeat interval owned by the latest socket", async () => {
-    const firstAuth = deferred<void>();
-    waitForSocketAckMock
-      .mockReturnValueOnce(firstAuth.promise)
-      .mockResolvedValueOnce(undefined);
+  it("coalesces concurrent connect attempts and returns the same in-flight promise", async () => {
+    const auth = deferred<void>();
+    waitForSocketAckMock.mockReturnValueOnce(auth.promise);
 
-    const intervalToken = { id: "heartbeat-interval" } as const;
-    const setIntervalSpy = vi
-      .spyOn(globalThis, "setInterval")
-      .mockReturnValue(
-        intervalToken as unknown as ReturnType<typeof setInterval>,
-      );
-
-    let socket1: ReturnType<typeof useSocketStore.getState>["socket"] = null;
-    let socket2: ReturnType<typeof useSocketStore.getState>["socket"] = null;
+    let socket: ReturnType<typeof useSocketStore.getState>["socket"] = null;
 
     try {
       const firstConnect = useSocketStore.getState().connect();
       await vi.waitFor(() =>
         expect(useSocketStore.getState().socket).not.toBeNull(),
       );
-      socket1 = useSocketStore.getState().socket;
+      socket = useSocketStore.getState().socket;
+
       const secondConnect = useSocketStore.getState().connect();
-      await vi.waitFor(() =>
-        expect(useSocketStore.getState().socket).not.toBe(socket1),
-      );
-      socket2 = useSocketStore.getState().socket;
+      expect(secondConnect).toBe(firstConnect);
+      expect(useSocketStore.getState().socket).toBe(socket);
 
-      await secondConnect;
-      firstAuth.resolve();
+      auth.resolve();
       await firstConnect;
+      await secondConnect;
 
-      expect(setIntervalSpy).toHaveBeenCalledTimes(1);
-      expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 25000);
-      expect(useSocketStore.getState().socket).toBe(socket2);
-      expect(useSocketStore.getState().heartbeatInterval).toBe(intervalToken);
+      expect(useSocketStore.getState().socket).toBe(socket);
     } finally {
-      socket1?.disconnect();
-      socket2?.disconnect();
-      setIntervalSpy.mockRestore();
+      socket?.disconnect();
     }
   });
 
-  it("ignores stale socket errors when clearing pending answers", async () => {
-    const firstAuth = deferred<void>();
-    waitForSocketAckMock
-      .mockReturnValueOnce(firstAuth.promise)
-      .mockResolvedValueOnce(undefined);
+  it("clears stored promise in finally after auth failure so subsequent connect can retry", async () => {
+    waitForSocketAckMock.mockRejectedValueOnce(
+      new Error("Authentication failed"),
+    );
 
-    let socket1: ReturnType<typeof useSocketStore.getState>["socket"] = null;
+    await expect(useSocketStore.getState().connect()).rejects.toThrow(
+      "Authentication failed",
+    );
+
+    // Second connect should initiate a new connection attempt
+    const secondAuth = deferred<void>();
+    waitForSocketAckMock.mockReturnValueOnce(secondAuth.promise);
+
     let socket2: ReturnType<typeof useSocketStore.getState>["socket"] = null;
-
     try {
-      const firstConnect = useSocketStore.getState().connect();
+      const secondConnect = useSocketStore.getState().connect();
       await vi.waitFor(() =>
         expect(useSocketStore.getState().socket).not.toBeNull(),
       );
-      socket1 = useSocketStore.getState().socket;
-      const secondConnect = useSocketStore.getState().connect();
-      await vi.waitFor(() =>
-        expect(useSocketStore.getState().socket).not.toBe(socket1),
-      );
       socket2 = useSocketStore.getState().socket;
+
+      secondAuth.resolve();
       await secondConnect;
 
-      useSocketStore.setState({
-        pendingAnswer: {
-          matchId: "m1",
-          roundNo: 1,
-          answer: "A",
-          submissionId: "s1",
-        },
-      });
-      socket1?.emit(ServerEvent.ERROR, {
-        code: ErrorCode.INTERNAL_ERROR,
-        message: "late",
-      });
-
-      expect(useSocketStore.getState().pendingAnswer?.submissionId).toBe("s1");
-
-      firstAuth.resolve();
-      await firstConnect;
+      expect(useSocketStore.getState().socket).toBe(socket2);
     } finally {
-      socket1?.disconnect();
       socket2?.disconnect();
     }
+  });
+
+  it("fast-paths connect() when socket is already connected and authenticated", async () => {
+    const mockSocket = createMockSocket();
+    mockSocket.connected = true;
+    useSocketStore.setState({
+      socket: mockSocket as unknown as ReturnType<
+        typeof useSocketStore.getState
+      >["socket"],
+      isConnected: true,
+      isAuthenticated: true,
+    });
+
+    await useSocketStore.getState().connect();
+
+    expect(useSocketStore.getState().socket).toBe(mockSocket);
+    expect(mockSocket.emit).not.toHaveBeenCalled();
   });
 
   it("clears pending answer on current-socket disconnect", async () => {
