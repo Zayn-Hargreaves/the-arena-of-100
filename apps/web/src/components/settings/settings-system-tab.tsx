@@ -53,7 +53,7 @@ export function SettingsSystemTab({
             onClick={() => onSwitchLanguage("vi")}
             disabled={isPendingLocale}
             className={cn(
-              "p-4 rounded-2xl border-[2.5px] border-candy-ink font-display font-black text-xs uppercase tracking-wide flex items-center justify-between transition-all cursor-pointer",
+              "p-4 rounded-2xl border-[2.5px] border-candy-ink font-display font-black text-xs uppercase tracking-wide flex items-center justify-between transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed",
               locale === "vi"
                 ? "bg-candy-mint text-white shadow-[3px_3px_0_0_#2B2D42] -translate-y-0.5"
                 : "bg-white text-candy-ink/70 hover:text-candy-ink hover:bg-candy-cloud shadow-[2px_2px_0_0_#2B2D42]",
@@ -72,7 +72,7 @@ export function SettingsSystemTab({
             onClick={() => onSwitchLanguage("en")}
             disabled={isPendingLocale}
             className={cn(
-              "p-4 rounded-2xl border-[2.5px] border-candy-ink font-display font-black text-xs uppercase tracking-wide flex items-center justify-between transition-all cursor-pointer",
+              "p-4 rounded-2xl border-[2.5px] border-candy-ink font-display font-black text-xs uppercase tracking-wide flex items-center justify-between transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed",
               locale === "en"
                 ? "bg-candy-pink text-white shadow-[3px_3px_0_0_#2B2D42] -translate-y-0.5"
                 : "bg-white text-candy-ink/70 hover:text-candy-ink hover:bg-candy-cloud shadow-[2px_2px_0_0_#2B2D42]",

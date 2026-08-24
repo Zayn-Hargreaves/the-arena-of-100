@@ -92,7 +92,7 @@ export function SettingsTabBar({
             id={`settings-tab-${tab.id}`}
             role="tab"
             aria-selected={isActive}
-            aria-controls={`settings-tabpanel-${tab.id}`}
+            aria-controls={isActive ? `settings-tabpanel-${tab.id}` : undefined}
             tabIndex={isActive ? 0 : -1}
             type="button"
             onClick={() => onTabChange(tab.id)}

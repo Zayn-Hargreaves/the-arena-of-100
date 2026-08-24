@@ -6,9 +6,9 @@ import {
   type CardEffectEvent,
 } from "@arena/shared";
 import type { SocketState } from "../socket-store.types";
-import {
-  consumedSecondChanceBySubmissionId,
-  pendingCardCommands,
+import type {
+  PendingCardCommand,
+  PendingSecondChanceConsumption,
 } from "../socket-store.state-maps";
 
 function getEffectId(eff: CardEffectEvent): string {
@@ -354,6 +354,7 @@ export function applyOptimisticCardPlay(
 export function applySubmitAnswerErrorState(
   state: SocketState,
   data: { failedEvent?: string; submissionId?: string },
+  savedSecondChance?: PendingSecondChanceConsumption,
 ): Partial<SocketState> {
   const { submissionId } = data;
   const pendingAnswer = state.pendingAnswer;
@@ -365,41 +366,31 @@ export function applySubmitAnswerErrorState(
     return {};
   }
 
-  const saved = submissionId
-    ? consumedSecondChanceBySubmissionId.get(submissionId)
-    : undefined;
-  if (submissionId) {
-    consumedSecondChanceBySubmissionId.delete(submissionId);
-  }
   const currentMatchId = state.room?.currentMatchId ?? state.match?.id;
   const shouldRestoreCard =
-    saved &&
-    saved.matchId &&
-    currentMatchId &&
-    saved.matchId === currentMatchId;
+    savedSecondChance &&
+    (!currentMatchId || savedSecondChance.matchId === currentMatchId);
 
   return {
     pendingAnswer: null,
-    ...(shouldRestoreCard ? { cardState: saved.cardState } : {}),
+    ...(shouldRestoreCard ? { cardState: savedSecondChance.cardState } : {}),
   };
 }
 
 export function applyCardCommandErrorState(
   state: SocketState,
   data: { failedEvent?: string; commandId?: string },
+  pending?: PendingCardCommand,
 ): Partial<SocketState> {
   if (
     (data.failedEvent !== ClientEvent.CARD_PICK &&
       data.failedEvent !== ClientEvent.CARD_PLAY) ||
-    !data.commandId
+    !data.commandId ||
+    !pending
   ) {
     return {};
   }
 
-  const pending = pendingCardCommands.get(data.commandId);
-  if (!pending) return {};
-
-  pendingCardCommands.delete(data.commandId);
   const currentMatchId = state.room?.currentMatchId ?? state.match?.id;
   if (currentMatchId !== pending.matchId) {
     return {};

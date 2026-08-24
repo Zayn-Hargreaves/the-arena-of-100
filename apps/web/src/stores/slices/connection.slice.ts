@@ -31,7 +31,11 @@ import {
 } from "@arena/shared";
 import { API_URL } from "@/lib/api";
 import type { SocketState } from "../socket-store.types";
-import { debugLog, waitForAuthAck } from "../socket-store.helpers";
+import {
+  AUTH_TIMEOUT_MS,
+  debugLog,
+  waitForSocketAck,
+} from "../socket-store.helpers";
 import {
   applyAnswerResultState,
   applyAuthenticatedState,
@@ -65,11 +69,13 @@ import {
   applyTopicVotingStartedState,
   applyTopicVotingSummaryState,
   applyUnauthorizedErrorState,
+  removePendingTopicVoteCommand,
 } from "../socket-store.updaters";
 import {
   clearCardCommandState,
   clearTopicVoteState,
   consumedSecondChanceBySubmissionId,
+  pendingCardCommands,
   resolvePendingCardCommand,
 } from "../socket-store.state-maps";
 
@@ -97,6 +103,9 @@ export const createConnectionSlice: StateCreator<
   connect: async () => {
     const state = get();
     if (state.socket?.connected && state.isAuthenticated) return;
+    if (state.heartbeatInterval) {
+      clearInterval(state.heartbeatInterval);
+    }
     if (state.socket) {
       state.socket.disconnect();
     }
@@ -112,8 +121,6 @@ export const createConnectionSlice: StateCreator<
       matchId: string;
       lastSeenSeqNo: number;
     } | null = null;
-
-    const authPromise = waitForAuthAck(newSocket);
 
     let isInitialConnect = true;
     newSocket.on("connect", () => {
@@ -474,14 +481,31 @@ export const createConnectionSlice: StateCreator<
       if (get().socket !== newSocket) return;
 
       if (data.failedEvent === ClientEvent.SUBMIT_ANSWER) {
-        set((state) => applySubmitAnswerErrorState(state, data));
+        const saved = data.submissionId
+          ? consumedSecondChanceBySubmissionId.get(data.submissionId)
+          : undefined;
+        if (data.submissionId) {
+          consumedSecondChanceBySubmissionId.delete(data.submissionId);
+        }
+        set((state) => applySubmitAnswerErrorState(state, data, saved));
       } else if (
         data.failedEvent === ClientEvent.CARD_PICK ||
         data.failedEvent === ClientEvent.CARD_PLAY
       ) {
-        set((state) => applyCardCommandErrorState(state, data));
+        const pending = data.commandId
+          ? pendingCardCommands.get(data.commandId)
+          : undefined;
+        if (data.commandId) {
+          pendingCardCommands.delete(data.commandId);
+        }
+        set((state) => applyCardCommandErrorState(state, data, pending));
       } else if (data.failedEvent === ClientEvent.VOTE_BAN_TOPIC) {
-        set((state) => applyTopicVoteErrorState(state, data));
+        const { matchId, recomputedTopic } = data.commandId
+          ? removePendingTopicVoteCommand(data.commandId)
+          : { matchId: null, recomputedTopic: null };
+        set((state) =>
+          applyTopicVoteErrorState(state, matchId, recomputedTopic),
+        );
       }
       if (
         data.code === ErrorCode.INVALID_TOKEN ||
@@ -508,7 +532,6 @@ export const createConnectionSlice: StateCreator<
     }
 
     if (!effectiveToken) {
-      authPromise.catch(() => {});
       newSocket.disconnect();
       if (get().socket === newSocket) {
         set({
@@ -521,6 +544,17 @@ export const createConnectionSlice: StateCreator<
       throw new Error("Authentication required");
     }
 
+    const authPromise = waitForSocketAck<void>({
+      socket: newSocket,
+      successEvent: ServerEvent.AUTHENTICATED,
+      timeoutMs: AUTH_TIMEOUT_MS,
+      timeoutMessage: "Authentication timed out",
+      mapSuccess: () => undefined,
+      shouldRejectOnError: (data) =>
+        data.code === ErrorCode.INVALID_TOKEN ||
+        data.code === ErrorCode.UNAUTHORIZED,
+      getErrorMessage: (data) => data.message || "Authentication timed out",
+    });
     newSocket.emit(ClientEvent.AUTHENTICATE, { token: effectiveToken });
     try {
       await authPromise;

@@ -133,7 +133,7 @@ export function debugLog(...args: unknown[]) {
   }
 }
 
-const AUTH_TIMEOUT_MS = 5000;
+export const AUTH_TIMEOUT_MS = 5000;
 
 export function waitForAuthAck(socket: Socket): Promise<void> {
   return waitForSocketAck<void>({
@@ -145,6 +145,6 @@ export function waitForAuthAck(socket: Socket): Promise<void> {
     shouldRejectOnError: (data) =>
       data.code === ErrorCode.INVALID_TOKEN ||
       data.code === ErrorCode.UNAUTHORIZED,
-    getErrorMessage: (data) => data.message,
+    getErrorMessage: (data) => data.message || "Authentication timed out",
   });
 }

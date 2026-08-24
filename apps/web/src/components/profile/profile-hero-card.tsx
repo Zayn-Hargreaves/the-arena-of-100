@@ -6,7 +6,12 @@ import { SpriteFrame } from "@/components/ui/sprite-frame";
 import { RankBadge } from "@/components/atoms/rank-badge";
 import { Link } from "@/i18n/routing";
 import { avatars, findAvatarBySeed, type AvatarOption } from "@/lib/avatars";
-import { DEFAULT_AVATAR_SEED, isValidAvatarSeed } from "@arena/shared";
+import {
+  DEFAULT_AVATAR_SEED,
+  isValidAvatarSeed,
+  DEFAULT_RANK_TIER,
+  DEFAULT_ELO,
+} from "@arena/shared";
 import { formatPlayedAt } from "@/lib/formatters";
 import type { useProfileStats } from "@/hooks/use-profile-stats";
 import type { Locale } from "@/i18n/routing";
@@ -28,7 +33,7 @@ function getActiveAvatar(
   if (seed && isValidAvatarSeed(seed)) {
     return findAvatarBySeed(seed);
   }
-  return catalog[0];
+  return findAvatarBySeed(DEFAULT_AVATAR_SEED) ?? catalog[0];
 }
 
 interface ProfileHeroCardProps {
@@ -178,8 +183,8 @@ export function ProfileHeroCard({
           </h2>
           {profile && (
             <RankBadge
-              tier={profile.user.rankTier ?? "SILVER"}
-              elo={profile.user.elo ?? 1200}
+              tier={profile.user.rankTier ?? DEFAULT_RANK_TIER}
+              elo={profile.user.elo ?? DEFAULT_ELO}
               size="md"
               showElo={true}
               className="w-fit mx-auto md:mx-0 shadow-[2px_2px_0_0_#2B2D42]"

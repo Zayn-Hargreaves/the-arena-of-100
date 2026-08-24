@@ -1,6 +1,4 @@
-import type { RoundState } from "@arena/shared";
-
-const ANSWER_CODES = ["A", "B", "C", "D"] as const;
+import { ANSWER_CODES, type RoundState } from "@arena/shared";
 
 export const UNAVAILABLE = Symbol("UNAVAILABLE");
 

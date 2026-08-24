@@ -3,6 +3,7 @@
 // components/game/*) so these tests focus on: snapshot hydration,
 // answer-submit gating, spectator/eliminated derivation, the
 // finished-match redirect, and the admin-termination toast + redirect.
+import "@testing-library/jest-dom/vitest";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, act, fireEvent } from "@testing-library/react";
 import React, { Suspense } from "react";

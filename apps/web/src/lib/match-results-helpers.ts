@@ -224,6 +224,7 @@ export function computePerformanceViewModel(
     : { accuracy: "--", avgSpeed: "--", eliminatedRoundNo: null };
 
   const isEliminated =
+    Boolean(currentPlayer) &&
     !isWinner &&
     (metrics.eliminatedRoundNo !== null || payload?.status === "FINISHED");
   const eliminatedRound = isEliminated

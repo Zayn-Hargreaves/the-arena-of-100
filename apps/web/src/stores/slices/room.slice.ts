@@ -17,7 +17,10 @@ import {
   requireSocket,
   waitForSocketAck,
 } from "../socket-store.helpers";
-import { clearCardCommandState } from "../socket-store.state-maps";
+import {
+  clearCardCommandState,
+  clearTopicVoteState,
+} from "../socket-store.state-maps";
 
 function getMatchLeavingResetState(): Partial<SocketState> {
   return {
@@ -114,6 +117,7 @@ export const createRoomSlice: StateCreator<SocketState, [], [], RoomSlice> = (
 
   leaveRoom: (roomId: string) => {
     const { socket } = get();
+    clearTopicVoteState();
     clearCardCommandState();
     emitIfConnected(socket, ClientEvent.LEAVE_ROOM, { roomId });
     set(getMatchLeavingResetState());
@@ -130,6 +134,7 @@ export const createRoomSlice: StateCreator<SocketState, [], [], RoomSlice> = (
       set({ error: "Socket is not connected" });
       return;
     }
+    clearTopicVoteState();
     clearCardCommandState();
     set(getMatchLeavingResetState());
     emitIfConnected(socket, ClientEvent.JOIN_MATCHMAKING, {
@@ -138,6 +143,7 @@ export const createRoomSlice: StateCreator<SocketState, [], [], RoomSlice> = (
   },
 
   leaveMatchmaking: () => {
+    clearTopicVoteState();
     clearCardCommandState();
     const socket = get().socket;
     if (socket?.connected) {

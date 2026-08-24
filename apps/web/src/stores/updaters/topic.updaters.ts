@@ -1,5 +1,4 @@
 import {
-  ClientEvent,
   MatchStatus,
   RoomStatus,
   type TopicVotingFinishedPayload,
@@ -125,18 +124,14 @@ export function applyTopicVotingFinishedState(
   };
 }
 
-export function applyTopicVoteErrorState(
-  state: SocketState,
-  data: { failedEvent?: string; commandId?: string },
-): Partial<SocketState> {
-  if (data.failedEvent !== ClientEvent.VOTE_BAN_TOPIC || !data.commandId) {
-    return {};
-  }
-
+export function removePendingTopicVoteCommand(commandId: string): {
+  matchId: string | null;
+  recomputedTopic: string | null;
+} {
   let failedCmd: PendingTopicVoteCommand | null = null;
 
   for (const [matchId, cmds] of pendingTopicVoteCommandsByMatch.entries()) {
-    const cmdIndex = cmds.findIndex((c) => c.commandId === data.commandId);
+    const cmdIndex = cmds.findIndex((c) => c.commandId === commandId);
     if (cmdIndex !== -1) {
       [failedCmd] = cmds.splice(cmdIndex, 1);
       if (cmds.length === 0) {
@@ -146,24 +141,37 @@ export function applyTopicVoteErrorState(
     }
   }
 
-  if (failedCmd) {
-    const matchPending =
-      pendingTopicVoteCommandsByMatch.get(failedCmd.matchId) ?? [];
-    const hasRemainingMatchCmds = matchPending.length > 0;
-    const recomputedTopic = getEffectiveTopicVote(failedCmd.matchId);
+  if (!failedCmd) {
+    return { matchId: null, recomputedTopic: null };
+  }
 
-    if (!hasRemainingMatchCmds) {
-      confirmedTopicVoteBaselineByMatch.delete(failedCmd.matchId);
-    }
+  const matchPending =
+    pendingTopicVoteCommandsByMatch.get(failedCmd.matchId) ?? [];
+  const hasRemainingMatchCmds = matchPending.length > 0;
+  const recomputedTopic = getEffectiveTopicVote(failedCmd.matchId);
 
-    if (state.topicVoting && state.topicVoting.matchId === failedCmd.matchId) {
-      return {
-        topicVoting: {
-          ...state.topicVoting,
-          myVotedTopic: recomputedTopic,
-        },
-      };
-    }
+  if (!hasRemainingMatchCmds) {
+    confirmedTopicVoteBaselineByMatch.delete(failedCmd.matchId);
+  }
+
+  return {
+    matchId: failedCmd.matchId,
+    recomputedTopic,
+  };
+}
+
+export function applyTopicVoteErrorState(
+  state: SocketState,
+  matchId: string | null,
+  recomputedTopic: string | null,
+): Partial<SocketState> {
+  if (matchId && state.topicVoting && state.topicVoting.matchId === matchId) {
+    return {
+      topicVoting: {
+        ...state.topicVoting,
+        myVotedTopic: recomputedTopic,
+      },
+    };
   }
 
   return {};

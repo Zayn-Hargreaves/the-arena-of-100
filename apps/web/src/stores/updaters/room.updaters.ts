@@ -31,8 +31,9 @@ function mapSocketPlayers(
   }));
 }
 
-export function applyRoomCreatedState(
-  data: RoomCreatedPayload,
+function createRoomEnteredState(
+  data: RoomCreatedPayload | RoomJoinedPayload,
+  countdownEndsAt: number | null,
 ): Partial<SocketState> {
   return {
     match: null,
@@ -52,47 +53,31 @@ export function applyRoomCreatedState(
       roomType: data.roomType,
       maxPlayers: data.maxPlayers,
       currentMatchId: data.currentMatchId,
-      countdownEndsAt: null,
+      countdownEndsAt,
       joinMode: data.joinedAs ?? "PLAYER",
       players: mapSocketPlayers(data.players),
     },
   };
+}
+
+export function applyRoomCreatedState(
+  data: RoomCreatedPayload,
+): Partial<SocketState> {
+  return createRoomEnteredState(data, null);
 }
 
 export function applyRoomJoinedState(
   data: RoomJoinedPayload,
 ): Partial<SocketState> {
-  return {
-    match: null,
-    cardState: createInitialCardState(),
-    topicVoting: null,
-    lastAnswerResult: null,
-    pendingAnswer: null,
-    remainingCount: null,
-    lastSeenSeqNo: 0,
-    isEliminated: false,
-    eliminationReason: null,
-    room: {
-      id: data.roomId,
-      code: data.code,
-      status: data.roomStatus,
-      hostId: data.hostId,
-      roomType: data.roomType,
-      maxPlayers: data.maxPlayers,
-      currentMatchId: data.currentMatchId,
-      countdownEndsAt: data.countdownEndsAt,
-      joinMode: data.joinedAs ?? "PLAYER",
-      players: mapSocketPlayers(data.players),
-    },
-  };
+  return createRoomEnteredState(data, data.countdownEndsAt);
 }
 
 export function applyPlayerJoinedState(
   state: SocketState,
   data: RoomPlayerJoinedPayload,
-): Partial<SocketState> {
+): Partial<SocketState> | SocketState {
   if (state.room?.id !== data.roomId) {
-    return {};
+    return state;
   }
 
   const hasPlayer = state.room.players.some(
@@ -129,9 +114,9 @@ export function applyPlayerJoinedState(
 export function applyPlayerLeftState(
   state: SocketState,
   data: RoomPlayerLeftPayload,
-): Partial<SocketState> {
+): Partial<SocketState> | SocketState {
   if (state.room?.id !== data.roomId) {
-    return {};
+    return state;
   }
 
   return {
@@ -147,9 +132,9 @@ export function applyPlayerLeftState(
 export function applyRoomStatusUpdatedState(
   state: SocketState,
   data: RoomStatusUpdatedPayload,
-): Partial<SocketState> {
+): Partial<SocketState> | SocketState {
   if (state.room?.id !== data.roomId) {
-    return {};
+    return state;
   }
 
   return {
@@ -165,9 +150,9 @@ export function applyRoomStatusUpdatedState(
 export function applyRoomCountdownStartedState(
   state: SocketState,
   data: RoomCountdownStartedPayload,
-): Partial<SocketState> {
+): Partial<SocketState> | SocketState {
   if (state.room?.id !== data.roomId) {
-    return {};
+    return state;
   }
 
   return {
@@ -182,9 +167,9 @@ export function applyRoomCountdownStartedState(
 export function applyRoomCountdownCancelledState(
   state: SocketState,
   data: RoomCountdownCancelledPayload,
-): Partial<SocketState> {
+): Partial<SocketState> | SocketState {
   if (state.room?.id !== data.roomId) {
-    return {};
+    return state;
   }
 
   return {
@@ -199,9 +184,9 @@ export function applyRoomCountdownCancelledState(
 export function applyRoomPresenceUpdatedState(
   state: SocketState,
   data: RoomPresenceUpdatedPayload,
-): Partial<SocketState> {
+): Partial<SocketState> | SocketState {
   if (state.room?.id !== data.roomId) {
-    return {};
+    return state;
   }
 
   return {

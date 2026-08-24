@@ -265,13 +265,18 @@ export function applyMatchFinishedState(
   };
 }
 
-function resolveSnapshotTopicVoting(
+export function resolveSnapshotTopicVoting(
   state: SocketState,
   data: SnapshotPayload,
 ): TopicVotingState | null {
+  const matchStatus = normalizeMatchStatus(data.status);
+  if (!matchStatus) {
+    return state.topicVoting;
+  }
+
   if (
-    data.status !== MatchStatus.TOPIC_VOTING &&
-    data.status !== MatchStatus.COUNTDOWN
+    matchStatus !== MatchStatus.TOPIC_VOTING &&
+    matchStatus !== MatchStatus.COUNTDOWN
   ) {
     return null;
   }
@@ -307,7 +312,7 @@ function resolveSnapshotTopicVoting(
           : state.topicVoting?.matchId === data.matchId
             ? state.topicVoting.activeTopics
             : []) ?? [],
-      isFinished: data.status !== MatchStatus.TOPIC_VOTING,
+      isFinished: matchStatus !== MatchStatus.TOPIC_VOTING,
     };
   }
 
@@ -323,7 +328,7 @@ function resolveSnapshotTopicVoting(
           ? data.activeTopics
           : state.topicVoting.activeTopics) ?? [],
       isFinished:
-        data.status !== MatchStatus.TOPIC_VOTING
+        matchStatus !== MatchStatus.TOPIC_VOTING
           ? true
           : state.topicVoting.isFinished,
     };
@@ -343,10 +348,30 @@ function resolveSnapshotTopicVoting(
       totalVotes,
       bannedTopics: data.bannedTopics ?? [],
       activeTopics: data.activeTopics ?? [],
-      isFinished: data.status !== MatchStatus.TOPIC_VOTING,
+      isFinished: matchStatus !== MatchStatus.TOPIC_VOTING,
     };
   }
 
+  return null;
+}
+
+export function normalizePlayerStatus(status: unknown): PlayerStatus | null {
+  if (
+    typeof status === "string" &&
+    Object.values(PlayerStatus).includes(status as PlayerStatus)
+  ) {
+    return status as PlayerStatus;
+  }
+  return null;
+}
+
+export function normalizeMatchStatus(status: unknown): MatchStatus | null {
+  if (
+    typeof status === "string" &&
+    Object.values(MatchStatus).includes(status as MatchStatus)
+  ) {
+    return status as MatchStatus;
+  }
   return null;
 }
 
@@ -354,10 +379,29 @@ export function applySnapshotState(
   state: SocketState,
   data: SnapshotPayload,
 ): Partial<SocketState> {
-  const players = (data.players as Player[]).map((player) => ({
-    ...player,
-    isOnline: player.isOnline ?? true,
-  }));
+  const matchStatus = normalizeMatchStatus(data.status);
+  if (!matchStatus) {
+    return {};
+  }
+
+  if (!Array.isArray(data.players)) {
+    return {};
+  }
+
+  const players: Player[] = [];
+  for (const player of data.players) {
+    const playerStatus = normalizePlayerStatus(player.status);
+    if (!playerStatus) {
+      return {};
+    }
+    players.push({
+      id: player.id,
+      name: player.name,
+      status: playerStatus,
+      score: player.score,
+      isOnline: player.isOnline ?? true,
+    });
+  }
 
   const selfEliminated = state.userId
     ? players.find((p) => p.id === state.userId)?.status ===
@@ -375,7 +419,7 @@ export function applySnapshotState(
       : null,
     match: {
       id: data.matchId,
-      status: data.status as MatchStatus,
+      status: matchStatus,
       currentRoundNo: data.currentRoundNo,
       players,
       currentQuestion: data.currentQuestion,
@@ -525,11 +569,12 @@ export function applyEventBatchState(
     if (!parsed.success) {
       if (process.env.NODE_ENV !== "production") {
         console.warn(
-          `⚠️ Replay event parse failed at seqNo ${rawEvent.seqNo}, stopping replay.`,
+          `⚠️ Replay event parse failed at seqNo ${rawEvent.seqNo}, skipping event.`,
           parsed.error,
         );
       }
-      break;
+      cursor = rawEvent.seqNo;
+      continue;
     }
     cursor = rawEvent.seqNo;
     current = foldReplayEvent(current, parsed.data, data.matchId);
@@ -553,7 +598,7 @@ export function applyAnswerResultState(
   data: AnswerResultPayload,
 ): Partial<SocketState> {
   const activeMatchId = state.room?.currentMatchId ?? state.match?.id;
-  if (!activeMatchId || activeMatchId !== data.matchId) return {};
+  if (activeMatchId && activeMatchId !== data.matchId) return {};
   const isPendingAnswer =
     state.pendingAnswer?.matchId === data.matchId &&
     state.pendingAnswer.roundNo === data.roundNo &&

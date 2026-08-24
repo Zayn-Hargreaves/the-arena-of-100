@@ -1,12 +1,12 @@
+import type { AuthenticatedPayload } from "@arena/shared";
 import {
   createInitialCardState,
   type SocketState,
 } from "../socket-store.types";
 
-export function applyAuthenticatedState(data: {
-  userId: string;
-  username: string;
-}): Partial<SocketState> {
+export function applyAuthenticatedState(
+  data: AuthenticatedPayload,
+): Partial<SocketState> {
   return {
     isAuthenticated: true,
     userId: data.userId,
