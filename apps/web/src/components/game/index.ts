@@ -52,3 +52,11 @@ export {
   type CardGlyphProps,
   type CardGlyphVariant,
 } from "./card-glyphs";
+export {
+  GameActiveBuffs,
+  type GameActiveBuffsProps,
+} from "./game-active-buffs";
+export {
+  GameSidebarPanel,
+  type GameSidebarPanelProps,
+} from "./game-sidebar-panel";

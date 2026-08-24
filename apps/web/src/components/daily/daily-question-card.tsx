@@ -2,6 +2,7 @@
 
 import React from "react";
 import { useTranslations } from "next-intl";
+import { ANSWER_CODES } from "@arena/shared";
 import type { DailyQuestionPublic } from "@/types/daily";
 
 interface DailyQuestionCardProps {
@@ -25,7 +26,7 @@ const difficultyTone: Record<
   HARD: { bg: "bg-candy-pink/20", fg: "text-candy-ink" },
 };
 
-const OPTION_LETTERS = ["A", "B", "C", "D"];
+const OPTION_LETTERS = ANSWER_CODES;
 
 export function DailyQuestionCard({
   question,
@@ -88,6 +89,7 @@ export function DailyQuestionCard({
                 className={`w-full text-left border-[2px] rounded-xl p-3.5 font-body text-sm font-bold transition-all duration-150 flex items-center gap-3 cursor-pointer disabled:cursor-not-allowed ${cardStateStyle}`}
               >
                 <span
+                  aria-hidden="true"
                   className={`w-7 h-7 rounded-lg border-[2px] border-candy-ink flex items-center justify-center font-mono font-black text-xs shrink-0 ${
                     isSelected
                       ? "bg-candy-pink text-white"

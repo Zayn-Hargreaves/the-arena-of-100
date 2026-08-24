@@ -6,7 +6,7 @@ import { Avatar } from "@/components/ui/avatar";
 import type {
   PerformanceViewModel,
   WinnerViewModel,
-} from "@/hooks/use-match-results";
+} from "@/types/match-results-types";
 import { ProfessorAvatar } from "@/components/character/professor-avatar";
 import {
   type ProfessorMood,

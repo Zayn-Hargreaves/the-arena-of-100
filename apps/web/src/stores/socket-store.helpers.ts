@@ -1,5 +1,6 @@
 import {
   ClientEvent,
+  ErrorCode,
   ServerEvent,
   type ErrorPayload,
   type CardEffectEvent,
@@ -122,4 +123,28 @@ export function hasSecondChancePermission(
   );
 
   return hasInActive || hasInLastResolved;
+}
+
+const IS_DEBUG = process.env.NODE_ENV !== "production";
+
+export function debugLog(...args: unknown[]) {
+  if (IS_DEBUG) {
+    console.log(...args);
+  }
+}
+
+export const AUTH_TIMEOUT_MS = 5000;
+
+export function waitForAuthAck(socket: Socket): Promise<void> {
+  return waitForSocketAck<void>({
+    socket,
+    successEvent: ServerEvent.AUTHENTICATED,
+    timeoutMs: AUTH_TIMEOUT_MS,
+    timeoutMessage: "Authentication timed out",
+    mapSuccess: () => undefined,
+    shouldRejectOnError: (data) =>
+      data.code === ErrorCode.INVALID_TOKEN ||
+      data.code === ErrorCode.UNAUTHORIZED,
+    getErrorMessage: (data) => data.message || "Authentication timed out",
+  });
 }

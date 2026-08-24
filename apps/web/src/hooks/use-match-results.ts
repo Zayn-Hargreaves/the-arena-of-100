@@ -1,59 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
-import type { AvatarSeed } from "@arena/shared";
 import { API_URL } from "@/lib/api";
-import { findAvatarBySeed } from "@/lib/avatars";
+import {
+  calculatePlayerEliminatedRound,
+  calculatePlayerMetrics,
+  computePerformanceViewModel,
+  computeWinnerViewModel,
+  sortMatchPlayers,
+  type PlayerMetrics,
+  type SimplePlayer,
+} from "@/lib/match-results-helpers";
+import type {
+  MatchResultApiResponse,
+  PerformanceViewModel,
+  ResultLoadState,
+  WinnerViewModel,
+} from "@/types/match-results-types";
 
-export interface MatchResultApiResponse {
-  winnerId?: string | null;
-  status?: string;
-  rounds?: Array<{ id?: string; roundNo?: number }>;
-  answers?: Array<{
-    userId?: string;
-    roundId?: string;
-    isCorrect?: boolean;
-    responseTimeMs?: number;
-  }>;
-  players?: Array<{
-    userId?: string;
-    score?: number;
-    rank?: number | null;
-    placement?: number | null;
-    eloBefore?: number | null;
-    eloAfter?: number | null;
-    eloDelta?: number | null;
-    user?: { id?: string; username?: string; avatar?: string; elo?: number };
-  }>;
-}
-
-export type ResultLoadState =
-  | "loading"
-  | "ready"
-  | "not_found"
-  | "unauthorized"
-  | "network_error";
-
-export interface WinnerViewModel {
-  name: string;
-  spritesheet: string;
-  isAnimated: boolean;
-  totalScore: number;
-  averageSpeed: string;
-  accuracy: string;
-  survivedRounds: string;
-}
-
-export interface PerformanceViewModel {
-  name: string;
-  rank: number | null;
-  score: number;
-  speed: string;
-  accuracy: string;
-  eliminatedRound?: number | null;
-  eloDelta?: number | null;
-  eloAfter?: number | null;
-  isWinner: boolean;
-}
+export type {
+  MatchResultApiResponse,
+  PerformanceViewModel,
+  ResultLoadState,
+  WinnerViewModel,
+};
 
 function buildRequestSignal(
   signal: AbortSignal,
@@ -81,20 +50,6 @@ function buildRequestSignal(
   };
 }
 
-/**
- * Fetch the match result in a single round-trip with a SHARED abort
- * controller. The same controller is wired into `fetch()` and is
- * consulted by the body reader downstream, so a timeout (or an external
- * abort) propagates through BOTH the network request and the response
- * body read — the in-flight `ReadableStream` sees the abort, not just
- * the surrounding `Promise.race` wrapper.
- *
- * Returns the response + parsed payload + whether the request timed
- * out. A network-phase timeout surfaces as `{ response, data: null,
- * wasTimeout: true }` (same response shape as a body-phase timeout);
- * the caller does not need to distinguish the two — both are "the user
- * should retry" outcomes.
- */
 export async function fetchResult(
   matchId: string,
   signal: AbortSignal,
@@ -110,11 +65,6 @@ export async function fetchResult(
       credentials: "include",
       signal: request.signal,
     });
-    // If the timer fired during fetch, the controller is already
-    // aborted. Skip body parsing — `response.json()` would either
-    // reject immediately (if the body is already locked) or hang
-    // (if the body is still streaming). Either way we treat it as
-    // a timeout outcome.
     if (request.signal.aborted) {
       return { response: null, data: null, wasTimeout: request.wasTimeout() };
     }
@@ -135,9 +85,6 @@ export async function fetchResult(
     }
     throw error;
   } finally {
-    // Runs AFTER both phases settle (network + body parse). Until
-    // this point, `request.signal` remains live so a timer-driven
-    // abort can still cancel the streaming body reader.
     request.cancel();
   }
 }
@@ -158,16 +105,12 @@ export function useMatchResults(matchId: string, userId: string | null) {
           matchId,
           abortController.signal,
         );
-        // Timeout abort: surface as network_error so the UI can retry.
         if (wasTimeout) {
           setLoadState("network_error");
           return;
         }
-        // External abort between fetch resolve and now — skip silently so a
-        // stale request never overwrites state after cleanup.
         if (abortController.signal.aborted) return;
         if (!response) {
-          // External abort (cleanup) — keep silent, no state change needed.
           return;
         }
         if (response.status === 401 || response.status === 403) {
@@ -182,7 +125,6 @@ export function useMatchResults(matchId: string, userId: string | null) {
           setLoadState("network_error");
           return;
         }
-        // External abort between status check and now — skip silently.
         if (abortController.signal.aborted) return;
         if (!data) {
           setLoadState("network_error");
@@ -203,7 +145,7 @@ export function useMatchResults(matchId: string, userId: string | null) {
 
   const retry = useCallback(() => setRetryToken((token) => token + 1), []);
 
-  const players = useMemo(
+  const players = useMemo<SimplePlayer[]>(
     () =>
       (payload?.players ?? []).map((player) => ({
         id: player.userId ?? player.user?.id ?? "",
@@ -221,101 +163,40 @@ export function useMatchResults(matchId: string, userId: string | null) {
     [payload?.players],
   );
 
+  const metricsByPlayerId = useMemo(() => {
+    const map = new Map<string, PlayerMetrics>();
+    for (const player of players) {
+      map.set(
+        player.id,
+        calculatePlayerMetrics(player.id, payload?.answers, payload?.rounds),
+      );
+    }
+    return map;
+  }, [players, payload?.answers, payload?.rounds]);
+
   const getPlayerMetrics = useCallback(
-    (playerId: string) => {
-      const playerAnswers = (payload?.answers ?? []).filter(
-        (a) => a.userId === playerId,
-      );
-      const totalAnswers = playerAnswers.length;
-      const correctAnswers = playerAnswers.filter((a) => a.isCorrect).length;
-      const accuracy =
-        totalAnswers > 0
-          ? `${Math.round((correctAnswers / totalAnswers) * 100)}%`
-          : "--";
-      const totalTimeMs = playerAnswers.reduce(
-        (acc, a) => acc + (a.responseTimeMs ?? 0),
-        0,
-      );
-      const avgSpeed =
-        totalAnswers > 0
-          ? `${(totalTimeMs / totalAnswers / 1000).toFixed(1)}s`
-          : "--";
-
-      const wrongAnswers = playerAnswers.filter((a) => !a.isCorrect);
-      let eliminatedRoundNo: number | null = null;
-      if (wrongAnswers.length > 0 && payload?.rounds) {
-        for (const wrong of wrongAnswers) {
-          const roundIdx = payload.rounds.findIndex(
-            (r) => r.id === wrong.roundId,
-          );
-          if (roundIdx !== -1) {
-            const rNo = payload.rounds[roundIdx]?.roundNo ?? roundIdx + 1;
-            if (eliminatedRoundNo === null || rNo < eliminatedRoundNo) {
-              eliminatedRoundNo = rNo;
-            }
-          }
-        }
-      }
-
-      return {
-        accuracy,
-        avgSpeed,
-        correctAnswers,
-        totalAnswers,
-        eliminatedRoundNo,
-      };
-    },
-    [payload?.answers, payload?.rounds],
+    (playerId: string) =>
+      metricsByPlayerId.get(playerId) ??
+      calculatePlayerMetrics(playerId, payload?.answers, payload?.rounds),
+    [metricsByPlayerId, payload?.answers, payload?.rounds],
   );
 
   const getPlayerEliminatedRound = useCallback(
     (playerId: string) => {
       const metrics = getPlayerMetrics(playerId);
-      if (metrics.eliminatedRoundNo !== null) {
-        return metrics.eliminatedRoundNo;
-      }
-      // If winner or never eliminated
-      if (payload?.winnerId && payload.winnerId === playerId) {
-        return (payload?.rounds?.length ?? 1) + 1;
-      }
-      return 0;
+      return calculatePlayerEliminatedRound(
+        playerId,
+        metrics,
+        payload?.rounds?.length ?? 1,
+        payload?.winnerId,
+      );
     },
     [getPlayerMetrics, payload?.rounds?.length, payload?.winnerId],
   );
 
   const sortedPlayers = useMemo(
-    () =>
-      [...players].sort((a, b) => {
-        // 1. Winner is always first
-        const aIsWinner = Boolean(
-          payload?.winnerId && payload.winnerId === a.id,
-        );
-        const bIsWinner = Boolean(
-          payload?.winnerId && payload.winnerId === b.id,
-        );
-        if (aIsWinner && !bIsWinner) return -1;
-        if (!aIsWinner && bIsWinner) return 1;
-
-        // 2. Higher survived/elimination round
-        const aRound = getPlayerEliminatedRound(a.id);
-        const bRound = getPlayerEliminatedRound(b.id);
-        if (bRound !== aRound) return bRound - aRound;
-
-        // 3. Higher score
-        if (b.score !== a.score) return b.score - a.score;
-
-        // 4. Faster total response time as tie-breaker
-        const aTotalTime = (payload?.answers ?? [])
-          .filter((ans) => ans.userId === a.id)
-          .reduce((acc, ans) => acc + (ans.responseTimeMs ?? 0), 0);
-        const bTotalTime = (payload?.answers ?? [])
-          .filter((ans) => ans.userId === b.id)
-          .reduce((acc, ans) => acc + (ans.responseTimeMs ?? 0), 0);
-        if (aTotalTime !== bTotalTime) return aTotalTime - bTotalTime;
-
-        return a.id.localeCompare(b.id);
-      }),
-    [players, payload?.winnerId, payload?.answers, getPlayerEliminatedRound],
+    () => sortMatchPlayers(players, payload, getPlayerEliminatedRound),
+    [players, payload, getPlayerEliminatedRound],
   );
 
   const playerById = useMemo(
@@ -342,58 +223,17 @@ export function useMatchResults(matchId: string, userId: string | null) {
     [payload?.players, sortedPlayers],
   );
 
-  const winner = useMemo<WinnerViewModel>(() => {
-    const winnerId = payload?.winnerId ?? null;
-    const winnerFromServer = winnerId ? playerById.get(winnerId) : null;
-    const rawWinner = winnerId ? rawPlayerById.get(winnerId) : null;
-    const winnerAvatarSeed =
-      (rawWinner?.user?.avatar as AvatarSeed) || "jellyfrog";
-    const winnerAvatarOpt = findAvatarBySeed(winnerAvatarSeed);
-    const winnerSpritesheet =
-      winnerAvatarOpt?.spritesheet ||
-      "/arena_of_100/jellyfrog_spritesheet.webp";
-    const totalRounds = payload?.rounds?.length ?? 1;
-
-    if (!winnerFromServer) {
-      return {
-        name: payload?.winnerId
-          ? t("guestPlayer")
-          : payload?.status === "FINISHED"
-            ? t("noWinner")
-            : t("updating"),
-        spritesheet: winnerSpritesheet,
-        isAnimated: true,
-        totalScore: 0,
-        averageSpeed: "--",
-        accuracy: "--",
-        survivedRounds:
-          payload?.status === "FINISHED" || payload?.winnerId
-            ? `${Math.max(1, totalRounds)}`
-            : "--",
-      };
-    }
-    const metrics = getPlayerMetrics(winnerFromServer.id);
-    const score = winnerFromServer.score ?? 0;
-    return {
-      name:
-        winnerFromServer.name ??
-        (payload?.winnerId ? t("guestPlayer") : t("updating")),
-      spritesheet: winnerSpritesheet,
-      isAnimated: true,
-      totalScore: score,
-      averageSpeed: metrics.avgSpeed,
-      accuracy: metrics.accuracy,
-      survivedRounds: `${Math.max(1, totalRounds)}`,
-    };
-  }, [
-    playerById,
-    rawPlayerById,
-    payload?.winnerId,
-    payload?.status,
-    payload?.rounds,
-    getPlayerMetrics,
-    t,
-  ]);
+  const winner = useMemo<WinnerViewModel>(
+    () =>
+      computeWinnerViewModel(
+        payload,
+        playerById,
+        rawPlayerById,
+        getPlayerMetrics,
+        t,
+      ),
+    [payload, playerById, rawPlayerById, getPlayerMetrics, t],
+  );
 
   const yourPerformance = useMemo<PerformanceViewModel>(() => {
     let effectiveUserId = userId;
@@ -418,71 +258,23 @@ export function useMatchResults(matchId: string, userId: string | null) {
       }
     }
 
-    // Never invent identity from "first non-bot" / first leaderboard row —
-    // that misattributes another player's rank/score/ELO as "you".
-    const currentPlayer = effectiveUserId
-      ? playerById.get(effectiveUserId)
-      : undefined;
-    const rawPlayer = currentPlayer
-      ? rawPlayerById.get(currentPlayer.id)
-      : undefined;
-    const isWinner = Boolean(
-      payload?.winnerId &&
-      currentPlayer?.id &&
-      payload.winnerId === currentPlayer.id,
+    return computePerformanceViewModel(
+      payload,
+      effectiveUserId,
+      playerById,
+      playerRankById,
+      rawPlayerById,
+      sortedPlayers,
+      getPlayerMetrics,
+      t,
     );
-
-    let rank: number | null = null;
-    if (currentPlayer) {
-      const serverRank = playerRankById.get(currentPlayer.id);
-      if (serverRank !== undefined && serverRank !== null) {
-        rank = serverRank;
-      } else if (isWinner) {
-        rank = 1;
-      } else {
-        const idx = sortedPlayers.findIndex((p) => p.id === currentPlayer.id);
-        if (idx >= 0) {
-          const baseRank = idx + 1;
-          rank = payload?.winnerId ? Math.max(2, baseRank) : baseRank;
-        } else {
-          rank = null;
-        }
-      }
-    }
-
-    const score = currentPlayer?.score ?? 0;
-    const metrics = currentPlayer
-      ? getPlayerMetrics(currentPlayer.id)
-      : { accuracy: "--", avgSpeed: "--", eliminatedRoundNo: null };
-
-    const isEliminated =
-      !isWinner &&
-      (metrics.eliminatedRoundNo !== null ||
-        (payload?.status === "FINISHED" && !isWinner));
-    const eliminatedRound = isEliminated
-      ? (metrics.eliminatedRoundNo ?? (payload?.rounds?.length || 1))
-      : null;
-
-    return {
-      name: currentPlayer?.name ?? t("guestPlayer"),
-      rank,
-      score,
-      speed: metrics.avgSpeed,
-      accuracy: metrics.accuracy,
-      eliminatedRound,
-      eloDelta: rawPlayer?.eloDelta ?? null,
-      eloAfter: rawPlayer?.eloAfter ?? null,
-      isWinner,
-    };
   }, [
     playerById,
     playerRankById,
     rawPlayerById,
     players,
     sortedPlayers,
-    payload?.winnerId,
-    payload?.status,
-    payload?.rounds,
+    payload,
     getPlayerMetrics,
     t,
     userId,

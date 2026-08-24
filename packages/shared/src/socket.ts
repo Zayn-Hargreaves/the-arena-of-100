@@ -127,6 +127,11 @@ export type {
 } from "./schemas";
 
 // Server Event Payloads
+export interface AuthenticatedPayload {
+  userId: string;
+  username: string;
+}
+
 export interface ErrorPayload {
   code: string;
   message: string;

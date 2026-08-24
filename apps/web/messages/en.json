@@ -129,6 +129,27 @@
     "ramCaption": "Fastify RAM usage (MAX: 1024MB)",
     "activeLobbies": "Active Lobbies",
     "lobbiesCaption": "Redis pub/sub channels active",
+    "postgresql": "PostgreSQL",
+    "primaryDatabase": "PRIMARY DATABASE",
+    "pgDescription": "PostgreSQL primary relational store for questions, players, and match records.",
+    "redis": "Redis",
+    "cacheAndPubsub": "CACHE & PUB/SUB",
+    "redisDescription": "Redis in-memory store for game session state, matchmaking lobbies, and pub/sub channels.",
+    "dangerZoneTitle": "DANGER ZONE",
+    "dangerZoneSubtitle": "Administrative high-privilege maintenance actions",
+    "dbSyncTitle": "DATABASE SYNCHRONIZATION",
+    "dbSyncDesc": "Seed standard 100 questions or sync Prisma migrations with the primary database.",
+    "syncBtn": "SEED QUESTIONS",
+    "syncing": "SEEDING...",
+    "systemResetTitle": "SYSTEM EMERGENCY RESET",
+    "systemResetDesc": "Clear all active rooms, disconnect running sessions, and purge Redis cache.",
+    "resetBtn": "RESET SYSTEM",
+    "resetting": "RESETTING...",
+    "resetModalTitle": "SYSTEM EMERGENCY RESET",
+    "resetModalWarning": "WARNING: You are about to clear all active lobbies and running matches.",
+    "resetModalDetails": "All connected players will be disconnected immediately, Redis game sessions will be purged, and match progress will be lost.",
+    "cancelBtn": "CANCEL",
+    "confirmResetBtn": "CONFIRM RESET",
     "dbAdministrationTitle": "DATABASE ADMINISTRATION (POSTGRESQL)",
     "prismaStatusLabel": "PRISMA STATUS:",
     "redisOperationsTitle": "REDIS SERVER OPERATIONS",
@@ -179,17 +200,19 @@
     },
     "terminateRoom": {
       "title": "KILL SWITCH — TERMINATE SINGLE ROOM",
+      "subtitle": "Emergency room shutdown and active match cancellation",
       "label": "ENTER ROOM CODE OR ID",
       "roomIdPlaceholder": "E.g. 6-char room code or UUID",
       "messageLabel": "REASON (OPTIONAL, MAX 200 CHARS)",
+      "messageOptional": "OPTIONAL",
       "messagePlaceholder": "E.g. abandoned, policy violation, maintenance...",
       "submit": "TERMINATE ROOM NOW",
       "submitting": "TERMINATING ROOM...",
       "warning": "WARNING: This action will kick all players out of the room, cancel the running match, and remove the room from database and Redis. Cannot be undone.",
-      "modal": {
-        "title": "Confirm Kill Switch?",
-        "description": "You are about to permanently close this room. All players will be kicked out immediately."
-      },
+      "confirmModalTitle": "Confirm Kill Switch?",
+      "confirmModalWarning": "Are you sure you want to terminate room {roomId}?",
+      "confirmModalDetails": "All players in this room will be kicked immediately, the ongoing match will be cancelled, and the room state will be removed.",
+      "confirmModalMessagePreview": "Reason for termination:",
       "errors": {
         "roomIdRequired": "Please enter a room code or ID.",
         "rateLimited": "You are acting too fast. Please wait 1 minute and try again."
@@ -524,6 +547,7 @@
     "title": "CHAMPIONS LEADERBOARD",
     "subtitle": "Honoring the sharpest minds surviving the arena",
     "period": {
+      "label": "Ranking Period",
       "weekly": "THIS WEEK",
       "all": "ALL-TIME"
     },
@@ -544,6 +568,7 @@
     "accuracyShort": "Accuracy",
     "pointsUnit": "PTS",
     "empty": "No leaderboard data yet.",
+    "loading": "Loading leaderboard...",
     "cardsThisWeek": "Cards played this week",
     "cardsLabel": "{count, plural, one {# card} other {# cards}}",
     "cardsTier": {
@@ -560,6 +585,7 @@
   "settings": {
     "title": "ARENA SETTINGS",
     "subtitle": "Customize your audio, sprite avatar, visuals, and battle controls",
+    "cancel": "Cancel",
     "tabs": {
       "profile": "Profile & Avatar",
       "sound": "Audio & Music",
@@ -576,7 +602,10 @@
       "callsignSaveFailed": "Failed to save callsign.",
       "avatarShowcase": "Active Sprite Avatar",
       "avatarGallery": "Sprite Roster",
-      "chooseTip": "Click any avatar below to switch your character instantly"
+      "chooseTip": "Click any avatar below to switch your character instantly",
+      "avatarFallback": "Sprite Character",
+      "selected": "Selected",
+      "seedLabel": "SEED:"
     },
     "sound": {
       "title": "Audio Settings",
@@ -633,11 +662,13 @@
       "resetDesc": "Restore all audio, visual, and control configurations to default values",
       "resetBtn": "Restore Defaults",
       "resetSuccess": "All settings restored to defaults!",
+      "confirmReset": "Are you sure you want to restore default settings?",
       "clearCacheTitle": "Clear Local Cache",
       "clearCacheDesc": "Purge cached browser data if you experience connection or rendering glitches",
       "clearCacheBtn": "Clear Cache",
       "clearCacheSuccess": "Local browser cache cleared successfully!",
-      "clearCacheFailed": "Failed to clear local cache."
+      "clearCacheFailed": "Failed to clear local cache.",
+      "confirmClearCache": "Are you sure you want to clear local cache?"
     },
     "saveButton": "Save Settings",
     "saveSuccess": "Settings saved to browser storage!",

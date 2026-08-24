@@ -2,15 +2,9 @@
 
 import React from "react";
 import { useTranslations } from "next-intl";
+import { ANSWER_CODES } from "@arena/shared";
 import { MiniGlyph } from "@/components/ui/mini-glyph";
 import { AnswerTile, type AnswerTileProps } from "./answer-tile";
-
-// The answer contract is fixed at 4 options (A/B/C/D) — this is the
-// only shape the server ever sends (see QuestionSnapshot/@arena/shared).
-// Deriving codes from `idx` would silently emit "E", "F", ... for any
-// out-of-contract payload; a fixed list plus a slice keeps the UI on
-// contract even if upstream ever sends a malformed options array.
-const ANSWER_CODES = ["A", "B", "C", "D"] as const;
 
 export interface AnswerPanelProps {
   isEliminated: boolean;

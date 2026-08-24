@@ -3,6 +3,7 @@
 // components/game/*) so these tests focus on: snapshot hydration,
 // answer-submit gating, spectator/eliminated derivation, the
 // finished-match redirect, and the admin-termination toast + redirect.
+import "@testing-library/jest-dom/vitest";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, act, fireEvent } from "@testing-library/react";
 import React, { Suspense } from "react";
@@ -119,6 +120,32 @@ vi.mock("@/components/game", () => ({
   CardHand: () => <div data-testid="card-hand" />,
   CardOfferOverlay: () => <div data-testid="card-offer-overlay" />,
   CardTargetPicker: () => <div data-testid="card-target-picker" />,
+  GameActiveBuffs: () => <div data-testid="game-active-buffs" />,
+  GameSidebarPanel: (p: {
+    players: unknown[];
+    userId: string | null;
+    onLeaveClick: () => void;
+    roundCompleted?: boolean;
+    matchStatus?: string;
+  }) => (
+    <div
+      data-testid="game-sidebar-panel"
+      data-round-completed={String(p.roundCompleted)}
+      data-match-status={String(p.matchStatus)}
+    >
+      <div
+        data-testid="opponents"
+        data-count={p.players.length}
+        data-userid={String(p.userId)}
+      />
+      <button
+        data-testid="leave-btn"
+        data-round-completed={String(p.roundCompleted)}
+        data-match-status={String(p.matchStatus)}
+        onClick={p.onLeaveClick}
+      />
+    </div>
+  ),
 }));
 
 import GamePage from "./page";
@@ -324,6 +351,8 @@ describe("GamePage — derived UI flags", () => {
       matchId: "m1",
       roundNo: 2,
       targetRoundNo: 2,
+      cardId: "TN-5",
+      offerSeqNo: 1,
       playedByPlayerId: "other",
       targetPlayerIds: ["me"],
       effect: { kind: "OPTION_FAKE", indexes: [1, 2], durationMs: 3000 },

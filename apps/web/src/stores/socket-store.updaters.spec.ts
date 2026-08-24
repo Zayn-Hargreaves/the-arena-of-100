@@ -43,6 +43,9 @@ import {
   applyCardPickedState,
   applyCardResolvedState,
   applyConsumeSecondChance,
+  normalizePlayerStatus,
+  normalizeMatchStatus,
+  resolveSnapshotTopicVoting,
 } from "./socket-store.updaters";
 
 import {
@@ -434,6 +437,7 @@ describe("applyMatchFinishedState — stale state.match guard", () => {
 describe("applyAnswerResultState", () => {
   it("updates lastAnswerResult only for the matching pending answer", () => {
     const state = makeState({
+      match: makeMatch({ id: "m1" }),
       pendingAnswer: {
         matchId: "m1",
         roundNo: 2,
@@ -461,7 +465,10 @@ describe("applyAnswerResultState", () => {
       answer: "A",
       submissionId: "s1",
     };
-    const state = makeState({ pendingAnswer });
+    const state = makeState({
+      match: makeMatch({ id: "m1" }),
+      pendingAnswer,
+    });
 
     const result = applyAnswerResultState(state, {
       matchId: "m1",
@@ -476,7 +483,29 @@ describe("applyAnswerResultState", () => {
   });
 
   it("stores answer result when pending answer is already clear", () => {
-    const result = applyAnswerResultState(makeState(), {
+    const result = applyAnswerResultState(
+      makeState({ match: makeMatch({ id: "m1" }) }),
+      {
+        matchId: "m1",
+        roundNo: 2,
+        submissionId: "s1",
+        isCorrect: true,
+        responseTimeMs: 123,
+      },
+    );
+
+    expect(result.lastAnswerResult).toMatchObject({ submissionId: "s1" });
+    expect(result.pendingAnswer).toBeNull();
+  });
+
+  it("returns empty object when no active match ID exists after leaveRoom cleared state", () => {
+    const state = makeState({
+      room: null,
+      match: null,
+      lastAnswerResult: null,
+    });
+
+    const result = applyAnswerResultState(state, {
       matchId: "m1",
       roundNo: 2,
       submissionId: "s1",
@@ -484,8 +513,8 @@ describe("applyAnswerResultState", () => {
       responseTimeMs: 123,
     });
 
-    expect(result.lastAnswerResult).toMatchObject({ submissionId: "s1" });
-    expect(result.pendingAnswer).toBeNull();
+    expect(result).toEqual({});
+    expect(state.lastAnswerResult).toBeNull();
   });
 
   it("consumes SECOND_CHANCE effect when receiving an answer result for a retry submission", () => {
@@ -505,6 +534,7 @@ describe("applyAnswerResultState", () => {
     };
     const state = makeState({
       userId: "p1",
+      match: makeMatch({ id: "m1" }),
       lastAnswerResult: {
         matchId: "m1",
         roundNo: 2,
@@ -2845,6 +2875,208 @@ describe("applyEventBatchState — Plan D mirror live updaters", () => {
       );
 
       expect(res.isEliminated).toBe(true);
+    });
+  });
+
+  describe("normalizePlayerStatus & normalizeMatchStatus & invalid snapshot handling", () => {
+    it("normalizePlayerStatus returns valid PlayerStatus and null for undefined/invalid status", () => {
+      expect(normalizePlayerStatus(PlayerStatus.ACTIVE)).toBe(
+        PlayerStatus.ACTIVE,
+      );
+      expect(normalizePlayerStatus(PlayerStatus.ELIMINATED)).toBe(
+        PlayerStatus.ELIMINATED,
+      );
+      expect(normalizePlayerStatus(PlayerStatus.DISCONNECTED)).toBe(
+        PlayerStatus.DISCONNECTED,
+      );
+      expect(normalizePlayerStatus(PlayerStatus.WINNER)).toBe(
+        PlayerStatus.WINNER,
+      );
+
+      expect(normalizePlayerStatus(undefined)).toBeNull();
+      expect(normalizePlayerStatus(null)).toBeNull();
+      expect(normalizePlayerStatus("")).toBeNull();
+      expect(normalizePlayerStatus("INVALID_STATUS")).toBeNull();
+      expect(normalizePlayerStatus(123)).toBeNull();
+      expect(normalizePlayerStatus({})).toBeNull();
+    });
+
+    it("normalizeMatchStatus returns valid MatchStatus and null for undefined/invalid status", () => {
+      expect(normalizeMatchStatus(MatchStatus.CREATED)).toBe(
+        MatchStatus.CREATED,
+      );
+      expect(normalizeMatchStatus(MatchStatus.TOPIC_VOTING)).toBe(
+        MatchStatus.TOPIC_VOTING,
+      );
+      expect(normalizeMatchStatus(MatchStatus.COUNTDOWN)).toBe(
+        MatchStatus.COUNTDOWN,
+      );
+      expect(normalizeMatchStatus(MatchStatus.ROUND_ACTIVE)).toBe(
+        MatchStatus.ROUND_ACTIVE,
+      );
+      expect(normalizeMatchStatus(MatchStatus.ROUND_EVALUATING)).toBe(
+        MatchStatus.ROUND_EVALUATING,
+      );
+      expect(normalizeMatchStatus(MatchStatus.ROUND_RESULT)).toBe(
+        MatchStatus.ROUND_RESULT,
+      );
+      expect(normalizeMatchStatus(MatchStatus.FINISHED)).toBe(
+        MatchStatus.FINISHED,
+      );
+
+      expect(normalizeMatchStatus(undefined)).toBeNull();
+      expect(normalizeMatchStatus(null)).toBeNull();
+      expect(normalizeMatchStatus("")).toBeNull();
+      expect(normalizeMatchStatus("UNKNOWN_STATUS")).toBeNull();
+      expect(normalizeMatchStatus(456)).toBeNull();
+      expect(normalizeMatchStatus({})).toBeNull();
+    });
+
+    it("resolveSnapshotTopicVoting preserves existing vote state when snapshot status is undefined or invalid", () => {
+      const existingVoting = {
+        matchId: "m1",
+        candidateTopics: ["TOPIC_A", "TOPIC_B"],
+        endsAt: 1000,
+        durationMs: 15000,
+        myVotedTopic: "TOPIC_A",
+        voteCounts: { TOPIC_A: 1 },
+        totalVotes: 1,
+        bannedTopics: [],
+        activeTopics: ["TOPIC_A", "TOPIC_B"],
+        isFinished: false,
+      };
+      const state = makeState({ topicVoting: existingVoting });
+
+      const invalidStatusPayload = {
+        matchId: "m1",
+        status: "INVALID_MATCH_STATUS" as unknown as MatchStatus,
+        currentRoundNo: 0,
+        players: [],
+        currentQuestion: null,
+        roundEndTime: null,
+        lastEventSeqNo: 1,
+      };
+
+      const undefinedStatusPayload = {
+        matchId: "m1",
+        status: undefined as unknown as MatchStatus,
+        currentRoundNo: 0,
+        players: [],
+        currentQuestion: null,
+        roundEndTime: null,
+        lastEventSeqNo: 1,
+      };
+
+      expect(resolveSnapshotTopicVoting(state, invalidStatusPayload)).toEqual(
+        existingVoting,
+      );
+      expect(resolveSnapshotTopicVoting(state, undefinedStatusPayload)).toEqual(
+        existingVoting,
+      );
+    });
+
+    it("resolveSnapshotTopicVoting clears topicVoting on valid non-voting match status", () => {
+      const existingVoting = {
+        matchId: "m1",
+        candidateTopics: ["TOPIC_A", "TOPIC_B"],
+        endsAt: 1000,
+        durationMs: 15000,
+        myVotedTopic: "TOPIC_A",
+        voteCounts: { TOPIC_A: 1 },
+        totalVotes: 1,
+        bannedTopics: [],
+        activeTopics: ["TOPIC_A", "TOPIC_B"],
+        isFinished: false,
+      };
+      const state = makeState({ topicVoting: existingVoting });
+
+      const roundActivePayload: SnapshotPayload = {
+        matchId: "m1",
+        status: MatchStatus.ROUND_ACTIVE,
+        currentRoundNo: 1,
+        players: [],
+        currentQuestion: null,
+        roundEndTime: null,
+        lastEventSeqNo: 1,
+      };
+
+      expect(resolveSnapshotTopicVoting(state, roundActivePayload)).toBeNull();
+    });
+
+    it("applySnapshotState drops the snapshot when match status is undefined or invalid string", () => {
+      const state = makeState();
+      const invalidSnapshot = {
+        matchId: "m1",
+        status: "INVALID_STRING" as unknown as MatchStatus,
+        currentRoundNo: 1,
+        players: [
+          {
+            id: "p1",
+            name: "Alice",
+            status: PlayerStatus.ACTIVE,
+            score: 0,
+            isOnline: true,
+          },
+        ],
+        currentQuestion: null,
+        roundEndTime: null,
+        lastEventSeqNo: 1,
+      };
+
+      const res = applySnapshotState(state, invalidSnapshot);
+      expect(res).toEqual({});
+
+      const undefinedStatusSnapshot = {
+        ...invalidSnapshot,
+        status: undefined as unknown as MatchStatus,
+      };
+      const resUndefined = applySnapshotState(state, undefinedStatusSnapshot);
+      expect(resUndefined).toEqual({});
+    });
+
+    it("applySnapshotState drops the snapshot when any player status is undefined or invalid string", () => {
+      const state = makeState();
+      const invalidPlayerSnapshot = {
+        matchId: "m1",
+        status: MatchStatus.ROUND_ACTIVE,
+        currentRoundNo: 1,
+        players: [
+          {
+            id: "p1",
+            name: "Alice",
+            status: "UNKNOWN_PLAYER_STATUS" as unknown as PlayerStatus,
+            score: 0,
+            isOnline: true,
+          },
+        ],
+        currentQuestion: null,
+        roundEndTime: null,
+        lastEventSeqNo: 1,
+      };
+
+      const res = applySnapshotState(state, invalidPlayerSnapshot);
+      expect(res).toEqual({});
+
+      const undefinedPlayerSnapshot = {
+        matchId: "m1",
+        status: MatchStatus.ROUND_ACTIVE,
+        currentRoundNo: 1,
+        players: [
+          {
+            id: "p1",
+            name: "Alice",
+            status: undefined as unknown as PlayerStatus,
+            score: 0,
+            isOnline: true,
+          },
+        ],
+        currentQuestion: null,
+        roundEndTime: null,
+        lastEventSeqNo: 1,
+      };
+
+      const resUndefined = applySnapshotState(state, undefinedPlayerSnapshot);
+      expect(resUndefined).toEqual({});
     });
   });
 });

@@ -8,6 +8,7 @@ import {
   RoomError,
   asRoomTypeOrDefault,
   getPlayerChannel,
+  type AuthenticatedPayload,
 } from "@arena/shared";
 import { AuthService } from "../../modules/auth/auth.service";
 import { RoomService } from "../../modules/room/room.service";
@@ -139,7 +140,7 @@ export class AuthHandler extends BaseHandler {
         client.emit(ServerEvent.AUTHENTICATED, {
           userId: decoded.userId,
           username: decoded.username,
-        });
+        } satisfies AuthenticatedPayload);
 
         this.logger.log(`Player authenticated: ${decoded.username}`);
 

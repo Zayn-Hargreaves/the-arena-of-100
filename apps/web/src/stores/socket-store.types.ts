@@ -126,6 +126,7 @@ export interface CardState {
   lastResolvedEffect: CardEffectEvent | null;
   pendingNextRoundEffects: CardEffectEvent[];
   activeRoundEffects: CardEffectEvent[];
+  consumedEffectIds: string[];
 }
 
 export function createInitialCardState(): CardState {
@@ -138,6 +139,7 @@ export function createInitialCardState(): CardState {
     lastResolvedEffect: null,
     pendingNextRoundEffects: [],
     activeRoundEffects: [],
+    consumedEffectIds: [],
   };
 }
 
@@ -150,6 +152,7 @@ export const INITIAL_CARD_STATE: Readonly<CardState> = Object.freeze({
   lastResolvedEffect: null,
   pendingNextRoundEffects: Object.freeze([]) as unknown as CardEffectEvent[],
   activeRoundEffects: Object.freeze([]) as unknown as CardEffectEvent[],
+  consumedEffectIds: Object.freeze([]) as unknown as string[],
 });
 
 export interface SocketState extends ConnectionState {

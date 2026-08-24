@@ -1,4 +1,4 @@
-import type { RoundState } from "@arena/shared";
+import { ANSWER_CODES, type RoundState } from "@arena/shared";
 
 export const UNAVAILABLE = Symbol("UNAVAILABLE");
 
@@ -8,8 +8,6 @@ export type RoundWithEliminationInputs = RoundState & {
   correctAnswer: string;
   startingPlayers: string[];
 };
-
-const ANSWER_CODES = ["A", "B", "C", "D"] as const;
 
 /**
  * Checks if a submitted answer matches the correct answer.

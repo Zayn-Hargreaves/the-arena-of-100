@@ -73,6 +73,8 @@ export const RankTier = Object.fromEntries(
   RANK_TIERS.map((t) => [t.tier, t.tier]),
 ) as { readonly [K in RankTier]: K };
 
+export const DEFAULT_RANK_TIER: RankTier = "SILVER";
+
 export const rankTierNames = RANK_TIERS.map((t) => t.tier) as unknown as [
   RankTier,
   ...RankTier[],
@@ -103,7 +105,7 @@ export function getRankTier(elo: number): RankTier {
 }
 
 const DEFAULT_RANK_TIER_INFO: RankTierInfo =
-  RANK_TIERS.find((t) => t.tier === "SILVER") ?? RANK_TIERS[0];
+  RANK_TIERS.find((t) => t.tier === DEFAULT_RANK_TIER) ?? RANK_TIERS[0];
 
 const RANK_TIER_MAP = new Map<RankTier, RankTierInfo>(
   RANK_TIERS.map((t) => [t.tier, t]),

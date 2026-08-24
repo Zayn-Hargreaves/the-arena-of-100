@@ -9,9 +9,6 @@ import {
   GameStateRibbon,
   QuestionCard,
   AnswerPanel,
-  OpponentsSidebar,
-  AntiHackNote,
-  LeaveMatchButton,
   MatchFinishedOverlay,
   LeaveMatchModal,
   TopicVotingOverlay,
@@ -19,10 +16,10 @@ import {
   CardOfferOverlay,
   CardTargetPicker,
   CardAnimation,
-  ClassBadge,
   CardGlyph,
+  GameActiveBuffs,
+  GameSidebarPanel,
 } from "@/components/game";
-import { ProfessorHudWidget } from "@/components/character/professor-hud-widget";
 
 import { useSocketStore } from "@/stores/socket-store";
 import { hasSecondChancePermission } from "@/stores/socket-store.helpers";
@@ -32,7 +29,12 @@ import { useGamePageLifecycle } from "@/hooks/use-game-page-lifecycle";
 import { INITIAL_CARD_STATE } from "@/stores/socket-store.types";
 // "remaining / total" denominator in the header. GAME_CONFIG.MAX_PLAYERS
 // is only the fallback when room capacity is not available.
-import { GAME_CONFIG, type CardId } from "@arena/shared";
+import {
+  GAME_CONFIG,
+  ANSWER_CODES,
+  type AnswerCode,
+  type CardId,
+} from "@arena/shared";
 
 interface TimedEffectLike {
   cardId?: CardId;
@@ -59,13 +61,16 @@ function useTimedEffectFlag(
         ? `${effect.cardId}-${effect.offerSeqNo}`
         : (effect.effect?.kind ?? "active")))
     : null;
+  const expiresAtServer = effect?.expiresAtServer;
+  const remainingMs = effect?.remainingMs;
+  const hasEffect = Boolean(effect);
 
   useEffect(() => {
-    if (effect) {
-      const fallback = effect.remainingMs ?? fallbackDuration ?? 0;
+    if (hasEffect) {
+      const fallback = remainingMs ?? fallbackDuration ?? 0;
       const remaining =
-        effect.expiresAtServer != null
-          ? Math.max(0, effect.expiresAtServer - Date.now())
+        expiresAtServer != null
+          ? Math.max(0, expiresAtServer - Date.now())
           : fallback;
       if (remaining <= 0) {
         setActive(false);
@@ -81,8 +86,9 @@ function useTimedEffectFlag(
   }, [
     currentRoundNo,
     sourceSeqNo,
-    effect?.expiresAtServer,
-    effect?.remainingMs,
+    hasEffect,
+    expiresAtServer,
+    remainingMs,
     fallbackDuration,
   ]);
 
@@ -166,7 +172,7 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
   const {
     activeAnswerResult,
     activePendingAnswer,
-    clearTimers,
+    clearCountdownTimer,
     getTileVariant,
     handleSelectAnswer,
     hasCurrentQuestion,
@@ -191,7 +197,7 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
     roomTerminated,
     roomTerminationMessage,
     requestSnapshot,
-    clearTimers,
+    clearCountdownTimer,
   });
 
   // F5 fix: when there is no current question yet (late hydration,
@@ -365,10 +371,11 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
           : null)) ??
       null;
     if (eff && eff.effect.kind === "OPTION_DISABLE" && eff.effect.indexes) {
-      const CODES = ["A", "B", "C", "D"];
       return eff.effect.indexes
-        .map((idx: number) => CODES[idx])
-        .filter((code: string | undefined): code is string => Boolean(code));
+        .map((idx: number) => ANSWER_CODES[idx])
+        .filter((code: AnswerCode | undefined): code is AnswerCode =>
+          Boolean(code),
+        );
     }
     return [];
   }, [myRoundEffects, userId, activeEffect, currentRoundNo]);
@@ -504,46 +511,12 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
               timeDelta={timeDelta}
             />
           </div>
-          <div className="flex items-center gap-3 flex-wrap">
-            {hasShield && (
-              <div className="flex items-center gap-1.5 bg-candy-mint px-3.5 py-2.5 rounded-2xl border-[3px] border-candy-ink shadow-[3px_3px_0_0_#2B2D42] text-candy-ink font-display font-black text-xs animate-pulse">
-                <CardGlyph
-                  variant="shield"
-                  size={18}
-                  className="text-candy-ink"
-                />
-                <span>{t("shieldActive")}</span>
-              </div>
-            )}
-            {scoreMultiplier && (
-              <div className="flex items-center gap-1.5 bg-candy-yellow px-3.5 py-2.5 rounded-2xl border-[3px] border-candy-ink shadow-[3px_3px_0_0_#2B2D42] text-candy-ink font-display font-black text-xs animate-bounce">
-                <CardGlyph
-                  variant="doubleScore"
-                  size={18}
-                  className="text-candy-ink"
-                />
-                <span>{t("scoreMultiplier", { factor: scoreMultiplier })}</span>
-              </div>
-            )}
-            {hasSecondChance && (
-              <div className="flex items-center gap-1.5 bg-candy-pink px-3.5 py-2.5 rounded-2xl border-[3px] border-candy-ink shadow-[3px_3px_0_0_#2B2D42] text-candy-ink font-display font-black text-xs">
-                <CardGlyph
-                  variant="secondChance"
-                  size={18}
-                  className="text-candy-ink"
-                />
-                <span>{t("secondChance")}</span>
-              </div>
-            )}
-            {cardState.classId && (
-              <div className="flex items-center gap-2 bg-white px-4 py-3 rounded-2xl border-[3px] border-candy-ink shadow-[3px_3px_0_0_#2B2D42]">
-                <span className="text-xs font-bold text-candy-ink/70">
-                  {t("classLabel")}
-                </span>
-                <ClassBadge classId={cardState.classId} variant="strong" />
-              </div>
-            )}
-          </div>
+          <GameActiveBuffs
+            hasShield={hasShield}
+            scoreMultiplier={scoreMultiplier}
+            hasSecondChance={hasSecondChance}
+            classId={cardState.classId}
+          />
         </div>
 
         {/* Layout Grid */}
@@ -619,31 +592,21 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
           </div>
 
           {/* Sidebar Panel: Live Feed & Eliminators */}
-          <div className="lg:col-span-1 space-y-6">
-            {/* Professor Exam Supervisor Widget */}
-            <ProfessorHudWidget
-              timeLeft={displayTimeLeft}
-              hasAnswered={
-                activePendingAnswer !== null || activeAnswerResult !== null
-              }
-              isCorrect={activeAnswerResult?.isCorrect ?? null}
-              isEliminated={isEliminated}
-            />
-
-            <OpponentsSidebar
-              players={
-                match?.players?.length ? match.players : (room?.players ?? [])
-              }
-              userId={userId}
-            />
-
-            <AntiHackNote />
-
-            <LeaveMatchButton
-              onClick={() => setShowLeaveModal(true)}
-              disabled={roundCompleted || match?.status === "FINISHED"}
-            />
-          </div>
+          <GameSidebarPanel
+            timeLeft={displayTimeLeft}
+            hasAnswered={
+              activePendingAnswer !== null || activeAnswerResult !== null
+            }
+            isCorrect={activeAnswerResult?.isCorrect ?? null}
+            isEliminated={isEliminated}
+            players={
+              match?.players?.length ? match.players : (room?.players ?? [])
+            }
+            userId={userId}
+            roundCompleted={roundCompleted}
+            matchStatus={match?.status}
+            onLeaveClick={() => setShowLeaveModal(true)}
+          />
         </div>
       </div>
 

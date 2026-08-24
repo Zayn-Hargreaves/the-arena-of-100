@@ -1,4 +1,8 @@
-import { AVATAR_SEEDS, type AvatarSeed } from "@arena/shared";
+import {
+  AVATAR_SEEDS,
+  isValidAvatarSeed,
+  type AvatarSeed,
+} from "@arena/shared";
 
 export interface AvatarOption {
   seed: AvatarSeed;
@@ -72,4 +76,16 @@ export function findAvatarBySeed(seed: AvatarSeed): AvatarOption {
     );
   }
   return AVATARS_BY_SEED.get(seed) ?? (avatars[0] as AvatarOption);
+}
+
+export function resolveAvatar(seed?: string | null): AvatarOption {
+  if (seed && isValidAvatarSeed(seed)) {
+    return findAvatarBySeed(seed);
+  }
+  if (avatars.length === 0) {
+    throw new Error(
+      "resolveAvatar: AVATAR_SEEDS yielded no entries; avatar catalog is empty.",
+    );
+  }
+  return avatars[0] as AvatarOption;
 }

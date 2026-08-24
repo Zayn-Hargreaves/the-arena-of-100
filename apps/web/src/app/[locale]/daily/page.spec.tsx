@@ -1,10 +1,11 @@
-"use client";
-
+import "@testing-library/jest-dom/vitest";
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { NextIntlClientProvider } from "next-intl";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import DailyPage from "./page";
+import { ApiError } from "../../../lib/api-client";
 
 const storeState: {
   accessToken: string | null;
@@ -61,9 +62,6 @@ vi.mock("@arena/shared", async () => {
   };
 });
 
-import DailyPage from "./page";
-import { ApiError } from "../../../lib/api-client";
-
 const sampleQuestions = [
   {
     content: "Q1?",
@@ -97,6 +95,14 @@ const sampleQuestions = [
   },
 ];
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function answerButtonMatcher(optionText: string): RegExp {
+  return new RegExp(`^(?:A\\s+)?${escapeRegExp(optionText)}$`, "i");
+}
+
 // Drive the quiz UI through every sample question: pick the first
 // option, click Next until the last question, then click Submit on
 // the final screen. Mirrors the answer-selection + Next/Submit
@@ -105,7 +111,7 @@ function completeQuiz() {
   for (let i = 0; i < sampleQuestions.length; i++) {
     fireEvent.click(
       screen.getByRole("button", {
-        name: new RegExp(`^A\\s+${sampleQuestions[i].options[0]}`, "i"),
+        name: answerButtonMatcher(sampleQuestions[i].options[0]),
       }),
     );
     if (i < sampleQuestions.length - 1) {
@@ -192,7 +198,7 @@ describe("DailyPage", () => {
     for (let i = 0; i < sampleQuestions.length; i++) {
       const q = sampleQuestions[i];
       const button = screen.getByRole("button", {
-        name: new RegExp(`^A\\s+${q.options[0]}`, "i"),
+        name: answerButtonMatcher(q.options[0]),
       });
       fireEvent.click(button);
       if (i < sampleQuestions.length - 1) {
@@ -373,7 +379,7 @@ describe("DailyPage", () => {
     // Select option on Q1
     fireEvent.click(
       screen.getByRole("button", {
-        name: new RegExp(`^A\\s+${sampleQuestions[0].options[0]}`, "i"),
+        name: answerButtonMatcher(sampleQuestions[0].options[0]),
       }),
     );
 
