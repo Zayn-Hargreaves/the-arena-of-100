@@ -1,161 +1,109 @@
 # Tech Context: Arena of 100
 
-## Tech Stack
+> **Core memory-bank file**  
+> Technical stack, environment specifications, and developer tooling.  
+> Recruiter & System Design overview: see `recruiter-summary.md`
 
-### Frontend
+---
 
-| Technology       | Version | Purpose                      |
-| ---------------- | ------- | ---------------------------- |
-| Next.js          | 15.x    | React framework (App Router) |
-| React            | 19.x    | UI library                   |
-| Zustand          | 5.x     | State management             |
-| Socket.io-client | 4.x     | WebSocket client             |
-| Tailwind CSS     | 3.x     | Utility-first CSS            |
-| TypeScript       | 5.x     | Type safety                  |
+## 1. Technical Stack Breakdown
 
-### Backend
+### Frontend Application (`apps/web`)
 
-| Technology | Version    | Purpose                    |
-| ---------- | ---------- | -------------------------- |
-| NestJS     | 10.x       | Node.js framework          |
-| Fastify    | via NestJS | HTTP adapter (performance) |
-| Socket.io  | 4.x        | WebSocket server           |
-| Prisma     | 6.x        | ORM for PostgreSQL         |
-| ioredis    | 5.x        | Redis client               |
-| Zod        | 3.x        | Runtime validation         |
-| JWT        | 9.x        | Authentication             |
+| Technology           | Version | Purpose                                                                       |
+| :------------------- | :------ | :---------------------------------------------------------------------------- |
+| **Next.js**          | 15.x    | React framework (App Router architecture, SSR/SSG, optimized font loading)    |
+| **React**            | 19.x    | Component UI library                                                          |
+| **Zustand**          | 5.x     | Modular slice-based state management (Socket store, Match store, Daily store) |
+| **Socket.io-client** | 4.x     | Real-time WebSocket connection handling & event streaming                     |
+| **Tailwind CSS**     | 3.x     | Design system styling, responsive layouts                                     |
+| **next-intl**        | 3.x     | Type-safe internationalization (English & Vietnamese)                         |
+| **Lucide React**     | -       | Iconography library                                                           |
 
-### Infrastructure
+### Backend API & Real-time Services (`apps/api`)
 
-| Technology | Version | Purpose                  |
-| ---------- | ------- | ------------------------ |
-| PostgreSQL | 16.x    | Primary database         |
-| Redis      | 7.x     | Cache, sessions, pub/sub |
-| Docker     | latest  | Containerization         |
-| pnpm       | 9.x     | Package manager          |
-| Turborepo  | 2.x     | Monorepo build system    |
+| Technology       | Version    | Purpose                                                              |
+| :--------------- | :--------- | :------------------------------------------------------------------- |
+| **NestJS**       | 10.x       | Structured backend application framework                             |
+| **Fastify**      | via NestJS | High-performance HTTP engine (replacing default Express)             |
+| **Socket.io**    | 4.x        | Multi-node WebSocket gateway with Redis Adapter                      |
+| **Prisma ORM**   | 6.x        | Type-safe database queries & migration management                    |
+| **ioredis**      | 5.x        | High-throughput Redis client with Sentinel HA & cluster support      |
+| **Zod**          | 3.x        | Strict runtime boundary validation for HTTP payloads & socket events |
+| **JWT & Bcrypt** | 9.x        | Session tokens and guest identification                              |
 
-### CI/CD
+### Shared Core Packages
 
-| Technology               | Version | Purpose                                                                    |
-| ------------------------ | ------- | -------------------------------------------------------------------------- |
-| GitHub Actions           | -       | Automated workflow orchestration (see `.github/workflows/`, e.g. `ci.yml`) |
-| Turborepo Remote Caching | -       | Distributed build and test cache (see `turbo.json` remote cache setup)     |
+| Package                | Purpose                                                                                             |
+| :--------------------- | :-------------------------------------------------------------------------------------------------- |
+| **`@arena/shared`**    | Shared interfaces, DTO schemas, event envelope factories, card IDs, constants                       |
+| **`@arena/game-core`** | Zero-dependency deterministic state machine (`MatchStateMachine`), card resolution engine, Elo math |
 
-## Development Setup
+### Infrastructure & Operations
 
-### Prerequisites
+| Technology                | Purpose                                                                      |
+| :------------------------ | :--------------------------------------------------------------------------- |
+| **PostgreSQL 16**         | Primary relational database (matches, users, card variants, audit events)    |
+| **Redis 7 (Sentinel HA)** | Distributed session cache, socket pub/sub bus, matchmaking ZSET, lease locks |
+| **Docker Compose**        | Multi-container local orchestration (Standard & Sentinel HA topologies)      |
+| **Turborepo & pnpm**      | High-speed monorepo build orchestration with caching                         |
+| **k6 & Vitest**           | Distributed load-testing harness and unit/integration test runners           |
 
-- Node.js >= 20.0.0
-- pnpm >= 9.x
-- Docker & Docker Compose
+---
 
-### Environment Variables
+## 2. Environment Configuration
+
+Example configuration for backend (`apps/api/.env`):
 
 ```env
-# Database
-DATABASE_URL="postgresql://arena:arena123@localhost:5432/arena_of_100"
-
-# Redis
-REDIS_URL="redis://localhost:6379"
-
-# JWT
-JWT_SECRET="arena-100-super-secret-key"
-JWT_EXPIRES_IN="24h"
-
 # Server
 PORT=3001
+NODE_ENV=development
 CORS_ORIGIN="http://localhost:3000"
+
+# Database
+DATABASE_URL="postgresql://arena:arena123@localhost:5432/arena_of_100?connection_limit=20"
+DB_POOL_MAX=20
+
+# Redis Standalone
+REDIS_URL="redis://localhost:6379"
+
+# Redis Sentinel HA (Optional / Production)
+# REDIS_SENTINELS="localhost:26379,localhost:26380,localhost:26381"
+# REDIS_SENTINEL_MASTER_NAME="mymaster"
+
+# Auth
+JWT_SECRET="arena-100-super-secret-key-change-in-prod"
+JWT_EXPIRES_IN="24h"
 ```
 
-### Running Locally
+---
+
+## 3. Local Development & Quick Start
 
 ```bash
-# 1. Start infrastructure
+# 1. Start Infrastructure (PostgreSQL + Redis)
 docker compose -f infrastructure/docker-compose.yml up -d
 
-# 2. Install dependencies
+# (Or for Redis Sentinel HA cluster)
+# docker compose -f infrastructure/docker-compose.sentinel.yml up -d
+
+# 2. Install all dependencies
 pnpm install
 
-# 3. Setup database
+# 3. Synchronize Database Schema & Seed Initial Trivia Data
 pnpm db:push
+pnpm --filter @arena/api run prisma:seed
 
-# 4. Run development servers
+# 4. Start Monorepo in Development Mode
 pnpm dev
+# Web: http://localhost:3000 | API: http://localhost:3001
 ```
 
-## Code Quality
+---
 
-### TypeScript Strict Mode
+## 4. Testing Architecture & Discipline
 
-- All code is TypeScript strict
-- No `any` unless absolutely necessary
-- Shared types in `@arena/shared`
-
-### Linting
-
-- ESLint 9.x
-- Consistent code style
-
-### Testing
-
-- Vitest for unit and integration tests
-- Coverage reporting via `@vitest/coverage-v8`
-- Target: 80% coverage
-- Automated execution in CI/CD pipeline
-- Testing priorities: unit/integration tests for game-core package first, then E2E tests for critical user flows (future)
-
-## Performance Considerations
-
-### WebSocket
-
-- Binary protocol for low latency (future)
-- Room-based broadcasting (not global)
-- Connection pooling
-
-### Redis
-
-- In-memory game state
-- Snapshot caching (TTL: 2 hours)
-- Atomic operations for concurrency
-
-### Database
-
-- Indexed queries (match_id, seq_no)
-- Pagination for leaderboards
-- Connection pooling via Prisma
-
-## Security
-
-### Anti-Cheat
-
-- Server-authoritative timestamps
-- No game logic on client
-- Answer validation on server
-
-### Authentication
-
-- JWT with refresh tokens
-- Token stored in Redis (revocable)
-- Guest login (no sensitive data)
-
-### Rate Limiting (Future)
-
-- Redis-based rate limiting
-- Per-user and per-IP limits
-
-## Deployment (Future)
-
-### Docker Compose (Production)
-
-- PostgreSQL with persistent volume
-- Redis with AOF persistence
-- API server behind nginx
-- Next.js standalone build
-
-### Scaling Considerations
-
-- Horizontal scaling: multiple API instances
-- Redis for shared state
-- PostgreSQL read replicas
-- Load balancer with sticky sessions (WebSocket)
+- **Unit & Integration Tests**: Run using Vitest across all workspace packages with strict assertions.
+- **Coverage Standard**: >=90% coverage threshold across business logic in `@arena/game-core` and `@arena/api`.
+- **Zero Global Regressions**: All 2,398 automated test assertions pass deterministically without race conditions.

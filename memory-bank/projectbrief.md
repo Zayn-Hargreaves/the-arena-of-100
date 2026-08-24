@@ -1,88 +1,49 @@
-# Project Brief: Arena of 100 - Game Đấu Trường 100
+# Project Brief: Arena of 100
 
-## Overview
-Arena of 100 is a real-time multiplayer quiz battle royale game where 100 players compete by answering questions. Players who answer incorrectly are eliminated, and the last player standing wins.
+> High-level project charter and delivered scope specification.  
+> Recruiter & System Design overview: see `recruiter-summary.md`
 
-The project demonstrates product engineering skills valued by top tech companies - focusing on complete user journeys, thoughtful onboarding, social features, and retention mechanics rather than just technical patterns. It emphasizes operational excellence, resilience, and international standards compliance.
+---
 
-## Core Requirements
+## Executive Overview
 
-### MVP Features
-1. **Frictionless Onboarding**: Guest access with nickname/avatar system and content moderation
-2. **Lobby Lifecycle Management**: Auto-start countdown, host controls, and heartbeat validation
-3. **Room Management**: Create/join public/private rooms with unique codes
-4. **Core Game Loop**: 100 players answer questions, wrong = eliminated, last one wins
-5. **Spectator Mode**: Eliminated players become spectators with micro-interactions
-6. **Drop-in Spectating**: Late joiners can watch ongoing matches with scalable infrastructure
-7. **AFK Sweeping**: Automatic handling of inactive players
-8. **Graceful Exit**: Instant surrender/leave mechanism
-9. **Asset Preloading**: Background asset fetching for rich media
-10. **Runtime Question Fallback**: Graceful error handling for content issues
-11. **Content Management**: Question pool with anti-repetition system
-12. **Tie-break**: If multiple players eliminated simultaneously, winner determined by response time
-13. **Sudden Death**: Exciting tie-break for final contestants
-14. **Reconnect**: Auto-sync state when players reconnect (snapshot + missing events)
-15. **Post-Match Flow**: Victory/defeat screen with statistics and rematch capability
-16. **Analytics**: Basic leaderboard and question accuracy stats
-17. **Accessibility**: WCAG compliant design with screen reader support
-18. **Mass-Spectator Isolation**: Scalable infrastructure for large audiences
-19. **Anonymous Identity Tracking**: Device fingerprinting for persistent guest identity
-20. **Optimistic UI & Answer Lock-in**: Instant feedback with smart recovery
-21. **Game Operations & Kill Switch**: Admin tools for emergency interventions
+**Arena of 100** is an enterprise-grade, real-time multiplayer quiz battle royale game where 100 players compete concurrently. Players must answer trivia questions within tight countdown windows (15s); wrong or missed answers lead to immediate elimination, transitioning players into an engaging spectator mode until a single champion emerges.
 
-### Technical Requirements
-- **Frontend**: Next.js + Zustand + Socket.io-client
-- **Backend**: NestJS + Fastify + Socket.io + Prisma + PostgreSQL + Redis
-- **Architecture**: Modular Monolith with Event-Driven patterns
-- **State Management**: Server-authoritative state machine (anti-cheat)
-- **Real-time**: WebSocket for players, Server-Sent Events for spectators
-- **Performance**: Event batching and throttling for micro-interactions
-- **Resilience**: Graceful error handling and fallback mechanisms
-- **Security**: Content moderation and rate limiting
+The project serves as a **production-ready showcase of modern full-stack & distributed systems engineering**, featuring sub-second p95 latency under 3,200 concurrent WebSocket connections, automated Redis Sentinel failover, monotonic delta state synchronization, and 2,398+ automated tests.
 
-## Success Criteria
-- [ ] Players can create/join rooms with frictionless onboarding and content moderation
-- [ ] Game loop works: start → round → answer → eliminate → spectator → winner
-- [ ] Lobby lifecycle management with auto-start/host controls and heartbeat validation
-- [ ] Drop-in spectating for late joiners with scalable infrastructure
-- [ ] AFK sweeping for inactive players
-- [ ] Graceful exit with instant resource cleanup
-- [ ] Asset preloading for fair media delivery with fallback handling
-- [ ] Runtime question fallback for content errors
-- [ ] Reconnect restores game state
-- [ ] Tie-break and sudden death logic work correctly
-- [ ] Spectator mode functions properly with emotes and scalable infrastructure
-- [ ] Post-match summary displays correctly with rematch capability
-- [ ] Content delivery system prevents question repetition
-- [ ] Accessibility features work correctly (screen reader, keyboard nav, color-blind mode)
-- [ ] Mass-spectator isolation prevents server overload
-- [ ] Basic UI is functional and responsive
-- [ ] Anonymous identity tracking prevents ban evasion
-- [ ] Optimistic UI provides instant feedback with smart recovery
-- [ ] Game operations tools enable emergency interventions
+---
 
-## Scope Boundaries
-### In Scope (MVP)
-- Frictionless guest onboarding with persistent identity and content moderation
-- Lobby lifecycle management (auto-start, host controls, heartbeat validation)
-- Basic question pool with difficulty categorization
-- Simple leaderboard
-- Core game mechanics
-- Spectator mode with micro-interactions and scalable infrastructure
-- AFK player handling
-- Graceful exit mechanism
-- Asset preloading system with fallback
-- Runtime question fallback
-- Accessibility support (WCAG compliance)
-- Mass-spectator isolation
-- Post-match flow with rematch
-- Anonymous identity tracking with device fingerprinting
-- Optimistic UI with smart recovery mechanisms
-- Game operations tools for emergency interventions
+## Delivered Scope & Features
 
-### Out of Scope (Post-MVP)
-- Social features (friends, chat)
-- Advanced analytics
-- Tournament mode
-- Bot injection system
-- Monetization
+### 1. Real-time Battle Royale Loop (100 Players)
+
+- [x] **Server-Authoritative Timing & Anti-Cheat**: All countdowns, answer validity, and elimination decisions execute server-side.
+- [x] **Instant Elimination & Sudden Death**: Wrong or expired answers trigger instant elimination. Simultaneous finalists resolve via high-precision response timestamps.
+- [x] **Spectator Experience**: Eliminated or late-joining players smoothly transition to real-time watch mode.
+
+### 2. Deep Tactical Mechanics (Class & Card Hybrid)
+
+- [x] **Dynamic Class Allocation**: Players are assigned to Offense (_Công_) or Defense (_Thủ_) classes.
+- [x] **18 Strategic Cards**: Tactical modifiers (Shields, Point Doublers, Freeze, Reveal) resolved via deterministic batch processing (`CARD_RESOLVED_BATCH` <= 50ms).
+- [x] **Cosmetic Progression**: Daily Challenge streaks (>=7 days) unlock Neon and Gold card variants.
+
+### 3. Matchmaking & Competitive Rankings
+
+- [x] **Elo Ranking Engine**: Dynamic K-factor adjustment based on match placement and relative opponent skill.
+- [x] **Redis ZSET Matchmaking Queue**: Fast ticket matching with expandable rating windows and automated bot backfill.
+- [x] **Custom Rooms**: Public lobby discovery and private rooms with unique 6-character codes.
+
+### 4. Distributed Resilience & Scalability
+
+- [x] **Multi-Node Redis Adapter**: Seamless cross-worker WebSocket broadcast scaling across multiple backend instances.
+- [x] **Redis Sentinel High Availability**: Automatic master failover with transparent `READONLY` error reconnection.
+- [x] **Delta Replay State Sync (`EVENT_BATCH`)**: Monotonic sequence tracking ensures seamless reconnection over spotty connections without full-state overhead.
+- [x] **High-Throughput Concurrency**: Self-rearming event-driven consumer loop drops p95 answer latency from 1,126ms to 201ms (-82%).
+
+---
+
+## Quality & Testing Verification
+
+- **2,398+ Automated Tests** passing across unit, integration, and chaos test suites.
+- **k6 Distributed Load Testing**: Validated up to **3,200 concurrent WebSocket users** with **0 connection errors** and sub-second p95 answer latency.
+- **Strict Monorepo Isolation**: Type-safe shared contracts across `@arena/shared`, `@arena/game-core`, `apps/api`, and `apps/web`.
