@@ -167,4 +167,4 @@ Explore the detailed architecture and engineering decision records in the [`memo
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
