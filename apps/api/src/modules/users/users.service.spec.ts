@@ -97,6 +97,34 @@ describe("UsersService", () => {
       });
     });
 
+    it("formats user createdAt when present as Date or string in getMyStats", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+        ...mockUser,
+        createdAt: new Date("2026-01-15T08:00:00.000Z"),
+      });
+      vi.mocked(prisma.matchPlayer.groupBy).mockResolvedValue([]);
+      vi.mocked(prisma.match.count).mockResolvedValue(0);
+      vi.mocked(prisma.$queryRaw)
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+
+      const res1 = await service.getMyStats("u1");
+      expect(res1.user.createdAt).toBe("2026-01-15T08:00:00.000Z");
+
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+        ...mockUser,
+        createdAt: "2026-01-15T08:00:00.000Z" as any,
+      });
+      vi.mocked(prisma.matchPlayer.groupBy).mockResolvedValue([]);
+      vi.mocked(prisma.match.count).mockResolvedValue(0);
+      vi.mocked(prisma.$queryRaw)
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+
+      const res2 = await service.getMyStats("u1");
+      expect(res2.user.createdAt).toBe("2026-01-15T08:00:00.000Z");
+    });
+
     it("uses fallback aggregate rows when raw queries return empty arrays", async () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
       vi.mocked(prisma.matchPlayer.groupBy).mockResolvedValue([]);
@@ -642,12 +670,21 @@ describe("UsersService", () => {
         avatar: "tux",
         role: Role.GUEST,
         elo: 1200,
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
       };
       vi.mocked(prisma.user.update).mockResolvedValue(updated);
 
       const result = await service.updateMyAvatar("u1", "tux");
 
-      expect(result).toEqual({ ...updated, rankTier: "SILVER" });
+      expect(result).toEqual({
+        id: "u1",
+        username: "Alice",
+        avatar: "tux",
+        role: Role.GUEST,
+        elo: 1200,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        rankTier: "SILVER",
+      });
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: "u1" },
         data: { avatar: "tux" },
@@ -660,6 +697,32 @@ describe("UsersService", () => {
           createdAt: true,
         },
       });
+    });
+
+    it("formats string or undefined createdAt in updateMyAvatar", async () => {
+      const updatedStringDate = {
+        id: "u1",
+        username: "Alice",
+        avatar: "tux",
+        role: Role.GUEST,
+        elo: 1200,
+        createdAt: "2026-02-01T00:00:00.000Z" as any,
+      };
+      vi.mocked(prisma.user.update).mockResolvedValueOnce(updatedStringDate);
+      const res1 = await service.updateMyAvatar("u1", "tux");
+      expect(res1.createdAt).toBe("2026-02-01T00:00:00.000Z");
+
+      const updatedNoDate = {
+        id: "u1",
+        username: "Alice",
+        avatar: "tux",
+        role: Role.GUEST,
+        elo: 1200,
+        createdAt: null as any,
+      };
+      vi.mocked(prisma.user.update).mockResolvedValueOnce(updatedNoDate);
+      const res2 = await service.updateMyAvatar("u1", "tux");
+      expect(res2.createdAt).toBeUndefined();
     });
   });
 
