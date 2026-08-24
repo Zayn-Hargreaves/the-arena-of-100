@@ -128,7 +128,11 @@ vi.mock("@/components/game", () => ({
     roundCompleted?: boolean;
     matchStatus?: string;
   }) => (
-    <div data-testid="game-sidebar-panel">
+    <div
+      data-testid="game-sidebar-panel"
+      data-round-completed={String(p.roundCompleted)}
+      data-match-status={String(p.matchStatus)}
+    >
       <div
         data-testid="opponents"
         data-count={p.players.length}
@@ -136,7 +140,8 @@ vi.mock("@/components/game", () => ({
       />
       <button
         data-testid="leave-btn"
-        disabled={Boolean(p.roundCompleted || p.matchStatus === "FINISHED")}
+        data-round-completed={String(p.roundCompleted)}
+        data-match-status={String(p.matchStatus)}
         onClick={p.onLeaveClick}
       />
     </div>
@@ -346,6 +351,8 @@ describe("GamePage — derived UI flags", () => {
       matchId: "m1",
       roundNo: 2,
       targetRoundNo: 2,
+      cardId: "TN-5",
+      offerSeqNo: 1,
       playedByPlayerId: "other",
       targetPlayerIds: ["me"],
       effect: { kind: "OPTION_FAKE", indexes: [1, 2], durationMs: 3000 },

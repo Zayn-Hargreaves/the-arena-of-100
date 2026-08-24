@@ -8,7 +8,7 @@ import {
   type SnapshotPayload,
   type VoteBanTopicPayload,
 } from "@arena/shared";
-import { INITIAL_CARD_STATE, createInitialCardState } from "./socket-store.types";
+import { INITIAL_CARD_STATE } from "./socket-store.types";
 import { hasSecondChancePermission } from "./socket-store.helpers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resetSocketStateMaps } from "./socket-store.state-maps";
@@ -172,7 +172,7 @@ describe("socket-store connect heartbeat ownership", () => {
 
       expect(useSocketStore.getState().socket).toBe(socket);
     } finally {
-      socket?.disconnect();
+      useSocketStore.getState().disconnect();
     }
   });
 
@@ -202,7 +202,7 @@ describe("socket-store connect heartbeat ownership", () => {
 
       expect(useSocketStore.getState().socket).toBe(socket2);
     } finally {
-      socket2?.disconnect();
+      useSocketStore.getState().disconnect();
     }
   });
 
@@ -254,7 +254,7 @@ describe("socket-store connect heartbeat ownership", () => {
       expect(useSocketStore.getState().heartbeatInterval).not.toBeNull();
     } finally {
       socket1?.disconnect();
-      socket2?.disconnect();
+      useSocketStore.getState().disconnect();
     }
   });
 

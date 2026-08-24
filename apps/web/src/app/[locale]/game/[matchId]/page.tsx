@@ -29,7 +29,12 @@ import { useGamePageLifecycle } from "@/hooks/use-game-page-lifecycle";
 import { INITIAL_CARD_STATE } from "@/stores/socket-store.types";
 // "remaining / total" denominator in the header. GAME_CONFIG.MAX_PLAYERS
 // is only the fallback when room capacity is not available.
-import { GAME_CONFIG, type CardId } from "@arena/shared";
+import {
+  GAME_CONFIG,
+  ANSWER_CODES,
+  type AnswerCode,
+  type CardId,
+} from "@arena/shared";
 
 interface TimedEffectLike {
   cardId?: CardId;
@@ -56,13 +61,16 @@ function useTimedEffectFlag(
         ? `${effect.cardId}-${effect.offerSeqNo}`
         : (effect.effect?.kind ?? "active")))
     : null;
+  const expiresAtServer = effect?.expiresAtServer;
+  const remainingMs = effect?.remainingMs;
+  const hasEffect = Boolean(effect);
 
   useEffect(() => {
-    if (effect) {
-      const fallback = effect.remainingMs ?? fallbackDuration ?? 0;
+    if (hasEffect) {
+      const fallback = remainingMs ?? fallbackDuration ?? 0;
       const remaining =
-        effect.expiresAtServer != null
-          ? Math.max(0, effect.expiresAtServer - Date.now())
+        expiresAtServer != null
+          ? Math.max(0, expiresAtServer - Date.now())
           : fallback;
       if (remaining <= 0) {
         setActive(false);
@@ -78,8 +86,9 @@ function useTimedEffectFlag(
   }, [
     currentRoundNo,
     sourceSeqNo,
-    effect?.expiresAtServer,
-    effect?.remainingMs,
+    hasEffect,
+    expiresAtServer,
+    remainingMs,
     fallbackDuration,
   ]);
 
@@ -362,10 +371,11 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
           : null)) ??
       null;
     if (eff && eff.effect.kind === "OPTION_DISABLE" && eff.effect.indexes) {
-      const CODES = ["A", "B", "C", "D"];
       return eff.effect.indexes
-        .map((idx: number) => CODES[idx])
-        .filter((code: string | undefined): code is string => Boolean(code));
+        .map((idx: number) => ANSWER_CODES[idx])
+        .filter((code: AnswerCode | undefined): code is AnswerCode =>
+          Boolean(code),
+        );
     }
     return [];
   }, [myRoundEffects, userId, activeEffect, currentRoundNo]);

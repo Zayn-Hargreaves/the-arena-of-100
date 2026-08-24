@@ -113,11 +113,15 @@ export const createMatchSlice: StateCreator<SocketState, [], [], MatchSlice> = (
   },
 
   submitAnswer: (matchId: string, roundNo: number, answer: string) => {
-    const { socket, pendingAnswer, cardState, userId } = get();
+    const { socket, pendingAnswer, cardState, userId, lastAnswerResult } =
+      get();
     if (!socket?.connected) return null;
 
     const hasExistingSubmission =
-      pendingAnswer?.matchId === matchId && pendingAnswer.roundNo === roundNo;
+      (pendingAnswer?.matchId === matchId &&
+        pendingAnswer.roundNo === roundNo) ||
+      (lastAnswerResult?.matchId === matchId &&
+        lastAnswerResult.roundNo === roundNo);
 
     const currentUserId = userId;
     const hasSecondChancePermission = hasSecondChance(

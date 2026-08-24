@@ -62,7 +62,6 @@ vi.mock("@arena/shared", async () => {
   };
 });
 
-
 const sampleQuestions = [
   {
     content: "Q1?",
@@ -100,6 +99,10 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function answerButtonMatcher(optionText: string): RegExp {
+  return new RegExp(`^(?:A\\s+)?${escapeRegExp(optionText)}$`, "i");
+}
+
 // Drive the quiz UI through every sample question: pick the first
 // option, click Next until the last question, then click Submit on
 // the final screen. Mirrors the answer-selection + Next/Submit
@@ -108,10 +111,7 @@ function completeQuiz() {
   for (let i = 0; i < sampleQuestions.length; i++) {
     fireEvent.click(
       screen.getByRole("button", {
-        name: new RegExp(
-          `^(?:A\\s+)?${escapeRegExp(sampleQuestions[i].options[0])}$`,
-          "i",
-        ),
+        name: answerButtonMatcher(sampleQuestions[i].options[0]),
       }),
     );
     if (i < sampleQuestions.length - 1) {
@@ -198,7 +198,7 @@ describe("DailyPage", () => {
     for (let i = 0; i < sampleQuestions.length; i++) {
       const q = sampleQuestions[i];
       const button = screen.getByRole("button", {
-        name: new RegExp(`^(?:A\\s+)?${escapeRegExp(q.options[0])}$`, "i"),
+        name: answerButtonMatcher(q.options[0]),
       });
       fireEvent.click(button);
       if (i < sampleQuestions.length - 1) {
@@ -379,7 +379,7 @@ describe("DailyPage", () => {
     // Select option on Q1
     fireEvent.click(
       screen.getByRole("button", {
-        name: new RegExp(`^A\\s+${sampleQuestions[0].options[0]}`, "i"),
+        name: answerButtonMatcher(sampleQuestions[0].options[0]),
       }),
     );
 

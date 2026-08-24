@@ -168,6 +168,22 @@ export function applyRoundEndedState(
       ? data.survivingCount
       : (survivingSet?.size ?? null);
 
+  let isEliminated = state.isEliminated;
+  if (state.userId) {
+    if (eliminatedSet.has(state.userId)) {
+      isEliminated = true;
+    } else if (survivingSet !== null && survivingSet.has(state.userId)) {
+      isEliminated = false;
+    } else {
+      const localPlayer = updatedPlayers.find((p) => p.id === state.userId);
+      if (localPlayer) {
+        isEliminated = localPlayer.status === PlayerStatus.ELIMINATED;
+      }
+    }
+  }
+
+  const eliminationReason = isEliminated ? state.eliminationReason : null;
+
   return {
     match: currentMatch
       ? {
@@ -203,6 +219,8 @@ export function applyRoundEndedState(
       correctAnswer: data.correctAnswer,
     },
     remainingCount: survivingCount,
+    isEliminated,
+    eliminationReason,
     pendingAnswer:
       state.pendingAnswer?.matchId === data.matchId &&
       state.pendingAnswer.roundNo === data.roundNo
@@ -381,10 +399,20 @@ export function applySnapshotState(
 ): Partial<SocketState> {
   const matchStatus = normalizeMatchStatus(data.status);
   if (!matchStatus) {
+    if (process.env.NODE_ENV !== "production") {
+      console.warn(
+        `⚠️ Snapshot hydration failed: invalid match status "${String(data.status)}". Dropping snapshot.`,
+      );
+    }
     return {};
   }
 
   if (!Array.isArray(data.players)) {
+    if (process.env.NODE_ENV !== "production") {
+      console.warn(
+        "⚠️ Snapshot hydration failed: players is not an array. Dropping snapshot.",
+      );
+    }
     return {};
   }
 
@@ -392,6 +420,11 @@ export function applySnapshotState(
   for (const player of data.players) {
     const playerStatus = normalizePlayerStatus(player.status);
     if (!playerStatus) {
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(
+          `⚠️ Snapshot hydration failed: invalid player status "${String(player.status)}" for player "${player.id}". Dropping snapshot.`,
+        );
+      }
       return {};
     }
     players.push({

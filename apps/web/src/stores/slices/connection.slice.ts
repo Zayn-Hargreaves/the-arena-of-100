@@ -31,11 +31,7 @@ import {
 } from "@arena/shared";
 import { API_URL } from "@/lib/api";
 import type { SocketState } from "../socket-store.types";
-import {
-  AUTH_TIMEOUT_MS,
-  debugLog,
-  waitForSocketAck,
-} from "../socket-store.helpers";
+import { debugLog, waitForAuthAck } from "../socket-store.helpers";
 import {
   applyAnswerResultState,
   applyAuthenticatedState,
@@ -594,18 +590,7 @@ export const createConnectionSlice: StateCreator<
             throw new Error("Authentication required");
           }
 
-          const authPromise = waitForSocketAck<void>({
-            socket: newSocket,
-            successEvent: ServerEvent.AUTHENTICATED,
-            timeoutMs: AUTH_TIMEOUT_MS,
-            timeoutMessage: "Authentication timed out",
-            mapSuccess: () => undefined,
-            shouldRejectOnError: (data) =>
-              data.code === ErrorCode.INVALID_TOKEN ||
-              data.code === ErrorCode.UNAUTHORIZED,
-            getErrorMessage: (data) =>
-              data.message || "Authentication timed out",
-          });
+          const authPromise = waitForAuthAck(newSocket);
           newSocket.emit(ClientEvent.AUTHENTICATE, { token: effectiveToken });
           try {
             await authPromise;
