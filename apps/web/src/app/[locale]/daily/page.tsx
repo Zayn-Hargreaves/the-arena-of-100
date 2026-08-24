@@ -28,6 +28,7 @@ import { DailyLeaderboard } from "@/components/daily/daily-leaderboard";
 import { DailyNicknameGate } from "@/components/daily/daily-nickname-gate";
 import { DailyShareButton } from "@/components/daily/daily-share-button";
 import { DailyStreakBadge } from "@/components/daily/daily-streak-badge";
+import { DailyStreakRewardsWidget } from "@/components/daily/daily-streak-rewards-widget";
 import { CardVariantUnlockModal } from "@/components/daily/card-variant-unlock-modal";
 
 /**
@@ -242,23 +243,30 @@ export default function DailyPage() {
 
   return (
     <AppShellLayout>
-      <div className="max-w-3xl mx-auto w-full space-y-6 pt-2 pb-8 select-none relative z-10">
-        <div className="bg-candy-cloud border-[3px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42] p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 relative overflow-hidden">
-          <div className="relative space-y-1.5">
-            <h1 className="font-display font-black text-2xl md:text-3xl text-candy-ink tracking-wider uppercase flex items-center gap-2">
-              <span className="inline-flex items-center justify-center w-9 h-9 rounded-2xl bg-white border-[2px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42] text-candy-pink">
+      <div className="max-w-6xl mx-auto w-full space-y-6 pt-2 pb-12 select-none relative z-10">
+        {/* Header Hero Card */}
+        <div className="bg-candy-cloud border-[3px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42] p-5 sm:p-6 rounded-3xl flex flex-col md:flex-row md:items-center justify-between gap-4 relative overflow-hidden">
+          <div className="relative space-y-1">
+            <div className="flex items-center gap-3">
+              <span className="inline-flex items-center justify-center w-10 h-10 rounded-2xl bg-white border-[2px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42] text-candy-pink shrink-0">
                 <MiniGlyph variant="target" className="w-5 h-5" />
               </span>
-              {t("title")}
-            </h1>
-            <p className="font-body text-xs md:text-sm text-candy-ink font-semibold opacity-85">
+              <h1 className="font-display font-black text-2xl md:text-3xl text-candy-ink tracking-wide uppercase">
+                {t("title")}
+              </h1>
+            </div>
+            <p className="font-body text-xs md:text-sm text-candy-ink font-semibold opacity-85 sm:pl-[52px]">
               {t("subtitle")}
             </p>
           </div>
-          <div className="flex flex-wrap gap-2 items-center">
-            {result ? (
+
+          <div className="flex flex-wrap gap-2.5 items-center">
+            {result ||
+            (data?.currentStreak != null && data.currentStreak > 0) ? (
               <DailyStreakBadge
-                streak={result.streakAfter}
+                streak={
+                  result ? result.streakAfter : (data?.currentStreak ?? 0)
+                }
                 label={t("streak")}
               />
             ) : null}
@@ -272,129 +280,149 @@ export default function DailyPage() {
           </div>
         </div>
 
-        {today.isLoading ? <LoadingSkeleton /> : null}
+        {/* 2-Column Responsive Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Main Column (Quiz / Results) */}
+          <div className="lg:col-span-7 xl:col-span-8 space-y-6">
+            {today.isLoading ? <LoadingSkeleton /> : null}
 
-        {today.error ? (
-          <MessageCard
-            message={t("error.loadFailed")}
-            actionLabel={t("error.retry")}
-            onAction={() => today.refetch()}
-            tone="error"
-          />
-        ) : null}
+            {today.error ? (
+              <MessageCard
+                message={t("error.loadFailed")}
+                actionLabel={t("error.retry")}
+                onAction={() => today.refetch()}
+                tone="error"
+              />
+            ) : null}
 
-        {data && data.questions.length === 0 ? (
-          <MessageCard message={t("error.noQuestions")} />
-        ) : null}
+            {data && data.questions.length === 0 ? (
+              <MessageCard message={t("error.noQuestions")} />
+            ) : null}
 
-        {data && data.questions.length > 0 ? (
-          showAlreadyDone ? (
-            <MessageCard message={t("alreadyDone")} />
-          ) : !accessToken ? (
-            <div className="bg-candy-cloud border-[3px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42] p-5 rounded-2xl space-y-3">
-              <p className="font-body text-sm font-semibold text-candy-ink">
-                {t("intro")}
-              </p>
-              <button
-                type="button"
-                onClick={handleStart}
-                className="min-h-11 px-5 py-2 rounded-xl bg-candy-pink text-white border-[2px] border-candy-ink font-display font-black text-xs uppercase shadow-[2px_2px_0_0_#2B2D42]"
-              >
-                {t("start")}
-              </button>
-            </div>
-          ) : result ? null : (
-            <div className="bg-candy-cloud border-[3px] border-candy-ink shadow-[6px_6px_0_0_#2B2D42] p-5 rounded-2xl space-y-5">
-              <DailyProgress index={questionIndex + 1} total={questionCount} />
-              {currentQuestion ? (
-                <DailyQuestionCard
-                  question={currentQuestion}
-                  questionNumber={questionIndex + 1}
-                  totalQuestions={questionCount}
-                  selected={answers[questionIndex]?.answer ?? null}
-                  locked={false}
-                  onSelect={handleSelect}
-                />
-              ) : null}
-              <div className="flex items-center justify-between gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={handleBack}
-                  disabled={questionIndex === 0}
-                  className="min-h-11 px-4 py-2 rounded-xl bg-white text-candy-ink border-[2px] border-candy-ink font-display font-black text-xs uppercase shadow-[2px_2px_0_0_#2B2D42] disabled:opacity-40"
-                >
-                  {t("back")}
-                </button>
-                {questionIndex < questionCount - 1 ? (
+            {data && data.questions.length > 0 ? (
+              showAlreadyDone ? (
+                <MessageCard message={t("alreadyDone")} />
+              ) : !accessToken ? (
+                <div className="bg-candy-cloud border-[3px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42] p-6 rounded-2xl space-y-4">
+                  <p className="font-body text-sm font-semibold text-candy-ink">
+                    {t("intro")}
+                  </p>
                   <button
                     type="button"
-                    onClick={handleNext}
-                    disabled={!answers[questionIndex]?.answer}
-                    className="min-h-11 px-4 py-2 rounded-xl bg-candy-yellow text-candy-ink border-[2px] border-candy-ink font-display font-black text-xs uppercase shadow-[2px_2px_0_0_#2B2D42] disabled:opacity-40"
+                    onClick={handleStart}
+                    className="min-h-11 px-6 py-2.5 rounded-xl bg-candy-pink text-white border-[2px] border-candy-ink font-display font-black text-xs uppercase shadow-[2px_2px_0_0_#2B2D42] hover:bg-candy-pink/90 active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
                   >
-                    {t("next")}
+                    {t("start")}
                   </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={handleSubmitRequest}
-                    disabled={!allAnswered || submitting}
-                    className="min-h-11 px-4 py-2 rounded-xl bg-candy-mint text-candy-ink border-[2px] border-candy-ink font-display font-black text-xs uppercase shadow-[2px_2px_0_0_#2B2D42] disabled:opacity-40"
-                  >
-                    {t("submit")}
-                  </button>
-                )}
-              </div>
-              {submitError?.status === 409 ? (
-                <MessageCard message={t("error.alreadySubmitted")} />
-              ) : submitError?.status === 429 ? (
-                <MessageCard message={t("error.rateLimited")} />
-              ) : submitError ? (
-                <MessageCard
-                  message={`${t("error.submitFailed")}: ${submitError.message}`}
-                  tone="error"
-                />
-              ) : null}
-            </div>
-          )
-        ) : null}
+                </div>
+              ) : result ? null : (
+                <div className="bg-candy-cloud border-[3px] border-candy-ink shadow-[6px_6px_0_0_#2B2D42] p-6 rounded-3xl space-y-6">
+                  <DailyProgress
+                    index={questionIndex + 1}
+                    total={questionCount}
+                  />
+                  {currentQuestion ? (
+                    <DailyQuestionCard
+                      question={currentQuestion}
+                      questionNumber={questionIndex + 1}
+                      totalQuestions={questionCount}
+                      selected={answers[questionIndex]?.answer ?? null}
+                      locked={false}
+                      onSelect={handleSelect}
+                    />
+                  ) : null}
+                  <div className="flex items-center justify-between gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={handleBack}
+                      disabled={questionIndex === 0}
+                      className="min-h-11 px-5 py-2 rounded-xl bg-white text-candy-ink border-[2px] border-candy-ink font-display font-black text-xs uppercase shadow-[2px_2px_0_0_#2B2D42] disabled:opacity-40 cursor-pointer"
+                    >
+                      {t("back")}
+                    </button>
+                    {questionIndex < questionCount - 1 ? (
+                      <button
+                        type="button"
+                        onClick={handleNext}
+                        disabled={!answers[questionIndex]?.answer}
+                        className="min-h-11 px-6 py-2 rounded-xl bg-candy-yellow text-candy-ink border-[2px] border-candy-ink font-display font-black text-xs uppercase shadow-[2px_2px_0_0_#2B2D42] disabled:opacity-40 cursor-pointer"
+                      >
+                        {t("next")}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleSubmitRequest}
+                        disabled={!allAnswered || submitting}
+                        className="min-h-11 px-6 py-2 rounded-xl bg-candy-mint text-candy-ink border-[2px] border-candy-ink font-display font-black text-xs uppercase shadow-[2px_2px_0_0_#2B2D42] disabled:opacity-40 cursor-pointer"
+                      >
+                        {t("submit")}
+                      </button>
+                    )}
+                  </div>
+                  {submitError?.status === 409 ? (
+                    <MessageCard message={t("error.alreadySubmitted")} />
+                  ) : submitError?.status === 429 ? (
+                    <MessageCard message={t("error.rateLimited")} />
+                  ) : submitError ? (
+                    <MessageCard
+                      message={`${t("error.submitFailed")}: ${submitError.message}`}
+                      tone="error"
+                    />
+                  ) : null}
+                </div>
+              )
+            ) : null}
 
-        {result ? (
-          <>
-            <DailyResultPanel
-              result={result}
-              speedBonusLabel={
-                result.elapsedMs == null
-                  ? t("speedBonus.none")
-                  : t("speedBonus.awarded", { ms: result.elapsedMs })
+            {result ? (
+              <>
+                <DailyResultPanel
+                  result={result}
+                  speedBonusLabel={
+                    result.elapsedMs == null
+                      ? t("speedBonus.none")
+                      : t("speedBonus.awarded", {
+                          seconds: (result.elapsedMs / 1000).toFixed(1),
+                        })
+                  }
+                />
+                <DailyShareButton
+                  result={result}
+                  shareLabel={t("share.result")}
+                  copyLabel={t("share.copy")}
+                  copiedLabel={t("share.copied")}
+                  errorLabel={t("share.error")}
+                  shareTextTitle={t("share.textTitle")}
+                  shareTextScoreLabel={t("result.score")}
+                  shareTextStreakLabel={t("result.streak")}
+                />
+              </>
+            ) : null}
+          </div>
+
+          {/* Side Column (Streak Rewards & Leaderboard) */}
+          <div className="lg:col-span-5 xl:col-span-4 space-y-6">
+            <DailyStreakRewardsWidget
+              currentStreak={
+                result ? result.streakAfter : (data?.currentStreak ?? 0)
               }
             />
-            <DailyShareButton
-              result={result}
-              shareLabel={t("share.result")}
-              copyLabel={t("share.copy")}
-              copiedLabel={t("share.copied")}
-              errorLabel={t("share.error")}
-              shareTextTitle={t("share.textTitle")}
-              shareTextScoreLabel={t("share.textScore")}
-              shareTextStreakLabel={t("share.textStreak")}
-            />
-          </>
-        ) : null}
 
-        <section className="space-y-3">
-          <DashboardSectionTitle
-            title={t("leaderboard.title")}
-            glyph="leaderboard"
-          />
-          {leaderboard.isLoading ? <LoadingSkeleton /> : null}
-          {leaderboard.error ? (
-            <MessageCard message={t("leaderboard.error")} />
-          ) : null}
-          {leaderboard.data ? (
-            <DailyLeaderboard items={leaderboard.data.items} />
-          ) : null}
-        </section>
+            <section className="space-y-3">
+              <DashboardSectionTitle
+                title={t("leaderboard.title")}
+                glyph="trophy"
+              />
+              {leaderboard.isLoading ? <LoadingSkeleton /> : null}
+              {leaderboard.error ? (
+                <MessageCard message={t("leaderboard.error")} />
+              ) : null}
+              {leaderboard.data ? (
+                <DailyLeaderboard items={leaderboard.data.items} />
+              ) : null}
+            </section>
+          </div>
+        </div>
 
         <DailyNicknameGate
           open={nicknameGateOpen}

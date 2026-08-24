@@ -341,18 +341,57 @@ describe("DailyService", () => {
     });
 
     it("reports alreadyAttempted=true when the user has submitted", async () => {
-      prisma.dailyAttempt.count.mockResolvedValue(1);
+      prisma.dailyAttempt.findUnique.mockResolvedValue({ streakAfter: 4 });
 
       const result = await service.getToday("user-1");
 
+      expect(prisma.dailyAttempt.findUnique).toHaveBeenCalledWith({
+        where: {
+          dateKey_userId: {
+            dateKey: "2026-08-09",
+            userId: "user-1",
+          },
+        },
+        select: { streakAfter: true },
+      });
       expect(result.alreadyAttempted).toBe(true);
+      expect(result.currentStreak).toBe(4);
+    });
+
+    it("reports alreadyAttempted=false and resolves previous streak when no attempt today", async () => {
+      prisma.dailyAttempt.findUnique
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ streakAfter: 3 });
+
+      const result = await service.getToday("user-1");
+
+      expect(prisma.dailyAttempt.findUnique).toHaveBeenNthCalledWith(1, {
+        where: {
+          dateKey_userId: {
+            dateKey: "2026-08-09",
+            userId: "user-1",
+          },
+        },
+        select: { streakAfter: true },
+      });
+      expect(prisma.dailyAttempt.findUnique).toHaveBeenNthCalledWith(2, {
+        where: {
+          dateKey_userId: {
+            dateKey: "2026-08-08",
+            userId: "user-1",
+          },
+        },
+        select: { streakAfter: true },
+      });
+      expect(result.alreadyAttempted).toBe(false);
+      expect(result.currentStreak).toBe(3);
     });
 
     it("skips the attempt lookup entirely for anonymous callers", async () => {
       const result = await service.getToday(undefined);
 
       expect(result.alreadyAttempted).toBe(false);
-      expect(prisma.dailyAttempt.count).not.toHaveBeenCalled();
+      expect(prisma.dailyAttempt.findUnique).not.toHaveBeenCalled();
     });
 
     it("throws 404 when no set is configured for today", async () => {

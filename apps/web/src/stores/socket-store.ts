@@ -41,6 +41,7 @@ import {
   createInitialCardState,
   type AuthResponse,
   type CardOfferState,
+  type CardState,
   type SocketState,
 } from "./socket-store.types";
 import {
@@ -109,12 +110,21 @@ type PendingCardCommand =
       addedToPlayed: boolean;
     };
 
+interface PendingSecondChanceConsumption {
+  matchId: string;
+  cardState: CardState;
+}
+
 const pendingTopicVoteCommandsByMatch = new Map<
   string,
   PendingTopicVoteCommand[]
 >();
 const confirmedTopicVoteBaselineByMatch = new Map<string, string | null>();
 const pendingCardCommands = new Map<string, PendingCardCommand>();
+const consumedSecondChanceBySubmissionId = new Map<
+  string,
+  PendingSecondChanceConsumption
+>();
 
 function clearTopicVoteState(matchId?: string) {
   if (matchId) {
@@ -133,8 +143,14 @@ function clearCardCommandState(matchId?: string) {
         pendingCardCommands.delete(cmdId);
       }
     }
+    for (const [subId, entry] of consumedSecondChanceBySubmissionId.entries()) {
+      if (entry.matchId === matchId) {
+        consumedSecondChanceBySubmissionId.delete(subId);
+      }
+    }
   } else {
     pendingCardCommands.clear();
+    consumedSecondChanceBySubmissionId.clear();
   }
 }
 
@@ -502,6 +518,9 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
     newSocket.on(ServerEvent.ANSWER_RESULT, (data: AnswerResultPayload) => {
       if (get().socket !== newSocket) return;
+      if (data.submissionId) {
+        consumedSecondChanceBySubmissionId.delete(data.submissionId);
+      }
       set((state) => applyAnswerResultState(state, data));
       console.log("✅ Answer result:", data);
     });
@@ -626,7 +645,22 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         data.failedEvent === ClientEvent.SUBMIT_ANSWER &&
         submissionId === pendingAnswer.submissionId
       ) {
-        set({ pendingAnswer: null });
+        const saved = submissionId
+          ? consumedSecondChanceBySubmissionId.get(submissionId)
+          : undefined;
+        if (submissionId) {
+          consumedSecondChanceBySubmissionId.delete(submissionId);
+        }
+        const currentMatchId = get().room?.currentMatchId ?? get().match?.id;
+        const shouldRestoreCard =
+          saved &&
+          (!saved.matchId ||
+            !currentMatchId ||
+            saved.matchId === currentMatchId);
+        set({
+          pendingAnswer: null,
+          ...(shouldRestoreCard ? { cardState: saved.cardState } : {}),
+        });
       }
       if (
         (data.failedEvent === ClientEvent.CARD_PICK ||
@@ -891,6 +925,53 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         userRole: null,
       });
       return null;
+    }
+  },
+
+  // Update Auth (e.g. after Admin login)
+  updateAuth: async (auth: {
+    accessToken: string;
+    userId: string;
+    username: string;
+    userRole: string;
+  }): Promise<void> => {
+    set({
+      accessToken: auth.accessToken,
+      userId: auth.userId,
+      username: auth.username,
+      userRole: auth.userRole,
+      isAuthenticated: false,
+    });
+
+    const socket = get().socket;
+    if (socket?.connected) {
+      const AUTH_TIMEOUT_MS = 5000;
+      const ack = waitForSocketAck<void>({
+        socket,
+        successEvent: ServerEvent.AUTHENTICATED,
+        timeoutMs: AUTH_TIMEOUT_MS,
+        timeoutMessage: "Authentication timed out",
+        mapSuccess: () => undefined,
+        shouldRejectOnError: (data) =>
+          data.code === ErrorCode.INVALID_TOKEN ||
+          data.code === ErrorCode.UNAUTHORIZED,
+        getErrorMessage: (data) => data.message,
+      });
+
+      socket.emit(ClientEvent.AUTHENTICATE, { token: auth.accessToken });
+      try {
+        await ack;
+        if (get().socket === socket) {
+          set({ isAuthenticated: true });
+        }
+      } catch (err) {
+        if (get().socket === socket) {
+          socket.disconnect();
+        }
+        throw err;
+      }
+    } else {
+      await get().connect();
     }
   },
 
@@ -1322,7 +1403,18 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     }
 
     const submissionId = generateId();
-    set({ pendingAnswer: { matchId, roundNo, answer, submissionId } });
+    if (hasExistingSubmission) {
+      consumedSecondChanceBySubmissionId.set(submissionId, {
+        matchId,
+        cardState: get().cardState,
+      });
+    }
+    set((state) => ({
+      ...(hasExistingSubmission
+        ? applyConsumeSecondChance(state, userId ?? undefined)
+        : {}),
+      pendingAnswer: { matchId, roundNo, answer, submissionId },
+    }));
 
     emitIfConnected(socket, ClientEvent.SUBMIT_ANSWER, {
       matchId,

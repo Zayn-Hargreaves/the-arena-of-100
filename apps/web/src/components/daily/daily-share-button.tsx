@@ -176,12 +176,36 @@ export function DailyShareButton({
         : copyLabel;
 
   return (
-    <button
-      type="button"
-      onClick={() => void handleShare()}
-      className="min-h-11 px-4 py-2 rounded-xl bg-candy-pink text-white border-[2px] border-candy-ink font-display font-black text-xs uppercase shadow-[2px_2px_0_0_#2B2D42]"
-    >
-      {label}
-    </button>
+    <div className="bg-candy-cloud border-[3px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42] rounded-2xl p-5 space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="space-y-1">
+          <h4 className="font-display font-black text-sm text-candy-ink uppercase tracking-wide">
+            {shareTextTitle}
+          </h4>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {result.results.map((r, i) => (
+              <span
+                key={i}
+                className={`w-6 h-6 rounded-lg border-[2px] border-candy-ink flex items-center justify-center font-mono font-black text-xs shadow-[1px_1px_0_0_#2B2D42] ${
+                  r.isCorrect
+                    ? "bg-candy-mint text-candy-ink"
+                    : "bg-candy-pink text-white"
+                }`}
+              >
+                {r.isCorrect ? "✓" : "✕"}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => void handleShare()}
+          className="min-h-11 px-5 py-2.5 rounded-xl bg-candy-pink text-white border-[2px] border-candy-ink font-display font-black text-xs uppercase shadow-[2px_2px_0_0_#2B2D42] hover:bg-candy-pink/90 active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all shrink-0 cursor-pointer"
+        >
+          {label}
+        </button>
+      </div>
+    </div>
   );
 }

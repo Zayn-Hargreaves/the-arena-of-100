@@ -60,6 +60,32 @@ describe("StatsDto & Schema", () => {
         }),
       ).toThrow(ZodError);
     });
+
+    it("should accept valid createdAt ISO timestamp", () => {
+      const input = {
+        id: "u1",
+        username: "Alice",
+        avatar: "jellyfrog",
+        role: "GUEST" as const,
+        elo: 1200,
+        rankTier: "SILVER" as const,
+        createdAt: "2026-08-01T00:00:00.000Z",
+      };
+      expect(userSummarySchema.parse(input)).toEqual(input);
+    });
+
+    it("should reject incorrectly formatted createdAt string", () => {
+      const input = {
+        id: "u1",
+        username: "Alice",
+        avatar: "jellyfrog",
+        role: "GUEST" as const,
+        elo: 1200,
+        rankTier: "SILVER" as const,
+        createdAt: "invalid-date-string",
+      };
+      expect(() => userSummarySchema.parse(input)).toThrow(ZodError);
+    });
   });
 
   describe("statsSchema", () => {
@@ -199,12 +225,14 @@ describe("StatsDto & Schema", () => {
       dto.role = "GUEST";
       dto.elo = 1200;
       dto.rankTier = "SILVER";
+      dto.createdAt = "2026-08-01T00:00:00.000Z";
       expect(dto.id).toBe("u1");
       expect(dto.username).toBe("Alice");
       expect(dto.avatar).toBe("jellyfrog");
       expect(dto.role).toBe("GUEST");
       expect(dto.elo).toBe(1200);
       expect(dto.rankTier).toBe("SILVER");
+      expect(dto.createdAt).toBe("2026-08-01T00:00:00.000Z");
     });
 
     it("StatsDto should instantiate and preserve properties", () => {

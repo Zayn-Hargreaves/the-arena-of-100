@@ -101,6 +101,8 @@ export const dailyTodayResponseSchema = z.object({
   nextResetAt: z.string(),
   /** True when the authenticated caller already submitted for `dateKey`. */
   alreadyAttempted: z.boolean(),
+  /** Persisted current streak for authenticated user. */
+  currentStreak: z.number().int().nonnegative().optional(),
 });
 
 export type DailyTodayResponse = z.infer<typeof dailyTodayResponseSchema>;
@@ -147,4 +149,13 @@ export class DailyTodayResponseDto implements DailyTodayResponse {
     description: "true when the caller already submitted today",
   })
   alreadyAttempted!: boolean;
+
+  @ApiProperty({
+    example: 3,
+    required: false,
+    type: "integer",
+    minimum: 0,
+    description: "Current streak for authenticated user",
+  })
+  currentStreak?: number;
 }

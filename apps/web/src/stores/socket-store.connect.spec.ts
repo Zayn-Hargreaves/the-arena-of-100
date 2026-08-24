@@ -4,9 +4,9 @@ import {
   ServerEvent,
   PlayerStatus,
   MatchStatus,
+  type CardEffectEvent,
   type SnapshotPayload,
   type VoteBanTopicPayload,
-  type CardEffectEvent,
 } from "@arena/shared";
 import { INITIAL_CARD_STATE } from "./socket-store.types";
 import { hasSecondChancePermission } from "./socket-store.helpers";
@@ -97,6 +97,7 @@ function createMockSocket() {
   return {
     connected: true,
     emit: vi.fn(),
+    disconnect: vi.fn(),
     on: vi.fn((event: string, callback: (...args: unknown[]) => void) => {
       if (!listeners[event]) listeners[event] = [];
       listeners[event].push(callback);
@@ -1159,6 +1160,172 @@ describe("socket-store connect heartbeat ownership", () => {
       expect(state.matchmaking.isQueued).toBe(false);
       expect(state.matchmaking.queuedAt).toBeNull();
       expect(state.matchmaking.playersInQueue).toBe(0);
+    });
+  });
+
+  describe("updateAuth", () => {
+    it("resets isAuthenticated to false before emitting AUTHENTICATE when starting with isAuthenticated true", async () => {
+      const mockSocket = createMockSocket();
+      mockSocket.connected = true;
+      useSocketStore.setState({
+        socket: mockSocket as unknown as ReturnType<
+          typeof useSocketStore.getState
+        >["socket"],
+        isConnected: true,
+        isAuthenticated: true,
+      });
+
+      const ackDeferred = deferred<void>();
+      waitForSocketAckMock.mockReturnValueOnce(ackDeferred.promise);
+
+      const updateAuthPromise = useSocketStore.getState().updateAuth({
+        accessToken: "admin-jwt-token",
+        userId: "admin-id-1",
+        username: "admin_user",
+        userRole: "ADMIN",
+      });
+
+      // Verify payload fields updated in store and isAuthenticated reset to false
+      const stateBeforeAck = useSocketStore.getState();
+      expect(stateBeforeAck.accessToken).toBe("admin-jwt-token");
+      expect(stateBeforeAck.userId).toBe("admin-id-1");
+      expect(stateBeforeAck.username).toBe("admin_user");
+      expect(stateBeforeAck.userRole).toBe("ADMIN");
+      expect(stateBeforeAck.isAuthenticated).toBe(false);
+
+      // Verify AUTHENTICATE event was emitted
+      expect(mockSocket.emit).toHaveBeenCalledWith(ClientEvent.AUTHENTICATE, {
+        token: "admin-jwt-token",
+      });
+      expect(waitForSocketAckMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          socket: mockSocket,
+          successEvent: ServerEvent.AUTHENTICATED,
+        }),
+      );
+
+      // Resolve server ack
+      ackDeferred.resolve();
+      await updateAuthPromise;
+
+      // isAuthenticated must now be true
+      expect(useSocketStore.getState().isAuthenticated).toBe(true);
+    });
+
+    it("when socket is connected and authentication ACK times out or is rejected, disconnects socket, rejects to caller, and keeps isAuthenticated false", async () => {
+      const mockSocket = createMockSocket();
+      mockSocket.connected = true;
+      const disconnectSpy = vi.fn();
+      mockSocket.disconnect = disconnectSpy;
+
+      useSocketStore.setState({
+        socket: mockSocket as unknown as ReturnType<
+          typeof useSocketStore.getState
+        >["socket"],
+        isConnected: true,
+        isAuthenticated: true,
+      });
+
+      waitForSocketAckMock.mockRejectedValueOnce(
+        new Error("Authentication timed out"),
+      );
+
+      await expect(
+        useSocketStore.getState().updateAuth({
+          accessToken: "bad-token",
+          userId: "u-bad",
+          username: "bad_user",
+          userRole: "GUEST",
+        }),
+      ).rejects.toThrow("Authentication timed out");
+
+      expect(disconnectSpy).toHaveBeenCalled();
+      expect(useSocketStore.getState().isAuthenticated).toBe(false);
+    });
+
+    it("does not set isAuthenticated to true if active socket changed before ACK resolved", async () => {
+      const socket1 = createMockSocket();
+      socket1.connected = true;
+      const socket2 = createMockSocket();
+      socket2.connected = true;
+
+      useSocketStore.setState({
+        socket: socket1 as unknown as ReturnType<
+          typeof useSocketStore.getState
+        >["socket"],
+        isConnected: true,
+        isAuthenticated: false,
+      });
+
+      const ackDeferred = deferred<void>();
+      waitForSocketAckMock.mockReturnValueOnce(ackDeferred.promise);
+
+      const updateAuthPromise = useSocketStore.getState().updateAuth({
+        accessToken: "jwt-token",
+        userId: "u1",
+        username: "user1",
+        userRole: "GUEST",
+      });
+
+      // Socket changed to socket2 before ACK resolved
+      useSocketStore.setState({
+        socket: socket2 as unknown as ReturnType<
+          typeof useSocketStore.getState
+        >["socket"],
+      });
+
+      ackDeferred.resolve();
+      await updateAuthPromise;
+
+      // Because socket changed, isAuthenticated should remain false
+      expect(useSocketStore.getState().isAuthenticated).toBe(false);
+    });
+
+    it("when socket is not connected, calls connect() and preserves user/token info", async () => {
+      useSocketStore.setState({
+        socket: null,
+        isConnected: false,
+        isAuthenticated: false,
+      });
+
+      const connectSpy = vi
+        .spyOn(useSocketStore.getState(), "connect")
+        .mockResolvedValueOnce();
+
+      await useSocketStore.getState().updateAuth({
+        accessToken: "fresh-token",
+        userId: "u-fresh",
+        username: "fresh_user",
+        userRole: "ADMIN",
+      });
+
+      expect(connectSpy).toHaveBeenCalled();
+      const state = useSocketStore.getState();
+      expect(state.accessToken).toBe("fresh-token");
+      expect(state.userId).toBe("u-fresh");
+      expect(state.username).toBe("fresh_user");
+      expect(state.userRole).toBe("ADMIN");
+    });
+
+    it("when socket is not connected and connect() fails, error is propagated to caller", async () => {
+      useSocketStore.setState({
+        socket: null,
+        isConnected: false,
+        isAuthenticated: false,
+      });
+
+      vi.spyOn(useSocketStore.getState(), "connect").mockRejectedValueOnce(
+        new Error("Connection refused"),
+      );
+
+      await expect(
+        useSocketStore.getState().updateAuth({
+          accessToken: "token",
+          userId: "u1",
+          username: "user1",
+          userRole: "GUEST",
+        }),
+      ).rejects.toThrow("Connection refused");
     });
   });
 });

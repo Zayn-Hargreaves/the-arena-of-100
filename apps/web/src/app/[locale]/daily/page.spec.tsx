@@ -62,7 +62,7 @@ vi.mock("@arena/shared", async () => {
 });
 
 import DailyPage from "./page";
-import { ApiError } from "@/lib/api-client";
+import { ApiError } from "../../../lib/api-client";
 
 const sampleQuestions = [
   {
@@ -104,12 +104,14 @@ const sampleQuestions = [
 function completeQuiz() {
   for (let i = 0; i < sampleQuestions.length; i++) {
     fireEvent.click(
-      screen.getByRole("button", { name: sampleQuestions[i].options[0] }),
+      screen.getByRole("button", {
+        name: new RegExp(`^A\\s+${sampleQuestions[i].options[0]}`, "i"),
+      }),
     );
     if (i < sampleQuestions.length - 1) {
-      fireEvent.click(screen.getByText(/^next$/i));
+      fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
     } else {
-      fireEvent.click(screen.getByText(/^submit$/i));
+      fireEvent.click(screen.getByRole("button", { name: /^submit$/i }));
     }
   }
 }
@@ -122,6 +124,7 @@ const todayResponse = {
   serverTime: "2026-08-09T12:00:00.000Z",
   nextResetAt: "2026-08-10T00:00:00.000Z",
   alreadyAttempted: false,
+  currentStreak: 5,
 };
 
 function renderPage() {
@@ -188,12 +191,14 @@ describe("DailyPage", () => {
 
     for (let i = 0; i < sampleQuestions.length; i++) {
       const q = sampleQuestions[i];
-      const button = screen.getByRole("button", { name: q.options[0] });
+      const button = screen.getByRole("button", {
+        name: new RegExp(`^A\\s+${q.options[0]}`, "i"),
+      });
       fireEvent.click(button);
       if (i < sampleQuestions.length - 1) {
-        fireEvent.click(screen.getByText(/^next$/i));
+        fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
       } else {
-        fireEvent.click(screen.getByText(/^submit$/i));
+        fireEvent.click(screen.getByRole("button", { name: /^submit$/i }));
       }
     }
 
@@ -250,6 +255,7 @@ describe("DailyPage", () => {
     getDailyToday.mockResolvedValue({
       ...todayResponse,
       alreadyAttempted: true,
+      currentStreak: 5,
     });
 
     renderPage();
@@ -257,6 +263,8 @@ describe("DailyPage", () => {
     await waitFor(() =>
       expect(screen.getByText("alreadyDone")).toBeInTheDocument(),
     );
+    expect(screen.getByText("rewards.title")).toBeInTheDocument();
+    expect(screen.getAllByText(/5\/7/)[0]).toBeInTheDocument();
   });
 
   it("shows 409 error message when submit returns conflict", async () => {
@@ -315,7 +323,7 @@ describe("DailyPage", () => {
     );
   });
 
-  it("shows CardVariantUnlockModal when submit response has unlockedVariant", async () => {
+  it("shows CardVariantUnlockModal when submit response has unlockedVariant and closes it on demand", async () => {
     storeState.accessToken = "tok-abc";
     submitDaily.mockResolvedValue({
       dateKey: "2026-08-09",
@@ -342,5 +350,149 @@ describe("DailyPage", () => {
         screen.getByTestId("card-variant-unlock-modal"),
       ).toBeInTheDocument(),
     );
+
+    const closeBtn = screen.getByRole("button", { name: "cardVariant.close" });
+    fireEvent.click(closeBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("card-variant-unlock-modal"),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("navigates forward and backward between questions", async () => {
+    storeState.accessToken = "tok-abc";
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText("Q1?")).toBeInTheDocument());
+
+    const backButton = screen.getByRole("button", { name: /^back$/i });
+    expect(backButton).toBeDisabled();
+
+    // Select option on Q1
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: new RegExp(`^A\\s+${sampleQuestions[0].options[0]}`, "i"),
+      }),
+    );
+
+    // Go to Q2
+    const nextButton = screen.getByRole("button", { name: /^next$/i });
+    fireEvent.click(nextButton);
+
+    await waitFor(() => expect(screen.getByText("Q2?")).toBeInTheDocument());
+    expect(backButton).not.toBeDisabled();
+
+    // Click Back to return to Q1
+    fireEvent.click(backButton);
+    await waitFor(() => expect(screen.getByText("Q1?")).toBeInTheDocument());
+  });
+
+  it("handles start button click to open nickname gate and starts quiz after authenticating", async () => {
+    storeState.accessToken = null;
+    storeState.authenticate = vi.fn().mockImplementation(async (nick) => {
+      storeState.accessToken = "tok-new";
+      storeState.username = nick;
+    });
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText("intro")).toBeInTheDocument());
+
+    const startBtn = screen.getByRole("button", { name: "start" });
+    fireEvent.click(startBtn);
+
+    // Nickname gate is opened
+    await waitFor(() =>
+      expect(screen.getByText("gate.title")).toBeInTheDocument(),
+    );
+
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "CoolPlayer" } });
+
+    const ctaBtn = screen.getByRole("button", { name: "gate.cta" });
+    fireEvent.click(ctaBtn);
+
+    await waitFor(() =>
+      expect(storeState.authenticate).toHaveBeenCalledWith("CoolPlayer"),
+    );
+  });
+
+  it("shows loading skeleton when daily query is loading", () => {
+    getDailyToday.mockReturnValue(new Promise(() => {})); // pending forever
+    const { container } = renderPage();
+    expect(container.querySelector(".animate-pulse")).toBeInTheDocument();
+  });
+
+  it("shows load failed error message and retries on action click", async () => {
+    getDailyToday.mockRejectedValueOnce(new Error("Network fail"));
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByText("error.loadFailed")).toBeInTheDocument(),
+    );
+
+    const retryBtn = screen.getByRole("button", { name: "error.retry" });
+    expect(retryBtn).toBeInTheDocument();
+    fireEvent.click(retryBtn);
+  });
+
+  it("shows no questions message when question array is empty", async () => {
+    storeState.accessToken = "tok-abc";
+    getDailyToday.mockResolvedValue({
+      ...todayResponse,
+      questions: [],
+    });
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByText("error.noQuestions")).toBeInTheDocument(),
+    );
+  });
+
+  it("renders speedBonus.none when elapsedMs is null in result", async () => {
+    storeState.accessToken = "tok-abc";
+    submitDaily.mockResolvedValue({
+      dateKey: "2026-08-09",
+      version: 1,
+      score: 500,
+      correctCount: 5,
+      totalQuestions: 5,
+      elapsedMs: null,
+      streakBefore: 2,
+      streakAfter: 3,
+      results: [],
+      completedAt: "2026-08-09T12:01:00.000Z",
+    });
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText("Q1?")).toBeInTheDocument());
+
+    completeQuiz();
+
+    await waitFor(() =>
+      expect(screen.getByText("speedBonus.none")).toBeInTheDocument(),
+    );
+  });
+
+  it("handles non-ApiError failure during submit", async () => {
+    storeState.accessToken = "tok-abc";
+    submitDaily.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText("Q1?")).toBeInTheDocument());
+
+    completeQuiz();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/error\.submitFailed:\s*Unknown error/),
+      ).toBeInTheDocument();
+    });
   });
 });

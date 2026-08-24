@@ -35,6 +35,9 @@ export {
   canonicalSerialize,
 } from "./cards.sampling-vector-helpers";
 
+// User summary contracts
+export * from "./user";
+
 // Class stats — profile stats contracts (class winrate + streak +
 // cards played). Shared between `@arena/api` (DTO + Zod parser)
 // and `@arena/web` (useClassStats hook + profile page).
@@ -51,9 +54,9 @@ export {
   MATCHMAKING_CONFIG,
   BOT_GUEST_ID_PREFIX,
 } from "./game-config";
-// Daily Challenge Constants (own file for the same reason as
-// game-config: the API's Zod DTOs import it directly).
+// Daily Challenge Constants and Contracts
 export { DAILY_QUESTION_COUNT } from "./daily-config";
+export * from "./daily";
 import { GAME_CONFIG } from "./game-config";
 
 export type QuestionCategory =

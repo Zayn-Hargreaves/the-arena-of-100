@@ -1,9 +1,25 @@
 import "@testing-library/jest-dom/vitest";
 import React from "react";
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DailyLeaderboard } from "./daily-leaderboard";
 import type { DailyLeaderboardItem } from "../../types/daily";
+
+vi.mock("next-intl", async () => {
+  const actual = await vi.importActual<typeof import("next-intl")>("next-intl");
+  return {
+    ...actual,
+    useLocale: () => "en",
+    useTranslations: vi.fn((_namespace?: string) =>
+      vi.fn((key: string, params?: Record<string, string | number>): string => {
+        if (params?.count !== undefined) {
+          return `${params.count}`;
+        }
+        return key;
+      }),
+    ),
+  };
+});
 
 const items: DailyLeaderboardItem[] = [
   {
@@ -35,7 +51,7 @@ const items: DailyLeaderboardItem[] = [
     avatar: "azure",
     score: 600,
     correctCount: 3,
-    streakAfter: 0,
+    streakAfter: 1,
     completedAt: "2026-08-09T10:13:00.000Z",
     cardsPlayedThisWeek: 20,
   },
@@ -53,7 +69,9 @@ describe("DailyLeaderboard", () => {
 
     for (const item of items) {
       expect(screen.getByText(item.username)).toBeInTheDocument();
-      expect(screen.getByText(`#${item.rank}`)).toBeInTheDocument();
+      if (item.rank > 1) {
+        expect(screen.getByText(`#${item.rank}`)).toBeInTheDocument();
+      }
     }
     expect(screen.getByText("1,000")).toBeInTheDocument();
     expect(screen.getByText("800")).toBeInTheDocument();
@@ -80,5 +98,34 @@ describe("DailyLeaderboard", () => {
     );
     // No crash, the row is rendered.
     expect(screen.getByText("NoAvatar")).toBeInTheDocument();
+  });
+
+  it("limits rendering and banner count to at most 10 items when given more", () => {
+    const fifteenItems: DailyLeaderboardItem[] = Array.from(
+      { length: 15 },
+      (_, i) => ({
+        rank: i + 1,
+        userId: `u${i + 1}`,
+        username: `Player_${i + 1}`,
+        avatar: "jellyfrog",
+        score: 1000 - i * 50,
+        correctCount: 5,
+        streakAfter: 1,
+        completedAt: "2026-08-09T10:15:00.000Z",
+        cardsPlayedThisWeek: i,
+      }),
+    );
+
+    render(<DailyLeaderboard items={fifteenItems} />);
+
+    expect(screen.getByText("leaderboard.topBanner")).toBeInTheDocument();
+    expect(screen.getByText("10")).toBeInTheDocument();
+
+    for (let i = 1; i <= 10; i++) {
+      expect(screen.getByText(`Player_${i}`)).toBeInTheDocument();
+    }
+    for (let i = 11; i <= 15; i++) {
+      expect(screen.queryByText(`Player_${i}`)).not.toBeInTheDocument();
+    }
   });
 });

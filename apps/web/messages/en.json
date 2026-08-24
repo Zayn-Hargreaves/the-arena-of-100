@@ -157,6 +157,8 @@
       "backToHome": "Return to Deck",
       "devHint": "Default development credentials configured via environment variables",
       "success": "Admin authentication successful!",
+      "successDesc": "Logged in as {username} ({role})",
+      "failedTitle": "Login Failed",
       "error": "Invalid admin credentials."
     },
     "units": {
@@ -447,6 +449,8 @@
       "editAvatar": "CHANGE AVATAR",
       "copyUid": "COPY",
       "copied": "COPIED!",
+      "copyFailed": "COPY FAILED",
+      "guestName": "Guest Challenger",
       "eloPoints": "ELO POINTS",
       "tierProgress": "RANK PROGRESS"
     },
@@ -474,7 +478,9 @@
       "duration": "DURATION",
       "empty": "No recent battle history yet — join your first match!",
       "playNow": "ENTER THE ARENA",
-      "loadMore": "LOAD MORE"
+      "loadMore": "LOAD MORE",
+      "top1": "TOP 1",
+      "pointsUnit": "PTS"
     },
     "status": {
       "WON": "VICTORY",
@@ -521,6 +527,11 @@
       "weekly": "THIS WEEK",
       "all": "ALL-TIME"
     },
+    "podium": {
+      "top1": "TOP 1 • CHAMPION",
+      "top2": "TOP 2 • RUNNER-UP",
+      "top3": "TOP 3 • 3RD PLACE"
+    },
     "tableTitle": "NEXT TOP RANKED PLAYERS",
     "columns": {
       "rank": "Rank",
@@ -531,6 +542,7 @@
       "accuracy": "Accuracy"
     },
     "accuracyShort": "Accuracy",
+    "pointsUnit": "PTS",
     "empty": "No leaderboard data yet.",
     "cardsThisWeek": "Cards played this week",
     "cardsLabel": "{count, plural, one {# card} other {# cards}}",
@@ -561,6 +573,7 @@
       "callsignHint": "This name appears on the global leaderboard and during 100-player matches.",
       "saveCallsign": "SAVE CALLSIGN",
       "callsignSaved": "Battle callsign saved!",
+      "callsignSaveFailed": "Failed to save callsign.",
       "avatarShowcase": "Active Sprite Avatar",
       "avatarGallery": "Sprite Roster",
       "chooseTip": "Click any avatar below to switch your character instantly"
@@ -569,9 +582,14 @@
       "title": "Audio Settings",
       "sfx": "Sound Effects (SFX)",
       "sfxDesc": "Chimes, button clicks, and gameplay interaction sounds",
+      "sfxVolume": "SFX Volume",
       "testSfx": "Test SFX",
       "bgm": "Background Music (BGM)",
       "bgmDesc": "Lobby atmosphere and high-energy battle music",
+      "bgmVolume": "BGM Volume",
+      "muted": "0% (Off)",
+      "testBgm": "Test BGM",
+      "stopTestBgm": "Stop Test BGM",
       "on": "ON",
       "off": "OFF"
     },
@@ -618,7 +636,8 @@
       "clearCacheTitle": "Clear Local Cache",
       "clearCacheDesc": "Purge cached browser data if you experience connection or rendering glitches",
       "clearCacheBtn": "Clear Cache",
-      "clearCacheSuccess": "Local browser cache cleared successfully!"
+      "clearCacheSuccess": "Local browser cache cleared successfully!",
+      "clearCacheFailed": "Failed to clear local cache."
     },
     "saveButton": "Save Settings",
     "saveSuccess": "Settings saved to browser storage!",
@@ -775,6 +794,7 @@
     "submit": "Submit",
     "alreadyDone": "You've already completed today's challenge.",
     "progressLabel": "Daily Challenge progress",
+    "questionProgress": "Question {questionNumber}/{totalQuestions}",
     "speedBonus": {
       "none": "No speed bonus",
       "awarded": "Completed in {seconds}s"
@@ -810,6 +830,7 @@
     "leaderboard": {
       "title": "Today's Leaderboard",
       "topBanner": "Top Players Today",
+      "playerCount": "{count, plural, one {# Player} other {# Players}}",
       "error": "Leaderboard unavailable.",
       "empty": "No scores yet today — be the first.",
       "cardsThisWeek": "Cards played this week",
@@ -849,6 +870,9 @@
       "skipped": "(skipped)",
       "correctAnswer": "Correct: {answer}",
       "questionLabel": "Q{index}",
+      "pts": "PTS",
+      "questionDetails": "Question Details",
+      "explanation": "Explanation:",
       "srCorrect": "Correct answer",
       "srIncorrect": "Incorrect answer"
     },

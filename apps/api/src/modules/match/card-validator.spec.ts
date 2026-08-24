@@ -310,7 +310,7 @@ describe("validateCardCommand — top-level", () => {
     try {
       validateCardCommand({
         ...baseArgs,
-        roundStatus: "REVEALING",
+        roundStatus: "EVALUATING",
       });
       throw new Error("expected throw");
     } catch (err) {

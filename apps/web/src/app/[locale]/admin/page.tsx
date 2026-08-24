@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { AppShellLayout } from "@/components/ui/app-shell-layout";
 import { useToast } from "@/hooks/use-toast";
 import { useSocketStore } from "@/stores/socket-store";
-import { API_URL, apiFetch } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { ApiError, apiSendJson } from "@/lib/api-client";
 import { Link } from "@/i18n/routing";
 import { Modal } from "@/components/ui/modal";
@@ -69,8 +69,11 @@ export default function AdminPage() {
   useEffect(() => {
     const fetchMonitoring = async () => {
       try {
-        const response = await fetch(`${API_URL}/health/monitoring`, {
+        const response = await apiFetch("/api/v1/health/monitoring", {
           credentials: "include",
+          headers: {
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          },
         });
 
         if (!response.ok) return;
@@ -92,8 +95,11 @@ export default function AdminPage() {
       setRedisStatusState("loading");
 
       try {
-        const response = await fetch(`${API_URL}/health`, {
+        const response = await apiFetch("/api/v1/health", {
           credentials: "include",
+          headers: {
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          },
         });
 
         if (!response.ok) {
@@ -124,12 +130,12 @@ export default function AdminPage() {
     };
 
     void Promise.all([fetchMonitoring(), fetchHealth()]);
-  }, []);
+  }, [accessToken]);
 
   const handleSeedQuestions = async () => {
     setSeeding(true);
     try {
-      const response = await apiFetch("/admin/questions/sync", {
+      const response = await apiFetch("/api/v1/admin/questions/sync", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -169,7 +175,7 @@ export default function AdminPage() {
     setShowResetModal(false);
     setResetting(true);
     try {
-      const response = await apiFetch("/admin/system/reset", {
+      const response = await apiFetch("/api/v1/admin/system/reset", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -237,7 +243,7 @@ export default function AdminPage() {
         matchId: string | null;
         message: string;
       }>(
-        `/admin/rooms/${encodeURIComponent(trimmedRoomId)}/terminate`,
+        `/api/v1/admin/rooms/${encodeURIComponent(trimmedRoomId)}/terminate`,
         "POST",
         {
           message: terminateMessage.trim() || undefined,

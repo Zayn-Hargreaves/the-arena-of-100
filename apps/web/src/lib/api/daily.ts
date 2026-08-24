@@ -23,14 +23,19 @@ import type {
 export async function getDailyToday(
   token?: string,
 ): Promise<DailyTodayResponse> {
-  return apiGetJson<DailyTodayResponse>("/daily/today", token);
+  return apiGetJson<DailyTodayResponse>("/api/v1/daily/today", token);
 }
 
 export async function submitDaily(
   body: DailySubmitInput,
   token: string,
 ): Promise<DailySubmitResponse> {
-  return apiSendJson<DailySubmitResponse>("/daily/submit", "POST", body, token);
+  return apiSendJson<DailySubmitResponse>(
+    "/api/v1/daily/submit",
+    "POST",
+    body,
+    token,
+  );
 }
 
 /** Bounds mirror `dailyLeaderboardQuerySchema` on the API side. */
@@ -69,6 +74,8 @@ export async function getDailyLeaderboard(
   query: DailyLeaderboardQuery = {},
 ): Promise<DailyLeaderboardResponse> {
   const qs = buildLeaderboardQuery(query);
-  const path = qs ? `/daily/leaderboard?${qs}` : "/daily/leaderboard";
+  const path = qs
+    ? `/api/v1/daily/leaderboard?${qs}`
+    : "/api/v1/daily/leaderboard";
   return apiGetJson<DailyLeaderboardResponse>(path);
 }

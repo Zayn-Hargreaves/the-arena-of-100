@@ -5,7 +5,7 @@ import type { DailyLeaderboardItem } from "@/types/daily";
 import { useLocale, useTranslations } from "next-intl";
 import { MiniGlyph } from "@/components/ui/mini-glyph";
 import { SpriteFrame } from "@/components/ui/sprite-frame";
-import { StreakGlyph } from "./daily-glyph";
+import { RankOneCrownGlyph, StreakGlyph, CardsGlyph } from "./daily-glyph";
 import { DAILY_QUESTION_COUNT, isValidAvatarSeed } from "@arena/shared";
 import { avatars, findAvatarBySeed } from "@/lib/avatars";
 
@@ -28,6 +28,8 @@ function cardsPlayedTier(count: number): keyof typeof CARDS_PLAYED_TIERS {
   return "EPIC";
 }
 
+const MAX_VISIBLE_LEADERBOARD_ITEMS = 10;
+
 interface DailyLeaderboardProps {
   items: DailyLeaderboardItem[];
 }
@@ -41,64 +43,114 @@ export function DailyLeaderboard({ items }: Readonly<DailyLeaderboardProps>) {
 
   if (items.length === 0) {
     return (
-      <p className="font-body text-sm font-semibold text-candy-ink/70">
-        {t("leaderboard.empty")}
-      </p>
+      <div className="bg-candy-cloud border-[3px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42] rounded-2xl p-6 text-center">
+        <p className="font-body text-sm font-semibold text-candy-ink/70">
+          {t("leaderboard.empty")}
+        </p>
+      </div>
     );
   }
 
+  const visibleItems = items.slice(0, MAX_VISIBLE_LEADERBOARD_ITEMS);
+
   return (
     <div className="bg-candy-cloud border-[3px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42] rounded-2xl overflow-hidden">
-      <ol className="divide-y-[2px] divide-candy-ink/20">
-        {items.slice(0, 10).map((item) => {
+      <div className="bg-candy-ink text-white px-4 py-2 flex items-center justify-between text-[11px] font-mono font-black uppercase tracking-wider">
+        <span>{t("leaderboard.topBanner")}</span>
+        <span className="text-candy-yellow">
+          {t("leaderboard.playerCount", { count: visibleItems.length })}
+        </span>
+      </div>
+
+      <ol className="divide-y-[2px] divide-candy-ink/15">
+        {visibleItems.map((item) => {
           const avatar = isValidAvatarSeed(item.avatar)
             ? findAvatarBySeed(item.avatar)
             : (avatars[0] ?? null);
           const tier = cardsPlayedTier(item.cardsPlayedThisWeek);
+          const isFirst = item.rank === 1;
+          const isSecond = item.rank === 2;
+          const isThird = item.rank === 3;
+
           return (
             <li
               key={item.userId}
-              className="flex items-center gap-3 px-4 py-2 hover:bg-candy-yellow/10 transition-colors"
+              className={`flex items-center gap-2.5 sm:gap-3 px-3 sm:px-4 py-2.5 transition-colors ${
+                isFirst
+                  ? "bg-amber-50/70 hover:bg-amber-100/60"
+                  : isSecond
+                    ? "bg-sky-50/50 hover:bg-sky-100/50"
+                    : isThird
+                      ? "bg-orange-50/40 hover:bg-orange-100/40"
+                      : "hover:bg-candy-yellow/10"
+              }`}
             >
-              <span className="font-mono font-black text-sm text-candy-ink/80 w-8 text-center">
-                #{item.rank}
-              </span>
-              <span className="w-9 h-9 rounded-lg bg-white border-[2px] border-candy-ink flex items-center justify-center overflow-hidden shrink-0">
+              {/* Rank Badge */}
+              <div className="w-7 sm:w-8 flex justify-center items-center shrink-0">
+                {isFirst ? (
+                  <span className="w-7 h-7 rounded-full bg-amber-400 border-[2px] border-candy-ink shadow-[1px_1px_0_0_#2B2D42] flex items-center justify-center text-candy-ink">
+                    <RankOneCrownGlyph size={15} />
+                  </span>
+                ) : isSecond ? (
+                  <span className="w-6 h-6 rounded-full bg-slate-200 border-[2px] border-candy-ink font-mono font-black text-xs text-candy-ink flex items-center justify-center">
+                    #2
+                  </span>
+                ) : isThird ? (
+                  <span className="w-6 h-6 rounded-full bg-amber-200 border-[2px] border-candy-ink font-mono font-black text-xs text-candy-ink flex items-center justify-center">
+                    #3
+                  </span>
+                ) : (
+                  <span className="font-mono font-black text-xs text-candy-ink/70">
+                    #{item.rank}
+                  </span>
+                )}
+              </div>
+
+              {/* Avatar Frame */}
+              <span
+                className={`w-9 h-9 rounded-xl border-[2px] border-candy-ink flex items-center justify-center overflow-hidden shrink-0 shadow-[1px_1px_0_0_#2B2D42] ${
+                  isFirst ? "bg-amber-100" : "bg-white"
+                }`}
+              >
                 <SpriteFrame
                   src={avatar?.spritesheet}
                   scale={0.15}
                   width="28px"
                   height="30px"
-                  frameClassName="w-9 h-9 rounded-lg border-0 shadow-none"
+                  frameClassName="w-9 h-9 rounded-xl border-0 shadow-none"
                   skeletonSize="20px"
                 />
               </span>
-              <span className="font-display font-black text-sm text-candy-ink truncate flex-1 min-w-0">
+
+              {/* Username */}
+              <span className="font-display font-black text-xs sm:text-sm text-candy-ink truncate flex-1 min-w-0">
                 {item.username}
               </span>
-              <span className="font-mono font-black text-sm text-candy-pink shrink-0">
+
+              {/* Score */}
+              <span className="font-mono font-black text-xs sm:text-sm text-candy-pink shrink-0">
                 {item.score.toLocaleString(locale)}
               </span>
-              <span className="font-mono text-[10px] text-candy-ink/60 inline-flex items-center gap-0.5 shrink-0">
+
+              {/* Accuracy / Total */}
+              <span className="font-mono text-[10px] text-candy-ink/60 inline-flex items-center gap-0.5 shrink-0 hidden sm:inline-flex">
                 <MiniGlyph variant="speed" className="w-3 h-3" />
-                {/* The leaderboard payload carries `correctCount` with no
-                    denominator, so the shared constant supplies it. Rows
-                    that DO get a server-side total (result panel, share
-                    card) use that instead. */}
                 {item.correctCount}/{DAILY_QUESTION_COUNT}
               </span>
+
+              {/* Streak */}
               <span className="font-mono text-[10px] text-candy-ink/60 shrink-0 inline-flex items-center gap-0.5">
                 <StreakGlyph className="text-candy-pink" size={10} />
                 {item.streakAfter}
               </span>
-              {/* Phase 3 — cross-show "Most cards played this week".
-                  Tier badge (Common / Rare / Epic) gives at-a-glance rank
-                  without forcing a sort on the metric itself. */}
+
+              {/* Cards tier badge */}
               <span
-                className={`shrink-0 font-mono text-[10px] font-semibold px-1.5 py-0.5 rounded ${CARDS_PLAYED_TIERS[tier].className}`}
+                className={`shrink-0 font-mono text-[10px] font-semibold px-1.5 py-0.5 rounded inline-flex items-center gap-1 ${CARDS_PLAYED_TIERS[tier].className}`}
                 title={t("leaderboard.cardsThisWeek")}
                 aria-label={t(`leaderboard.cardsTier.${tier}`)}
               >
+                <CardsGlyph size={10} className="shrink-0" />
                 {t("leaderboard.cardsLabel", {
                   count: item.cardsPlayedThisWeek,
                 })}
