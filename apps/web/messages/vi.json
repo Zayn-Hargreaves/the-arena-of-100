@@ -422,6 +422,13 @@
       "on": "BẬT",
       "off": "TẮT"
     },
+    "audioPrompt": {
+      "ariaLabel": "Cài đặt âm thanh",
+      "title": "Âm Thanh Đấu Trường",
+      "description": "Bật nhạc nền BGM & hiệu ứng âm thanh thao tác để trải nghiệm trận đấu sống động nhất?",
+      "enable": "Bật Âm Thanh",
+      "dismiss": "Tắt"
+    },
     "controls": {
       "title": "Phím Tắt Điều Khiển",
       "quickAnswersTitle": "Trả Lời Bằng Phím Tắt",

@@ -917,7 +917,13 @@ describe("RoomService", () => {
             ],
           },
         },
-        include: { players: true },
+        include: {
+          players: {
+            include: {
+              user: { select: { guestId: true } },
+            },
+          },
+        },
       });
       expect(result).toEqual(mockRooms);
     });

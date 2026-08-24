@@ -422,6 +422,13 @@
       "on": "ON",
       "off": "OFF"
     },
+    "audioPrompt": {
+      "ariaLabel": "Audio settings",
+      "title": "Arena Audio",
+      "description": "Enable background music (BGM) and action sound effects for the best battle experience?",
+      "enable": "Enable Audio",
+      "dismiss": "Off"
+    },
     "controls": {
       "title": "Control Shortcuts",
       "quickAnswersTitle": "Shortcut Answers",
