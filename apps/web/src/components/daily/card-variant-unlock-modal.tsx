@@ -23,6 +23,15 @@ interface CardVariantUnlockModalProps {
   shareStreakLine: (streak: number) => string;
 }
 
+const VARIANT_BADGE_STYLES: Record<string, string> = {
+  GOLD: "bg-amber-100 text-amber-700",
+  NEON: "bg-cyan-100 text-cyan-700",
+};
+
+function getVariantBadgeClasses(variantKey: string): string {
+  return VARIANT_BADGE_STYLES[variantKey] ?? "bg-slate-100 text-slate-700";
+}
+
 /**
  * Phase 3 — fires when `unlockedVariant` is present in the submit
  * response (i.e. the streak crossed a threshold of 7 / 14 / …).
@@ -48,7 +57,7 @@ export function CardVariantUnlockModal({
 }: Readonly<CardVariantUnlockModalProps>) {
   const [copied, setCopied] = React.useState(false);
   const t = useTranslations("Cards");
-  const containerRef = React.useRef<HTMLDivElement>(null);
+  const containerRef = React.useRef<HTMLDialogElement>(null);
   const previousFocusRef = React.useRef<HTMLElement | null>(null);
 
   // Focus management — move focus into the modal when it opens,
@@ -77,7 +86,7 @@ export function CardVariantUnlockModal({
       const items = getFocusables();
       if (items.length === 0) return;
       const first = items[0];
-      const last = items[items.length - 1];
+      const last = items.at(-1);
       const active = document.activeElement as HTMLElement | null;
       if (event.shiftKey && active === first) {
         event.preventDefault();
@@ -158,12 +167,12 @@ export function CardVariantUnlockModal({
   }, [shareText]);
 
   return (
-    <div
+    <dialog
       ref={containerRef}
-      role="dialog"
+      open
       aria-modal="true"
       aria-label={title}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-candy-ink/50 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-candy-ink/50 p-4 border-none m-0 max-w-none max-h-none w-full h-full"
       data-testid="card-variant-unlock-modal"
     >
       <div className="bg-candy-yellow border-[3px] border-candy-ink rounded-2xl p-6 max-w-sm w-full shadow-[6px_6px_0_0_#2B2D42] space-y-4">
@@ -182,13 +191,7 @@ export function CardVariantUnlockModal({
             {cardName}
           </div>
           <div
-            className={`inline-block px-3 py-1 rounded-full font-mono font-black text-xs uppercase ${
-              variantKey === "GOLD"
-                ? "bg-amber-100 text-amber-700"
-                : variantKey === "NEON"
-                  ? "bg-cyan-100 text-cyan-700"
-                  : "bg-slate-100 text-slate-700"
-            }`}
+            className={`inline-block px-3 py-1 rounded-full font-mono font-black text-xs uppercase ${getVariantBadgeClasses(variantKey)}`}
           >
             {variantKey}
           </div>
@@ -222,6 +225,6 @@ export function CardVariantUnlockModal({
           </button>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 }

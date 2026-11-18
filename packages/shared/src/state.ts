@@ -11,6 +11,7 @@ export enum RoomStatus {
   IN_GAME = "IN_GAME",
   FINISHED = "FINISHED",
 }
+export type RoomStatusValue = `${RoomStatus}`;
 
 // Match States (State Machine Pattern)
 export enum MatchStatus {
@@ -22,6 +23,7 @@ export enum MatchStatus {
   ROUND_RESULT = "ROUND_RESULT",
   FINISHED = "FINISHED",
 }
+export type MatchStatusValue = `${MatchStatus}`;
 
 // Player States in Match
 //
@@ -38,6 +40,7 @@ export enum PlayerStatus {
   DISCONNECTED = "DISCONNECTED",
   WINNER = "WINNER",
 }
+export type PlayerStatusValue = `${PlayerStatus}`;
 
 // Discriminator for public vs private rooms. Aliased here so
 // consumers (frontend socket-store types, validation schemas) can

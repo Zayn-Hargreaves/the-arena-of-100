@@ -348,7 +348,7 @@ describe("MatchmakingModal", () => {
     mockSocketStore.matchmaking.isQueued = true;
 
     const querySpy = vi
-      .spyOn(HTMLDivElement.prototype, "querySelector")
+      .spyOn(HTMLDialogElement.prototype, "querySelector")
       .mockReturnValue(null);
 
     render(<MatchmakingModal />);
@@ -367,7 +367,7 @@ describe("MatchmakingModal", () => {
     mockSocketStore.matchmaking.isQueued = true;
 
     const queryAllSpy = vi
-      .spyOn(HTMLDivElement.prototype, "querySelectorAll")
+      .spyOn(HTMLDialogElement.prototype, "querySelectorAll")
       .mockReturnValue([] as unknown as NodeListOf<HTMLElement>);
 
     render(<MatchmakingModal />);

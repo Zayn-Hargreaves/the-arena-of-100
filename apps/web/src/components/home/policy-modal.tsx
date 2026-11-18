@@ -26,7 +26,7 @@ export function PolicyModal({
   onSelectType,
 }: Readonly<PolicyModalProps>) {
   const t = useTranslations("policies");
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -78,23 +78,30 @@ export function PolicyModal({
             e.preventDefault();
             lastElement.focus();
           }
-        } else {
-          if (
-            document.activeElement === lastElement ||
-            document.activeElement === dialogRef.current
-          ) {
-            e.preventDefault();
-            firstElement.focus();
-          }
+        } else if (
+          document.activeElement === lastElement ||
+          document.activeElement === dialogRef.current
+        ) {
+          e.preventDefault();
+          firstElement.focus();
         }
       }
     };
 
+    const handleDialogClick = (e: MouseEvent) => {
+      if (e.target === dialogRef.current) {
+        onCloseRef.current?.();
+      }
+    };
+
+    const dialogElement = dialogRef.current;
+    dialogElement?.addEventListener("click", handleDialogClick);
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       if (typeof document !== "undefined") {
         document.body.style.overflow = previousOverflow;
       }
+      dialogElement?.removeEventListener("click", handleDialogClick);
       window.removeEventListener("keydown", handleKeyDown);
       const prevElement = previouslyFocusedRef.current;
       if (
@@ -113,20 +120,15 @@ export function PolicyModal({
   const isTerms = type === "terms";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+    <dialog
+      ref={dialogRef}
+      open
+      aria-modal="true"
+      aria-labelledby="policy-modal-title"
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm border-none m-0 max-w-none max-h-none w-full h-full outline-none"
     >
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="policy-modal-title"
-        tabIndex={-1}
-        className="relative w-full max-w-2xl bg-white border-4 border-candy-ink rounded-3xl p-6 md:p-8 shadow-[8px_8px_0_0_#2B2D42] overflow-hidden outline-none max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-200"
-      >
+      <div className="relative w-full max-w-2xl bg-white border-4 border-candy-ink rounded-3xl p-6 md:p-8 shadow-[8px_8px_0_0_#2B2D42] overflow-hidden outline-none max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-200">
         {/* Top Header & Tab Toggle */}
         <div className="flex justify-between items-start gap-4 mb-4 shrink-0">
           {onSelectType ? (
@@ -199,9 +201,7 @@ export function PolicyModal({
         </div>
 
         {/* Scrollable Policy Content */}
-        <div
-          tabIndex={0}
-          role="region"
+        <section
           aria-label={isTerms ? t("termsTitle") : t("antiCheatTitle")}
           className="overflow-y-auto space-y-4 pr-1 flex-1 text-candy-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-candy-pink rounded-xl"
         >
@@ -298,7 +298,7 @@ export function PolicyModal({
               </div>
             </>
           )}
-        </div>
+        </section>
 
         {/* Footer Action Button */}
         <div className="mt-5 pt-3 border-t-3 border-candy-ink shrink-0">
@@ -311,6 +311,6 @@ export function PolicyModal({
           </button>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 }

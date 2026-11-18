@@ -28,7 +28,7 @@ export function CardHand({
   disabled,
   burningCardId = null,
   className,
-}: CardHandProps) {
+}: Readonly<CardHandProps>) {
   const t = useTranslations("Cards");
   const playedSet = React.useMemo(
     () => new Set(playedCardIds),

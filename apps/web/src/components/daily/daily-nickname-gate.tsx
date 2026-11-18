@@ -124,7 +124,6 @@ export function DailyNicknameGate({
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? NICKNAME_ERROR_ID : undefined}
             className="w-full border-[2px] border-candy-ink rounded-xl px-3 py-2 font-body text-sm text-candy-ink bg-white focus:outline-none focus:ring-2 focus:ring-candy-yellow disabled:opacity-60"
-            autoFocus
           />
         </label>
         {error ? (

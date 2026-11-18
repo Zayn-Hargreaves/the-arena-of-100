@@ -6,7 +6,6 @@ import {
   ERROR_MESSAGE_KEYS,
   RoomJoinedPayload,
   RoomError,
-  asRoomTypeOrDefault,
   getPlayerChannel,
   type AuthenticatedPayload,
 } from "@arena/shared";
@@ -96,9 +95,11 @@ export class AuthHandler extends BaseHandler {
         // first (user-switch on a reused socket), then join the new one.
         for (const roomName of Array.from(client.rooms ?? [])) {
           if (roomName === client.id) continue;
-          if (roomName.startsWith("player:")) client.leave(roomName);
+          if (roomName.startsWith("player:")) {
+            void client.leave(roomName);
+          }
         }
-        client.join(getPlayerChannel(decoded.userId));
+        await client.join(getPlayerChannel(decoded.userId));
 
         if (
           previousUserId &&
@@ -226,7 +227,7 @@ export class AuthHandler extends BaseHandler {
     for (const roomName of Array.from(client.rooms ?? [])) {
       if (roomName === client.id) continue;
       if (roomName.startsWith("room:")) {
-        client.leave(roomName);
+        void client.leave(roomName);
       }
     }
 
@@ -234,26 +235,28 @@ export class AuthHandler extends BaseHandler {
     // here cannot undo the synchronous socket cleanup above.
     try {
       const userActiveRooms = await this.roomService.getUserActiveRooms(userId);
-      for (const rp of userActiveRooms) {
-        // Re-check tracking: a newer socket may have authenticated as
-        // this user during the await. If connectedPlayers[userId] now
-        // holds any entry (the one we just deleted), a new session is
-        // canonical — skip the state-mutating handlePlayerDisconnect so
-        // the live player's state machine is NOT marked DISCONNECTED.
-        if (this.connectedPlayers.has(userId)) {
-          this.logger.debug(
-            `Skipping handlePlayerDisconnect for ${userId} in room ${rp.room.id}: a newer socket has authenticated`,
-          );
-          continue;
-        }
-        if (rp.room.currentMatchId) {
-          await this.gameLoopService.handlePlayerDisconnect(
-            rp.room.currentMatchId,
-            userId,
-            server,
-          );
-        }
-      }
+      await Promise.all(
+        userActiveRooms.map(async (rp) => {
+          // Re-check tracking: a newer socket may have authenticated as
+          // this user during the await. If connectedPlayers[userId] now
+          // holds any entry (the one we just deleted), a new session is
+          // canonical — skip the state-mutating handlePlayerDisconnect so
+          // the live player's state machine is NOT marked DISCONNECTED.
+          if (this.connectedPlayers.has(userId)) {
+            this.logger.debug(
+              `Skipping handlePlayerDisconnect for ${userId} in room ${rp.room.id}: a newer socket has authenticated`,
+            );
+            return;
+          }
+          if (rp.room.currentMatchId) {
+            await this.gameLoopService.handlePlayerDisconnect(
+              rp.room.currentMatchId,
+              userId,
+              server,
+            );
+          }
+        }),
+      );
     } catch (error) {
       this.logger.warn(
         `Failed to notify match of disconnect for ${userId}`,
@@ -311,21 +314,23 @@ export class AuthHandler extends BaseHandler {
       // implementation only updated presence for the most recent
       // room, leaving the other rooms' presence records pointing
       // at the pre-disconnect state.
-      for (const roomPlayer of sortedByJoinedAt) {
-        const room = roomPlayer.room;
-        client.join(`room:${room.id}`);
-        await this.presenceService.updatePresence(room.id, userId);
+      await Promise.all(
+        sortedByJoinedAt.map(async (roomPlayer) => {
+          const room = roomPlayer.room;
+          await client.join(`room:${room.id}`);
+          await this.presenceService.updatePresence(room.id, userId);
 
-        if (room.currentMatchId) {
-          const stateMachine = await this.matchService.getStateMachine(
-            room.currentMatchId,
-          );
-          if (stateMachine) {
-            stateMachine.reconnectPlayer(userId);
-            await this.matchService.persistStateMachine(room.currentMatchId);
+          if (room.currentMatchId) {
+            const stateMachine = await this.matchService.getStateMachine(
+              room.currentMatchId,
+            );
+            if (stateMachine) {
+              stateMachine.reconnectPlayer(userId);
+              await this.matchService.persistStateMachine(room.currentMatchId);
+            }
           }
-        }
-      }
+        }),
+      );
 
       // Pass 2: emit the user-facing ROOM_JOINED + SNAPSHOT for the
       // most recent room only. The web store has a single `room`
@@ -354,8 +359,8 @@ export class AuthHandler extends BaseHandler {
         roomId: mostRecentRoom.id,
         code: mostRecentRoom.code,
         hostId: mostRecentRoom.hostId,
-        roomType: asRoomTypeOrDefault(mostRecentRoom.type),
-        roomStatus: mostRecentRoom.status as import("@arena/shared").RoomStatus,
+        roomType: mostRecentRoom.type,
+        roomStatus: mostRecentRoom.status,
         maxPlayers: mostRecentRoom.maxPlayers,
         currentMatchId: mostRecentRoom.currentMatchId,
         countdownEndsAt,

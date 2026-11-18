@@ -39,7 +39,7 @@ const CLASS_THEME: Record<ClassId, ClassStyleTokens> = {
 
 interface ClassStatCardProps {
   classId: ClassId;
-  stats?: ClassStats["classWinrate"][ClassId];
+  stats: ClassStats["classWinrate"][ClassId];
   isLoading: boolean;
   icon: React.ReactNode;
   colorClass?: ClassStyleTokens;
@@ -53,6 +53,20 @@ function ClassStatCard({
   colorClass = CLASS_THEME[classId],
 }: Readonly<ClassStatCardProps>) {
   const t = useTranslations("profile");
+
+  let matchSubtext = t("classStats.noClassMatches");
+  if (stats && stats.plays > 0) {
+    matchSubtext = `${stats.wins} / ${stats.plays} ${t("classStats.matchesWon")}`;
+  } else if (isLoading) {
+    matchSubtext = "...";
+  }
+
+  let winRateDisplay = "0%";
+  if (stats) {
+    winRateDisplay = formatPercent(stats.winRate);
+  } else if (isLoading) {
+    winRateDisplay = "--";
+  }
 
   return (
     <div className="bg-candy-cloud/70 border-2 border-candy-ink rounded-2xl p-4 space-y-3">
@@ -70,16 +84,12 @@ function ClassStatCard({
               {t(`classStats.class.${classId}`)}
             </span>
             <p className="text-[11px] font-mono font-bold text-candy-ink/70 mt-0.5">
-              {stats && stats.plays > 0
-                ? `${stats.wins} / ${stats.plays} ${t("classStats.matchesWon")}`
-                : isLoading
-                  ? "..."
-                  : t("classStats.noClassMatches")}
+              {matchSubtext}
             </p>
           </div>
         </div>
         <span className={`font-display font-black text-2xl ${colorClass.text}`}>
-          {stats ? formatPercent(stats.winRate) : isLoading ? "--" : "0%"}
+          {winRateDisplay}
         </span>
       </div>
 

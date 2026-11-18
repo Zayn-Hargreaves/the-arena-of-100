@@ -7,6 +7,7 @@ import { ProfessorDialogueBox } from "./professor-dialogue-box";
 import { ProfessorHudWidget } from "./professor-hud-widget";
 import {
   getRandomProfessorDialogue,
+  getDeterministicProfessorDialogue,
   PROFESSOR_DIALOGUES,
 } from "./professor-roast-engine";
 import * as roastEngine from "./professor-roast-engine";
@@ -57,6 +58,21 @@ describe("professor-roast-engine", () => {
     expect(result).toHaveProperty("key");
     expect(result).toHaveProperty("mood");
     expect(result.key).toMatch(/^dialogues\.home_greeting\.\d+$/);
+  });
+
+  it("returns deterministic DialogueData for the same seed with codePointAt hashing", () => {
+    const seed = "player-seed-🔥";
+    const result1 = getDeterministicProfessorDialogue(
+      "game_correct_answer",
+      seed,
+    );
+    const result2 = getDeterministicProfessorDialogue(
+      "game_correct_answer",
+      seed,
+    );
+    expect(result1).toEqual(result2);
+    expect(result1).toHaveProperty("key");
+    expect(result1).toHaveProperty("mood");
   });
 
   it("ensures all dialogue keys in PROFESSOR_DIALOGUES exist in both message catalogs", () => {

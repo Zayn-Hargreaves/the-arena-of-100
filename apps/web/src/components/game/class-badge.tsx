@@ -32,7 +32,7 @@ export function ClassBadge({
   classId,
   variant = "soft",
   className,
-}: ClassBadgeProps) {
+}: Readonly<ClassBadgeProps>) {
   const t = useTranslations("Cards");
   const styles = CLASS_STYLES[classId];
   return (

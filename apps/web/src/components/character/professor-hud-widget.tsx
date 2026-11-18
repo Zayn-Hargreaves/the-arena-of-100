@@ -54,7 +54,6 @@ export const ProfessorHudWidget: React.FC<ProfessorHudWidgetProps> = ({
       const d = getRandomProfessorDialogue("game_wrong_answer");
       setMood(d.mood);
       setDialogueKey(d.key);
-      return;
     }
   }, [isEliminated, hasAnswered, isCorrect]);
 

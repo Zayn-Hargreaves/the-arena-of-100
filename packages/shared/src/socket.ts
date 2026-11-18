@@ -4,7 +4,7 @@
 // ============================================================
 
 import type { RoomTerminationReason } from "./events";
-import type { RoomStatus, RoomType } from "./state";
+import type { RoomStatus, RoomStatusValue, RoomType } from "./state";
 
 // Socket Namespaces
 export enum SocketNamespace {
@@ -206,7 +206,7 @@ export interface RoomCreatedPayload {
   code: string;
   hostId: string;
   roomType: RoomType;
-  roomStatus: RoomStatus;
+  roomStatus: RoomStatus | RoomStatusValue;
   maxPlayers: number;
   currentMatchId: string | null;
   players: RoomPlayerSummary[];
@@ -220,7 +220,7 @@ export interface RoomJoinedPayload {
   code: string;
   hostId: string;
   roomType: RoomType;
-  roomStatus: RoomStatus;
+  roomStatus: RoomStatus | RoomStatusValue;
   maxPlayers: number;
   currentMatchId: string | null;
   countdownEndsAt: number | null;
@@ -247,7 +247,7 @@ export interface RoomPlayerLeftPayload {
 
 export interface RoomStatusUpdatedPayload {
   roomId: string;
-  roomStatus: RoomStatus;
+  roomStatus: RoomStatus | RoomStatusValue;
   currentMatchId: string | null;
   updatedAt: number;
 }
@@ -262,7 +262,7 @@ export interface RoomCountdownStartedPayload {
 
 export interface RoomCountdownCancelledPayload {
   roomId: string;
-  roomStatus: RoomStatus;
+  roomStatus: RoomStatus | RoomStatusValue;
   reason:
     | "NOT_ENOUGH_PLAYERS"
     | "HOST_CANCELLED"

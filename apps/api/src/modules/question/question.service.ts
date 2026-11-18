@@ -43,38 +43,12 @@ export class QuestionService {
   private mapPrismaQuestionToQuestion(
     prismaQuestion: PrismaQuestion,
   ): Question {
-    // Ensure options is always an array of strings
-    let options: string[] = [];
-    if (Array.isArray(prismaQuestion.options)) {
-      // Convert all elements to strings
-      options = prismaQuestion.options.map(String);
-    } else if (typeof prismaQuestion.options === "string") {
-      // If it's a string, try to parse it as JSON array
-      try {
-        const parsed = JSON.parse(prismaQuestion.options);
-        if (Array.isArray(parsed)) {
-          options = parsed.map(String);
-        } else {
-          // If parsing succeeds but it's not an array, treat as a single option
-          options = [String(parsed)];
-        }
-      } catch {
-        // If parsing fails, treat as a single option
-        options = [prismaQuestion.options];
-      }
-    } else if (
-      prismaQuestion.options !== null &&
-      prismaQuestion.options !== undefined
-    ) {
-      // For any other type, convert to string and treat as single option
-      options = [String(prismaQuestion.options)];
-    }
     return {
       id: prismaQuestion.id,
       createdAt: prismaQuestion.createdAt,
       updatedAt: prismaQuestion.updatedAt,
       content: prismaQuestion.content,
-      options: options,
+      options: prismaQuestion.options,
       difficulty: prismaQuestion.difficulty as QuestionDifficulty,
       correctAnswer: prismaQuestion.correctAnswer,
       active: prismaQuestion.active,
@@ -196,9 +170,7 @@ export class QuestionService {
       }
 
       if (
-        !existingQuestion.options ||
-        !Array.isArray(existingQuestion.options) ||
-        !existingQuestion.options.includes(updateQuestionDto.correctAnswer)
+        !existingQuestion.options?.includes(updateQuestionDto.correctAnswer)
       ) {
         throw new BadRequestException(
           "correctAnswer must be one of the existing options",
@@ -293,6 +265,43 @@ export class QuestionService {
     }
   }
 
+  private resolveCategoryFilter(
+    category?: string,
+    allowedCategories?: string[],
+  ): Prisma.QuestionWhereInput["category"] {
+    if (category) {
+      if (category === "ALL") {
+        // "ALL" represents all categories, no filter applied
+        return undefined;
+      }
+      if (VALID_PRISMA_QUESTION_CATEGORIES.has(category)) {
+        return category as PrismaQuestionCategory;
+      }
+      throw new BadRequestException(`Invalid category: ${category}`);
+    }
+
+    if (
+      !allowedCategories ||
+      allowedCategories.length === 0 ||
+      allowedCategories.includes("ALL")
+    ) {
+      return undefined;
+    }
+
+    const validCategories = allowedCategories.filter(
+      (c): c is PrismaQuestionCategory =>
+        VALID_PRISMA_QUESTION_CATEGORIES.has(c),
+    );
+    if (validCategories.length === 0) {
+      throw new BadRequestException(
+        "No valid categories provided in allowedCategories",
+      );
+    }
+    return {
+      in: validCategories,
+    };
+  }
+
   async getRandom(
     difficulty?: QuestionDifficulty,
     excludeIds?: string[],
@@ -307,31 +316,12 @@ export class QuestionService {
       where.difficulty = difficulty;
     }
 
-    if (category) {
-      if (category === "ALL") {
-        // "ALL" represents all categories, no filter applied
-      } else if (VALID_PRISMA_QUESTION_CATEGORIES.has(category)) {
-        where.category = category as PrismaQuestionCategory;
-      } else {
-        throw new BadRequestException(`Invalid category: ${category}`);
-      }
-    } else if (allowedCategories && allowedCategories.length > 0) {
-      if (allowedCategories.includes("ALL")) {
-        // "ALL" represents all categories, no filter applied
-      } else {
-        const validCategories = allowedCategories.filter(
-          (c): c is PrismaQuestionCategory =>
-            VALID_PRISMA_QUESTION_CATEGORIES.has(c),
-        );
-        if (validCategories.length === 0) {
-          throw new BadRequestException(
-            "No valid categories provided in allowedCategories",
-          );
-        }
-        where.category = {
-          in: validCategories,
-        };
-      }
+    const categoryFilter = this.resolveCategoryFilter(
+      category,
+      allowedCategories,
+    );
+    if (categoryFilter !== undefined) {
+      where.category = categoryFilter;
     }
 
     if (excludeIds?.length) {

@@ -67,12 +67,55 @@ const TOPIC_METADATA: Record<
   },
 };
 
+function getTopicCardInteractiveStyle(
+  isSelected: boolean,
+  isTopDanger: boolean,
+): string {
+  if (isSelected) {
+    return "ring-2 ring-rose-500 border-rose-500 shadow-lg shadow-rose-950/40 transform scale-[1.02]";
+  }
+  if (isTopDanger) {
+    return "border-amber-500/50 hover:border-amber-400/80 hover:scale-[1.01]";
+  }
+  return "hover:border-slate-500/50 hover:scale-[1.01]";
+}
+
+function TopicBadge({
+  isSelected,
+  isTopDanger,
+  votedLabel,
+  topDangerLabel,
+}: Readonly<{
+  isSelected: boolean;
+  isTopDanger: boolean;
+  votedLabel: string;
+  topDangerLabel: string;
+}>) {
+  if (isSelected) {
+    return (
+      <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/20 border border-rose-500/40 text-[10px] font-bold text-rose-300">
+        <CheckCircle2 className="w-3 h-3" />
+        {votedLabel}
+      </span>
+    );
+  }
+  if (isTopDanger) {
+    return (
+      <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-[10px] font-bold text-amber-300">
+        <Flame className="w-3 h-3 text-amber-400" />
+        {topDangerLabel}
+      </span>
+    );
+  }
+  return null;
+}
+
 export function TopicVotingOverlay() {
   const t = useTranslations("Game.topicVoting");
   const { topicVoting, voteBanTopic, match } = useSocketStore();
 
   const [timeLeft, setTimeLeft] = useState<number>(10);
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
 
   const isPhaseValid =
@@ -111,7 +154,7 @@ export function TopicVotingOverlay() {
       }
 
       const firstElement = focusable[0];
-      const lastElement = focusable[focusable.length - 1];
+      const lastElement = focusable.at(-1);
 
       if (e.shiftKey) {
         if (
@@ -121,14 +164,12 @@ export function TopicVotingOverlay() {
           e.preventDefault();
           lastElement?.focus();
         }
-      } else {
-        if (
-          document.activeElement === lastElement ||
-          document.activeElement === dialogRef.current
-        ) {
-          e.preventDefault();
-          firstElement?.focus();
-        }
+      } else if (
+        document.activeElement === lastElement ||
+        document.activeElement === dialogRef.current
+      ) {
+        e.preventDefault();
+        firstElement?.focus();
       }
     };
 
@@ -204,13 +245,13 @@ export function TopicVotingOverlay() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fade-in">
-      <div
+      <dialog
         ref={dialogRef}
-        role="dialog"
+        open
         tabIndex={-1}
         aria-modal="true"
         aria-labelledby="topic-voting-title"
-        className="relative w-full max-w-4xl max-h-[90dvh] overflow-y-auto p-6 md:p-8 bg-slate-900/95 border border-slate-700/60 rounded-2xl shadow-2xl shadow-rose-950/20 text-slate-100 flex flex-col items-center animate-scale-in scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent"
+        className="relative w-full max-w-4xl max-h-[90dvh] overflow-y-auto p-6 md:p-8 bg-slate-900/95 border border-slate-700/60 rounded-2xl shadow-2xl shadow-rose-950/20 text-slate-100 flex flex-col items-center animate-scale-in scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent m-0 outline-none"
       >
         {/* Header Glow */}
         <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-96 h-32 bg-rose-500/20 blur-3xl pointer-events-none" />
@@ -269,13 +310,10 @@ export function TopicVotingOverlay() {
                 aria-pressed={isSelected}
                 className={`relative text-left w-full p-5 rounded-xl border transition-all duration-200 select-none overflow-hidden flex flex-col justify-between min-h-[150px] bg-gradient-to-br ${
                   meta.color
-                } ${isFinished ? "cursor-default" : "cursor-pointer"} ${
-                  isSelected
-                    ? "ring-2 ring-rose-500 border-rose-500 shadow-lg shadow-rose-950/40 transform scale-[1.02]"
-                    : isTopDanger
-                      ? "border-amber-500/50 hover:border-amber-400/80 hover:scale-[1.01]"
-                      : "hover:border-slate-500/50 hover:scale-[1.01]"
-                } ${isBanned ? "opacity-60 grayscale" : ""}`}
+                } ${isFinished ? "cursor-default" : "cursor-pointer"} ${getTopicCardInteractiveStyle(
+                  isSelected,
+                  isTopDanger,
+                )} ${isBanned ? "opacity-60 grayscale" : ""}`}
               >
                 {/* Card Header */}
                 <div className="flex items-start justify-between gap-3">
@@ -290,17 +328,12 @@ export function TopicVotingOverlay() {
                     </div>
                   </div>
 
-                  {isSelected ? (
-                    <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/20 border border-rose-500/40 text-[10px] font-bold text-rose-300">
-                      <CheckCircle2 className="w-3 h-3" />
-                      {t("voted")}
-                    </span>
-                  ) : isTopDanger ? (
-                    <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-[10px] font-bold text-amber-300">
-                      <Flame className="w-3 h-3 text-amber-400" />
-                      {t("topDanger")}
-                    </span>
-                  ) : null}
+                  <TopicBadge
+                    isSelected={isSelected}
+                    isTopDanger={isTopDanger}
+                    votedLabel={t("voted")}
+                    topDangerLabel={t("topDanger")}
+                  />
                 </div>
 
                 {/* Progress Bar (Visible during voting when votes exist) */}
@@ -377,7 +410,7 @@ export function TopicVotingOverlay() {
             <span>{t("startingMatch")}</span>
           </div>
         )}
-      </div>
+      </dialog>
     </div>
   );
 }

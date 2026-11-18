@@ -228,7 +228,7 @@ export function buildFlowReconnect({ connectAndJoin, onControllerReady }) {
       generation,
       isActive,
       onClose: (intentional) =>
-        controller && controller.handleClose(generation, intentional),
+        controller?.handleClose(generation, intentional),
     });
     if (!client) return false;
     // A superseded attempt (newer loop / intentional close) discards its

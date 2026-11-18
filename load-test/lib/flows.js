@@ -93,7 +93,7 @@ function createAndWireClient({
       // bookkeeping below and is a no-op when no controller is wired.
       if (onLifecycleClose) onLifecycleClose(intentional, detail);
       if (!intentional) {
-        if (client && client.handshakeCompleted) {
+        if (client?.handshakeCompleted) {
           M.wsUnexpectedDisconnect.add(1);
           M.wsDisconnectErrors.add(1);
           M.appErrorRate.add(true);
@@ -205,7 +205,7 @@ const HANDSHAKE_ATTEMPTS = 4;
 const HANDSHAKE_BACKOFF_MS = 2000;
 
 async function connectWithRetry({ token, roomCode, vu, wire, wsBase }) {
-  for (let attempt = 1; attempt <= HANDSHAKE_ATTEMPTS; attempt++) {
+  async function attemptConnect(attempt) {
     const isFinal = attempt === HANDSHAKE_ATTEMPTS;
     const client = createAndWireClient({
       countConnectErrors: isFinal,
@@ -223,12 +223,15 @@ async function connectWithRetry({ token, roomCode, vu, wire, wsBase }) {
         `handshake attempt ${attempt}/${HANDSHAKE_ATTEMPTS} failed (vu=${vu}), retrying in ${HANDSHAKE_BACKOFF_MS}ms`,
       );
       await sleepMs(HANDSHAKE_BACKOFF_MS);
+      return attemptConnect(attempt + 1);
     }
+
+    M.setupErrors.add(1);
+    M.appErrorRate.add(true);
+    return null;
   }
 
-  M.setupErrors.add(1);
-  M.appErrorRate.add(true);
-  return null;
+  return attemptConnect(1);
 }
 
 // C2: drive a role's socket with reconnect. On a non-intentional close, the
@@ -329,7 +332,7 @@ async function runReconnectingFlow({
   const hb = setInterval(() => {
     const c = currentClient;
     const roomId = getRoomId();
-    if (c && c.connected && roomId) {
+    if (c?.connected && roomId) {
       c.emit(ClientEvent.HEARTBEAT, { roomId, sentAt: Date.now() });
     }
   }, 25000);
@@ -340,6 +343,27 @@ async function runReconnectingFlow({
   // late retry never re-joins after the VU meant to leave.
   controller.dispose();
   if (currentClient) currentClient.close();
+}
+
+// Track the highest event seqNo we've applied so a reconnect can resync
+// with a tight delta instead of a full snapshot. Shared across player and spectator.
+function createSeqTracker() {
+  let lastSeq = 0;
+  return {
+    getLastSeq: () => lastSeq,
+    noteSeq: (p) => {
+      if (!p) return;
+      if (Number.isFinite(p.lastEventSeqNo)) {
+        lastSeq = Math.max(lastSeq, p.lastEventSeqNo);
+      }
+      if (Array.isArray(p.events)) {
+        for (const e of p.events) {
+          if (e && Number.isFinite(e.seqNo))
+            lastSeq = Math.max(lastSeq, e.seqNo);
+        }
+      }
+    },
+  };
 }
 
 // A registered player: joins before the match starts, answers each round.
@@ -354,44 +378,30 @@ export async function playerFlow({
   const pending = {}; // submissionId -> sentAt (ms)
   let matchId = null;
   let roomId = null;
-  let lastSeq = 0; // delta-replay cursor for REQUEST_SNAPSHOT on reconnect
   let finished = false;
   let eliminated = false;
   let demotedToSpectator = false;
-
-  // Track the highest event seqNo we've applied so a reconnect can resync
-  // with a tight delta instead of a full snapshot.
-  const noteSeq = (p) => {
-    if (!p) return;
-    if (Number.isFinite(p.lastEventSeqNo)) {
-      lastSeq = Math.max(lastSeq, p.lastEventSeqNo);
-    }
-    if (Array.isArray(p.events)) {
-      for (const e of p.events) {
-        if (e && Number.isFinite(e.seqNo)) lastSeq = Math.max(lastSeq, e.seqNo);
-      }
-    }
-  };
+  const seqTracker = createSeqTracker();
 
   const wire = (client) => {
-    client.on(ServerEvent.SNAPSHOT, noteSeq);
-    client.on(ServerEvent.EVENT_BATCH, noteSeq);
+    client.on(ServerEvent.SNAPSHOT, seqTracker.noteSeq);
+    client.on(ServerEvent.EVENT_BATCH, seqTracker.noteSeq);
     client.on(ServerEvent.ROOM_JOINED, (p) => {
-      if (p && p.roomId) roomId = p.roomId;
+      if (p?.roomId) roomId = p.roomId;
       // A player that arrives after START_MATCH is admitted as SPECTATOR
       // by the server (drop-in policy). Treating it as a real player and
       // submitting answers would yield SPECTATOR_CANNOT_ANSWER rejections
       // — correct server behavior, but pure k6 scenario noise. Mirror a
       // real client: a user who joined too late just watches the rest of
       // the match, so we stop sending answers and record the demotion.
-      if (p && p.joinedAs === "SPECTATOR") {
+      if (p?.joinedAs === "SPECTATOR") {
         demotedToSpectator = true;
         M.playersDemotedToSpectator.add(1);
       }
     });
 
     client.on(ServerEvent.MATCH_STARTED, (p) => {
-      if (p && p.matchId) matchId = p.matchId;
+      if (p?.matchId) matchId = p.matchId;
     });
 
     // An eliminated player is not allowed to answer future rounds — the
@@ -404,7 +414,7 @@ export async function playerFlow({
 
     client.on(ServerEvent.ROUND_STARTED, (p) => {
       M.roundStarted.add(1);
-      const mid = (p && p.matchId) || matchId;
+      const mid = p?.matchId || matchId;
       if (!mid || finished || eliminated || demotedToSpectator || !p) return;
 
       const sid = newSubmissionId(vu, p.roundNo);
@@ -420,7 +430,7 @@ export async function playerFlow({
     });
 
     client.on(ServerEvent.ANSWER_RESULT, (p) => {
-      const sid = p && p.submissionId;
+      const sid = p?.submissionId;
       if (sid && pending[sid] != null) {
         M.answerLatency.add(Date.now() - pending[sid]);
         delete pending[sid];
@@ -445,7 +455,7 @@ export async function playerFlow({
       wire,
       getRoomId: () => roomId,
       getMatchId: () => matchId,
-      getLastSeq: () => lastSeq,
+      getLastSeq: seqTracker.getLastSeq,
     });
     return;
   }
@@ -514,28 +524,16 @@ export async function spectatorFlow({
 }) {
   let roomId = null;
   let matchId = null;
-  let lastSeq = 0;
-
-  const noteSeq = (p) => {
-    if (!p) return;
-    if (Number.isFinite(p.lastEventSeqNo)) {
-      lastSeq = Math.max(lastSeq, p.lastEventSeqNo);
-    }
-    if (Array.isArray(p.events)) {
-      for (const e of p.events) {
-        if (e && Number.isFinite(e.seqNo)) lastSeq = Math.max(lastSeq, e.seqNo);
-      }
-    }
-  };
+  const seqTracker = createSeqTracker();
 
   const wire = (client) => {
-    client.on(ServerEvent.SNAPSHOT, noteSeq);
-    client.on(ServerEvent.EVENT_BATCH, noteSeq);
+    client.on(ServerEvent.SNAPSHOT, seqTracker.noteSeq);
+    client.on(ServerEvent.EVENT_BATCH, seqTracker.noteSeq);
     client.on(ServerEvent.ROOM_JOINED, (p) => {
-      if (p && p.roomId) roomId = p.roomId;
+      if (p?.roomId) roomId = p.roomId;
     });
     client.on(ServerEvent.MATCH_STARTED, (p) => {
-      if (p && p.matchId) matchId = p.matchId;
+      if (p?.matchId) matchId = p.matchId;
     });
     client.on(ServerEvent.ROUND_STARTED, () => M.roundStarted.add(1));
     client.on(ServerEvent.MATCH_FINISHED, () => M.matchFinished.add(1));
@@ -551,7 +549,7 @@ export async function spectatorFlow({
       wire,
       getRoomId: () => roomId,
       getMatchId: () => matchId,
-      getLastSeq: () => lastSeq,
+      getLastSeq: seqTracker.getLastSeq,
     });
     return;
   }

@@ -46,11 +46,14 @@ export const ProfessorGreetingCard: React.FC<ProfessorGreetingCardProps> = ({
   };
 
   const avatarNote = avatarName ? ` (${avatarName})` : "";
-  const dialogue = dialogueKey
-    ? tProf(dialogueKey)
-    : !nickname.trim()
-      ? tProf("greetingIdle")
-      : tProf("greetingNickname", { nickname, avatarNote });
+  let dialogue: string;
+  if (dialogueKey) {
+    dialogue = tProf(dialogueKey);
+  } else if (nickname.trim()) {
+    dialogue = tProf("greetingNickname", { nickname, avatarNote });
+  } else {
+    dialogue = tProf("greetingIdle");
+  }
 
   return (
     <aside

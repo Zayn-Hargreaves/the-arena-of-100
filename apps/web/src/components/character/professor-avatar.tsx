@@ -21,7 +21,318 @@ const SIZE_MAP: Record<ProfessorAvatarSize, string> = {
   xl: "w-48 h-48",
 };
 
-export const ProfessorAvatar: React.FC<ProfessorAvatarProps> = ({
+function getBodyAnimationClass(
+  animated: boolean,
+  mood: ProfessorMood,
+): string | false {
+  if (!animated) return false;
+  if (mood === "ticking_panic")
+    return "drlabo-panic motion-reduce:animate-none";
+  if (mood === "proud_cheer") return "drlabo-cheer motion-reduce:animate-none";
+  return "drlabo-animated-body motion-reduce:animate-none";
+}
+
+function ProfessorMoodOverlay({
+  mood,
+  animated,
+}: Readonly<{
+  mood: ProfessorMood;
+  animated: boolean;
+}>) {
+  if (mood === "proud_cheer") {
+    return (
+      <>
+        <div
+          className={cn(
+            "absolute -top-3 -right-2 w-6 h-6 pointer-events-none z-20",
+            animated && "animate-bounce motion-reduce:animate-none",
+          )}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            className="w-full h-full"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z"
+              fill="#FFD000"
+              stroke="#2B2D42"
+              strokeWidth="2"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </div>
+        <div
+          className={cn(
+            "absolute -top-2 -left-2 w-5 h-5 pointer-events-none z-20",
+            animated && "animate-pulse motion-reduce:animate-none",
+          )}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            className="w-full h-full"
+            fill="none"
+            aria-hidden="true"
+          >
+            <polygon
+              points="12,2 15,8.5 22,9.5 17,14.5 18.5,21.5 12,18 5.5,21.5 7,14.5 2,9.5 9,8.5"
+              fill="#FF85A2"
+              stroke="#2B2D42"
+              strokeWidth="2"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </div>
+      </>
+    );
+  }
+
+  if (mood === "ticking_panic") {
+    return (
+      <div
+        className={cn(
+          "absolute -top-2 right-1 w-5 h-5 pointer-events-none z-20",
+          animated && "animate-bounce motion-reduce:animate-none",
+        )}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          className="w-full h-full"
+          fill="none"
+          aria-hidden="true"
+        >
+          <path
+            d="M12 3C12 3 6 11 6 15.5C6 18.8 8.7 21.5 12 21.5C15.3 21.5 18 18.8 18 15.5C18 11 12 3 12 3Z"
+            fill="#38BDF8"
+            stroke="#2B2D42"
+            strokeWidth="2"
+          />
+        </svg>
+      </div>
+    );
+  }
+
+  if (mood === "angry_roast") {
+    return (
+      <div
+        className={cn(
+          "absolute -top-3 left-1 w-6 h-6 pointer-events-none z-20",
+          animated && "animate-bounce motion-reduce:animate-none",
+        )}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          className="w-full h-full"
+          fill="none"
+          aria-hidden="true"
+        >
+          <path
+            d="M5 8C9 8 9 4 9 4M15 4C15 4 15 8 19 8M19 16C15 16 15 20 15 20M9 20C9 20 9 16 5 16"
+            stroke="#EF4444"
+            strokeWidth="3.5"
+            strokeLinecap="round"
+          />
+        </svg>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function ProfessorEyebrows({ mood }: Readonly<{ mood: ProfessorMood }>) {
+  if (mood === "angry_roast") {
+    return (
+      <>
+        <line
+          x1="38"
+          y1="42"
+          x2="52"
+          y2="47"
+          stroke="#2B2D42"
+          strokeWidth="4.5"
+          strokeLinecap="round"
+        />
+        <line
+          x1="82"
+          y1="42"
+          x2="68"
+          y2="47"
+          stroke="#2B2D42"
+          strokeWidth="4.5"
+          strokeLinecap="round"
+        />
+      </>
+    );
+  }
+
+  if (mood === "shocked" || mood === "ticking_panic") {
+    return (
+      <>
+        <path
+          d="M38 40C44 36 48 36 52 40"
+          stroke="#2B2D42"
+          strokeWidth="4"
+          strokeLinecap="round"
+        />
+        <path
+          d="M82 40C76 36 72 36 68 40"
+          stroke="#2B2D42"
+          strokeWidth="4"
+          strokeLinecap="round"
+        />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <path
+        d="M36 42C42 38 48 38 52 42"
+        stroke="#FFFFFF"
+        strokeWidth="5"
+        strokeLinecap="round"
+      />
+      <path
+        d="M36 42C42 38 48 38 52 42"
+        stroke="#2B2D42"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+      />
+      <path
+        d="M84 42C78 38 72 38 68 42"
+        stroke="#FFFFFF"
+        strokeWidth="5"
+        strokeLinecap="round"
+      />
+      <path
+        d="M84 42C78 38 72 38 68 42"
+        stroke="#2B2D42"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+      />
+    </>
+  );
+}
+
+function ProfessorEyes({
+  mood,
+  animated,
+}: Readonly<{
+  mood: ProfessorMood;
+  animated: boolean;
+}>) {
+  let content: React.ReactNode;
+  if (mood === "shocked" || mood === "ticking_panic") {
+    content = (
+      <>
+        <circle cx="44" cy="52" r="5" fill="#2B2D42" />
+        <circle cx="43" cy="50" r="1.5" fill="#FFFFFF" />
+        <circle cx="76" cy="56" r="5" fill="#2B2D42" />
+        <circle cx="75" cy="54" r="1.5" fill="#FFFFFF" />
+      </>
+    );
+  } else if (mood === "proud_cheer") {
+    content = (
+      <>
+        <path
+          d="M39 53C42 49 46 49 49 53"
+          stroke="#2B2D42"
+          strokeWidth="3.5"
+          strokeLinecap="round"
+        />
+        <path
+          d="M71 53C74 49 78 49 81 53"
+          stroke="#2B2D42"
+          strokeWidth="3.5"
+          strokeLinecap="round"
+        />
+      </>
+    );
+  } else {
+    content = (
+      <>
+        <circle cx="44" cy="52" r="4.2" fill="#2B2D42" />
+        <circle cx="42.5" cy="50.5" r="1.5" fill="#FFFFFF" />
+        <circle cx="76" cy="52" r="4.2" fill="#2B2D42" />
+        <circle cx="74.5" cy="50.5" r="1.5" fill="#FFFFFF" />
+      </>
+    );
+  }
+
+  return (
+    <g
+      className={
+        animated ? "drlabo-animated-eyes motion-reduce:animate-none" : ""
+      }
+    >
+      {content}
+    </g>
+  );
+}
+
+function ProfessorMouth({
+  mood,
+  animated,
+}: Readonly<{
+  mood: ProfessorMood;
+  animated: boolean;
+}>) {
+  let content: React.ReactNode;
+  if (mood === "shocked" || mood === "ticking_panic") {
+    content = (
+      <ellipse
+        cx="60"
+        cy="74"
+        rx="6"
+        ry="5"
+        fill="#991B1B"
+        stroke="#2B2D42"
+        strokeWidth="2"
+      />
+    );
+  } else if (mood === "proud_cheer") {
+    content = (
+      <path
+        d="M54 71C56 76 64 76 66 71"
+        stroke="#2B2D42"
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
+    );
+  } else if (mood === "angry_roast") {
+    content = (
+      <path
+        d="M52 75C56 72 64 72 68 75"
+        stroke="#2B2D42"
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
+    );
+  } else {
+    content = (
+      <path
+        d="M55 72C58 74 62 74 65 72"
+        stroke="#2B2D42"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+      />
+    );
+  }
+
+  return (
+    <g
+      className={
+        animated ? "drlabo-animated-mouth motion-reduce:animate-none" : ""
+      }
+    >
+      {content}
+    </g>
+  );
+}
+
+export const ProfessorAvatar: React.FC<Readonly<ProfessorAvatarProps>> = ({
   mood = "idle",
   size = "md",
   showNameplate = false,
@@ -40,92 +351,14 @@ export const ProfessorAvatar: React.FC<ProfessorAvatarProps> = ({
       {...props}
     >
       {/* Mood Effect FX Overlay (Vector SVG Graphics) */}
-      {mood === "proud_cheer" && (
-        <div
-          className={cn(
-            "absolute -top-3 -right-2 w-6 h-6 pointer-events-none z-20",
-            animated && "animate-bounce motion-reduce:animate-none",
-          )}
-        >
-          <svg viewBox="0 0 24 24" className="w-full h-full" fill="none">
-            <path
-              d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z"
-              fill="#FFD000"
-              stroke="#2B2D42"
-              strokeWidth="2"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </div>
-      )}
-      {mood === "proud_cheer" && (
-        <div
-          className={cn(
-            "absolute -top-2 -left-2 w-5 h-5 pointer-events-none z-20",
-            animated && "animate-pulse motion-reduce:animate-none",
-          )}
-        >
-          <svg viewBox="0 0 24 24" className="w-full h-full" fill="none">
-            <polygon
-              points="12,2 15,8.5 22,9.5 17,14.5 18.5,21.5 12,18 5.5,21.5 7,14.5 2,9.5 9,8.5"
-              fill="#FF85A2"
-              stroke="#2B2D42"
-              strokeWidth="2"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </div>
-      )}
-      {mood === "ticking_panic" && (
-        <div
-          className={cn(
-            "absolute -top-2 right-1 w-5 h-5 pointer-events-none z-20",
-            animated && "animate-bounce motion-reduce:animate-none",
-          )}
-        >
-          <svg viewBox="0 0 24 24" className="w-full h-full" fill="none">
-            <path
-              d="M12 3C12 3 6 11 6 15.5C6 18.8 8.7 21.5 12 21.5C15.3 21.5 18 18.8 18 15.5C18 11 12 3 12 3Z"
-              fill="#38BDF8"
-              stroke="#2B2D42"
-              strokeWidth="2"
-            />
-          </svg>
-        </div>
-      )}
-      {mood === "angry_roast" && (
-        <div
-          className={cn(
-            "absolute -top-3 left-1 w-6 h-6 pointer-events-none z-20",
-            animated && "animate-bounce motion-reduce:animate-none",
-          )}
-        >
-          <svg viewBox="0 0 24 24" className="w-full h-full" fill="none">
-            <path
-              d="M5 8C9 8 9 4 9 4M15 4C15 4 15 8 19 8M19 16C15 16 15 20 15 20M9 20C9 20 9 16 5 16"
-              stroke="#EF4444"
-              strokeWidth="3.5"
-              strokeLinecap="round"
-            />
-          </svg>
-        </div>
-      )}
+      <ProfessorMoodOverlay mood={mood} animated={animated} />
 
       {/* Main Dr. Labo (Brain Genius) Character Vector Animation */}
       <div
         className={cn(
           SIZE_MAP[size],
           "relative flex items-center justify-center filter drop-shadow-[0_4px_6px_rgba(0,0,0,0.18)]",
-          animated &&
-            mood === "ticking_panic" &&
-            "drlabo-panic motion-reduce:animate-none",
-          animated &&
-            mood === "proud_cheer" &&
-            "drlabo-cheer motion-reduce:animate-none",
-          animated &&
-            mood !== "ticking_panic" &&
-            mood !== "proud_cheer" &&
-            "drlabo-animated-body motion-reduce:animate-none",
+          getBodyAnimationClass(animated, mood),
         )}
       >
         <svg
@@ -326,70 +559,7 @@ export const ProfessorAvatar: React.FC<ProfessorAvatarProps> = ({
           />
 
           {/* Eyebrows (White & Bushy above spectacles) */}
-          {mood === "angry_roast" ? (
-            <>
-              <line
-                x1="38"
-                y1="42"
-                x2="52"
-                y2="47"
-                stroke="#2B2D42"
-                strokeWidth="4.5"
-                strokeLinecap="round"
-              />
-              <line
-                x1="82"
-                y1="42"
-                x2="68"
-                y2="47"
-                stroke="#2B2D42"
-                strokeWidth="4.5"
-                strokeLinecap="round"
-              />
-            </>
-          ) : mood === "shocked" || mood === "ticking_panic" ? (
-            <>
-              <path
-                d="M38 40C44 36 48 36 52 40"
-                stroke="#2B2D42"
-                strokeWidth="4"
-                strokeLinecap="round"
-              />
-              <path
-                d="M82 40C76 36 72 36 68 40"
-                stroke="#2B2D42"
-                strokeWidth="4"
-                strokeLinecap="round"
-              />
-            </>
-          ) : (
-            <>
-              <path
-                d="M36 42C42 38 48 38 52 42"
-                stroke="#FFFFFF"
-                strokeWidth="5"
-                strokeLinecap="round"
-              />
-              <path
-                d="M36 42C42 38 48 38 52 42"
-                stroke="#2B2D42"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-              />
-              <path
-                d="M84 42C78 38 72 38 68 42"
-                stroke="#FFFFFF"
-                strokeWidth="5"
-                strokeLinecap="round"
-              />
-              <path
-                d="M84 42C78 38 72 38 68 42"
-                stroke="#2B2D42"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-              />
-            </>
-          )}
+          <ProfessorEyebrows mood={mood} />
 
           {/* Glasses Frame & Bridge */}
           <line
@@ -426,42 +596,7 @@ export const ProfessorAvatar: React.FC<ProfessorAvatarProps> = ({
           />
 
           {/* Eyes behind Glasses (with animated blinking!) */}
-          <g
-            className={
-              animated ? "drlabo-animated-eyes motion-reduce:animate-none" : ""
-            }
-          >
-            {mood === "shocked" || mood === "ticking_panic" ? (
-              <>
-                <circle cx="44" cy="52" r="5" fill="#2B2D42" />
-                <circle cx="43" cy="50" r="1.5" fill="#FFFFFF" />
-                <circle cx="76" cy="56" r="5" fill="#2B2D42" />
-                <circle cx="75" cy="54" r="1.5" fill="#FFFFFF" />
-              </>
-            ) : mood === "proud_cheer" ? (
-              <>
-                <path
-                  d="M39 53C42 49 46 49 49 53"
-                  stroke="#2B2D42"
-                  strokeWidth="3.5"
-                  strokeLinecap="round"
-                />
-                <path
-                  d="M71 53C74 49 78 49 81 53"
-                  stroke="#2B2D42"
-                  strokeWidth="3.5"
-                  strokeLinecap="round"
-                />
-              </>
-            ) : (
-              <>
-                <circle cx="44" cy="52" r="4.2" fill="#2B2D42" />
-                <circle cx="42.5" cy="50.5" r="1.5" fill="#FFFFFF" />
-                <circle cx="76" cy="52" r="4.2" fill="#2B2D42" />
-                <circle cx="74.5" cy="50.5" r="1.5" fill="#FFFFFF" />
-              </>
-            )}
-          </g>
+          <ProfessorEyes mood={mood} animated={animated} />
 
           {/* Glasses Lens Glint */}
           <path
@@ -500,44 +635,7 @@ export const ProfessorAvatar: React.FC<ProfessorAvatarProps> = ({
           />
 
           {/* Animated Mouth */}
-          <g
-            className={
-              animated ? "drlabo-animated-mouth motion-reduce:animate-none" : ""
-            }
-          >
-            {mood === "shocked" || mood === "ticking_panic" ? (
-              <ellipse
-                cx="60"
-                cy="74"
-                rx="6"
-                ry="5"
-                fill="#991B1B"
-                stroke="#2B2D42"
-                strokeWidth="2"
-              />
-            ) : mood === "proud_cheer" ? (
-              <path
-                d="M54 71C56 76 64 76 66 71"
-                stroke="#2B2D42"
-                strokeWidth="3"
-                strokeLinecap="round"
-              />
-            ) : mood === "angry_roast" ? (
-              <path
-                d="M52 75C56 72 64 72 68 75"
-                stroke="#2B2D42"
-                strokeWidth="3"
-                strokeLinecap="round"
-              />
-            ) : (
-              <path
-                d="M55 72C58 74 62 74 65 72"
-                stroke="#2B2D42"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-              />
-            )}
-          </g>
+          <ProfessorMouth mood={mood} animated={animated} />
 
           {/* Iconic Graduation Mortarboard Academic Cap (Mũ Cử Nhân Dr. Labo!) */}
           <g>

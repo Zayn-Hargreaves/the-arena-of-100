@@ -33,6 +33,30 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
 }) => {
   const t = useTranslations("Game");
 
+  let statusText = t("waiting");
+  if (roundCompleted) {
+    statusText = t("lockedAnswer");
+  } else if (hasAnswered) {
+    statusText = t("answerSubmitted");
+  }
+
+  const renderQuestionContent = () => {
+    if (!hasCurrentQuestion) {
+      return (
+        <div
+          data-testid="loading-question"
+          className="animate-pulse text-center text-candy-ink/50 py-4"
+        >
+          {t("loadingQuestion")}
+        </div>
+      );
+    }
+    if (isFoggy || isDelayRender) {
+      return "";
+    }
+    return questionText;
+  };
+
   return (
     <div className="p-6 md:p-10 rounded-3xl border-[3.5px] border-candy-ink bg-candy-yellow text-candy-ink shadow-[6px_6px_0_0_#2B2D42] flex flex-col justify-between min-h-[200px] relative overflow-hidden">
       {/* Fog Visual Overlay (CB-5) */}
@@ -99,13 +123,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
         </div>
         <div className="text-[11px] sm:text-xs font-display font-black text-candy-pink animate-pulse flex items-center gap-1.5 shrink-0">
           <span className="w-2 h-2 rounded-full bg-candy-pink border border-candy-ink shrink-0" />
-          <span className="whitespace-nowrap">
-            {roundCompleted
-              ? t("lockedAnswer")
-              : hasAnswered
-                ? t("answerSubmitted")
-                : t("waiting")}
-          </span>
+          <span className="whitespace-nowrap">{statusText}</span>
         </div>
       </div>
 
@@ -117,20 +135,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
       >
         {/* Render a loading skeleton when the current question is not
             yet available, instead of stale fallback content. */}
-        {hasCurrentQuestion ? (
-          isFoggy || isDelayRender ? (
-            ""
-          ) : (
-            questionText
-          )
-        ) : (
-          <div
-            data-testid="loading-question"
-            className="animate-pulse text-center text-candy-ink/50 py-4"
-          >
-            {t("loadingQuestion")}
-          </div>
-        )}
+        {renderQuestionContent()}
       </h2>
 
       {/* Hint Reveal Box (TN-3) */}

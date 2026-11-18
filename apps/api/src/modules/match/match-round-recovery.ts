@@ -33,6 +33,67 @@ export interface RoundRecoveryContext {
   questionService: QuestionService;
 }
 
+async function resolveRecoveryCorrectAnswer(
+  context: RoundRecoveryContext,
+  matchId: string,
+  round: NonNullable<ReturnType<MatchStateMachine["getCurrentRound"]>>,
+  fallbackAnswer: string,
+): Promise<string> {
+  if (fallbackAnswer) {
+    return fallbackAnswer;
+  }
+
+  try {
+    const question = await context.questionService.findOne(round.question.id);
+    if (question) {
+      return question.correctAnswer;
+    }
+    context.logger.warn(
+      `Failed to rehydrate correctAnswer in recovery: question ${round.question.id} not found in DB for match ${matchId} round ${round.roundNo}`,
+    );
+  } catch (error) {
+    context.logger.warn(
+      `Failed to rehydrate correctAnswer in recovery: question lookup for ${round.question.id} threw on match ${matchId} round ${round.roundNo}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  return "";
+}
+
+function collectRoundEvaluatedEvents(
+  stateMachine: MatchStateMachine,
+  roundNo: number,
+): Array<{ payload?: unknown }> {
+  const roundEvaluatedEvents: Array<{ payload?: unknown }> = [];
+  if (typeof stateMachine.forEachEvent === "function") {
+    stateMachine.forEachEvent((event) => {
+      if (
+        event.type === "ROUND_EVALUATED" &&
+        event.payload &&
+        (event.payload as { roundNo?: number }).roundNo === roundNo
+      ) {
+        roundEvaluatedEvents.push(event);
+        if (roundEvaluatedEvents.length > 1) {
+          return false;
+        }
+      }
+      return true;
+    }, "reverse");
+  } else {
+    for (const event of stateMachine.getEventLog()) {
+      if (
+        event.type === "ROUND_EVALUATED" &&
+        event.payload &&
+        (event.payload as { roundNo?: number }).roundNo === roundNo
+      ) {
+        roundEvaluatedEvents.push(event);
+      }
+    }
+  }
+  return roundEvaluatedEvents;
+}
+
 export async function recoverRoundEnd(
   context: RoundRecoveryContext,
   matchId: string,
@@ -46,40 +107,22 @@ export async function recoverRoundEnd(
 
   const recoveryRound = round as typeof round & RecoveryRound;
   const survivingIds = [...state.survivingPlayerIds];
-  let correctAnswer = recoveryRound.correctAnswer || "";
-
-  if (!correctAnswer) {
-    try {
-      const question = await context.questionService.findOne(round.question.id);
-      if (question) {
-        correctAnswer = question.correctAnswer;
-      } else {
-        context.logger.warn(
-          `Failed to rehydrate correctAnswer in recovery: question ${round.question.id} not found in DB for match ${matchId} round ${round.roundNo}`,
-        );
-      }
-    } catch (error) {
-      context.logger.warn(
-        `Failed to rehydrate correctAnswer in recovery: question lookup for ${round.question.id} threw on match ${matchId} round ${round.roundNo}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
+  const correctAnswer = await resolveRecoveryCorrectAnswer(
+    context,
+    matchId,
+    round,
+    recoveryRound.correctAnswer || "",
+  );
 
   const startingPlayers = getRecoveryStartingPlayers(
     context,
     recoveryRound,
     matchId,
   );
-  const roundEvaluatedEvents = stateMachine
-    .getEventLog()
-    .filter(
-      (event) =>
-        event.type === "ROUND_EVALUATED" &&
-        event.payload &&
-        (event.payload as { roundNo?: number }).roundNo === round.roundNo,
-    );
+  const roundEvaluatedEvents = collectRoundEvaluatedEvents(
+    stateMachine,
+    round.roundNo,
+  );
   const recoveredEliminatedIds = getRecoveryEliminatedIdsFromEventLog(
     context,
     roundEvaluatedEvents,

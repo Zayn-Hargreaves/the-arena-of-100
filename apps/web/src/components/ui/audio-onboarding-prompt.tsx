@@ -14,10 +14,10 @@ import {
 function MusicNoteSvg({
   size = 24,
   className = "",
-}: {
+}: Readonly<{
   size?: number;
   className?: string;
-}) {
+}>) {
   return (
     <svg
       width={size}
@@ -41,10 +41,10 @@ function MusicNoteSvg({
 function VolumeHighSvg({
   size = 24,
   className = "",
-}: {
+}: Readonly<{
   size?: number;
   className?: string;
-}) {
+}>) {
   return (
     <svg
       width={size}
@@ -68,10 +68,10 @@ function VolumeHighSvg({
 function VolumeMuteSvg({
   size = 24,
   className = "",
-}: {
+}: Readonly<{
   size?: number;
   className?: string;
-}) {
+}>) {
   return (
     <svg
       width={size}

@@ -152,31 +152,62 @@ export function createSocketIOClient(wsBase, opts = {}) {
   };
 
   function dispatch(event, payload) {
-    for (let i = 0; i < anyHandlers.length; i++) {
+    for (const handler of anyHandlers) {
       try {
-        anyHandlers[i](event, payload);
+        handler(event, payload);
       } catch (_e) {
         /* handler must not break the loop */
       }
     }
     const hs = eventHandlers[event];
     if (hs) {
-      for (let i = 0; i < hs.length; i++) {
+      for (const h of hs) {
         try {
-          hs[i](payload);
+          h(payload);
         } catch (_e) {
           /* ignore */
         }
       }
     }
     const pending = waiters[event];
-    if (pending && pending.length) {
+    if (pending?.length) {
       waiters[event] = [];
-      for (let i = 0; i < pending.length; i++) {
-        clearTimeout(pending[i].timer);
-        pending[i].resolve(payload);
+      for (const p of pending) {
+        clearTimeout(p.timer);
+        p.resolve(payload);
       }
     }
+  }
+
+  let lastServerDisconnectReason = null;
+
+  function handleSocketPacket(pkt) {
+    if (pkt.namespace !== namespace) return;
+
+    if (pkt.sioType === SIO.CONNECT) {
+      client.connected = true;
+      resolveReady(pkt.data || {});
+      return;
+    }
+    if (pkt.sioType === SIO.CONNECT_ERROR) {
+      rejectReady(
+        new Error(`connect_error: ${JSON.stringify(pkt.data || {})}`),
+      );
+      return;
+    }
+    if (pkt.sioType === SIO.EVENT) {
+      const arr = pkt.data || [];
+      dispatch(arr[0], arr[1]);
+      return;
+    }
+    if (pkt.sioType === SIO.DISCONNECT) {
+      // The server sends this Socket.IO packet (e.g. socket.disconnect())
+      // before the raw WebSocket close frame — it's the only place the
+      // application-level reason (as opposed to the transport-level close
+      // code) is available, so stash it for the onClose hook below.
+      lastServerDisconnectReason = pkt.data || "server_disconnect";
+    }
+    // ACK: nothing to do for the load client.
   }
 
   function handleRaw(raw) {
@@ -208,36 +239,8 @@ export function createSocketIOClient(wsBase, opts = {}) {
     if (engineType !== ENGINE.MESSAGE) return;
 
     const pkt = decodeSocketPacket(data.slice(1));
-    if (pkt.namespace !== namespace) return;
-
-    if (pkt.sioType === SIO.CONNECT) {
-      client.connected = true;
-      resolveReady(pkt.data || {});
-      return;
-    }
-    if (pkt.sioType === SIO.CONNECT_ERROR) {
-      rejectReady(
-        new Error(`connect_error: ${JSON.stringify(pkt.data || {})}`),
-      );
-      return;
-    }
-    if (pkt.sioType === SIO.EVENT) {
-      const arr = pkt.data || [];
-      dispatch(arr[0], arr[1]);
-      return;
-    }
-    if (pkt.sioType === SIO.DISCONNECT) {
-      // The server sends this Socket.IO packet (e.g. socket.disconnect())
-      // before the raw WebSocket close frame — it's the only place the
-      // application-level reason (as opposed to the transport-level close
-      // code) is available, so stash it for the onClose hook below.
-      lastServerDisconnectReason = pkt.data || "server_disconnect";
-      return;
-    }
-    // ACK: nothing to do for the load client.
+    handleSocketPacket(pkt);
   }
-
-  let lastServerDisconnectReason = null;
 
   ws.onmessage = (e) => handleRaw(e.data);
   ws.onerror = (e) => {
@@ -256,8 +259,8 @@ export function createSocketIOClient(wsBase, opts = {}) {
     );
     if (opts.onClose) {
       opts.onClose(intentionalClose, {
-        code: e && e.code,
-        reason: e && e.reason,
+        code: e?.code,
+        reason: e?.reason,
         sioReason: lastServerDisconnectReason,
       });
     }

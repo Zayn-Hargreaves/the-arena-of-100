@@ -28,6 +28,11 @@ export function DailyResultPanel({
   const accuracyPct = Math.round(
     (result.correctCount / result.totalQuestions) * 100,
   );
+  const breakdownItems = result.results.map((r, idx) => ({
+    ...r,
+    id: `breakdown-${result.dateKey ?? "result"}-${idx + 1}`,
+    questionIndex: idx + 1,
+  }));
 
   return (
     <div className="space-y-6">
@@ -101,9 +106,9 @@ export function DailyResultPanel({
         </h3>
 
         <div className="space-y-2.5">
-          {result.results.map((r, i) => (
+          {breakdownItems.map((r) => (
             <div
-              key={i}
+              key={r.id}
               className={`border-[2px] border-candy-ink shadow-[3px_3px_0_0_#2B2D42] rounded-2xl p-4 transition-all ${
                 r.isCorrect ? "bg-candy-mint/15" : "bg-candy-pink/10"
               }`}
@@ -127,7 +132,7 @@ export function DailyResultPanel({
                 <div className="min-w-0 flex-1 space-y-2">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <span className="font-mono text-xs font-black text-candy-ink">
-                      {t("result.questionLabel", { index: i + 1 })}
+                      {t("result.questionLabel", { index: r.questionIndex })}
                     </span>
                     <span
                       className={`font-mono text-[10px] font-black uppercase px-2 py-0.5 rounded border border-candy-ink/30 ${

@@ -60,6 +60,21 @@ export class RoomService {
     );
 
     const code = generateRoomCode();
+
+    // Enforce 1 active room per user: auto-leave any other active rooms
+    try {
+      const activeRooms = (await this.getUserActiveRoomIds(hostId)) ?? [];
+      await Promise.all(
+        activeRooms.map((ar) => this.leaveRoom(ar.roomId, hostId)),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Failed to clean up prior active rooms for host ${hostId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
     const room = await this.prisma.room.create({
       data: {
         code,
@@ -163,92 +178,7 @@ export class RoomService {
     // the lock turns the second insert into a no-op rejoin (same
     // outcome as the early-return path for an existing player).
     if (room.status === RoomStatus.WAITING) {
-      let didCreate = false;
-      await this.prisma.$transaction(async (tx) => {
-        // Acquire a row-level lock on the Room. Tagged-template
-        // parameter binding escapes the cuid safely; we never
-        // interpolate user input.
-        const lockedRoom = await tx.$queryRaw<
-          Array<{ id: string; maxPlayers: number }>
-        >`
-          SELECT id, "maxPlayers"
-          FROM "rooms"
-          WHERE id = ${room.id}
-          FOR UPDATE
-        `;
-        if (lockedRoom.length === 0) {
-          // Room was deleted between the outer read and the
-          // in-transaction lock acquisition. Treat as not-found so
-          // the caller gets a typed error.
-          throw new RoomError(ErrorCode.ROOM_NOT_FOUND);
-        }
-        const maxPlayers = lockedRoom[0].maxPlayers;
-
-        // Re-check membership under the row lock. Handles the
-        // double-join race: a concurrent transaction may have
-        // inserted the same (roomId, userId) between our outer
-        // read and the lock acquisition.
-        const existing = await tx.roomPlayer.findFirst({
-          where: { roomId: room.id, userId },
-          select: { id: true },
-        });
-        if (existing) {
-          // No-op rejoin under the lock. Fall through with
-          // didCreate = false; the caller will see `joined: false`
-          // (same shape as the early-return reconnect path above).
-          return;
-        }
-
-        // Count players under the row lock. Counting is cheaper
-        // than re-fetching the include graph and is sufficient for
-        // the capacity check.
-        const currentPlayers = await tx.roomPlayer.count({
-          where: { roomId: room.id },
-        });
-        if (currentPlayers >= maxPlayers) {
-          throw new RoomError(ErrorCode.ROOM_FULL);
-        }
-
-        await tx.roomPlayer.create({
-          data: {
-            roomId: room.id,
-            userId,
-          },
-        });
-        didCreate = true;
-      });
-
-      // Only update Redis state if this transaction actually created
-      // a RoomPlayer row. The no-op rejoin path (double-join race)
-      // deliberately skips the sadd/incr/mirror to keep the cached
-      // playerCount consistent with the authoritative DB.
-      if (didCreate) {
-        await this.redis.sadd(roomPlayersKey(room.id), userId);
-
-        // Atomically bump the player-count counter. Safe under concurrent
-        // joins, and ensures that if the key is recreated due to eviction or
-        // expiry, a proper TTL is set to prevent key leakage.
-        const newCount = await this.cache.incrementPlayerCount(room.id);
-
-        // incrementPlayerCount returns NaN (best-effort) when Redis is
-        // unavailable — skip mirroring a NaN into the cached snapshot.
-        if (!Number.isNaN(newCount)) {
-          await this.cache.syncPlayerCount(room.id, newCount);
-        }
-
-        this.logger.log(`Player ${userId} joined room ${roomCode}`);
-      } else {
-        this.logger.log(
-          `Player ${userId} no-op rejoin room ${roomCode} (concurrent insert won the race)`,
-        );
-      }
-
-      const updatedRoom = await this.getRoom(room.id);
-      return {
-        ...updatedRoom,
-        joined: didCreate,
-        joinedAs: "PLAYER" as JoinMode,
-      };
+      return this.joinWaitingRoom(room, userId);
     }
 
     // 3. IN_GAME / FINISHED — drop-in spectator path. No DB write, no
@@ -274,6 +204,114 @@ export class RoomService {
     //    the same error a stale join attempt would have hit before this
     //    PR.
     throw new RoomError(ErrorCode.ROOM_ALREADY_STARTED);
+  }
+
+  private async joinWaitingRoom(
+    room: { id: string; code: string },
+    userId: string,
+  ) {
+    // Enforce 1 active room per user: auto-leave any other active rooms
+    try {
+      const activeRooms = (await this.getUserActiveRoomIds(userId)) ?? [];
+      await Promise.all(
+        activeRooms
+          .filter((ar) => ar.roomId !== room.id)
+          .map((ar) => this.leaveRoom(ar.roomId, userId)),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Failed to clean up prior active rooms for user ${userId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
+    let didCreate = false;
+    await this.prisma.$transaction(async (tx) => {
+      // Acquire a row-level lock on the Room. Tagged-template
+      // parameter binding escapes the cuid safely; we never
+      // interpolate user input.
+      const lockedRoom = await tx.$queryRaw<
+        Array<{ id: string; maxPlayers: number }>
+      >`
+        SELECT id, "maxPlayers"
+        FROM "rooms"
+        WHERE id = ${room.id}
+        FOR UPDATE
+      `;
+      if (lockedRoom.length === 0) {
+        // Room was deleted between the outer read and the
+        // in-transaction lock acquisition. Treat as not-found so
+        // the caller gets a typed error.
+        throw new RoomError(ErrorCode.ROOM_NOT_FOUND);
+      }
+      const maxPlayers = lockedRoom[0].maxPlayers;
+
+      // Re-check membership under the row lock. Handles the
+      // double-join race: a concurrent transaction may have
+      // inserted the same (roomId, userId) between our outer
+      // read and the lock acquisition.
+      const existing = await tx.roomPlayer.findFirst({
+        where: { roomId: room.id, userId },
+        select: { id: true },
+      });
+      if (existing) {
+        // No-op rejoin under the lock. Fall through with
+        // didCreate = false; the caller will see `joined: false`
+        // (same shape as the early-return reconnect path above).
+        return;
+      }
+
+      // Count players under the row lock. Counting is cheaper
+      // than re-fetching the include graph and is sufficient for
+      // the capacity check.
+      const currentPlayers = await tx.roomPlayer.count({
+        where: { roomId: room.id },
+      });
+      if (currentPlayers >= maxPlayers) {
+        throw new RoomError(ErrorCode.ROOM_FULL);
+      }
+
+      await tx.roomPlayer.create({
+        data: {
+          roomId: room.id,
+          userId,
+        },
+      });
+      didCreate = true;
+    });
+
+    // Only update Redis state if this transaction actually created
+    // a RoomPlayer row. The no-op rejoin path (double-join race)
+    // deliberately skips the sadd/incr/mirror to keep the cached
+    // playerCount consistent with the authoritative DB.
+    if (didCreate) {
+      await this.redis.sadd(roomPlayersKey(room.id), userId);
+
+      // Atomically bump the player-count counter. Safe under concurrent
+      // joins, and ensures that if the key is recreated due to eviction or
+      // expiry, a proper TTL is set to prevent key leakage.
+      const newCount = await this.cache.incrementPlayerCount(room.id);
+
+      // incrementPlayerCount returns NaN (best-effort) when Redis is
+      // unavailable — skip mirroring a NaN into the cached snapshot.
+      if (!Number.isNaN(newCount)) {
+        await this.cache.syncPlayerCount(room.id, newCount);
+      }
+
+      this.logger.log(`Player ${userId} joined room ${room.code}`);
+    } else {
+      this.logger.log(
+        `Player ${userId} no-op rejoin room ${room.code} (concurrent insert won the race)`,
+      );
+    }
+
+    const updatedRoom = await this.getRoom(room.id);
+    return {
+      ...updatedRoom,
+      joined: didCreate,
+      joinedAs: "PLAYER" as JoinMode,
+    };
   }
 
   // Leave room
@@ -354,7 +392,7 @@ export class RoomService {
 
   // List public rooms
   async listPublicRooms() {
-    return this.prisma.room.findMany({
+    return await this.prisma.room.findMany({
       where: {
         type: "PUBLIC",
         status: RoomStatus.WAITING,
@@ -428,9 +466,32 @@ export class RoomService {
     return this.redis.smembers(roomPlayersKey(roomId));
   }
 
-  // Find active rooms for a user
+  // Lightweight lookup for room IDs and match IDs (e.g. auto-cleanup / leaveRoom)
+  async getUserActiveRoomIds(userId: string) {
+    return await this.prisma.roomPlayer.findMany({
+      where: {
+        userId,
+        room: {
+          status: {
+            not: RoomStatus.FINISHED,
+          },
+        },
+      },
+      select: {
+        roomId: true,
+        room: {
+          select: {
+            id: true,
+            currentMatchId: true,
+          },
+        },
+      },
+    });
+  }
+
+  // Find active rooms for a user (includes full player list for reconnection rehydration)
   async getUserActiveRooms(userId: string) {
-    return this.prisma.roomPlayer.findMany({
+    return await this.prisma.roomPlayer.findMany({
       where: {
         userId,
         room: {
@@ -485,7 +546,7 @@ export class RoomService {
     // FINISHED rooms are excluded: once a room has finished it will never
     // have stale players that need sweeping, and including it would cause
     // the sweep to track FINISHED rooms in hostStaleStrikes indefinitely.
-    return this.prisma.room.findMany({
+    return await this.prisma.room.findMany({
       where: {
         status: {
           in: [

@@ -44,7 +44,7 @@ export function HomeArenaCard({
   onQuickMatchSubmit,
   onCreateRoom,
   onJoinRoom,
-}: HomeArenaCardProps) {
+}: Readonly<HomeArenaCardProps>) {
   const t = useTranslations("HomePage");
 
   return (

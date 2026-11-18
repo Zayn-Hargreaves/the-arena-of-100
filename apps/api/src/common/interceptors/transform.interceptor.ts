@@ -27,7 +27,7 @@ function isWrappedResponse(data: unknown): data is Response<unknown> {
 }
 
 // Type guard to check if data has the expected pagination structure
-function hasPaginationStructure<T, M>(
+export function hasPaginationStructure<T, M>(
   data: unknown,
 ): data is { data: T; meta: M } {
   if (data === null || typeof data !== "object") {

@@ -63,7 +63,7 @@ export function CardTile({
   disabled,
   isBurning = false,
   className,
-}: CardTileProps) {
+}: Readonly<CardTileProps>) {
   const def = getCardDefinition(cardId);
   const t = useTranslations("Cards");
   const glyph = getGlyphForCardId(cardId);

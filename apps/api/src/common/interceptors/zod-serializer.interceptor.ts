@@ -9,6 +9,8 @@ import { Observable } from "rxjs";
 import { map } from "rxjs/operators";
 import { ZodSchema } from "zod";
 
+import { hasPaginationStructure } from "./transform.interceptor";
+
 /**
  * NestJS interceptor to serialize outgoing payloads using Zod schemas.
  * This completely decouples presentation serialization from internal database entities.
@@ -28,13 +30,7 @@ export class ZodSerializerInterceptor implements NestInterceptor {
         }
 
         // If the return data is a pagination envelope, serialize the inside "data" array/object
-        if (
-          typeof data === "object" &&
-          "data" in data &&
-          "meta" in data &&
-          data.data !== null &&
-          typeof data.data === "object"
-        ) {
+        if (hasPaginationStructure(data)) {
           const serializedData = Array.isArray(data.data)
             ? data.data.map((item: unknown) => this.schema.parse(item))
             : this.schema.parse(data.data);

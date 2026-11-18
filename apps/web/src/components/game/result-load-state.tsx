@@ -6,11 +6,11 @@ export function ResultLoadStateView({
   state,
   onHome,
   onRetry,
-}: {
+}: Readonly<{
   state: Exclude<LoadState, "ready">;
   onHome: () => void;
   onRetry: () => void;
-}) {
+}>) {
   const t = useTranslations("Result.loadState");
 
   if (state === "loading") {

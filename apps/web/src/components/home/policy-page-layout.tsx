@@ -9,6 +9,7 @@ import { LanguageToggle } from "@/components/ui/language-toggle";
 import { cn } from "@/lib/utils";
 
 export interface PolicySection {
+  id?: string;
   title: string;
   desc: string;
   bgClass: string;
@@ -80,9 +81,9 @@ export function PolicyPageLayout({
         </div>
 
         <div className="space-y-6">
-          {sections.map((sec, i) => (
+          {sections.map((sec) => (
             <div
-              key={i}
+              key={sec.id ?? sec.title}
               className={cn(
                 "p-5 rounded-2xl border-3 border-candy-ink shadow-[3px_3px_0_0_#2B2D42]",
                 sec.bgClass,

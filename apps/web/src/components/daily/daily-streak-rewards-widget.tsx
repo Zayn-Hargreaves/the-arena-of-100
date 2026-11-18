@@ -35,7 +35,7 @@ export function DailyStreakRewardsWidget({
 
   // Calculate next target
   const nextMilestone =
-    milestones.find((m) => !m.isUnlocked) ?? milestones[milestones.length - 1];
+    milestones.find((m) => !m.isUnlocked) ?? milestones.at(-1)!;
   const progressPercent = Math.min(
     100,
     Math.round((currentStreak / nextMilestone.target) * 100),

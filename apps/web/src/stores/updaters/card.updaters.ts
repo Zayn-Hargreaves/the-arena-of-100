@@ -126,16 +126,20 @@ export function applyCardOfferState(
   }
 
   const serverExpiresAt = data.expiresAt;
-  const serverDurationMs = data.durationMs;
-  const fallbackDurationMs = GAME_CONFIG.CARD_OFFER_DURATION_MS;
-  const expiresAt =
-    serverExpiresAt ??
-    (state.cardState.currentOffer?.offerSeqNo === data.offerSeqNo &&
-    state.cardState.currentOffer.expiresAt
-      ? state.cardState.currentOffer.expiresAt
-      : serverDurationMs
-        ? Date.now() + serverDurationMs
-        : Date.now() + fallbackDurationMs);
+  const currentOffer = state.cardState.currentOffer;
+  let expiresAt: number;
+
+  if (serverExpiresAt !== undefined) {
+    expiresAt = serverExpiresAt;
+  } else if (
+    currentOffer?.offerSeqNo === data.offerSeqNo &&
+    currentOffer.expiresAt
+  ) {
+    expiresAt = currentOffer.expiresAt;
+  } else {
+    const durationMs = data.durationMs || GAME_CONFIG.CARD_OFFER_DURATION_MS;
+    expiresAt = Date.now() + durationMs;
+  }
 
   return {
     cardState: {
@@ -189,7 +193,7 @@ export function applyCardPickedState(
       ...state.cardState,
       hand: nextHand,
       offerSeqNoByCardId: {
-        ...(state.cardState.offerSeqNoByCardId ?? {}),
+        ...state.cardState.offerSeqNoByCardId,
         [data.selectedCardId]: data.offerSeqNo,
       },
       currentOffer: null, // dismiss active offer
@@ -328,7 +332,7 @@ export function applyOptimisticCardPick(
         ? state.cardState.hand
         : [...state.cardState.hand, cardId],
       offerSeqNoByCardId: {
-        ...(state.cardState.offerSeqNoByCardId ?? {}),
+        ...state.cardState.offerSeqNoByCardId,
         [cardId]: offerSeqNo,
       },
       currentOffer: null,
@@ -398,7 +402,7 @@ export function applyCardCommandErrorState(
 
   if (pending.type === "PICK") {
     const nextOfferSeqNo = {
-      ...(state.cardState.offerSeqNoByCardId ?? {}),
+      ...state.cardState.offerSeqNoByCardId,
     };
     if (pending.addedToHand) {
       delete nextOfferSeqNo[pending.cardId];

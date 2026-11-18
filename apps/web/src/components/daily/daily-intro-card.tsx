@@ -5,7 +5,7 @@ interface DailyIntroCardProps {
   onStart: () => void;
 }
 
-export function DailyIntroCard({ onStart }: DailyIntroCardProps) {
+export function DailyIntroCard({ onStart }: Readonly<DailyIntroCardProps>) {
   const t = useTranslations("daily");
 
   return (

@@ -14,7 +14,7 @@ export function PanelSection({
   glyph,
   children,
   className,
-}: PanelSectionProps) {
+}: Readonly<PanelSectionProps>) {
   return (
     <div
       className={cn(

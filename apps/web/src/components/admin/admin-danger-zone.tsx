@@ -15,7 +15,7 @@ export function AdminDangerZone({
   resetting,
   onSeedQuestions,
   onResetSystem,
-}: AdminDangerZoneProps) {
+}: Readonly<AdminDangerZoneProps>) {
   const t = useTranslations("admin");
 
   return (

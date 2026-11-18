@@ -865,7 +865,7 @@ export class MatchStateMachine {
     }
 
     const player = this.state.players.get(playerId);
-    if (!player || player.status !== PlayerStatus.ACTIVE) {
+    if (player?.status !== PlayerStatus.ACTIVE) {
       throw new RoomError(ErrorCode.PLAYER_NOT_IN_ROOM);
     }
 
@@ -873,9 +873,7 @@ export class MatchStateMachine {
       throw new RoomError(ErrorCode.INVALID_TOPIC);
     }
 
-    if (!this.state.topicVotes) {
-      this.state.topicVotes = {};
-    }
+    this.state.topicVotes ??= {};
 
     const previousVote = this.state.topicVotes[playerId];
     if (previousVote === topic) {
@@ -1090,8 +1088,7 @@ export class MatchStateMachine {
   } {
     if (
       this.state.status !== MatchStatus.ROUND_ACTIVE ||
-      !this.currentRound ||
-      this.currentRound.status !== "ACTIVE"
+      this.currentRound?.status !== "ACTIVE"
     ) {
       throw new RoomError(ErrorCode.ROUND_NOT_ACTIVE);
     }
@@ -1141,6 +1138,44 @@ export class MatchStateMachine {
       );
     }
 
+    this.applyCardResolutionSideEffects({
+      playedByPlayerId,
+      cardId,
+      resolvedEffect,
+      targetPlayerIds,
+      seqNo,
+      expiresAtServer,
+      isTemporary,
+      roundNo: currentRoundNo,
+    });
+
+    return {
+      seqNo,
+      expiresAtServer: isTemporary ? expiresAtServer : null,
+      remainingMs: isTemporary ? remainingMs : null,
+    };
+  }
+
+  private applyCardResolutionSideEffects(params: {
+    playedByPlayerId: string;
+    cardId: CardId;
+    resolvedEffect: CardEffect;
+    targetPlayerIds: readonly string[];
+    seqNo: number;
+    expiresAtServer: number;
+    isTemporary: boolean;
+    roundNo: number;
+  }): void {
+    const {
+      playedByPlayerId,
+      cardId,
+      resolvedEffect,
+      targetPlayerIds,
+      seqNo,
+      expiresAtServer,
+      isTemporary,
+      roundNo,
+    } = params;
     if (isTemporary) {
       const list = this.activeEffects.get(playedByPlayerId) ?? [];
       list.push({
@@ -1159,7 +1194,7 @@ export class MatchStateMachine {
       this.secondChancePlayers.add(playedByPlayerId);
       this.logEvent("SECOND_CHANCE_GRANTED", {
         playerId: playedByPlayerId,
-        roundNo: this.currentRound.roundNo,
+        roundNo,
       });
     }
 
@@ -1168,7 +1203,6 @@ export class MatchStateMachine {
     // only resolutions with `targetPlayerIds.length > 1` do,
     // matching the spec's `AOE_CAP_PER_ROUND` rule (spec §3.3).
     if (targetPlayerIds.length > 1) {
-      const roundNo = this.currentRound.roundNo;
       const current = this.aoeCountByRound.get(roundNo) ?? 0;
       this.aoeCountByRound.set(roundNo, current + 1);
     }
@@ -1187,12 +1221,6 @@ export class MatchStateMachine {
     }
     played.add(cardId);
     this.playerPickedCards.get(playedByPlayerId)?.delete(cardId);
-
-    return {
-      seqNo,
-      expiresAtServer: isTemporary ? expiresAtServer : null,
-      remainingMs: isTemporary ? remainingMs : null,
-    };
   }
 
   // Get a player's current hand (off the in-memory mirror —

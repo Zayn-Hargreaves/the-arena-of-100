@@ -5,9 +5,11 @@
 // ============================================================
 
 import { Logger } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import {
   normalizeString,
+  Question,
   questionSeeds,
 } from "../../../prisma-seeds/questions";
 import { appendAudit } from "./admin-audit.ops";
@@ -15,6 +17,183 @@ import { appendAudit } from "./admin-audit.ops";
 export interface QuestionSyncDeps {
   prisma: PrismaService;
   logger: Logger;
+}
+
+type TagRecord = { id: string; name: string };
+
+/**
+ * Clear all existing questions, tags, and dependencies when requested.
+ */
+async function clearQuestionBank(
+  tx: Prisma.TransactionClient,
+  logger: Logger,
+): Promise<void> {
+  logger.warn("Deleting all existing questions, tags, and dependencies...");
+  // Prisma relations will handle cascading delete on QuestionTag, MatchRound questions are kept or protected.
+  // Since match_rounds have on_delete: Restrict/Cascade, we'll perform a clean delete.
+  // To avoid foreign key constraint violations if there are active matches referencing questions,
+  // we must clear matches, rounds, answers first, or skip clearing those if it's production.
+  // For general sync, clearing questions and tags is fully supported.
+  await tx.questionTag.deleteMany();
+  await tx.question.deleteMany();
+  await tx.tag.deleteMany();
+}
+
+/**
+ * Collect all unique normalized tag names across seed questions.
+ */
+function collectUniqueSeedTags(seeds: Question[]): string[] {
+  const allTagNames = new Set<string>();
+  for (const question of seeds) {
+    for (const t of question.tags ?? []) {
+      allTagNames.add(normalizeString(t));
+    }
+  }
+  return Array.from(allTagNames);
+}
+
+/**
+ * Batch create or fetch tags in the database.
+ */
+async function syncTags(
+  tx: Prisma.TransactionClient,
+  tagNames: string[],
+): Promise<Map<string, TagRecord>> {
+  if (tagNames.length === 0) {
+    return new Map();
+  }
+  await tx.tag.createMany({
+    data: tagNames.map((name) => ({ name })),
+    skipDuplicates: true,
+  });
+  const existingTags = await tx.tag.findMany({
+    where: { name: { in: tagNames } },
+  });
+  return new Map(existingTags.map((tag) => [tag.name, tag]));
+}
+
+/**
+ * Preload every question that already matches a seed's content and its
+ * associated questionTag links in batch queries instead of per-seed lookups.
+ */
+async function preloadExistingQuestionsAndTags(
+  tx: Prisma.TransactionClient,
+  seedContents: string[],
+) {
+  const existingQuestions = await tx.question.findMany({
+    where: { content: { in: seedContents } },
+  });
+  const existingQuestionByContent = new Map(
+    existingQuestions.map((q) => [q.content, q]),
+  );
+
+  const existingQuestionIds = existingQuestions.map((q) => q.id);
+  const existingQuestionTags =
+    existingQuestionIds.length > 0
+      ? await tx.questionTag.findMany({
+          where: { questionId: { in: existingQuestionIds } },
+        })
+      : [];
+
+  const existingTagIdsByQuestionId = new Map<string, Set<string>>();
+  for (const qt of existingQuestionTags) {
+    let set = existingTagIdsByQuestionId.get(qt.questionId);
+    if (!set) {
+      set = new Set();
+      existingTagIdsByQuestionId.set(qt.questionId, set);
+    }
+    set.add(qt.tagId);
+  }
+
+  return { existingQuestionByContent, existingTagIdsByQuestionId };
+}
+
+/**
+ * Sync tag links for a single question.
+ */
+async function syncQuestionTags(
+  tx: Prisma.TransactionClient,
+  questionId: string,
+  questionTags: string[] | undefined,
+  tagMap: Map<string, TagRecord>,
+  existingTagIdsByQuestionId: Map<string, Set<string>>,
+): Promise<number> {
+  if (!questionTags || questionTags.length === 0) {
+    return 0;
+  }
+
+  const resolvedTags = questionTags
+    .map((name) => tagMap.get(normalizeString(name)))
+    .filter((t): t is TagRecord => !!t);
+
+  if (resolvedTags.length === 0) {
+    return 0;
+  }
+
+  const existingTagIds =
+    existingTagIdsByQuestionId.get(questionId) ?? new Set<string>();
+  const tagsToCreate = resolvedTags.filter(
+    (tag) => !existingTagIds.has(tag.id),
+  );
+
+  if (tagsToCreate.length === 0) {
+    return 0;
+  }
+
+  await tx.questionTag.createMany({
+    data: tagsToCreate.map((tag) => ({
+      questionId,
+      tagId: tag.id,
+    })),
+    skipDuplicates: true,
+  });
+
+  return tagsToCreate.length;
+}
+
+/**
+ * Insert or update a single question and synchronize its tags.
+ */
+async function syncSingleQuestion(
+  tx: Prisma.TransactionClient,
+  question: Question,
+  existingQuestionByContent: Map<string, { id: string }>,
+  tagMap: Map<string, TagRecord>,
+  existingTagIdsByQuestionId: Map<string, Set<string>>,
+): Promise<{ seededQuestionTags: number }> {
+  const normalizedContent = question.content.trim();
+  const existingQuestion = existingQuestionByContent.get(normalizedContent);
+
+  const questionData = {
+    options: question.options,
+    correctAnswer: question.correctAnswer,
+    difficulty: question.difficulty,
+    category: question.category,
+    explanation: question.explanation,
+    active: true,
+  };
+
+  const createdQuestion = existingQuestion
+    ? await tx.question.update({
+        where: { id: existingQuestion.id },
+        data: questionData,
+      })
+    : await tx.question.create({
+        data: {
+          content: normalizedContent,
+          ...questionData,
+        },
+      });
+
+  const seededQuestionTags = await syncQuestionTags(
+    tx,
+    createdQuestion.id,
+    question.tags,
+    tagMap,
+    existingTagIdsByQuestionId,
+  );
+
+  return { seededQuestionTags };
 }
 
 /**
@@ -57,143 +236,27 @@ export async function syncQuestions(
     // purge instead of leaving the question bank empty.
     const result = await prisma.$transaction(async (tx) => {
       if (clearExisting) {
-        logger.warn(
-          "Deleting all existing questions, tags, and dependencies...",
-        );
-        // Prisma relations will handle cascading delete on QuestionTag, MatchRound questions are kept or protected.
-        // Since match_rounds have on_delete: Restrict/Cascade, we'll perform a clean delete.
-        // To avoid foreign key constraint violations if there are active matches referencing questions,
-        // we must clear matches, rounds, answers first, or skip clearing those if it's production.
-        // For general sync, clearing questions and tags is fully supported.
-        await tx.questionTag.deleteMany();
-        await tx.question.deleteMany();
-        await tx.tag.deleteMany();
+        await clearQuestionBank(tx, logger);
       }
 
-      // Collect all unique tag names
-      const allTagNames = new Set<string>();
-      for (const question of questionSeeds) {
-        const targetTags = question.tags
-          ? question.tags.map((t) => normalizeString(t))
-          : [];
-        targetTags.forEach((tagName) => allTagNames.add(tagName));
-      }
+      const txAllTagNamesArray = collectUniqueSeedTags(questionSeeds);
+      const tagMap = await syncTags(tx, txAllTagNamesArray);
 
-      const txAllTagNamesArray = Array.from(allTagNames);
-
-      // Batch create or fetch tags
-      if (txAllTagNamesArray.length > 0) {
-        await tx.tag.createMany({
-          data: txAllTagNamesArray.map((name) => ({ name })),
-          skipDuplicates: true,
-        });
-      }
-
-      const existingTags =
-        txAllTagNamesArray.length > 0
-          ? await tx.tag.findMany({
-              where: { name: { in: txAllTagNamesArray } },
-            })
-          : [];
-      const tagMap = new Map(existingTags.map((tag) => [tag.name, tag]));
-
-      // Preload every question that already matches a seed's content in
-      // one query instead of a per-seed findFirst (N+1). Seeded content
-      // is trimmed up front so the lookup map matches what's queried.
       const seedContents = questionSeeds.map((q) => q.content.trim());
-      const existingQuestions = await tx.question.findMany({
-        where: { content: { in: seedContents } },
-      });
-      const existingQuestionByContent = new Map(
-        existingQuestions.map((q) => [q.content, q]),
+      const { existingQuestionByContent, existingTagIdsByQuestionId } =
+        await preloadExistingQuestionsAndTags(tx, seedContents);
+
+      const questionResults = await Promise.all(
+        questionSeeds.map((question) =>
+          syncSingleQuestion(
+            tx,
+            question,
+            existingQuestionByContent,
+            tagMap,
+            existingTagIdsByQuestionId,
+          ),
+        ),
       );
-
-      // Preload the questionTag links for those existing questions in one
-      // query. A newly-created question can never already have a tag
-      // link, so only existing questions need this lookup.
-      const existingQuestionIds = existingQuestions.map((q) => q.id);
-      const existingQuestionTags =
-        existingQuestionIds.length > 0
-          ? await tx.questionTag.findMany({
-              where: { questionId: { in: existingQuestionIds } },
-            })
-          : [];
-      const existingTagIdsByQuestionId = new Map<string, Set<string>>();
-      for (const qt of existingQuestionTags) {
-        const set = existingTagIdsByQuestionId.get(qt.questionId) ?? new Set();
-        set.add(qt.tagId);
-        existingTagIdsByQuestionId.set(qt.questionId, set);
-      }
-
-      let txSeededQuestions = 0;
-      let txSeededQuestionTags = 0;
-
-      for (const question of questionSeeds) {
-        const normalizedContent = question.content.trim();
-        const existingQuestion =
-          existingQuestionByContent.get(normalizedContent);
-
-        let createdQuestion;
-        if (existingQuestion) {
-          // Update existing question
-          createdQuestion = await tx.question.update({
-            where: { id: existingQuestion.id },
-            data: {
-              options: question.options as string[],
-              correctAnswer: question.correctAnswer,
-              difficulty: question.difficulty,
-              category: question.category,
-              explanation: question.explanation,
-              active: true,
-            },
-          });
-        } else {
-          // Create new question
-          createdQuestion = await tx.question.create({
-            data: {
-              content: normalizedContent,
-              options: question.options as string[],
-              correctAnswer: question.correctAnswer,
-              difficulty: question.difficulty,
-              category: question.category,
-              explanation: question.explanation,
-              active: true,
-            },
-          });
-        }
-        txSeededQuestions++;
-
-        // Sync tags
-        const targetTags = question.tags
-          ? question.tags.map((t) => normalizeString(t))
-          : [];
-
-        const resolvedTags = targetTags
-          .map((name) => tagMap.get(name))
-          .filter((t): t is (typeof existingTags)[0] => !!t);
-
-        if (resolvedTags.length > 0) {
-          // Existing questions may already be linked to some of these
-          // tags (preloaded above); a freshly created question never is.
-          const existingTagIds =
-            existingTagIdsByQuestionId.get(createdQuestion.id) ??
-            new Set<string>();
-          const tagsToCreate = resolvedTags.filter(
-            (tag) => !existingTagIds.has(tag.id),
-          );
-
-          if (tagsToCreate.length > 0) {
-            await tx.questionTag.createMany({
-              data: tagsToCreate.map((tag) => ({
-                questionId: createdQuestion.id,
-                tagId: tag.id,
-              })),
-              skipDuplicates: true,
-            });
-            txSeededQuestionTags += tagsToCreate.length;
-          }
-        }
-      }
 
       // Upsert admin user for safety
       await tx.user.upsert({
@@ -204,6 +267,12 @@ export async function syncQuestions(
           role: "ADMIN",
         },
       });
+
+      const txSeededQuestions = questionResults.length;
+      const txSeededQuestionTags = questionResults.reduce(
+        (sum, r) => sum + r.seededQuestionTags,
+        0,
+      );
 
       return {
         seededQuestions: txSeededQuestions,

@@ -116,6 +116,25 @@ export function ProfileMatchHistory({
         const isWon = item.status === "WON";
         const isEliminated = item.status === "ELIMINATED";
 
+        let statusIcon = <FlagAbandonSvg size={22} />;
+        if (isWon) {
+          statusIcon = <CrownGoldSvg size={24} />;
+        } else if (isEliminated) {
+          statusIcon = <SkullDefeatSvg size={22} />;
+        }
+
+        let eloDeltaClass =
+          "bg-candy-cloud text-candy-ink/70 border-candy-ink/20";
+        if (item.eloDelta !== null && item.eloDelta !== undefined) {
+          if (item.eloDelta > 0) {
+            eloDeltaClass =
+              "bg-candy-mint/15 text-candy-mint border-candy-mint/40";
+          } else if (item.eloDelta < 0) {
+            eloDeltaClass =
+              "bg-candy-red/15 text-candy-red border-candy-red/40";
+          }
+        }
+
         return (
           <div
             key={item.matchId}
@@ -136,13 +155,7 @@ export function ProfileMatchHistory({
                     : "bg-candy-cloud text-candy-ink"
                 }`}
               >
-                {isWon ? (
-                  <CrownGoldSvg size={24} />
-                ) : isEliminated ? (
-                  <SkullDefeatSvg size={22} />
-                ) : (
-                  <FlagAbandonSvg size={22} />
-                )}
+                {statusIcon}
               </div>
               <div>
                 <div className="flex items-center gap-2">
@@ -184,13 +197,7 @@ export function ProfileMatchHistory({
                 </p>
                 {item.eloDelta !== null && item.eloDelta !== undefined && (
                   <span
-                    className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-mono font-black mt-0.5 border ${
-                      item.eloDelta > 0
-                        ? "bg-candy-mint/15 text-candy-mint border-candy-mint/40"
-                        : item.eloDelta < 0
-                          ? "bg-candy-red/15 text-candy-red border-candy-red/40"
-                          : "bg-candy-cloud text-candy-ink/70 border-candy-ink/20"
-                    }`}
+                    className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-mono font-black mt-0.5 border ${eloDeltaClass}`}
                   >
                     {item.eloDelta > 0 ? `+${item.eloDelta}` : item.eloDelta}{" "}
                     ELO

@@ -89,6 +89,33 @@ export async function fetchResult(
   }
 }
 
+function resolveStoredUserId(
+  playerById: Map<string, SimplePlayer>,
+  players: SimplePlayer[],
+): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const storedUserId = localStorage.getItem("userId");
+    if (storedUserId && playerById.has(storedUserId)) {
+      return storedUserId;
+    }
+    const storedCallsign = localStorage.getItem("callsign");
+    if (storedCallsign) {
+      const matchedPlayers = players.filter(
+        (p) => p.name?.toLowerCase() === storedCallsign.toLowerCase(),
+      );
+      if (matchedPlayers.length === 1 && matchedPlayers[0]) {
+        return matchedPlayers[0].id;
+      }
+    }
+  } catch {
+    // ignore localStorage access errors
+  }
+  return null;
+}
+
 export function useMatchResults(matchId: string, userId: string | null) {
   const t = useTranslations("Result.fallbacks");
   const [loadState, setLoadState] = useState<ResultLoadState>("loading");
@@ -236,27 +263,7 @@ export function useMatchResults(matchId: string, userId: string | null) {
   );
 
   const yourPerformance = useMemo<PerformanceViewModel>(() => {
-    let effectiveUserId = userId;
-    if (!effectiveUserId && typeof window !== "undefined") {
-      try {
-        const storedUserId = localStorage.getItem("userId");
-        if (storedUserId && playerById.has(storedUserId)) {
-          effectiveUserId = storedUserId;
-        } else {
-          const storedCallsign = localStorage.getItem("callsign");
-          if (storedCallsign) {
-            const matchedPlayers = players.filter(
-              (p) => p.name?.toLowerCase() === storedCallsign.toLowerCase(),
-            );
-            if (matchedPlayers.length === 1 && matchedPlayers[0]) {
-              effectiveUserId = matchedPlayers[0].id;
-            }
-          }
-        }
-      } catch {
-        // ignore localStorage access errors
-      }
-    }
+    const effectiveUserId = userId ?? resolveStoredUserId(playerById, players);
 
     return computePerformanceViewModel(
       payload,

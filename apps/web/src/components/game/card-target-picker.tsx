@@ -44,7 +44,7 @@ export function CardTargetPicker({
   onPick,
   onCancel,
   className,
-}: CardTargetPickerProps) {
+}: Readonly<CardTargetPickerProps>) {
   const t = useTranslations("Cards");
   const def = getCardDefinition(cardId);
   const isSelfOnly = def.classId === "DEFENSE";
@@ -68,7 +68,7 @@ export function CardTargetPicker({
   }, [isSelfOnly, isAoe, cardId, offerSeqNo, targets, onPick]);
 
   const [searchQuery, setSearchQuery] = React.useState("");
-  const dialogRef = React.useRef<HTMLDivElement>(null);
+  const dialogRef = React.useRef<HTMLDialogElement>(null);
   const previousActiveElement = React.useRef<HTMLElement | null>(null);
   const onCancelRef = React.useRef(onCancel);
   onCancelRef.current = onCancel;
@@ -108,7 +108,7 @@ export function CardTargetPicker({
       }
 
       const firstElement = focusable[0];
-      const lastElement = focusable[focusable.length - 1];
+      const lastElement = focusable.at(-1);
 
       if (e.shiftKey) {
         if (
@@ -118,14 +118,12 @@ export function CardTargetPicker({
           e.preventDefault();
           lastElement?.focus();
         }
-      } else {
-        if (
-          document.activeElement === lastElement ||
-          document.activeElement === dialogRef.current
-        ) {
-          e.preventDefault();
-          firstElement?.focus();
-        }
+      } else if (
+        document.activeElement === lastElement ||
+        document.activeElement === dialogRef.current
+      ) {
+        e.preventDefault();
+        firstElement?.focus();
       }
     };
 
@@ -172,14 +170,14 @@ export function CardTargetPicker({
     : def.description;
 
   return (
-    <div
+    <dialog
       ref={dialogRef}
-      role="dialog"
+      open
       aria-modal="true"
       tabIndex={-1}
       aria-label={t("select")}
       className={cn(
-        "fixed inset-0 z-50 flex items-center justify-center bg-candy-ink/60 backdrop-blur-sm p-4 animate-fade-in outline-none",
+        "fixed inset-0 z-50 flex items-center justify-center bg-candy-ink/60 backdrop-blur-sm p-4 animate-fade-in outline-none border-none m-0 max-w-none max-h-none w-full h-full",
         className,
       )}
     >
@@ -309,6 +307,6 @@ export function CardTargetPicker({
           </button>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 }

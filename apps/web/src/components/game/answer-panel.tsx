@@ -46,8 +46,7 @@ export const AnswerPanel: React.FC<AnswerPanelProps> = ({
   return (
     <div className="space-y-3">
       {isObserving && (
-        <div
-          role="status"
+        <output
           data-testid="spectator-practice-badge"
           className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-candy-cloud rounded-2xl border-[2.5px] border-candy-ink shadow-[2px_2px_0_0_#2B2D42] text-xs text-candy-ink/80 animate-fade-in"
         >
@@ -61,7 +60,7 @@ export const AnswerPanel: React.FC<AnswerPanelProps> = ({
           <span className="text-[10px] uppercase font-display font-black tracking-wider px-2 py-0.5 rounded-lg bg-candy-blue/15 text-candy-blue border-[1.5px] border-candy-blue/30 shrink-0">
             {t("spectatorMode.observingBadge")}
           </span>
-        </div>
+        </output>
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -4,6 +4,13 @@ import { Database, Server } from "lucide-react";
 
 export type ServiceStatus = "loading" | "connected" | "disconnected" | "error";
 
+const STATUS_INDICATOR_STYLE: Record<ServiceStatus, string> = {
+  connected: "bg-candy-mint animate-pulse",
+  loading: "bg-candy-yellow animate-ping",
+  disconnected: "bg-candy-red",
+  error: "bg-candy-red",
+};
+
 const STATUS_KEY_MAP = {
   loading: "status.loading",
   connected: "status.connected",
@@ -27,7 +34,7 @@ function ServiceStatusCard({
   subtitle,
   description,
   status,
-}: ServiceStatusCardProps) {
+}: Readonly<ServiceStatusCardProps>) {
   const t = useTranslations("admin");
 
   return (
@@ -49,13 +56,7 @@ function ServiceStatusCard({
 
         <div className="flex items-center gap-2 bg-candy-cloud px-3 py-1.5 rounded-full border-2 border-candy-ink">
           <span
-            className={`w-2.5 h-2.5 rounded-full ${
-              status === "connected"
-                ? "bg-candy-mint animate-pulse"
-                : status === "loading"
-                  ? "bg-candy-yellow animate-ping"
-                  : "bg-candy-red"
-            }`}
+            className={`w-2.5 h-2.5 rounded-full ${STATUS_INDICATOR_STYLE[status]}`}
           />
           <span className="font-mono font-black text-xs uppercase text-candy-ink">
             {t(STATUS_KEY_MAP[status])}
@@ -78,7 +79,7 @@ interface AdminServiceStatusProps {
 export function AdminServiceStatus({
   dbStatusState,
   redisStatusState,
-}: AdminServiceStatusProps) {
+}: Readonly<AdminServiceStatusProps>) {
   const t = useTranslations("admin");
 
   return (

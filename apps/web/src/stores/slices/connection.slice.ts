@@ -85,6 +85,135 @@ export interface ConnectionSlice {
   disconnect: () => void;
 }
 
+function handleFailedEventRollback(
+  data: ErrorPayload,
+  set: (updater: (state: SocketState) => Partial<SocketState>) => void,
+): void {
+  if (data.failedEvent === ClientEvent.SUBMIT_ANSWER) {
+    const saved = data.submissionId
+      ? consumedSecondChanceBySubmissionId.get(data.submissionId)
+      : undefined;
+    if (data.submissionId) {
+      consumedSecondChanceBySubmissionId.delete(data.submissionId);
+    }
+    set((state) => applySubmitAnswerErrorState(state, data, saved));
+  } else if (
+    data.failedEvent === ClientEvent.CARD_PICK ||
+    data.failedEvent === ClientEvent.CARD_PLAY
+  ) {
+    const pending = data.commandId
+      ? pendingCardCommands.get(data.commandId)
+      : undefined;
+    if (data.commandId) {
+      pendingCardCommands.delete(data.commandId);
+    }
+    set((state) => applyCardCommandErrorState(state, data, pending));
+  } else if (data.failedEvent === ClientEvent.VOTE_BAN_TOPIC) {
+    const { matchId, recomputedTopic } = data.commandId
+      ? removePendingTopicVoteCommand(data.commandId)
+      : { matchId: null, recomputedTopic: null };
+    set((state) => applyTopicVoteErrorState(state, matchId, recomputedTopic));
+  }
+}
+
+function handleAuthErrorDisconnect(
+  newSocket: Socket,
+  data: ErrorPayload,
+  get: () => SocketState,
+  set: (updater: (state: SocketState) => Partial<SocketState>) => void,
+): void {
+  if (
+    data.code !== ErrorCode.INVALID_TOKEN &&
+    data.code !== ErrorCode.UNAUTHORIZED
+  ) {
+    return;
+  }
+  if (get().socket === newSocket) {
+    const { heartbeatInterval: hb } = get();
+    if (hb) clearInterval(hb);
+    set((state) => applyUnauthorizedErrorState(data.message, state));
+  }
+  newSocket.disconnect();
+}
+
+async function resolveAndAuthenticateSocket(
+  newSocket: Socket,
+  get: () => SocketState,
+  set: (state: Partial<SocketState>) => void,
+): Promise<void> {
+  const stateToken = get().accessToken;
+  let effectiveToken = stateToken;
+  if (!effectiveToken) {
+    try {
+      effectiveToken = await get().refreshAccessToken();
+    } catch {
+      effectiveToken = null;
+    }
+  }
+
+  if (!effectiveToken) {
+    newSocket.disconnect();
+    if (get().socket === newSocket) {
+      set({
+        socket: null,
+        isConnected: false,
+        isAuthenticated: false,
+        error: "Authentication required",
+      });
+    }
+    throw new Error("Authentication required");
+  }
+
+  const authPromise = waitForAuthAck(newSocket);
+  newSocket.emit(ClientEvent.AUTHENTICATE, { token: effectiveToken });
+  try {
+    await authPromise;
+  } catch (error) {
+    if (get().socket === newSocket) {
+      set({
+        socket: null,
+        isConnected: false,
+        isAuthenticated: false,
+        error: error instanceof Error ? error.message : "Authentication failed",
+      });
+    }
+    newSocket.disconnect();
+    throw error;
+  }
+}
+
+function setupSocketHeartbeat(
+  newSocket: Socket,
+  get: () => SocketState,
+  set: (state: Partial<SocketState>) => void,
+): void {
+  const currentState = get();
+  if (currentState.socket !== newSocket) {
+    newSocket.disconnect();
+    return;
+  }
+  if (currentState.heartbeatInterval) {
+    clearInterval(currentState.heartbeatInterval);
+  }
+  const interval = setInterval(() => {
+    const state = get();
+    if (state.socket?.connected && state.room?.id) {
+      state.socket.emit(ClientEvent.HEARTBEAT, {
+        roomId: state.room.id,
+        sentAt: Date.now(),
+      });
+    }
+  }, 25000);
+
+  if (get().socket !== newSocket) {
+    clearInterval(interval);
+    newSocket.disconnect();
+    return;
+  }
+
+  set({ heartbeatInterval: interval });
+}
+
 export const createConnectionSlice: StateCreator<
   SocketState,
   [],
@@ -147,7 +276,7 @@ export const createConnectionSlice: StateCreator<
             if (stateToken) {
               newSocket.emit(ClientEvent.AUTHENTICATE, { token: stateToken });
             } else {
-              get()
+              void get()
                 .refreshAccessToken()
                 .then((refreshedToken) => {
                   if (get().socket !== newSocket) return;
@@ -156,6 +285,9 @@ export const createConnectionSlice: StateCreator<
                       token: refreshedToken,
                     });
                   }
+                })
+                .catch(() => {
+                  // ignore refresh error on connect
                 });
             }
           });
@@ -523,118 +655,13 @@ export const createConnectionSlice: StateCreator<
 
           newSocket.on(ServerEvent.ERROR, (data: ErrorPayload) => {
             if (get().socket !== newSocket) return;
-
-            if (data.failedEvent === ClientEvent.SUBMIT_ANSWER) {
-              const saved = data.submissionId
-                ? consumedSecondChanceBySubmissionId.get(data.submissionId)
-                : undefined;
-              if (data.submissionId) {
-                consumedSecondChanceBySubmissionId.delete(data.submissionId);
-              }
-              set((state) => applySubmitAnswerErrorState(state, data, saved));
-            } else if (
-              data.failedEvent === ClientEvent.CARD_PICK ||
-              data.failedEvent === ClientEvent.CARD_PLAY
-            ) {
-              const pending = data.commandId
-                ? pendingCardCommands.get(data.commandId)
-                : undefined;
-              if (data.commandId) {
-                pendingCardCommands.delete(data.commandId);
-              }
-              set((state) => applyCardCommandErrorState(state, data, pending));
-            } else if (data.failedEvent === ClientEvent.VOTE_BAN_TOPIC) {
-              const { matchId, recomputedTopic } = data.commandId
-                ? removePendingTopicVoteCommand(data.commandId)
-                : { matchId: null, recomputedTopic: null };
-              set((state) =>
-                applyTopicVoteErrorState(state, matchId, recomputedTopic),
-              );
-            }
-            if (
-              data.code === ErrorCode.INVALID_TOKEN ||
-              data.code === ErrorCode.UNAUTHORIZED
-            ) {
-              if (get().socket === newSocket) {
-                const { heartbeatInterval: hb } = get();
-                if (hb) clearInterval(hb);
-                set((state) =>
-                  applyUnauthorizedErrorState(data.message, state),
-                );
-              }
-              newSocket.disconnect();
-            }
+            handleFailedEventRollback(data, set);
+            handleAuthErrorDisconnect(newSocket, data, get, set);
             console.error("❌ Error:", data.message);
           });
 
-          const stateToken = get().accessToken;
-          let effectiveToken = stateToken;
-          if (!effectiveToken) {
-            try {
-              effectiveToken = await get().refreshAccessToken();
-            } catch {
-              effectiveToken = null;
-            }
-          }
-
-          if (!effectiveToken) {
-            newSocket.disconnect();
-            if (get().socket === newSocket) {
-              set({
-                socket: null,
-                isConnected: false,
-                isAuthenticated: false,
-                error: "Authentication required",
-              });
-            }
-            throw new Error("Authentication required");
-          }
-
-          const authPromise = waitForAuthAck(newSocket);
-          newSocket.emit(ClientEvent.AUTHENTICATE, { token: effectiveToken });
-          try {
-            await authPromise;
-          } catch (error) {
-            if (get().socket === newSocket) {
-              set({
-                socket: null,
-                isConnected: false,
-                isAuthenticated: false,
-                error:
-                  error instanceof Error
-                    ? error.message
-                    : "Authentication failed",
-              });
-            }
-            newSocket.disconnect();
-            throw error;
-          }
-
-          const currentState = get();
-          if (currentState.socket !== newSocket) {
-            newSocket.disconnect();
-            return;
-          }
-          if (currentState.heartbeatInterval) {
-            clearInterval(currentState.heartbeatInterval);
-          }
-          const interval = setInterval(() => {
-            const state = get();
-            if (state.socket?.connected && state.room?.id) {
-              state.socket.emit(ClientEvent.HEARTBEAT, {
-                roomId: state.room.id,
-                sentAt: Date.now(),
-              });
-            }
-          }, 25000);
-
-          if (get().socket !== newSocket) {
-            clearInterval(interval);
-            newSocket.disconnect();
-            return;
-          }
-
-          set({ heartbeatInterval: interval });
+          await resolveAndAuthenticateSocket(newSocket, get, set);
+          setupSocketHeartbeat(newSocket, get, set);
         } finally {
           if (connectGeneration === generation) {
             inFlightConnectPromise = null;

@@ -132,9 +132,62 @@ describe("RoomService", () => {
         expect(result.maxPlayers).toBe(100);
       },
     );
+
+    it("auto-leaves previous active rooms before creating new room", async () => {
+      const mockRoom = {
+        id: "r2",
+        code: "DEF456",
+        status: RoomStatus.WAITING,
+        hostId: "u1",
+        maxPlayers: 100,
+        currentMatchId: null,
+      };
+      vi.mocked(prisma.roomPlayer.findMany).mockResolvedValue([
+        { roomId: "r1", userId: "u1", room: { status: RoomStatus.WAITING } },
+      ] as any);
+      const leaveRoomSpy = vi
+        .spyOn(service, "leaveRoom")
+        .mockResolvedValue({} as any);
+      vi.mocked(prisma.room.create).mockResolvedValue(mockRoom as any);
+      vi.mocked(prisma.roomPlayer.create).mockResolvedValue({} as any);
+
+      await service.createRoom("u1", "PUBLIC", 100);
+
+      expect(leaveRoomSpy).toHaveBeenCalledWith("r1", "u1");
+      expect(prisma.room.create).toHaveBeenCalled();
+    });
   });
 
   describe("joinRoom", () => {
+    it("joins WAITING room successfully as PLAYER and auto-leaves prior rooms", async () => {
+      const mockRoom = {
+        id: "r2",
+        code: "ABC",
+        status: RoomStatus.WAITING,
+        maxPlayers: 100,
+        players: [],
+      };
+      vi.mocked(prisma.roomPlayer.findMany).mockResolvedValue([
+        { roomId: "r1", userId: "u2", room: { status: RoomStatus.WAITING } },
+      ] as any);
+      const leaveRoomSpy = vi
+        .spyOn(service, "leaveRoom")
+        .mockResolvedValue({} as any);
+      vi.mocked(prisma.room.findUnique).mockResolvedValue(mockRoom as any);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { id: "r2", maxPlayers: 100 },
+      ] as any);
+      vi.mocked(prisma.roomPlayer.count).mockResolvedValue(0);
+      vi.mocked(prisma.roomPlayer.create).mockResolvedValue({} as any);
+      vi.spyOn(service, "getRoom").mockResolvedValue(mockRoom as any);
+
+      const result = await service.joinRoom("ABC", "u2");
+
+      expect(leaveRoomSpy).toHaveBeenCalledWith("r1", "u2");
+      expect(result.joined).toBe(true);
+      expect(result.joinedAs).toBe("PLAYER");
+    });
+
     it("joins WAITING room successfully as PLAYER", async () => {
       const mockRoom = {
         id: "r1",
@@ -609,6 +662,32 @@ describe("RoomService", () => {
       await expect(service.getRoomByCode("INVALID")).rejects.toMatchObject({
         code: ErrorCode.ROOM_NOT_FOUND,
       });
+    });
+  });
+
+  describe("getUserActiveRoomIds", () => {
+    it("returns lightweight active room ids for user", async () => {
+      const mockRooms = [
+        { roomId: "r1", room: { id: "r1", currentMatchId: "m1" } },
+      ];
+      vi.mocked(prisma.roomPlayer.findMany).mockResolvedValue(mockRooms as any);
+      const result = await service.getUserActiveRoomIds("u1");
+      expect(prisma.roomPlayer.findMany).toHaveBeenCalledWith({
+        where: {
+          userId: "u1",
+          room: { status: { not: RoomStatus.FINISHED } },
+        },
+        select: {
+          roomId: true,
+          room: {
+            select: {
+              id: true,
+              currentMatchId: true,
+            },
+          },
+        },
+      });
+      expect(result).toEqual(mockRooms);
     });
   });
 

@@ -22,6 +22,128 @@ export interface ResultContentProps {
   onHome: () => void;
 }
 
+function checkIsWinner(performance: PerformanceViewModel): boolean {
+  return (
+    performance.isWinner ||
+    (performance.rank === 1 && !performance.eliminatedRound)
+  );
+}
+
+function getGradeBadge(
+  isWinner: boolean,
+  isTop10: boolean,
+  tProf: (key: string) => string,
+): string {
+  if (isWinner) {
+    return tProf("grades.valedictorian");
+  }
+  if (isTop10) {
+    return tProf("grades.honor");
+  }
+  return tProf("grades.remedial");
+}
+
+function getPerformanceRankDisplay(
+  isWinner: boolean,
+  rank: number | null | undefined,
+  isEliminated: boolean,
+  eliminatedText: string,
+): string {
+  if (isWinner) {
+    return "#1";
+  }
+  if (rank !== null && rank !== undefined) {
+    return `#${rank}`;
+  }
+  if (isEliminated) {
+    return eliminatedText;
+  }
+  return "--";
+}
+
+function getEloDeltaDisplay(eloDelta: number | null | undefined): string {
+  if (eloDelta === undefined || eloDelta === null) {
+    return "--";
+  }
+  const prefix = eloDelta > 0 ? "+" : "";
+  return `${prefix}${eloDelta} ELO`;
+}
+
+function getEloDeltaColor(
+  eloDelta: number | null | undefined = 0,
+): "mint" | "pink" | "cloud" {
+  if (typeof eloDelta === "number" && eloDelta > 0) {
+    return "mint";
+  }
+  if (typeof eloDelta === "number" && eloDelta < 0) {
+    return "pink";
+  }
+  return "cloud";
+}
+
+function getGradeBadgeStyle(isWinner: boolean, isTop10: boolean): string {
+  if (isWinner) {
+    return "bg-candy-yellow text-candy-ink";
+  }
+  if (isTop10) {
+    return "bg-candy-mint text-candy-ink";
+  }
+  return "bg-candy-red text-white";
+}
+
+function getEvaluationDialogueKey(
+  isWinner: boolean,
+  isTop10: boolean,
+  matchId: string,
+): string {
+  if (isWinner) {
+    return getDeterministicProfessorDialogue("result_winner", matchId).key;
+  }
+  if (isTop10) {
+    return getDeterministicProfessorDialogue("result_top10", matchId).key;
+  }
+  return getDeterministicProfessorDialogue("result_early_elim", matchId).key;
+}
+
+function ChampionAvatar({
+  winner,
+}: Readonly<{
+  winner: WinnerViewModel;
+}>) {
+  if (winner.isAnimated && winner.spritesheet) {
+    return (
+      <div className="w-24 h-24 border-[3.5px] border-candy-ink rounded-2xl bg-candy-cloud overflow-hidden flex items-center justify-center relative shadow-[4px_4px_0_0_#2B2D42]">
+        <AnimatedSprite
+          src={winner.spritesheet}
+          width="96px"
+          height="96px"
+          scale={0.5}
+          row={0}
+          speed={120}
+        />
+      </div>
+    );
+  }
+  return (
+    <Avatar
+      size="xl"
+      fallback={winner.name}
+      className="border-[3.5px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42]"
+    />
+  );
+}
+
+function getPerformanceCardFontSize(value: string | number): string {
+  const length = String(value).length;
+  if (length > 8) {
+    return "text-xs sm:text-sm tracking-tight";
+  }
+  if (length > 5) {
+    return "text-sm sm:text-base tracking-tight";
+  }
+  return "text-2xl";
+}
+
 export function ResultContent({
   matchId,
   winner,
@@ -29,13 +151,11 @@ export function ResultContent({
   opponents = 0,
   onRematch,
   onHome,
-}: ResultContentProps) {
+}: Readonly<ResultContentProps>) {
   const t = useTranslations("Result");
   const tProf = useTranslations("Professor");
 
-  const isWinner =
-    performance.isWinner ||
-    (performance.rank === 1 && !performance.eliminatedRound);
+  const isWinner = checkIsWinner(performance);
   const isEliminated = performance.eliminatedRound != null;
   const rank = performance.rank;
   const isTop10 =
@@ -45,26 +165,11 @@ export function ResultContent({
     isWinner || isTop10 ? "proud_cheer" : "angry_roast";
 
   const evaluationText = useMemo(() => {
-    if (isWinner) {
-      return tProf(
-        getDeterministicProfessorDialogue("result_winner", matchId).key,
-      );
-    }
-    if (isTop10) {
-      return tProf(
-        getDeterministicProfessorDialogue("result_top10", matchId).key,
-      );
-    }
-    return tProf(
-      getDeterministicProfessorDialogue("result_early_elim", matchId).key,
-    );
+    const key = getEvaluationDialogueKey(isWinner, isTop10, matchId);
+    return tProf(key);
   }, [isWinner, isTop10, matchId, tProf]);
 
-  const gradeBadge = isWinner
-    ? tProf("grades.valedictorian")
-    : isTop10
-      ? tProf("grades.honor")
-      : tProf("grades.remedial");
+  const gradeBadge = getGradeBadge(isWinner, isTop10, tProf);
 
   return (
     <div className="max-w-4xl mx-auto w-full space-y-8 pt-2 select-none animate-slide-up">
@@ -89,24 +194,7 @@ export function ResultContent({
           <span>{t("championBadge")}</span>
         </div>
         <div className="relative shrink-0 mt-1 md:mt-0">
-          {winner.isAnimated && winner.spritesheet ? (
-            <div className="w-24 h-24 border-[3.5px] border-candy-ink rounded-2xl bg-candy-cloud overflow-hidden flex items-center justify-center relative shadow-[4px_4px_0_0_#2B2D42]">
-              <AnimatedSprite
-                src={winner.spritesheet}
-                width="96px"
-                height="96px"
-                scale={0.5}
-                row={0}
-                speed={120}
-              />
-            </div>
-          ) : (
-            <Avatar
-              size="xl"
-              fallback={winner.name}
-              className="border-[3.5px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42]"
-            />
-          )}
+          <ChampionAvatar winner={winner} />
         </div>
         <div className="flex-1 space-y-4 text-center md:text-left">
           <div className="space-y-1">
@@ -154,15 +242,12 @@ export function ResultContent({
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             <PerformanceCard
               label={t("performance.rank")}
-              value={
-                isWinner
-                  ? "#1"
-                  : performance.rank !== null && performance.rank !== undefined
-                    ? `#${performance.rank}`
-                    : isEliminated
-                      ? t("performance.eliminated")
-                      : "--"
-              }
+              value={getPerformanceRankDisplay(
+                isWinner,
+                performance.rank,
+                isEliminated,
+                t("performance.eliminated"),
+              )}
               color="pink"
               icon={
                 <MiniGlyph
@@ -178,19 +263,8 @@ export function ResultContent({
             />
             <PerformanceCard
               label={t("performance.elo")}
-              value={
-                performance.eloDelta !== undefined &&
-                performance.eloDelta !== null
-                  ? `${performance.eloDelta > 0 ? "+" : ""}${performance.eloDelta} ELO`
-                  : "--"
-              }
-              color={
-                (performance.eloDelta ?? 0) > 0
-                  ? "mint"
-                  : (performance.eloDelta ?? 0) < 0
-                    ? "pink"
-                    : "cloud"
-              }
+              value={getEloDeltaDisplay(performance.eloDelta)}
+              color={getEloDeltaColor(performance.eloDelta)}
               icon={
                 <MiniGlyph
                   variant="shield"
@@ -251,13 +325,10 @@ export function ResultContent({
                   {tProf("evalLabel")}
                 </span>
                 <span
-                  className={`self-center sm:self-auto inline-block border-[2px] border-candy-ink px-3 py-0.5 rounded-lg font-display font-black text-[10px] uppercase tracking-wider shadow-[2px_2px_0_0_#2B2D42] shrink-0 ${
-                    isWinner
-                      ? "bg-candy-yellow text-candy-ink"
-                      : isTop10
-                        ? "bg-candy-mint text-candy-ink"
-                        : "bg-candy-red text-white"
-                  }`}
+                  className={`self-center sm:self-auto inline-block border-[2px] border-candy-ink px-3 py-0.5 rounded-lg font-display font-black text-[10px] uppercase tracking-wider shadow-[2px_2px_0_0_#2B2D42] shrink-0 ${getGradeBadgeStyle(
+                    isWinner,
+                    isTop10,
+                  )}`}
                 >
                   {gradeBadge}
                 </span>
@@ -286,11 +357,11 @@ function Metric({
   label,
   value,
   color,
-}: {
+}: Readonly<{
   label: string;
   value: string | number;
   color: "pink" | "blue" | "mint";
-}) {
+}>) {
   const textColor = {
     pink: "text-candy-pink",
     blue: "text-candy-blue",
@@ -313,12 +384,12 @@ function PerformanceCard({
   value,
   color,
   icon,
-}: {
+}: Readonly<{
   label: string;
   value: string | number;
   color: "pink" | "cloud" | "blue" | "yellow" | "mint";
   icon?: ReactNode;
-}) {
+}>) {
   const background = {
     pink: "bg-candy-pink/10",
     cloud: "bg-candy-cloud",
@@ -327,13 +398,7 @@ function PerformanceCard({
     mint: "bg-candy-mint/10",
   }[color];
 
-  const valueStr = String(value);
-  const fontSize =
-    valueStr.length > 8
-      ? "text-xs sm:text-sm tracking-tight"
-      : valueStr.length > 5
-        ? "text-sm sm:text-base tracking-tight"
-        : "text-2xl";
+  const fontSize = getPerformanceCardFontSize(value);
 
   return (
     <div
@@ -357,12 +422,12 @@ function ActionButton({
   color,
   glyph,
   children,
-}: {
+}: Readonly<{
   onClick: () => void;
   color: "pink" | "blue";
   glyph: "rematch" | "home";
   children: ReactNode;
-}) {
+}>) {
   const background = color === "pink" ? "bg-candy-pink" : "bg-candy-blue";
   return (
     <button

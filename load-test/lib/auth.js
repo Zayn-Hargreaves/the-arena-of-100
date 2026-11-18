@@ -73,8 +73,7 @@ export function guestLogin(httpBase, username) {
     return null;
   }
 
-  if (!body || !body.data || !body.data.accessToken || !body.data.user)
-    return null;
+  if (!body?.data?.accessToken || !body.data.user) return null;
 
   // NOTE: never console.log `body` or `res.body` here. The guest-login
   // response carries a long-lived accessToken; logging it would expose
@@ -122,7 +121,7 @@ export function createRoom(httpBase, hostToken, { maxPlayers, timeLimit }) {
   } catch (_e) {
     return null;
   }
-  if (!body || !body.data || !body.data.id || !body.data.code) return null;
+  if (!body?.data?.id || !body.data.code) return null;
 
   return { roomId: body.data.id, code: body.data.code };
 }
@@ -157,10 +156,7 @@ export function waitForRoomInGame(
     if (res.status === 200) {
       try {
         const body = res.json();
-        const status =
-          (body && body.data && body.data.status) ||
-          (body && body.status) ||
-          null;
+        const status = body?.data?.status || body?.status || null;
         if (status === "IN_GAME") return true;
       } catch (_e) {
         /* retry */

@@ -117,6 +117,7 @@ export const Timer: React.FC<TimerProps> = ({
         <svg
           className="absolute w-[80%] h-[80%] -rotate-90"
           viewBox="0 0 36 36"
+          aria-hidden="true"
         >
           <path
             className="text-candy-cloud"
