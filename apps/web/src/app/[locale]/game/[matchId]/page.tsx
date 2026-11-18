@@ -49,18 +49,26 @@ interface TimedEffectLike {
   };
 }
 
+function getSourceSeqNo(
+  effect: TimedEffectLike | null | undefined,
+): string | number | null {
+  if (!effect) return null;
+  if (effect.sourceSeqNo !== undefined) {
+    return effect.sourceSeqNo;
+  }
+  if (effect.cardId !== undefined || effect.offerSeqNo !== undefined) {
+    return `${effect.cardId}-${effect.offerSeqNo}`;
+  }
+  return effect.effect?.kind ?? "active";
+}
+
 function useTimedEffectFlag(
   effect: TimedEffectLike | null | undefined,
   fallbackDuration: number | undefined,
   currentRoundNo: number,
 ): boolean {
   const [active, setActive] = useState(false);
-  const sourceSeqNo = effect
-    ? (effect.sourceSeqNo ??
-      (effect.cardId !== undefined || effect.offerSeqNo !== undefined
-        ? `${effect.cardId}-${effect.offerSeqNo}`
-        : (effect.effect?.kind ?? "active")))
-    : null;
+  const sourceSeqNo = getSourceSeqNo(effect);
   const expiresAtServer = effect?.expiresAtServer;
   const remainingMs = effect?.remainingMs;
   const hasEffect = Boolean(effect);
@@ -370,7 +378,7 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
           ? activeEffect
           : null)) ??
       null;
-    if (eff && eff.effect.kind === "OPTION_DISABLE" && eff.effect.indexes) {
+    if (eff?.effect.kind === "OPTION_DISABLE" && eff.effect.indexes) {
       return eff.effect.indexes
         .map((idx: number) => ANSWER_CODES[idx])
         .filter((code: AnswerCode | undefined): code is AnswerCode =>
@@ -381,7 +389,7 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
   }, [myRoundEffects, userId, activeEffect, currentRoundNo]);
 
   const fakeFlaggedIndexes = useMemo(() => {
-    if (!activeFake || !fakeEff || fakeEff.effect.kind !== "OPTION_FAKE") {
+    if (!activeFake || fakeEff?.effect.kind !== "OPTION_FAKE") {
       return [];
     }
     return fakeEff.effect.indexes ?? [];
@@ -440,9 +448,8 @@ export default function GamePage({ params }: Readonly<GamePageProps>) {
       {/* Pre-Match Topic Ban Draft Overlay */}
       {Boolean(
         match?.id &&
-        topicVoting &&
-        topicVoting.matchId === match.id &&
-        !topicVoting.isFinished,
+        topicVoting?.matchId === match.id &&
+        !topicVoting?.isFinished,
       ) && <TopicVotingOverlay />}
 
       {/* Phase 2: Milestone Card Offer Overlay */}

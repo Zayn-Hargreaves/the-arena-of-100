@@ -26,6 +26,14 @@ interface LobbyPlayerGridProps {
   capacity?: number;
 }
 
+const PLACEHOLDER_SLOT_KEYS = [
+  "placeholder-slot-1",
+  "placeholder-slot-2",
+  "placeholder-slot-3",
+  "placeholder-slot-4",
+  "placeholder-slot-5",
+];
+
 export const LobbyPlayerGrid: FC<LobbyPlayerGridProps> = ({
   players,
   currentUserId,
@@ -57,7 +65,7 @@ export const LobbyPlayerGrid: FC<LobbyPlayerGridProps> = ({
 
     let hash = 0;
     for (let i = 0; i < player.name.length; i++) {
-      hash += player.name.charCodeAt(i);
+      hash += player.name.codePointAt(i) ?? 0;
     }
     const index = Math.abs(hash) % avatars.length;
     const avatar = avatars[index] ?? avatars[0]!;
@@ -181,27 +189,29 @@ export const LobbyPlayerGrid: FC<LobbyPlayerGridProps> = ({
       })}
 
       {/* Dynamic Placeholder Slots */}
-      {Array.from({ length: placeholderCount }).map((_, index) => (
-        <div
-          key={`placeholder-${index}`}
-          className="p-3.5 flex items-center gap-3 rounded-2xl border-[2.5px] border-dashed border-candy-ink/20 bg-white/40 select-none transition-all"
-        >
-          <div className="w-12 h-12 rounded-2xl border-[2px] border-dashed border-candy-ink/20 bg-candy-cloud/40 flex items-center justify-center shrink-0">
-            <Loader2 className="w-5 h-5 text-candy-ink/25 animate-spin" />
+      {PLACEHOLDER_SLOT_KEYS.slice(0, placeholderCount).map(
+        (slotKey, index) => (
+          <div
+            key={slotKey}
+            className="p-3.5 flex items-center gap-3 rounded-2xl border-[2.5px] border-dashed border-candy-ink/20 bg-white/40 select-none transition-all"
+          >
+            <div className="w-12 h-12 rounded-2xl border-[2px] border-dashed border-candy-ink/20 bg-candy-cloud/40 flex items-center justify-center shrink-0">
+              <Loader2 className="w-5 h-5 text-candy-ink/25 animate-spin" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-display font-bold text-xs uppercase tracking-wide text-candy-ink/35 truncate">
+                {t("waitingSlot")}
+              </p>
+              <p className="font-mono text-[9px] uppercase tracking-wider font-semibold text-candy-ink/25 mt-0.5">
+                {t("slotNumber", {
+                  slot: players.length + index + 1,
+                  capacity: capacity ?? GAME_CONFIG.MAX_PLAYERS,
+                })}
+              </p>
+            </div>
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-display font-bold text-xs uppercase tracking-wide text-candy-ink/35 truncate">
-              {t("waitingSlot")}
-            </p>
-            <p className="font-mono text-[9px] uppercase tracking-wider font-semibold text-candy-ink/25 mt-0.5">
-              {t("slotNumber", {
-                slot: players.length + index + 1,
-                capacity: capacity ?? GAME_CONFIG.MAX_PLAYERS,
-              })}
-            </p>
-          </div>
-        </div>
-      ))}
+        ),
+      )}
     </div>
   );
 };

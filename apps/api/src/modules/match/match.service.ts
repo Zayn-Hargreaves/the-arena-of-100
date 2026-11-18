@@ -61,29 +61,23 @@ export const matchRoomCacheKey = (matchId: string): string =>
 export const matchGenerationKey = (matchId: string): string =>
   `match:gen:${matchId}`;
 
+type DateInput = string | number | Date;
+
 function restoreMatchDates<T>(data: T): T {
   if (!data || typeof data !== "object") return data;
   const match = data as Record<string, unknown>;
   return {
     ...match,
-    startedAt: match.startedAt
-      ? new Date(match.startedAt as string | number | Date)
-      : null,
-    endedAt: match.endedAt
-      ? new Date(match.endedAt as string | number | Date)
-      : null,
+    startedAt: match.startedAt ? new Date(match.startedAt as DateInput) : null,
+    endedAt: match.endedAt ? new Date(match.endedAt as DateInput) : null,
     createdAt: match.createdAt
-      ? new Date(match.createdAt as string | number | Date)
+      ? new Date(match.createdAt as DateInput)
       : undefined,
     rounds: Array.isArray(match.rounds)
       ? match.rounds.map((r: Record<string, unknown>) => ({
           ...r,
-          startedAt: r.startedAt
-            ? new Date(r.startedAt as string | number | Date)
-            : null,
-          endedAt: r.endedAt
-            ? new Date(r.endedAt as string | number | Date)
-            : null,
+          startedAt: r.startedAt ? new Date(r.startedAt as DateInput) : null,
+          endedAt: r.endedAt ? new Date(r.endedAt as DateInput) : null,
         }))
       : [],
     answers: Array.isArray(match.answers) ? match.answers : [],
@@ -524,12 +518,57 @@ export class MatchService implements OnModuleDestroy {
     await this.executeGenerationInvalidation(matchId, 1, epoch);
   }
 
+  private isInvalidationStale(matchId: string, epoch: number): boolean {
+    return this.isDestroyed || this.invalidationEpochs.get(matchId) !== epoch;
+  }
+
+  private clearInvalidationRecord(matchId: string, epoch: number): void {
+    if (this.invalidationEpochs.get(matchId) === epoch) {
+      this.invalidationEpochs.delete(matchId);
+      this.pendingGenerationInvalidations.delete(matchId);
+      const timer = this.invalidationTimers.get(matchId);
+      if (timer) {
+        clearTimeout(timer);
+        this.invalidationTimers.delete(matchId);
+      }
+    }
+  }
+
+  private async purgeBestEffortCaches(matchId: string): Promise<void> {
+    try {
+      await this.redis.del(matchCacheKey(matchId));
+    } catch {
+      // best-effort
+    }
+    try {
+      await this.redis.del(matchRoomCacheKey(matchId));
+    } catch {
+      // best-effort
+    }
+  }
+
+  private scheduleInvalidationRetry(
+    matchId: string,
+    attempt: number,
+    epoch: number,
+  ): void {
+    const delayMs = Math.min(100 * Math.pow(2, attempt - 1), 2000);
+    const timer = setTimeout(() => {
+      if (this.isInvalidationStale(matchId, epoch)) {
+        return;
+      }
+      this.invalidationTimers.delete(matchId);
+      void this.executeGenerationInvalidation(matchId, attempt + 1, epoch);
+    }, delayMs);
+    this.invalidationTimers.set(matchId, timer);
+  }
+
   private async executeGenerationInvalidation(
     matchId: string,
     attempt: number,
     epoch: number,
   ): Promise<void> {
-    if (this.isDestroyed || this.invalidationEpochs.get(matchId) !== epoch) {
+    if (this.isInvalidationStale(matchId, epoch)) {
       return;
     }
 
@@ -539,32 +578,15 @@ export class MatchService implements OnModuleDestroy {
         [matchGenerationKey(matchId)],
         [String(MATCH_CACHE_TTL_SEC)],
       );
-      if (this.isDestroyed || this.invalidationEpochs.get(matchId) !== epoch) {
+      if (this.isInvalidationStale(matchId, epoch)) {
         return;
       }
       if (attempt > 1) {
-        try {
-          await this.redis.del(matchCacheKey(matchId));
-        } catch {
-          // best-effort
-        }
-        try {
-          await this.redis.del(matchRoomCacheKey(matchId));
-        } catch {
-          // best-effort
-        }
+        await this.purgeBestEffortCaches(matchId);
       }
-      if (this.invalidationEpochs.get(matchId) === epoch) {
-        this.invalidationEpochs.delete(matchId);
-        this.pendingGenerationInvalidations.delete(matchId);
-        const timer = this.invalidationTimers.get(matchId);
-        if (timer) {
-          clearTimeout(timer);
-          this.invalidationTimers.delete(matchId);
-        }
-      }
+      this.clearInvalidationRecord(matchId, epoch);
     } catch (err) {
-      if (this.isDestroyed || this.invalidationEpochs.get(matchId) !== epoch) {
+      if (this.isInvalidationStale(matchId, epoch)) {
         return;
       }
       if (attempt >= MAX_GENERATION_INVALIDATION_ATTEMPTS) {
@@ -572,15 +594,7 @@ export class MatchService implements OnModuleDestroy {
           `finishMatch: exceeded max retry attempts (${MAX_GENERATION_INVALIDATION_ATTEMPTS}) to increment match cache generation for ${matchId}`,
           err,
         );
-        if (this.invalidationEpochs.get(matchId) === epoch) {
-          this.invalidationEpochs.delete(matchId);
-          this.pendingGenerationInvalidations.delete(matchId);
-          const timer = this.invalidationTimers.get(matchId);
-          if (timer) {
-            clearTimeout(timer);
-            this.invalidationTimers.delete(matchId);
-          }
-        }
+        this.clearInvalidationRecord(matchId, epoch);
         return;
       }
 
@@ -588,19 +602,7 @@ export class MatchService implements OnModuleDestroy {
         `finishMatch: failed to increment match cache generation for ${matchId} (attempt ${attempt}), scheduling retry`,
         err,
       );
-      if (this.isDestroyed || this.invalidationEpochs.get(matchId) !== epoch) {
-        return;
-      }
-
-      const delayMs = Math.min(100 * Math.pow(2, attempt - 1), 2000);
-      const timer = setTimeout(() => {
-        if (this.invalidationEpochs.get(matchId) !== epoch) {
-          return;
-        }
-        this.invalidationTimers.delete(matchId);
-        void this.executeGenerationInvalidation(matchId, attempt + 1, epoch);
-      }, delayMs);
-      this.invalidationTimers.set(matchId, timer);
+      this.scheduleInvalidationRetry(matchId, attempt, epoch);
     }
   }
 
@@ -613,40 +615,84 @@ export class MatchService implements OnModuleDestroy {
     this.invalidationEpochs.clear();
   }
 
+  private parseCachedMatchPayload(
+    cached: string,
+    currentGen: string,
+  ): MatchWithDetails | null {
+    const parsed = JSON.parse(cached) as {
+      gen?: string;
+      data?: MatchWithDetails;
+    };
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      parsed.gen !== undefined &&
+      parsed.gen === currentGen &&
+      parsed.data
+    ) {
+      const data = restoreMatchDates(parsed.data);
+      if (data.status !== "FINISHED") {
+        data.answers = [];
+      }
+      return data;
+    }
+    return null;
+  }
+
+  private async tryGetCachedMatch(
+    matchId: string,
+  ): Promise<{ data: MatchWithDetails | null; capturedGen: string | null }> {
+    if (this.pendingGenerationInvalidations.has(matchId)) {
+      return { data: null, capturedGen: null };
+    }
+    try {
+      const [cached, gen] = await this.redis.mget(
+        matchCacheKey(matchId),
+        matchGenerationKey(matchId),
+      );
+      const currentGen = gen ?? "0";
+      if (!cached) {
+        return { data: null, capturedGen: currentGen };
+      }
+      const data = this.parseCachedMatchPayload(cached, currentGen);
+      return { data, capturedGen: currentGen };
+    } catch (err) {
+      this.logger.warn(`Failed to read match cache for ${matchId}`, err);
+      return { data: null, capturedGen: null };
+    }
+  }
+
+  private async trySetCachedMatch(
+    matchId: string,
+    capturedGen: string,
+    sanitized: MatchWithDetails,
+  ): Promise<void> {
+    if (this.pendingGenerationInvalidations.has(matchId)) {
+      return;
+    }
+    try {
+      const payload = JSON.stringify({
+        gen: capturedGen,
+        data: sanitized,
+      });
+      await this.redis.setIfGenMatches(
+        matchGenerationKey(matchId),
+        matchCacheKey(matchId),
+        capturedGen,
+        payload,
+        MATCH_CACHE_TTL_SEC,
+      );
+    } catch (err) {
+      this.logger.warn(`Failed to set match cache for ${matchId}`, err);
+    }
+  }
+
   // Get match by ID (with short-lived Redis cache to prevent DB connection spikes)
   async getMatch(matchId: string): Promise<MatchWithDetails> {
-    const cacheKey = matchCacheKey(matchId);
-    const genKey = matchGenerationKey(matchId);
-
-    let capturedGen: string | null = null;
-
-    if (!this.pendingGenerationInvalidations.has(matchId)) {
-      try {
-        const [cached, gen] = await this.redis.mget(cacheKey, genKey);
-        const currentGen = gen ?? "0";
-        capturedGen = currentGen;
-        if (cached) {
-          const parsed = JSON.parse(cached) as {
-            gen?: string;
-            data?: MatchWithDetails;
-          };
-          if (
-            parsed &&
-            typeof parsed === "object" &&
-            parsed.gen !== undefined &&
-            parsed.gen === currentGen &&
-            parsed.data
-          ) {
-            const data = restoreMatchDates(parsed.data);
-            if (data.status !== "FINISHED") {
-              data.answers = [];
-            }
-            return data;
-          }
-        }
-      } catch (err) {
-        this.logger.warn(`Failed to read match cache for ${matchId}`, err);
-      }
+    const { data: cachedMatch, capturedGen } =
+      await this.tryGetCachedMatch(matchId);
+    if (cachedMatch) {
+      return cachedMatch;
     }
 
     const match = await this.prisma.match.findUnique({
@@ -678,25 +724,8 @@ export class MatchService implements OnModuleDestroy {
     const sanitized: MatchWithDetails =
       match.status === "FINISHED" ? match : { ...match, answers: [] };
 
-    if (
-      capturedGen !== null &&
-      !this.pendingGenerationInvalidations.has(matchId)
-    ) {
-      try {
-        const payload = JSON.stringify({
-          gen: capturedGen,
-          data: sanitized,
-        });
-        await this.redis.setIfGenMatches(
-          genKey,
-          cacheKey,
-          capturedGen,
-          payload,
-          MATCH_CACHE_TTL_SEC,
-        );
-      } catch (err) {
-        this.logger.warn(`Failed to set match cache for ${matchId}`, err);
-      }
+    if (capturedGen !== null) {
+      await this.trySetCachedMatch(matchId, capturedGen, sanitized);
     }
 
     return sanitized;
@@ -728,6 +757,51 @@ export class MatchService implements OnModuleDestroy {
   // one-shot match query. This keeps the transaction list short
   // and avoids a `findUnique` inside `$transaction` (which is
   // awkward in Prisma's typed transaction API).
+  private async cleanupMatchRedisState(matchId: string): Promise<void> {
+    try {
+      const snapshot = this.matchOwnership.getOwnershipSnapshot(matchId);
+      if (snapshot) {
+        // Owner-path cleanup: fence the delete so a superseded owner's late
+        // finish cannot remove canonical state a NEW owner has since written.
+        // A no-op (false) means ownership already moved on — leave it intact.
+        const deleted = await this.redis.fencedStateDelete(
+          ownerKey(matchId),
+          fenceKey(matchId),
+          stateKey(matchId),
+          revisionKey(matchId),
+          { leaseValue: snapshot.leaseValue, expectedFence: snapshot.fence },
+        );
+        if (!deleted) {
+          this.logger.warn(
+            `finishMatch: fenced state cleanup for ${matchId} was a no-op (ownership moved on); leaving canonical state for the current owner`,
+          );
+        }
+      } else {
+        // No ownership snapshot (admin force-termination / legacy path): delete
+        // unconditionally so a terminated match never strands Redis state.
+        await this.redis.del(stateKey(matchId));
+        // B2c: drop the fenced-CAS revision key alongside the state.
+        await this.redis.del(revisionKey(matchId));
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Failed to delete Redis state for match ${matchId} (will be cleaned on next Redis flush): ${message}`,
+      );
+    }
+
+    try {
+      // Invalidate short-lived read caches independently of state cleanup
+      await this.redis.del(matchCacheKey(matchId));
+      await this.redis.del(matchRoomCacheKey(matchId));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Failed to delete Redis read caches for match ${matchId}: ${message}`,
+      );
+    }
+  }
+
   async finishMatch(
     matchId: string,
     winnerId: string | null,
@@ -738,9 +812,7 @@ export class MatchService implements OnModuleDestroy {
     let playerScores: ReturnType<MatchStateMachine["getPlayerScores"]> = [];
     if (!isAdminTermination) {
       stateMachine = this.stateMachines.get(matchId) ?? null;
-      if (!stateMachine) {
-        stateMachine = (await this.getStateMachine(matchId)) ?? null;
-      }
+      stateMachine ??= (await this.getStateMachine(matchId)) ?? null;
       if (stateMachine) {
         playerScores = stateMachine.getPlayerScores();
       }
@@ -809,48 +881,7 @@ export class MatchService implements OnModuleDestroy {
     // keep returning the (now-fully-FINISHED) machine and the API
     // stays consistent. Operators see a logged warning; the state
     // is functionally clean for new requests.
-    try {
-      const snapshot = this.matchOwnership.getOwnershipSnapshot(matchId);
-      if (snapshot) {
-        // Owner-path cleanup: fence the delete so a superseded owner's late
-        // finish cannot remove canonical state a NEW owner has since written.
-        // A no-op (false) means ownership already moved on — leave it intact.
-        const deleted = await this.redis.fencedStateDelete(
-          ownerKey(matchId),
-          fenceKey(matchId),
-          stateKey(matchId),
-          revisionKey(matchId),
-          { leaseValue: snapshot.leaseValue, expectedFence: snapshot.fence },
-        );
-        if (!deleted) {
-          this.logger.warn(
-            `finishMatch: fenced state cleanup for ${matchId} was a no-op (ownership moved on); leaving canonical state for the current owner`,
-          );
-        }
-      } else {
-        // No ownership snapshot (admin force-termination / legacy path): delete
-        // unconditionally so a terminated match never strands Redis state.
-        await this.redis.del(stateKey(matchId));
-        // B2c: drop the fenced-CAS revision key alongside the state.
-        await this.redis.del(revisionKey(matchId));
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(
-        `Failed to delete Redis state for match ${matchId} (will be cleaned on next Redis flush): ${message}`,
-      );
-    }
-
-    try {
-      // Invalidate short-lived read caches independently of state cleanup
-      await this.redis.del(matchCacheKey(matchId));
-      await this.redis.del(matchRoomCacheKey(matchId));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(
-        `Failed to delete Redis read caches for match ${matchId}: ${message}`,
-      );
-    }
+    await this.cleanupMatchRedisState(matchId);
 
     // Only after Redis is clean do we drop the in-memory entry.
     this.stateMachines.delete(matchId);
@@ -863,6 +894,109 @@ export class MatchService implements OnModuleDestroy {
       : " (admin termination, no winner)";
     this.logger.log(`Match finished: ${matchId}${winnerDetails}`);
     return match;
+  }
+
+  private extractEventLogSummaries(stateMachine: MatchStateMachine): {
+    cardsPlayedByUser: Map<string, number>;
+    classByUser: Map<string, string>;
+    eliminatedRoundByUser: Map<string, number>;
+  } {
+    const cardsPlayedByUser = new Map<string, number>();
+    const classByUser = new Map<string, string>();
+    const eliminatedRoundByUser = new Map<string, number>();
+
+    for (const entry of stateMachine.getEventLog()) {
+      switch (entry.type) {
+        case MatchEventType.CARD_RESOLVED:
+          this.recordCardResolved(
+            entry.payload as CardEffectEvent,
+            cardsPlayedByUser,
+          );
+          break;
+        case MatchEventType.CLASS_ASSIGNED:
+          this.recordClassAssigned(
+            entry.payload as ClassAssignedEvent,
+            classByUser,
+          );
+          break;
+        case "ROUND_EVALUATED":
+          this.recordRoundEvaluated(
+            entry.payload as {
+              roundNo?: number;
+              eliminatedIds?: string[];
+            },
+            eliminatedRoundByUser,
+          );
+          break;
+      }
+    }
+
+    return { cardsPlayedByUser, classByUser, eliminatedRoundByUser };
+  }
+
+  private recordCardResolved(
+    payload: CardEffectEvent | undefined,
+    cardsPlayedByUser: Map<string, number>,
+  ): void {
+    const playerId = payload?.playedByPlayerId;
+    if (playerId) {
+      cardsPlayedByUser.set(
+        playerId,
+        (cardsPlayedByUser.get(playerId) ?? 0) + 1,
+      );
+    }
+  }
+
+  private recordClassAssigned(
+    payload: ClassAssignedEvent | undefined,
+    classByUser: Map<string, string>,
+  ): void {
+    const assignments = payload?.assignments ?? [];
+    for (const a of assignments) {
+      classByUser.set(a.playerId, a.classId);
+    }
+  }
+
+  private recordRoundEvaluated(
+    payload:
+      | {
+          roundNo?: number;
+          eliminatedIds?: string[];
+        }
+      | undefined,
+    eliminatedRoundByUser: Map<string, number>,
+  ): void {
+    if (
+      typeof payload?.roundNo !== "number" ||
+      !Array.isArray(payload.eliminatedIds)
+    ) {
+      return;
+    }
+
+    for (const playerId of payload.eliminatedIds) {
+      eliminatedRoundByUser.set(playerId, payload.roundNo);
+    }
+  }
+
+  private async applyUserEloIncrements(
+    eloResults: Array<{ userId: string; delta: number }>,
+    tx: Prisma.TransactionClient,
+  ): Promise<void> {
+    const deltaToUserIds = new Map<number, string[]>();
+    for (const r of eloResults) {
+      const group = deltaToUserIds.get(r.delta) ?? [];
+      group.push(r.userId);
+      deltaToUserIds.set(r.delta, group);
+    }
+
+    await Promise.all(
+      Array.from(deltaToUserIds.entries()).map(([delta, ids]) =>
+        tx.user.updateMany({
+          where: { id: { in: ids } },
+          data: { elo: { increment: delta } },
+        }),
+      ),
+    );
   }
 
   // Build and execute the score-update Prisma operations inside the transaction.
@@ -890,43 +1024,8 @@ export class MatchService implements OnModuleDestroy {
       );
     }
 
-    // Phase 3 — count CARD_RESOLVED events per player from the event
-    // log so the daily leaderboard can aggregate "most cards played
-    // this week". Read-only traversal of the in-memory event log; the
-    // state machine is NOT modified.
-    const cardsPlayedByUser = new Map<string, number>();
-    // Phase 3 — class assignment per match, derived from the
-    // CLASS_ASSIGNED event emitted by MatchStateMachine.classAssignment.
-    // Stored on MatchPlayer.classId so the profile page can compute
-    // class winrate (per spec §2 Decision 19 follow-up: class-specific
-    // winrate is part of Phase 3 reporting). Players with no
-    // CLASS_ASSIGNED event (legacy / admin-terminated matches) keep
-    // classId = NULL.
-    const classByUser = new Map<string, string>();
-    for (const entry of stateMachine.getEventLog()) {
-      if (entry.type === MatchEventType.CARD_RESOLVED) {
-        // `CardEffectEvent = MutationEffect | TemporaryEffect` — both
-        // share a `playedByPlayerId` field; the union is already
-        // narrowed by `entry.type` matching the discriminator, so the
-        // cast is safe (the runtime value is one of the two).
-        const payload = entry.payload as CardEffectEvent;
-        const playerId = payload.playedByPlayerId;
-        if (playerId) {
-          cardsPlayedByUser.set(
-            playerId,
-            (cardsPlayedByUser.get(playerId) ?? 0) + 1,
-          );
-        }
-      } else if (entry.type === MatchEventType.CLASS_ASSIGNED) {
-        // `ClassAssignedEvent` is the canonical payload schema for the
-        // CLASS_ASSIGNED event; reading `assignments` is type-safe.
-        const payload = entry.payload as ClassAssignedEvent;
-        const assignments = payload.assignments ?? [];
-        for (const a of assignments) {
-          classByUser.set(a.playerId, a.classId);
-        }
-      }
-    }
+    const { cardsPlayedByUser, classByUser, eliminatedRoundByUser } =
+      this.extractEventLogSummaries(stateMachine);
 
     // Phase 4 — ELO Rating calculation (Multiplayer Battle Royale ELO).
     // Fetch starting ELO for all participating users, assign placements
@@ -940,25 +1039,6 @@ export class MatchService implements OnModuleDestroy {
     const eloByUser = new Map<string, number>(
       userRows.map((u) => [u.id, u.elo]),
     );
-
-    // Collect elimination rounds from event log for Battle Royale rank calculation
-    const eliminatedRoundByUser = new Map<string, number>();
-    for (const entry of stateMachine.getEventLog()) {
-      if (entry.type === "ROUND_EVALUATED") {
-        const payload = entry.payload as {
-          roundNo?: number;
-          eliminatedIds?: string[];
-        };
-        if (
-          typeof payload?.roundNo === "number" &&
-          Array.isArray(payload?.eliminatedIds)
-        ) {
-          for (const playerId of payload.eliminatedIds) {
-            eliminatedRoundByUser.set(playerId, payload.roundNo);
-          }
-        }
-      }
-    }
 
     const winnerId = stateMachine.getState().winnerId;
     const totalRounds =
@@ -1006,26 +1086,12 @@ export class MatchService implements OnModuleDestroy {
       }),
     );
 
-    const deltaToUserIds = new Map<number, string[]>();
-    for (const r of eloResults) {
-      const group = deltaToUserIds.get(r.delta) ?? [];
-      group.push(r.userId);
-      deltaToUserIds.set(r.delta, group);
-    }
-
-    await Promise.all(
-      Array.from(deltaToUserIds.entries()).map(([delta, ids]) =>
-        tx.user.updateMany({
-          where: { id: { in: ids } },
-          data: { elo: { increment: delta } },
-        }),
-      ),
-    );
+    await this.applyUserEloIncrements(eloResults, tx);
   }
 
   // Save round result
   async saveRound(matchId: string, roundNo: number, questionId: string) {
-    return this.prisma.matchRound.create({
+    return await this.prisma.matchRound.create({
       data: {
         matchId,
         roundNo,
@@ -1128,7 +1194,7 @@ export class MatchService implements OnModuleDestroy {
     isCorrect: boolean,
     responseTimeMs: number,
   ) {
-    return this.prisma.answer.create({
+    return await this.prisma.answer.create({
       data: {
         matchId,
         roundId,
@@ -1152,7 +1218,7 @@ export class MatchService implements OnModuleDestroy {
     }>,
   ) {
     if (answers.length === 0) return { count: 0 };
-    return this.prisma.answer.createMany({
+    return await this.prisma.answer.createMany({
       data: answers,
     });
   }

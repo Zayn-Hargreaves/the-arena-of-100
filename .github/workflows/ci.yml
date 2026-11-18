@@ -32,6 +32,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
 
       - name: Install pnpm
         uses: pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a
@@ -80,6 +82,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
 
       - name: Install pnpm
         uses: pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a
@@ -148,6 +152,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
 
       - name: Install pnpm
         uses: pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a
@@ -234,6 +240,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
 
       - name: Install pnpm
         uses: pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a
@@ -354,6 +362,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
 
       - name: Install pnpm
         uses: pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a

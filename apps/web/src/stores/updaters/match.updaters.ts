@@ -123,6 +123,67 @@ export function applyRoundStartedState(
   };
 }
 
+function updatePlayerRoundStatus(
+  player: Player,
+  eliminatedSet: Set<string>,
+  survivingSet: Set<string> | null,
+): Player {
+  if (eliminatedSet.has(player.id)) {
+    return { ...player, status: PlayerStatus.ELIMINATED };
+  }
+  if (survivingSet !== null) {
+    if (!survivingSet.has(player.id)) {
+      return { ...player, status: PlayerStatus.ELIMINATED };
+    }
+    return player.status === PlayerStatus.ELIMINATED
+      ? { ...player, status: PlayerStatus.ACTIVE }
+      : player;
+  }
+  return player;
+}
+
+function resolveUserRoundEliminated(
+  userId: string | null | undefined,
+  currentEliminated: boolean,
+  eliminatedSet: Set<string>,
+  survivingSet: Set<string> | null,
+  updatedPlayers: Player[],
+): boolean {
+  if (!userId) return currentEliminated;
+  if (eliminatedSet.has(userId)) return true;
+  if (survivingSet?.has(userId)) return false;
+
+  const localPlayer = updatedPlayers.find((p) => p.id === userId);
+  return localPlayer
+    ? localPlayer.status === PlayerStatus.ELIMINATED
+    : currentEliminated;
+}
+
+function buildRoundEndedAnswerResult(
+  matchId: string,
+  roundNo: number,
+  correctAnswer: string,
+  prior: LastAnswerResult | null,
+): LastAnswerResult {
+  return {
+    matchId,
+    roundNo,
+    ...(prior?.submissionId !== undefined && {
+      submissionId: prior.submissionId,
+    }),
+    ...(prior?.submittedAnswer !== undefined && {
+      submittedAnswer: prior.submittedAnswer,
+    }),
+    ...(prior?.isCorrect !== undefined && {
+      isCorrect: prior.isCorrect,
+    }),
+    ...(prior?.responseTimeMs !== undefined && {
+      responseTimeMs: prior.responseTimeMs,
+    }),
+    correctAnswer,
+  };
+}
+
 export function applyRoundEndedState(
   state: SocketState,
   data:
@@ -148,39 +209,22 @@ export function applyRoundEndedState(
       ? new Set(data.survivingPlayerIds)
       : null;
 
-  const updatedPlayers = basePlayers.map((player) => {
-    if (eliminatedSet.has(player.id)) {
-      return { ...player, status: PlayerStatus.ELIMINATED };
-    }
-    if (survivingSet !== null) {
-      if (!survivingSet.has(player.id)) {
-        return { ...player, status: PlayerStatus.ELIMINATED };
-      }
-      return player.status === PlayerStatus.ELIMINATED
-        ? { ...player, status: PlayerStatus.ACTIVE }
-        : player;
-    }
-    return player;
-  });
+  const updatedPlayers = basePlayers.map((player) =>
+    updatePlayerRoundStatus(player, eliminatedSet, survivingSet),
+  );
 
   const survivingCount =
     "survivingCount" in data && typeof data.survivingCount === "number"
       ? data.survivingCount
       : (survivingSet?.size ?? null);
 
-  let isEliminated = state.isEliminated;
-  if (state.userId) {
-    if (eliminatedSet.has(state.userId)) {
-      isEliminated = true;
-    } else if (survivingSet !== null && survivingSet.has(state.userId)) {
-      isEliminated = false;
-    } else {
-      const localPlayer = updatedPlayers.find((p) => p.id === state.userId);
-      if (localPlayer) {
-        isEliminated = localPlayer.status === PlayerStatus.ELIMINATED;
-      }
-    }
-  }
+  const isEliminated = resolveUserRoundEliminated(
+    state.userId,
+    state.isEliminated,
+    eliminatedSet,
+    survivingSet,
+    updatedPlayers,
+  );
 
   const eliminationReason = isEliminated ? state.eliminationReason : null;
 
@@ -201,23 +245,12 @@ export function applyRoundEndedState(
           currentQuestion: null,
           roundEndTime: null,
         },
-    lastAnswerResult: {
-      matchId: data.matchId,
-      roundNo: data.roundNo,
-      ...(priorForThisRound?.submissionId !== undefined && {
-        submissionId: priorForThisRound.submissionId,
-      }),
-      ...(priorForThisRound?.submittedAnswer !== undefined && {
-        submittedAnswer: priorForThisRound.submittedAnswer,
-      }),
-      ...(priorForThisRound?.isCorrect !== undefined && {
-        isCorrect: priorForThisRound.isCorrect,
-      }),
-      ...(priorForThisRound?.responseTimeMs !== undefined && {
-        responseTimeMs: priorForThisRound.responseTimeMs,
-      }),
-      correctAnswer: data.correctAnswer,
-    },
+    lastAnswerResult: buildRoundEndedAnswerResult(
+      data.matchId,
+      data.roundNo,
+      data.correctAnswer,
+      priorForThisRound,
+    ),
     remainingCount: survivingCount,
     isEliminated,
     eliminationReason,
@@ -283,6 +316,55 @@ export function applyMatchFinishedState(
   };
 }
 
+function resolveTopicsList(
+  dataTopics: string[] | undefined,
+  existingTopics: string[] | undefined,
+): string[] {
+  return dataTopics ?? existingTopics ?? [];
+}
+
+function calculateTotalVotes(
+  voteCounts: Record<string, number> | undefined,
+): number {
+  if (!voteCounts) return 0;
+  return Object.values(voteCounts).reduce((sum, n) => sum + n, 0);
+}
+
+function buildCandidateTopicVoting(
+  state: SocketState,
+  data: SnapshotPayload,
+  isFinished: boolean,
+  totalVotes: number,
+): TopicVotingState {
+  const isSameMatch = state.topicVoting?.matchId === data.matchId;
+  const existing = isSameMatch ? state.topicVoting : null;
+  return {
+    matchId: data.matchId,
+    candidateTopics: data.candidateTopics ?? [],
+    endsAt: data.phaseEndsAt ?? data.roundEndTime ?? 0,
+    durationMs: GAME_CONFIG.TOPIC_VOTING_DURATION_MS,
+    myVotedTopic: existing?.myVotedTopic ?? null,
+    voteCounts: data.voteCounts ?? {},
+    totalVotes,
+    bannedTopics: resolveTopicsList(data.bannedTopics, existing?.bannedTopics),
+    activeTopics: resolveTopicsList(data.activeTopics, existing?.activeTopics),
+    isFinished,
+  };
+}
+
+function mergeExistingTopicVoting(
+  existing: TopicVotingState,
+  data: SnapshotPayload,
+  isFinished: boolean,
+): TopicVotingState {
+  return {
+    ...existing,
+    bannedTopics: resolveTopicsList(data.bannedTopics, existing.bannedTopics),
+    activeTopics: resolveTopicsList(data.activeTopics, existing.activeTopics),
+    isFinished: isFinished || existing.isFinished,
+  };
+}
+
 export function resolveSnapshotTopicVoting(
   state: SocketState,
   data: SnapshotPayload,
@@ -299,75 +381,25 @@ export function resolveSnapshotTopicVoting(
     return null;
   }
 
-  const totalVotes = data.voteCounts
-    ? Object.values(data.voteCounts).reduce(
-        (sum: number, n: number) => sum + n,
-        0,
-      )
-    : 0;
+  const isFinished = matchStatus !== MatchStatus.TOPIC_VOTING;
+  const totalVotes = calculateTotalVotes(data.voteCounts);
 
   if (data.candidateTopics && data.candidateTopics.length > 0) {
-    return {
-      matchId: data.matchId,
-      candidateTopics: data.candidateTopics,
-      endsAt: data.phaseEndsAt ?? data.roundEndTime ?? 0,
-      durationMs: GAME_CONFIG.TOPIC_VOTING_DURATION_MS,
-      myVotedTopic:
-        state.topicVoting?.matchId === data.matchId
-          ? state.topicVoting.myVotedTopic
-          : null,
-      voteCounts: data.voteCounts ?? {},
-      totalVotes,
-      bannedTopics:
-        (data.bannedTopics !== undefined
-          ? data.bannedTopics
-          : state.topicVoting?.matchId === data.matchId
-            ? state.topicVoting.bannedTopics
-            : []) ?? [],
-      activeTopics:
-        (data.activeTopics !== undefined
-          ? data.activeTopics
-          : state.topicVoting?.matchId === data.matchId
-            ? state.topicVoting.activeTopics
-            : []) ?? [],
-      isFinished: matchStatus !== MatchStatus.TOPIC_VOTING,
-    };
+    return buildCandidateTopicVoting(state, data, isFinished, totalVotes);
   }
 
   if (state.topicVoting?.matchId === data.matchId) {
-    return {
-      ...state.topicVoting,
-      bannedTopics:
-        (data.bannedTopics !== undefined
-          ? data.bannedTopics
-          : state.topicVoting.bannedTopics) ?? [],
-      activeTopics:
-        (data.activeTopics !== undefined
-          ? data.activeTopics
-          : state.topicVoting.activeTopics) ?? [],
-      isFinished:
-        matchStatus !== MatchStatus.TOPIC_VOTING
-          ? true
-          : state.topicVoting.isFinished,
-    };
+    return mergeExistingTopicVoting(state.topicVoting, data, isFinished);
   }
 
-  if (
-    (data.bannedTopics && data.bannedTopics.length > 0) ||
-    (data.activeTopics && data.activeTopics.length > 0)
-  ) {
-    return {
-      matchId: data.matchId,
-      candidateTopics: data.candidateTopics ?? [],
-      endsAt: data.phaseEndsAt ?? data.roundEndTime ?? 0,
-      durationMs: GAME_CONFIG.TOPIC_VOTING_DURATION_MS,
-      myVotedTopic: null,
-      voteCounts: data.voteCounts ?? {},
-      totalVotes,
-      bannedTopics: data.bannedTopics ?? [],
-      activeTopics: data.activeTopics ?? [],
-      isFinished: matchStatus !== MatchStatus.TOPIC_VOTING,
-    };
+  const hasBannedTopics = Boolean(
+    data.bannedTopics && data.bannedTopics.length > 0,
+  );
+  const hasActiveTopics = Boolean(
+    data.activeTopics && data.activeTopics.length > 0,
+  );
+  if (hasBannedTopics || hasActiveTopics) {
+    return buildCandidateTopicVoting(state, data, isFinished, totalVotes);
   }
 
   return null;
@@ -502,7 +534,7 @@ function mergeAccumulator(
       res.pendingAnswer !== undefined ? res.pendingAnswer : acc.pendingAnswer,
     topicVoting:
       res.topicVoting !== undefined ? res.topicVoting : acc.topicVoting,
-    cardState: res.cardState !== undefined ? res.cardState : acc.cardState,
+    cardState: res.cardState ?? acc.cardState,
   };
 }
 
@@ -636,19 +668,22 @@ export function applyAnswerResultState(
     state.pendingAnswer?.matchId === data.matchId &&
     state.pendingAnswer.roundNo === data.roundNo &&
     state.pendingAnswer.submissionId === data.submissionId;
-  const submittedAnswer = isPendingAnswer
-    ? state.pendingAnswer?.answer
-    : state.lastAnswerResult?.matchId === data.matchId &&
-        state.lastAnswerResult?.roundNo === data.roundNo
-      ? state.lastAnswerResult.submittedAnswer
-      : undefined;
+
+  let submittedAnswer: string | undefined;
+  if (isPendingAnswer) {
+    submittedAnswer = state.pendingAnswer?.answer;
+  } else if (
+    state.lastAnswerResult?.matchId === data.matchId &&
+    state.lastAnswerResult?.roundNo === data.roundNo
+  ) {
+    submittedAnswer = state.lastAnswerResult.submittedAnswer;
+  }
 
   const isRetry = Boolean(
-    state.lastAnswerResult &&
-    state.lastAnswerResult.matchId === data.matchId &&
-    state.lastAnswerResult.roundNo === data.roundNo &&
-    state.lastAnswerResult.submissionId &&
     data.submissionId &&
+    state.lastAnswerResult?.matchId === data.matchId &&
+    state.lastAnswerResult?.roundNo === data.roundNo &&
+    state.lastAnswerResult?.submissionId &&
     state.lastAnswerResult.submissionId !== data.submissionId,
   );
 

@@ -10,7 +10,10 @@ interface DailyHeaderHeroProps {
   result: DailySubmitResponse | null;
 }
 
-export function DailyHeaderHero({ data, result }: DailyHeaderHeroProps) {
+export function DailyHeaderHero({
+  data,
+  result,
+}: Readonly<DailyHeaderHeroProps>) {
   const t = useTranslations("daily");
 
   return (

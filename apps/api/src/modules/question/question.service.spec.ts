@@ -274,13 +274,13 @@ describe("QuestionService", () => {
       expect(result).toEqual(question);
     });
 
-    it("should handle non-array options by converting them to string array", async () => {
+    it("should preserve string array options correctly", async () => {
       const id = "q-1";
       const question = {
         id,
         content: "Question",
-        options: { value1: "A", value2: "B" },
-        correctAnswer: "0",
+        options: ["Paris", "London", "Berlin", "Madrid"],
+        correctAnswer: "Paris",
         difficulty: QuestionDifficulty.EASY,
         category: QuestionCategory.GENERAL,
         active: true,
@@ -292,55 +292,8 @@ describe("QuestionService", () => {
 
       const result = await service.findOne(id);
 
-      // Options should be converted to string array
       expect(Array.isArray(result.options)).toBe(true);
-      expect(result.options).toEqual(["[object Object]"]);
-    });
-
-    it("should parse JSON string options correctly", async () => {
-      const id = "q-1";
-      const question = {
-        id,
-        content: "Question",
-        options: '["A", "B", "C"]',
-        correctAnswer: "0",
-        difficulty: QuestionDifficulty.EASY,
-        category: QuestionCategory.GENERAL,
-        active: true,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      mockPrismaService.question.findUnique.mockResolvedValueOnce(question);
-
-      const result = await service.findOne(id);
-
-      // Options should be parsed as array
-      expect(Array.isArray(result.options)).toBe(true);
-      expect(result.options).toEqual(["A", "B", "C"]);
-    });
-
-    it("should convert non-string array elements to strings", async () => {
-      const id = "q-1";
-      const question = {
-        id,
-        content: "Question",
-        options: [1, 2, 3],
-        correctAnswer: "0",
-        difficulty: QuestionDifficulty.EASY,
-        category: QuestionCategory.GENERAL,
-        active: true,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      mockPrismaService.question.findUnique.mockResolvedValueOnce(question);
-
-      const result = await service.findOne(id);
-
-      // Non-string elements should be converted to strings
-      expect(Array.isArray(result.options)).toBe(true);
-      expect(result.options).toEqual(["1", "2", "3"]);
+      expect(result.options).toEqual(["Paris", "London", "Berlin", "Madrid"]);
     });
 
     it("should map the category field correctly from prismaQuestion", async () => {

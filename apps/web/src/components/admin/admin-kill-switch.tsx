@@ -18,7 +18,7 @@ export function AdminKillSwitch({
   setTerminateMessage,
   terminating,
   onTerminateClick,
-}: AdminKillSwitchProps) {
+}: Readonly<AdminKillSwitchProps>) {
   const tTerminate = useTranslations("admin.terminateRoom");
 
   return (

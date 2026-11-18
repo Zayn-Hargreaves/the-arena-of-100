@@ -10,7 +10,9 @@ import {
 } from "@/lib/sound-engine";
 import { AudioOnboardingPrompt } from "@/components/ui/audio-onboarding-prompt";
 
-export function SfxProvider({ children }: { children: React.ReactNode }) {
+export function SfxProvider({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
   useEffect(() => {
     function handleGlobalInteraction() {
       const settings = getAudioSettings();
@@ -46,7 +48,7 @@ export function SfxProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Check custom data-sfx override
-      const customSfx = interactiveEl.getAttribute("data-sfx");
+      const customSfx = interactiveEl.dataset.sfx;
       if (customSfx === "none" || customSfx === "custom") {
         return;
       }

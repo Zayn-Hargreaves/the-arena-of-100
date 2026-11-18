@@ -61,6 +61,31 @@ function isAbortLikeError(err: unknown): boolean {
   return err instanceof Error && err.name === "AbortError";
 }
 
+interface ShareButtonLabelParams {
+  copied: boolean;
+  error: boolean;
+  supportsNativeShare: boolean;
+  copiedLabel: string;
+  errorLabel: string;
+  shareLabel: string;
+  copyLabel: string;
+}
+
+function getShareButtonLabel({
+  copied,
+  error,
+  supportsNativeShare,
+  copiedLabel,
+  errorLabel,
+  shareLabel,
+  copyLabel,
+}: ShareButtonLabelParams): string {
+  if (copied) return copiedLabel;
+  if (error) return errorLabel;
+  if (supportsNativeShare) return shareLabel;
+  return copyLabel;
+}
+
 /**
  * Client-side share helper. Uses the platform `navigator.share` when
  * available (mobile-first), falls back to clipboard otherwise. The URL
@@ -167,13 +192,20 @@ export function DailyShareButton({
     shareTextStreakLabel,
   ]);
 
-  const label = copied
-    ? copiedLabel
-    : error
-      ? errorLabel
-      : supportsNativeShare
-        ? shareLabel
-        : copyLabel;
+  const label = getShareButtonLabel({
+    copied,
+    error,
+    supportsNativeShare,
+    copiedLabel,
+    errorLabel,
+    shareLabel,
+    copyLabel,
+  });
+
+  const shareGridItems = result.results.map((r, index) => ({
+    ...r,
+    id: `share-grid-${result.dateKey ?? "result"}-${index + 1}`,
+  }));
 
   return (
     <div className="bg-candy-cloud border-[3px] border-candy-ink shadow-[4px_4px_0_0_#2B2D42] rounded-2xl p-5 space-y-4">
@@ -183,9 +215,9 @@ export function DailyShareButton({
             {shareTextTitle}
           </h4>
           <div className="flex items-center gap-1.5 flex-wrap">
-            {result.results.map((r, i) => (
+            {shareGridItems.map((r) => (
               <span
-                key={i}
+                key={r.id}
                 className={`w-6 h-6 rounded-lg border-[2px] border-candy-ink flex items-center justify-center font-mono font-black text-xs shadow-[1px_1px_0_0_#2B2D42] ${
                   r.isCorrect
                     ? "bg-candy-mint text-candy-ink"

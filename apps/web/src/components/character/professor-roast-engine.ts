@@ -148,7 +148,7 @@ export function getDeterministicProfessorDialogue(
   }
   let hash = 0;
   for (let i = 0; i < seed.length; i++) {
-    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+    hash = (hash * 31 + (seed.codePointAt(i) ?? 0)) >>> 0;
   }
   const idx = hash % list.length;
   return list[idx] ?? list[0]!;

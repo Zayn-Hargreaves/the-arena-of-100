@@ -30,6 +30,18 @@ export interface EliminatedOverlayProps {
   onLeave?: () => void;
 }
 
+function getProfessorDialogueContext(
+  reason: EliminationReason | undefined | null,
+): DialogueContext {
+  if (reason === "WRONG_ANSWER") {
+    return "game_wrong_answer";
+  }
+  if (reason === "TIMEOUT") {
+    return "game_eliminated_timeout";
+  }
+  return "game_eliminated";
+}
+
 /**
  * Fullscreen overlay shown when the local player has been eliminated.
  * Provides actions to continue spectating the remaining match or leave.
@@ -54,18 +66,13 @@ export const EliminatedOverlay: React.FC<EliminatedOverlayProps> = ({
   const roundNo = match?.currentRoundNo;
 
   const professorRoast = useMemo(() => {
-    const context: DialogueContext =
-      reason === "WRONG_ANSWER"
-        ? "game_wrong_answer"
-        : reason === "TIMEOUT"
-          ? "game_eliminated_timeout"
-          : "game_eliminated";
+    const context = getProfessorDialogueContext(reason);
     const seed = `${reason ?? "eliminated"}-${matchId ?? "match"}-${roundNo ?? 0}`;
     const d = getDeterministicProfessorDialogue(context, seed);
     return tProf(d.key);
   }, [reason, matchId, roundNo, tProf]);
 
-  const dialogRef = React.useRef<HTMLDivElement>(null);
+  const dialogRef = React.useRef<HTMLDialogElement>(null);
   const previousActiveElement = React.useRef<HTMLElement | null>(null);
   const onSpectateRef = React.useRef(onSpectate);
   onSpectateRef.current = onSpectate;
@@ -109,7 +116,7 @@ export const EliminatedOverlay: React.FC<EliminatedOverlayProps> = ({
       }
 
       const firstElement = focusable[0];
-      const lastElement = focusable[focusable.length - 1];
+      const lastElement = focusable.at(-1);
 
       if (e.shiftKey) {
         if (
@@ -119,14 +126,12 @@ export const EliminatedOverlay: React.FC<EliminatedOverlayProps> = ({
           e.preventDefault();
           lastElement?.focus();
         }
-      } else {
-        if (
-          document.activeElement === lastElement ||
-          document.activeElement === dialogRef.current
-        ) {
-          e.preventDefault();
-          firstElement?.focus();
-        }
+      } else if (
+        document.activeElement === lastElement ||
+        document.activeElement === dialogRef.current
+      ) {
+        e.preventDefault();
+        firstElement?.focus();
       }
     };
 
@@ -143,13 +148,13 @@ export const EliminatedOverlay: React.FC<EliminatedOverlayProps> = ({
   }, []);
 
   return (
-    <div
+    <dialog
       ref={dialogRef}
-      role="dialog"
+      open
       aria-modal="true"
       aria-labelledby="eliminated-title"
       tabIndex={-1}
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 pt-16 sm:pt-4 overflow-y-auto bg-black/60 backdrop-blur-sm pointer-events-none outline-none"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 pt-16 sm:pt-4 overflow-y-auto bg-black/60 backdrop-blur-sm pointer-events-none outline-none border-none m-0 max-w-none max-h-none w-full h-full"
     >
       <div className="jelly-card p-5 sm:p-6 md:p-8 rounded-3xl border-[4px] border-candy-ink bg-white shadow-[8px_8px_0_0_#2B2D42] text-center space-y-3.5 sm:space-y-4 animate-bounce-in pointer-events-auto max-w-md w-full my-auto relative">
         {/* Red Stamp Badge */}
@@ -229,7 +234,7 @@ export const EliminatedOverlay: React.FC<EliminatedOverlayProps> = ({
           )}
         </div>
       </div>
-    </div>
+    </dialog>
   );
 };
 

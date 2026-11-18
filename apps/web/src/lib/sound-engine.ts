@@ -193,7 +193,7 @@ function handleAutoplayBlocked(): void {
       currentSettings.bgmEnabled &&
       currentSettings.bgmVolume > 0
     ) {
-      safePlayBgm();
+      void safePlayBgm();
     }
   };
 
@@ -201,13 +201,10 @@ function handleAutoplayBlocked(): void {
   window.addEventListener("keydown", resumeOnGesture, { once: true });
 }
 
-function safePlayBgm(): void {
+async function safePlayBgm(): Promise<void> {
   if (!bgmAudioElement) return;
   try {
-    const playPromise = bgmAudioElement.play();
-    if (playPromise && typeof playPromise.catch === "function") {
-      playPromise.catch(handleAutoplayBlocked);
-    }
+    await bgmAudioElement.play();
   } catch {
     handleAutoplayBlocked();
   }
@@ -232,7 +229,7 @@ export function startBgm(trackUrl: string = DEFAULT_BGM_TRACK): void {
   bgmAudioElement.volume = settings.bgmEnabled ? normalizedVol : 0;
 
   if (settings.soundConsent && settings.bgmEnabled && settings.bgmVolume > 0) {
-    safePlayBgm();
+    void safePlayBgm();
   } else {
     bgmAudioElement.pause();
   }
@@ -254,7 +251,7 @@ export function syncBgmWithSettings(): void {
   if (settings.soundConsent && settings.bgmEnabled && settings.bgmVolume > 0) {
     bgmAudioElement.volume = normalizedVol;
     if (bgmAudioElement.paused) {
-      safePlayBgm();
+      void safePlayBgm();
     }
   } else {
     bgmAudioElement.pause();
@@ -283,10 +280,7 @@ export function playSfx(
   const settings = getAudioSettings();
   if (!settings.soundConsent || !settings.sfxEnabled) return;
 
-  const volume =
-    customVolumePercent !== undefined
-      ? customVolumePercent
-      : settings.sfxVolume;
+  const volume = customVolumePercent ?? settings.sfxVolume;
   if (volume <= 0) return;
 
   const ctx = getAudioContext();

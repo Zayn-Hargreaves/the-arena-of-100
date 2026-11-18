@@ -94,7 +94,7 @@ export function applyTopicVotingSummaryState(
   state: SocketState,
   data: TopicVotingSummaryPayload,
 ): Partial<SocketState> {
-  if (!state.topicVoting || state.topicVoting.matchId !== data.matchId) {
+  if (state.topicVoting?.matchId !== data.matchId) {
     return {};
   }
   return {
@@ -110,7 +110,7 @@ export function applyTopicVotingFinishedState(
   state: SocketState,
   data: TopicVotingFinishedPayload,
 ): Partial<SocketState> {
-  if (!state.topicVoting || state.topicVoting.matchId !== data.matchId) {
+  if (state.topicVoting?.matchId !== data.matchId) {
     return {};
   }
   return {
@@ -165,7 +165,7 @@ export function applyTopicVoteErrorState(
   matchId: string | null,
   recomputedTopic: string | null,
 ): Partial<SocketState> {
-  if (matchId && state.topicVoting && state.topicVoting.matchId === matchId) {
+  if (matchId && state.topicVoting?.matchId === matchId) {
     return {
       topicVoting: {
         ...state.topicVoting,

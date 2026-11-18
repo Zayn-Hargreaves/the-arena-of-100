@@ -81,4 +81,24 @@ describe("PolicyModal", () => {
     fireEvent.click(closeButtons[0]);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("calls onClose when backdrop is clicked", () => {
+    const { container } = render(
+      <PolicyModal isOpen={true} type="terms" onClose={onClose} />,
+    );
+
+    const dialog = container.querySelector("dialog");
+    expect(dialog).not.toBeNull();
+    if (dialog) {
+      fireEvent.click(dialog);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("calls onClose when Escape key is pressed", () => {
+    render(<PolicyModal isOpen={true} type="terms" onClose={onClose} />);
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

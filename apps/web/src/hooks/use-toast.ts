@@ -126,6 +126,7 @@ function toast({ ...props }: Toast) {
       type: "UPDATE_TOAST",
       toast: { ...props, id },
     });
+
   const dismiss = () => dismissToast(id);
 
   dispatch({

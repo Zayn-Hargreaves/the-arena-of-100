@@ -28,6 +28,23 @@ const difficultyTone: Record<
 
 const OPTION_LETTERS = ANSWER_CODES;
 
+function getOptionCardStyle(
+  isCorrectAnswer: boolean,
+  isWrongSelected: boolean,
+  isSelected: boolean,
+): string {
+  if (isCorrectAnswer) {
+    return "bg-candy-mint text-candy-ink border-candy-ink shadow-[3px_3px_0_0_#2B2D42]";
+  }
+  if (isWrongSelected) {
+    return "bg-candy-pink/30 text-candy-ink border-candy-pink shadow-[3px_3px_0_0_#2B2D42]";
+  }
+  if (isSelected) {
+    return "bg-candy-yellow text-candy-ink border-candy-ink shadow-[3px_3px_0_0_#2B2D42] -translate-y-0.5";
+  }
+  return "bg-white text-candy-ink border-candy-ink shadow-[3px_3px_0_0_#2B2D42] hover:bg-candy-yellow/20 hover:-translate-y-0.5 active:translate-y-0 active:shadow-none";
+}
+
 export function DailyQuestionCard({
   question,
   questionNumber,
@@ -71,13 +88,11 @@ export function DailyQuestionCard({
           const isWrongSelected = locked && isSelected && !isCorrectAnswer;
           const letter = OPTION_LETTERS[idx] ?? String(idx + 1);
 
-          const cardStateStyle = isCorrectAnswer
-            ? "bg-candy-mint text-candy-ink border-candy-ink shadow-[3px_3px_0_0_#2B2D42]"
-            : isWrongSelected
-              ? "bg-candy-pink/30 text-candy-ink border-candy-pink shadow-[3px_3px_0_0_#2B2D42]"
-              : isSelected
-                ? "bg-candy-yellow text-candy-ink border-candy-ink shadow-[3px_3px_0_0_#2B2D42] -translate-y-0.5"
-                : "bg-white text-candy-ink border-candy-ink shadow-[3px_3px_0_0_#2B2D42] hover:bg-candy-yellow/20 hover:-translate-y-0.5 active:translate-y-0 active:shadow-none";
+          const cardStateStyle = getOptionCardStyle(
+            isCorrectAnswer,
+            isWrongSelected,
+            isSelected,
+          );
 
           return (
             <li key={option}>

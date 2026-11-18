@@ -40,7 +40,7 @@ export function MatchmakingModal() {
   const [professorLine, setProfessorLine] = useState(() =>
     tProf("dialogues.matchmaking_waiting.0"),
   );
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const previouslyFocusedElementRef = useRef<FocusableElement | null>(null);
   const routerRef = useRef(router);
   routerRef.current = router;
@@ -148,11 +148,9 @@ export function MatchmakingModal() {
             e.preventDefault();
             lastElement.focus();
           }
-        } else {
-          if (document.activeElement === lastElement) {
-            e.preventDefault();
-            firstElement.focus();
-          }
+        } else if (document.activeElement === lastElement) {
+          e.preventDefault();
+          firstElement.focus();
         }
       }
     };
@@ -300,15 +298,115 @@ export function MatchmakingModal() {
     .padStart(2, "0");
   const estSecs = (estSeconds % 60).toString().padStart(2, "0");
 
+  const renderContentBody = () => {
+    if (joinError) {
+      return (
+        <div className="flex flex-col items-center gap-3">
+          <ProfessorAvatar mood="angry_roast" size="lg" />
+          <div role="alert" aria-live="assertive">
+            <h3 className="font-display font-black text-lg text-candy-red">
+              {getErrorMessage(joinError)}
+            </h3>
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (matchmaking.matchedRoomCode) {
+                  void handleJoinMatchedRoom(matchmaking.matchedRoomCode);
+                }
+              }}
+              className="px-4 py-2 bg-candy-yellow border-2 border-candy-ink rounded-xl font-display font-black text-xs uppercase shadow-[2px_2px_0_0_#2B2D42] cursor-pointer"
+            >
+              {t("retry")}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setJoinError(null);
+                handleLeaveMatchmaking();
+              }}
+              className="px-4 py-2 bg-white border-2 border-candy-ink rounded-xl font-display font-black text-xs uppercase shadow-[2px_2px_0_0_#2B2D42] cursor-pointer"
+            >
+              {t("cancelButton")}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (isMatched) {
+      return (
+        <div className="flex flex-col items-center gap-3 animate-bounce motion-reduce:animate-none">
+          <ProfessorAvatar mood="proud_cheer" size="lg" />
+          <h3 className="font-display font-black text-2xl text-candy-ink">
+            {t("readyToBattle")}
+          </h3>
+          <ProfessorDialogueBox
+            text={professorLine}
+            tailPosition="bottom"
+            variant="paper"
+            className="w-full text-center"
+          />
+          <p className="font-display text-xs text-candy-slate font-bold">
+            {t("redirecting", {
+              roomCode: matchmaking.matchedRoomCode ?? "",
+            })}
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <>
+        {/* Professor Examining with Magnifying Glass */}
+        <div className="relative flex items-center justify-center my-1">
+          <ProfessorAvatar mood="searching" size="lg" />
+        </div>
+
+        {/* Professor Dialogue */}
+        <ProfessorDialogueBox
+          text={professorLine}
+          tailPosition="bottom"
+          variant="paper"
+          className="w-full text-center text-xs"
+        />
+
+        {/* Timer Display */}
+        <div>
+          <div className="font-display font-black text-3xl tracking-widest text-candy-ink">
+            {minutes}:{seconds}
+          </div>
+          <div className="font-display text-xs text-candy-slate font-bold mt-0.5">
+            {t("estimatedWait", { time: `${estMinutes}:${estSecs}` })}
+          </div>
+        </div>
+
+        {/* Players in Queue Indicator */}
+        <div className="w-full bg-[#FFF8E7] border-3 border-candy-ink rounded-2xl p-3 shadow-[2px_2px_0_0_#2B2D42] flex items-center justify-between text-xs font-display">
+          <span className="text-candy-slate font-bold flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-candy-mint animate-pulse inline-block" />
+            {t("playersInQueue")}
+          </span>
+          <span className="font-black text-candy-ink bg-white px-2.5 py-0.5 border-2 border-candy-ink rounded-lg">
+            {t("playerCount", {
+              count: Math.max(1, matchmaking.playersInQueue),
+            })}
+          </span>
+        </div>
+      </>
+    );
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div
+      <dialog
         ref={dialogRef}
-        role="dialog"
+        open
         aria-modal="true"
         aria-labelledby="matchmaking-modal-title"
         tabIndex={-1}
-        className="relative w-full max-w-md bg-white border-4 border-candy-ink rounded-3xl p-6 shadow-[8px_8px_0_0_#2B2D42] overflow-hidden outline-none"
+        className="relative w-full max-w-md bg-white border-4 border-candy-ink rounded-3xl p-6 shadow-[8px_8px_0_0_#2B2D42] overflow-hidden outline-none m-0"
       >
         {/* Playful Top Badge */}
         <div className="flex justify-between items-center mb-4">
@@ -336,95 +434,7 @@ export function MatchmakingModal() {
 
         {/* Content Body */}
         <div className="flex flex-col items-center text-center my-4 gap-3">
-          {joinError ? (
-            <div className="flex flex-col items-center gap-3">
-              <ProfessorAvatar mood="angry_roast" size="lg" />
-              <div role="alert" aria-live="assertive">
-                <h3 className="font-display font-black text-lg text-candy-red">
-                  {getErrorMessage(joinError)}
-                </h3>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (matchmaking.matchedRoomCode) {
-                      void handleJoinMatchedRoom(matchmaking.matchedRoomCode);
-                    }
-                  }}
-                  className="px-4 py-2 bg-candy-yellow border-2 border-candy-ink rounded-xl font-display font-black text-xs uppercase shadow-[2px_2px_0_0_#2B2D42] cursor-pointer"
-                >
-                  {t("retry")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setJoinError(null);
-                    handleLeaveMatchmaking();
-                  }}
-                  className="px-4 py-2 bg-white border-2 border-candy-ink rounded-xl font-display font-black text-xs uppercase shadow-[2px_2px_0_0_#2B2D42] cursor-pointer"
-                >
-                  {t("cancelButton")}
-                </button>
-              </div>
-            </div>
-          ) : isMatched ? (
-            <div className="flex flex-col items-center gap-3 animate-bounce motion-reduce:animate-none">
-              <ProfessorAvatar mood="proud_cheer" size="lg" />
-              <h3 className="font-display font-black text-2xl text-candy-ink">
-                {t("readyToBattle")}
-              </h3>
-              <ProfessorDialogueBox
-                text={professorLine}
-                tailPosition="bottom"
-                variant="paper"
-                className="w-full text-center"
-              />
-              <p className="font-display text-xs text-candy-slate font-bold">
-                {t("redirecting", {
-                  roomCode: matchmaking.matchedRoomCode ?? "",
-                })}
-              </p>
-            </div>
-          ) : (
-            <>
-              {/* Professor Examining with Magnifying Glass */}
-              <div className="relative flex items-center justify-center my-1">
-                <ProfessorAvatar mood="searching" size="lg" />
-              </div>
-
-              {/* Professor Dialogue */}
-              <ProfessorDialogueBox
-                text={professorLine}
-                tailPosition="bottom"
-                variant="paper"
-                className="w-full text-center text-xs"
-              />
-
-              {/* Timer Display */}
-              <div>
-                <div className="font-display font-black text-3xl tracking-widest text-candy-ink">
-                  {minutes}:{seconds}
-                </div>
-                <div className="font-display text-xs text-candy-slate font-bold mt-0.5">
-                  {t("estimatedWait", { time: `${estMinutes}:${estSecs}` })}
-                </div>
-              </div>
-
-              {/* Players in Queue Indicator */}
-              <div className="w-full bg-[#FFF8E7] border-3 border-candy-ink rounded-2xl p-3 shadow-[2px_2px_0_0_#2B2D42] flex items-center justify-between text-xs font-display">
-                <span className="text-candy-slate font-bold flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-candy-mint animate-pulse inline-block" />
-                  {t("playersInQueue")}
-                </span>
-                <span className="font-black text-candy-ink bg-white px-2.5 py-0.5 border-2 border-candy-ink rounded-lg">
-                  {t("playerCount", {
-                    count: Math.max(1, matchmaking.playersInQueue),
-                  })}
-                </span>
-              </div>
-            </>
-          )}
+          {renderContentBody()}
         </div>
 
         {/* Footer Actions */}
@@ -439,7 +449,7 @@ export function MatchmakingModal() {
             </button>
           </div>
         )}
-      </div>
+      </dialog>
     </div>
   );
 }

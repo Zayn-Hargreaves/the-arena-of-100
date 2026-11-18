@@ -57,10 +57,7 @@ function parseObjectToSafeNumber(value: object): number {
     const n = v.toNumber();
     return Number.isFinite(n) ? n : 0;
   }
-  if (
-    Object.prototype.hasOwnProperty.call(value, "valueOf") &&
-    typeof v.valueOf === "function"
-  ) {
+  if (Object.hasOwn(value, "valueOf") && typeof v.valueOf === "function") {
     const n = Number(v.valueOf());
     return Number.isFinite(n) ? n : 0;
   }
@@ -162,8 +159,15 @@ export class UsersService {
     };
 
     // survivalRate: top 50% by score within each match (RANK, ties broken by userId)
+    // Optimization: Pre-filter to only matches the user participated in before ranking
     const survivalAgg = await this.prisma.$queryRaw<SurvivalAggRow[]>`
-      WITH ranked AS (
+      WITH user_matches AS (
+        SELECT mp."matchId"
+        FROM "match_players" mp
+        JOIN "matches" m ON m."id" = mp."matchId"
+        WHERE mp."userId" = ${userId}::text AND m."status" = ${FINISHED}::text
+      ),
+      ranked AS (
         SELECT
           mp."userId" AS user_id,
           RANK() OVER (
@@ -172,8 +176,7 @@ export class UsersService {
           ) AS rank,
           COUNT(*) OVER (PARTITION BY mp."matchId") AS total
         FROM "match_players" mp
-        JOIN "matches" m ON m."id" = mp."matchId"
-        WHERE m."status" = ${FINISHED}::text
+        JOIN user_matches um ON um."matchId" = mp."matchId"
       )
       SELECT
         COUNT(*) FILTER (WHERE rank <= total / 2.0)::numeric
@@ -327,18 +330,20 @@ export class UsersService {
       },
     });
     await this.invalidateLeaderboardCache();
+    let createdAtFormatted: string | undefined;
+    if (user.createdAt instanceof Date) {
+      createdAtFormatted = user.createdAt.toISOString();
+    } else if (user.createdAt) {
+      createdAtFormatted = String(user.createdAt);
+    }
+
     return {
       id: user.id,
       username: user.username,
       avatar: user.avatar,
       role: user.role,
       elo: user.elo,
-      createdAt:
-        user.createdAt instanceof Date
-          ? user.createdAt.toISOString()
-          : user.createdAt
-            ? String(user.createdAt)
-            : undefined,
+      createdAt: createdAtFormatted,
       rankTier: getRankTier(user.elo),
     };
   }

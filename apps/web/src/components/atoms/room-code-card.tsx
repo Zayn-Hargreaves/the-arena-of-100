@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { Copy, Check, Link as LinkIcon, Sparkles } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
+import { copyToClipboard } from "@/lib/clipboard";
 
 export interface RoomCodeCardProps {
   roomCode: string;
@@ -25,32 +26,6 @@ export const RoomCodeCard: React.FC<RoomCodeCardProps> = ({ roomCode }) => {
       if (linkTimeoutRef.current) clearTimeout(linkTimeoutRef.current);
     };
   }, []);
-
-  const copyToClipboard = async (text: string) => {
-    try {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(text);
-        return true;
-      }
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      textarea.style.position = "fixed";
-      textarea.style.top = "0";
-      textarea.style.left = "0";
-      textarea.style.opacity = "0";
-      textarea.style.pointerEvents = "none";
-      document.body.appendChild(textarea);
-      try {
-        textarea.focus();
-        textarea.select();
-        return document.execCommand("copy");
-      } finally {
-        document.body.removeChild(textarea);
-      }
-    } catch {
-      return false;
-    }
-  };
 
   const handleCopyCode = async () => {
     const success = await copyToClipboard(roomCode);

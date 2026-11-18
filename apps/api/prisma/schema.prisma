@@ -39,6 +39,29 @@ enum QuestionCategory {
   LOGIC
 }
 
+enum RoomType {
+  PUBLIC
+  PRIVATE
+}
+
+enum RoomStatus {
+  WAITING
+  COUNTDOWN
+  STARTING
+  IN_GAME
+  FINISHED
+}
+
+enum MatchStatus {
+  CREATED
+  TOPIC_VOTING
+  COUNTDOWN
+  ROUND_ACTIVE
+  ROUND_EVALUATING
+  ROUND_RESULT
+  FINISHED
+}
+
 // Users
 model User {
   id        String   @id @default(cuid())
@@ -70,17 +93,17 @@ model User {
 
 // Rooms
 model Room {
-  id             String   @id @default(cuid())
-  code           String   @unique
-  type           String // PUBLIC | PRIVATE
-  status         String // WAITING | COUNTDOWN | IN_GAME | FINISHED
+  id             String     @id @default(cuid())
+  code           String     @unique
+  type           RoomType   @default(PUBLIC)
+  status         RoomStatus @default(WAITING)
   hostId         String
-  maxPlayers     Int      @default(100)
-  timeLimit      Int      @default(15)
-  category       String   @default("ALL")
+  maxPlayers     Int        @default(100)
+  timeLimit      Int        @default(15)
+  category       String     @default("ALL")
   currentMatchId String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
   // Relations
   host    User         @relation("RoomHost", fields: [hostId], references: [id])
@@ -107,13 +130,13 @@ model RoomPlayer {
 
 // Matches
 model Match {
-  id        String    @id @default(cuid())
+  id        String      @id @default(cuid())
   roomId    String
-  status    String // CREATED | COUNTDOWN | ROUND_ACTIVE | ROUND_EVALUATING | ROUND_RESULT | FINISHED
+  status    MatchStatus @default(CREATED)
   winnerId  String?
   startedAt DateTime?
   endedAt   DateTime?
-  createdAt DateTime  @default(now())
+  createdAt DateTime    @default(now())
 
   // Relations
   room      Room          @relation(fields: [roomId], references: [id])
@@ -187,7 +210,7 @@ model MatchRound {
 model Question {
   id            String           @id @default(cuid())
   content       String
-  options       Json // ["A", "B", "C", "D"]
+  options       String[]
   correctAnswer String
   difficulty    Difficulty
   category      QuestionCategory

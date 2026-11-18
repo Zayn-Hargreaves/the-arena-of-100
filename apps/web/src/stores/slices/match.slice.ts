@@ -74,7 +74,7 @@ export const createMatchSlice: StateCreator<SocketState, [], [], MatchSlice> = (
 
     const commandId = generateId();
 
-    if (topicVoting && topicVoting.matchId === matchId) {
+    if (topicVoting?.matchId === matchId) {
       const matchCmds = pendingTopicVoteCommandsByMatch.get(matchId) ?? [];
 
       if (

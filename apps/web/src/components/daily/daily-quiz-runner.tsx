@@ -19,6 +19,25 @@ interface DailyQuizRunnerProps {
   onSubmit: () => void;
 }
 
+function renderSubmitErrorMessage(
+  submitError: { status: number; message: string } | null,
+  t: (key: string) => string,
+) {
+  if (!submitError) return null;
+  if (submitError.status === 409) {
+    return <MessageCard message={t("error.alreadySubmitted")} />;
+  }
+  if (submitError.status === 429) {
+    return <MessageCard message={t("error.rateLimited")} />;
+  }
+  return (
+    <MessageCard
+      message={`${t("error.submitFailed")}: ${submitError.message}`}
+      tone="error"
+    />
+  );
+}
+
 export function DailyQuizRunner({
   questionIndex,
   questionCount,
@@ -31,7 +50,7 @@ export function DailyQuizRunner({
   onBack,
   onNext,
   onSubmit,
-}: DailyQuizRunnerProps) {
+}: Readonly<DailyQuizRunnerProps>) {
   const t = useTranslations("daily");
 
   return (
@@ -79,16 +98,7 @@ export function DailyQuizRunner({
         )}
       </div>
 
-      {submitError?.status === 409 ? (
-        <MessageCard message={t("error.alreadySubmitted")} />
-      ) : submitError?.status === 429 ? (
-        <MessageCard message={t("error.rateLimited")} />
-      ) : submitError ? (
-        <MessageCard
-          message={`${t("error.submitFailed")}: ${submitError.message}`}
-          tone="error"
-        />
-      ) : null}
+      {renderSubmitErrorMessage(submitError, t)}
     </div>
   );
 }

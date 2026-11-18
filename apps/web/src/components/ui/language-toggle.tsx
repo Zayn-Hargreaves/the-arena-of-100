@@ -33,11 +33,10 @@ export function LanguageTogglePresentation({
   const isButtonsDisabled = Boolean(disabled || !onSelect);
 
   return (
-    <div
-      role="group"
+    <fieldset
       aria-label={languageLabel}
       className={cn(
-        "inline-flex items-center gap-0.5 sm:gap-1 bg-white border-2 sm:border-3 border-candy-ink p-0.5 sm:p-1 rounded-2xl shadow-[2px_2px_0_0_#2B2D42] sm:shadow-[3px_3px_0_0_#2B2D42] select-none shrink-0",
+        "inline-flex items-center gap-0.5 sm:gap-1 bg-white border-2 sm:border-3 border-candy-ink p-0.5 sm:p-1 rounded-2xl shadow-[2px_2px_0_0_#2B2D42] sm:shadow-[3px_3px_0_0_#2B2D42] select-none shrink-0 m-0 min-w-0",
         className,
       )}
     >
@@ -79,7 +78,7 @@ export function LanguageTogglePresentation({
       >
         EN
       </button>
-    </div>
+    </fieldset>
   );
 }
 

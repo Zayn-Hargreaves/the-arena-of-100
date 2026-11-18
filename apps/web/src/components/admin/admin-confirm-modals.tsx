@@ -28,7 +28,7 @@ export function AdminConfirmModals({
   terminateRoomId,
   terminateMessage,
   onPerformTerminate,
-}: AdminConfirmModalsProps) {
+}: Readonly<AdminConfirmModalsProps>) {
   const t = useTranslations("admin");
   const tTerminate = useTranslations("admin.terminateRoom");
 

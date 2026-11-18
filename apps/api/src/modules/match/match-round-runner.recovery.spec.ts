@@ -100,6 +100,17 @@ function buildRecoveryContext(events: RecoveryEvent[]) {
     getState: vi.fn(() => state),
     getCurrentRound: vi.fn(() => round),
     getEventLog: vi.fn(() => events),
+    forEachEvent: vi.fn(
+      (
+        callback: (event: RecoveryEvent) => void | boolean,
+        direction: "forward" | "reverse" = "forward",
+      ) => {
+        const list = direction === "reverse" ? [...events].reverse() : events;
+        for (const e of list) {
+          if (callback(e) === false) break;
+        }
+      },
+    ),
     transition: vi.fn(),
   };
 
@@ -162,109 +173,80 @@ describe("MatchRoundRunner recovery event validation", () => {
     vi.useRealTimers();
   });
 
-  it("accepts exactly one valid ROUND_EVALUATED event for the round", async () => {
-    const { stateMachine } = buildRecoveryContext([
-      {
-        type: "ROUND_EVALUATED",
-        payload: { roundNo: 1, eliminatedIds: ["p2"] },
-        timestamp: 1,
-      },
-    ]);
-    const { runner } = buildRunner(stateMachine, questionService, roomService);
-
-    await (runner as any).endRound("match-1", "room-1", mockServer);
-
-    expect(emitSpy).toHaveBeenCalledWith(
-      ServerEvent.ROUND_ENDED,
-      expect.objectContaining({ eliminatedPlayerIds: ["p2"] }),
-    );
-  });
-
-  it("falls back to recomputing eliminations when multiple ROUND_EVALUATED events exist for the round", async () => {
-    const { stateMachine } = buildRecoveryContext([
-      {
-        type: "ROUND_EVALUATED",
-        payload: { roundNo: 1, eliminatedIds: ["p1"] },
-        timestamp: 1,
-      },
-      {
-        type: "ROUND_EVALUATED",
-        payload: { roundNo: 1, eliminatedIds: ["p2"] },
-        timestamp: 2,
-      },
-    ]);
-    const { runner } = buildRunner(stateMachine, questionService, roomService);
-
-    await (runner as any).endRound("match-1", "room-1", mockServer);
-
-    expect(emitSpy).toHaveBeenCalledWith(
-      ServerEvent.ROUND_ENDED,
-      expect.objectContaining({ eliminatedPlayerIds: ["p2"] }),
-    );
-  });
-
-  it("falls back to recomputing eliminations when ROUND_EVALUATED event disagrees with round answers", async () => {
-    const { stateMachine } = buildRecoveryContext([
-      {
-        type: "ROUND_EVALUATED",
-        payload: { roundNo: 1, eliminatedIds: ["p1"] },
-        timestamp: 1,
-      },
-    ]);
-    const { runner } = buildRunner(stateMachine, questionService, roomService);
-
-    await (runner as any).endRound("match-1", "room-1", mockServer);
-
-    expect(emitSpy).toHaveBeenCalledWith(
-      ServerEvent.ROUND_ENDED,
-      expect.objectContaining({ eliminatedPlayerIds: ["p2"] }),
-    );
-  });
-
-  it("falls back to recomputing eliminations when ROUND_EVALUATED contains duplicate IDs", async () => {
-    const { stateMachine } = buildRecoveryContext([
-      {
-        type: "ROUND_EVALUATED",
-        payload: { roundNo: 1, eliminatedIds: ["p2", "p2"] },
-        timestamp: 1,
-      },
-    ]);
-    const { runner } = buildRunner(stateMachine, questionService, roomService);
-
-    await (runner as any).endRound("match-1", "room-1", mockServer);
-
-    expect(emitSpy).toHaveBeenCalledWith(
-      ServerEvent.ROUND_ENDED,
-      expect.objectContaining({ eliminatedPlayerIds: ["p2"] }),
-    );
-  });
-
-  it("falls back to recomputing eliminations when ROUND_EVALUATED contains a non-string ID", async () => {
-    const { stateMachine } = buildRecoveryContext([
-      {
-        type: "ROUND_EVALUATED",
-        payload: { roundNo: 1, eliminatedIds: [123, "p2"] },
-        timestamp: 1,
-      },
-    ]);
-    const { runner } = buildRunner(stateMachine, questionService, roomService);
-
-    await (runner as any).endRound("match-1", "room-1", mockServer);
-
-    expect(emitSpy).toHaveBeenCalledWith(
-      ServerEvent.ROUND_ENDED,
-      expect.objectContaining({ eliminatedPlayerIds: ["p2"] }),
-    );
-  });
-
-  it("falls back to recomputing eliminations when ROUND_EVALUATED contains IDs outside the match roster", async () => {
-    const { stateMachine } = buildRecoveryContext([
-      {
-        type: "ROUND_EVALUATED",
-        payload: { roundNo: 1, eliminatedIds: ["p3"] },
-        timestamp: 1,
-      },
-    ]);
+  it.each([
+    {
+      description:
+        "accepts exactly one valid ROUND_EVALUATED event for the round",
+      events: [
+        {
+          type: "ROUND_EVALUATED",
+          payload: { roundNo: 1, eliminatedIds: ["p2"] },
+          timestamp: 1,
+        },
+      ],
+    },
+    {
+      description:
+        "falls back to recomputing eliminations when multiple ROUND_EVALUATED events exist for the round",
+      events: [
+        {
+          type: "ROUND_EVALUATED",
+          payload: { roundNo: 1, eliminatedIds: ["p1"] },
+          timestamp: 1,
+        },
+        {
+          type: "ROUND_EVALUATED",
+          payload: { roundNo: 1, eliminatedIds: ["p2"] },
+          timestamp: 2,
+        },
+      ],
+    },
+    {
+      description:
+        "falls back to recomputing eliminations when ROUND_EVALUATED event disagrees with round answers",
+      events: [
+        {
+          type: "ROUND_EVALUATED",
+          payload: { roundNo: 1, eliminatedIds: ["p1"] },
+          timestamp: 1,
+        },
+      ],
+    },
+    {
+      description:
+        "falls back to recomputing eliminations when ROUND_EVALUATED contains duplicate IDs",
+      events: [
+        {
+          type: "ROUND_EVALUATED",
+          payload: { roundNo: 1, eliminatedIds: ["p2", "p2"] },
+          timestamp: 1,
+        },
+      ],
+    },
+    {
+      description:
+        "falls back to recomputing eliminations when ROUND_EVALUATED contains a non-string ID",
+      events: [
+        {
+          type: "ROUND_EVALUATED",
+          payload: { roundNo: 1, eliminatedIds: [123, "p2"] },
+          timestamp: 1,
+        },
+      ],
+    },
+    {
+      description:
+        "falls back to recomputing eliminations when ROUND_EVALUATED contains IDs outside the match roster",
+      events: [
+        {
+          type: "ROUND_EVALUATED",
+          payload: { roundNo: 1, eliminatedIds: ["p3"] },
+          timestamp: 1,
+        },
+      ],
+    },
+  ])("$description", async ({ events }) => {
+    const { stateMachine } = buildRecoveryContext(events);
     const { runner } = buildRunner(stateMachine, questionService, roomService);
 
     await (runner as any).endRound("match-1", "room-1", mockServer);

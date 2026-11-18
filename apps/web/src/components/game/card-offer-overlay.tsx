@@ -24,7 +24,7 @@ export function CardOfferOverlay({
   onDismiss,
   durationSeconds = GAME_CONFIG.CARD_OFFER_DURATION_MS / 1000,
   expiresAt,
-}: CardOfferOverlayProps) {
+}: Readonly<CardOfferOverlayProps>) {
   const t = useTranslations("Cards");
   const computeInitialTimeLeft = () =>
     Math.max(
@@ -47,7 +47,7 @@ export function CardOfferOverlay({
   onDismissRef.current = onDismiss;
   const expiredRef = useRef(false);
 
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
 
   const [timeLeft, setTimeLeft] = useState(computeInitialTimeLeft);
@@ -128,7 +128,7 @@ export function CardOfferOverlay({
       }
 
       const firstElement = focusable[0];
-      const lastElement = focusable[focusable.length - 1];
+      const lastElement = focusable.at(-1);
 
       if (e.shiftKey) {
         if (
@@ -138,14 +138,12 @@ export function CardOfferOverlay({
           e.preventDefault();
           lastElement?.focus();
         }
-      } else {
-        if (
-          document.activeElement === lastElement ||
-          document.activeElement === dialogRef.current
-        ) {
-          e.preventDefault();
-          firstElement?.focus();
-        }
+      } else if (
+        document.activeElement === lastElement ||
+        document.activeElement === dialogRef.current
+      ) {
+        e.preventDefault();
+        firstElement?.focus();
       }
     };
 
@@ -162,13 +160,13 @@ export function CardOfferOverlay({
   }, [offerSeqNo]);
 
   return (
-    <div
+    <dialog
       ref={dialogRef}
-      role="dialog"
+      open
       aria-modal="true"
       aria-labelledby="card-offer-title"
       tabIndex={-1}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-candy-ink/60 backdrop-blur-sm p-4 animate-fade-in outline-none"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-candy-ink/60 backdrop-blur-sm p-4 animate-fade-in outline-none border-none m-0 max-w-none max-h-none w-full h-full"
     >
       <div className="w-full max-w-2xl rounded-2xl border-4 border-candy-ink bg-white p-6 shadow-[8px_8px_0_0_#2B2D42] space-y-6 animate-scale-up">
         {/* Header */}
@@ -219,6 +217,6 @@ export function CardOfferOverlay({
           {t("offerFooter")}
         </p>
       </div>
-    </div>
+    </dialog>
   );
 }

@@ -28,6 +28,42 @@ function cardsPlayedTier(count: number): keyof typeof CARDS_PLAYED_TIERS {
   return "EPIC";
 }
 
+function getLeaderboardRowStyle(rank: number): string {
+  if (rank === 1) return "bg-amber-50/70 hover:bg-amber-100/60";
+  if (rank === 2) return "bg-sky-50/50 hover:bg-sky-100/50";
+  if (rank === 3) return "bg-orange-50/40 hover:bg-orange-100/40";
+  return "hover:bg-candy-yellow/10";
+}
+
+function RankBadge({ rank }: Readonly<{ rank: number }>) {
+  if (rank === 1) {
+    return (
+      <span className="w-7 h-7 rounded-full bg-amber-400 border-[2px] border-candy-ink shadow-[1px_1px_0_0_#2B2D42] flex items-center justify-center text-candy-ink">
+        <RankOneCrownGlyph size={15} />
+      </span>
+    );
+  }
+  if (rank === 2) {
+    return (
+      <span className="w-6 h-6 rounded-full bg-slate-200 border-[2px] border-candy-ink font-mono font-black text-xs text-candy-ink flex items-center justify-center">
+        #2
+      </span>
+    );
+  }
+  if (rank === 3) {
+    return (
+      <span className="w-6 h-6 rounded-full bg-amber-200 border-[2px] border-candy-ink font-mono font-black text-xs text-candy-ink flex items-center justify-center">
+        #3
+      </span>
+    );
+  }
+  return (
+    <span className="font-mono font-black text-xs text-candy-ink/70">
+      #{rank}
+    </span>
+  );
+}
+
 const MAX_VISIBLE_LEADERBOARD_ITEMS = 10;
 
 interface DailyLeaderboardProps {
@@ -69,41 +105,15 @@ export function DailyLeaderboard({ items }: Readonly<DailyLeaderboardProps>) {
             : (avatars[0] ?? null);
           const tier = cardsPlayedTier(item.cardsPlayedThisWeek);
           const isFirst = item.rank === 1;
-          const isSecond = item.rank === 2;
-          const isThird = item.rank === 3;
 
           return (
             <li
               key={item.userId}
-              className={`flex items-center gap-2.5 sm:gap-3 px-3 sm:px-4 py-2.5 transition-colors ${
-                isFirst
-                  ? "bg-amber-50/70 hover:bg-amber-100/60"
-                  : isSecond
-                    ? "bg-sky-50/50 hover:bg-sky-100/50"
-                    : isThird
-                      ? "bg-orange-50/40 hover:bg-orange-100/40"
-                      : "hover:bg-candy-yellow/10"
-              }`}
+              className={`flex items-center gap-2.5 sm:gap-3 px-3 sm:px-4 py-2.5 transition-colors ${getLeaderboardRowStyle(item.rank)}`}
             >
               {/* Rank Badge */}
               <div className="w-7 sm:w-8 flex justify-center items-center shrink-0">
-                {isFirst ? (
-                  <span className="w-7 h-7 rounded-full bg-amber-400 border-[2px] border-candy-ink shadow-[1px_1px_0_0_#2B2D42] flex items-center justify-center text-candy-ink">
-                    <RankOneCrownGlyph size={15} />
-                  </span>
-                ) : isSecond ? (
-                  <span className="w-6 h-6 rounded-full bg-slate-200 border-[2px] border-candy-ink font-mono font-black text-xs text-candy-ink flex items-center justify-center">
-                    #2
-                  </span>
-                ) : isThird ? (
-                  <span className="w-6 h-6 rounded-full bg-amber-200 border-[2px] border-candy-ink font-mono font-black text-xs text-candy-ink flex items-center justify-center">
-                    #3
-                  </span>
-                ) : (
-                  <span className="font-mono font-black text-xs text-candy-ink/70">
-                    #{item.rank}
-                  </span>
-                )}
+                <RankBadge rank={item.rank} />
               </div>
 
               {/* Avatar Frame */}

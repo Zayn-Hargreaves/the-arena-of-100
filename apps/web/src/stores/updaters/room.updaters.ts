@@ -1,6 +1,7 @@
 import {
   MatchStatus,
   PlayerStatus,
+  RoomStatus,
   type MatchmakingMatchedPayload,
   type MatchmakingStatusPayload,
   type RoomCountdownCancelledPayload,
@@ -48,7 +49,7 @@ function createRoomEnteredState(
     room: {
       id: data.roomId,
       code: data.code,
-      status: data.roomStatus,
+      status: data.roomStatus as RoomStatus,
       hostId: data.hostId,
       roomType: data.roomType,
       maxPlayers: data.maxPlayers,
@@ -140,7 +141,7 @@ export function applyRoomStatusUpdatedState(
   return {
     room: {
       ...state.room,
-      status: data.roomStatus,
+      status: data.roomStatus as RoomStatus,
       currentMatchId: data.currentMatchId,
       countdownEndsAt: null,
     },
@@ -158,7 +159,7 @@ export function applyRoomCountdownStartedState(
   return {
     room: {
       ...state.room,
-      status: data.roomStatus,
+      status: data.roomStatus as RoomStatus,
       countdownEndsAt: data.countdownEndsAt,
     },
   };
@@ -175,7 +176,7 @@ export function applyRoomCountdownCancelledState(
   return {
     room: {
       ...state.room,
-      status: data.roomStatus,
+      status: data.roomStatus as RoomStatus,
       countdownEndsAt: null,
     },
   };
@@ -248,19 +249,22 @@ export function applyMatchmakingMatchedState(
     data.matchId && state.topicVoting?.matchId === data.matchId,
   );
 
+  let match = null;
+  if (isSameMatch) {
+    match = state.match;
+  } else if (data.matchId) {
+    match = {
+      id: data.matchId,
+      status: MatchStatus.TOPIC_VOTING,
+      currentRoundNo: 0,
+      players: state.room?.players ?? [],
+      currentQuestion: null,
+      roundEndTime: null,
+    };
+  }
+
   return {
-    match: isSameMatch
-      ? state.match
-      : data.matchId
-        ? {
-            id: data.matchId,
-            status: MatchStatus.TOPIC_VOTING,
-            currentRoundNo: 0,
-            players: state.room?.players ?? [],
-            currentQuestion: null,
-            roundEndTime: null,
-          }
-        : null,
+    match,
     topicVoting: isSameTopicVoting ? state.topicVoting : null,
     cardState: isSameMatch ? state.cardState : createInitialCardState(),
     lastAnswerResult: isSameMatch ? state.lastAnswerResult : null,

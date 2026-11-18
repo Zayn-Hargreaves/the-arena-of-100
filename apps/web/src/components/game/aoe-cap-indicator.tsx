@@ -20,7 +20,7 @@ export function AoeCapIndicator({
   used,
   cap = AOE_CAP_PER_ROUND,
   className,
-}: AoeCapIndicatorProps) {
+}: Readonly<AoeCapIndicatorProps>) {
   const t = useTranslations("Cards");
   const exhausted = used >= cap;
   return (

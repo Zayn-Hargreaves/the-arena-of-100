@@ -13,7 +13,7 @@ interface AdminMetricsGridProps {
   };
 }
 
-export function AdminMetricsGrid({ metrics }: AdminMetricsGridProps) {
+export function AdminMetricsGrid({ metrics }: Readonly<AdminMetricsGridProps>) {
   const t = useTranslations("admin");
 
   return (

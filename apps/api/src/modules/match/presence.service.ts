@@ -160,7 +160,7 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
   }
 
   async isPresent(roomId: string, userId: string): Promise<boolean> {
-    return this.roomService.checkPresence(roomId, userId);
+    return await this.roomService.checkPresence(roomId, userId);
   }
 
   /**
@@ -198,15 +198,13 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
     retries = 3,
     delay = 50,
   ): Promise<T> {
-    for (let attempt = 1; attempt <= retries; attempt++) {
-      try {
-        return await fn();
-      } catch (error) {
-        if (attempt === retries) throw error;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
+    try {
+      return await fn();
+    } catch (error) {
+      if (retries <= 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return this.executeWithRetry(fn, retries - 1, delay);
     }
-    throw new Error("executeWithRetry failed");
   }
 
   private cleanupObsoleteHostStrikes(activeRooms: Array<{ id: string }>): void {
@@ -441,18 +439,13 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
       // excluded from getUserActiveRooms (nothing to preserve) and their
       // state machine is already gone.
       const DISCONNECT_TIMEOUT_MS = 3000;
-      let chain = Promise.resolve();
-      const promises = stalePlayerIds.map((userId) => {
-        const p = chain.then(() =>
-          this.disconnectSingleInGamePlayer(
-            room.currentMatchId!,
-            userId,
-            DISCONNECT_TIMEOUT_MS,
-          ),
-        );
-        chain = p.catch(() => {});
-        return p;
-      });
+      const promises = stalePlayerIds.map((userId) =>
+        this.disconnectSingleInGamePlayer(
+          room.currentMatchId!,
+          userId,
+          DISCONNECT_TIMEOUT_MS,
+        ),
+      );
 
       const results = await Promise.allSettled(promises);
       results.forEach((result, idx) => {
@@ -515,11 +508,19 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
 
     this.cleanupObsoleteHostStrikes(activeRooms);
 
-    for (const room of activeRooms) {
-      if (now - room.createdAt.getTime() < ROOM_SWEEP_GRACE_PERIOD_MS) {
-        continue;
-      }
+    await this.sweepActiveRoomsSequentially(activeRooms, token, now);
+  }
 
+  private async sweepActiveRoomsSequentially(
+    activeRooms: Awaited<ReturnType<RoomService["getActiveRooms"]>>,
+    token: string,
+    now: number,
+    index = 0,
+  ): Promise<void> {
+    if (index >= activeRooms.length) return;
+
+    const room = activeRooms[index];
+    if (now - room.createdAt.getTime() >= ROOM_SWEEP_GRACE_PERIOD_MS) {
       // B5: re-assert leadership as part of each room's mutation window. A sweep
       // can outlast the lease TTL; the moment we are no longer the current
       // leader, abort the rest of the sweep so a demoted ex-leader never
@@ -533,5 +534,12 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
 
       await this.sweepRoom(room);
     }
+
+    return this.sweepActiveRoomsSequentially(
+      activeRooms,
+      token,
+      now,
+      index + 1,
+    );
   }
 }

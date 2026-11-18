@@ -14,9 +14,9 @@ export function parseRedisUrl(rawUrl) {
     return { scheme: null, host: null, port: null, db: null, tls: false };
   }
 
-  const match = rawUrl.match(
+  const match = new RegExp(
     /^(rediss?):\/\/(?:[^@/]+@)?([^:/]+)(?::(\d+))?(?:\/(\d+))?/i,
-  );
+  ).exec(rawUrl);
   if (!match) {
     return { scheme: null, host: null, port: null, db: null, tls: false };
   }
@@ -42,7 +42,7 @@ export function parseRedisUrl(rawUrl) {
 // NEVER include userinfo. Example:
 //   redis://10.0.0.1:6379/2
 export function redactedRedisUrl(parts) {
-  if (!parts || !parts.scheme || !parts.host) return null;
+  if (!parts?.scheme || !parts.host) return null;
   const port = parts.port ? `:${parts.port}` : "";
   const db = parts.db != null ? `/${parts.db}` : "";
   return `${parts.scheme}://${parts.host}${port}${db}`;

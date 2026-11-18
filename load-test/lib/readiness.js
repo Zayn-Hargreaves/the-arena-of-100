@@ -31,8 +31,7 @@
 // ============================================================
 
 import http from "k6/http";
-import { check, sleep } from "k6";
-import exec from "k6/execution";
+import sleep from "k6";
 
 const READY_KEY_PREFIX = "k6:ready:";
 const READY_TTL_SECONDS = 2 * 60 * 60; // 2h hard cap; coordinator always cleans up
@@ -103,7 +102,7 @@ export function waitForReadiness(coordinatorUrl, runId, target, timeoutMs) {
       tags: { name: "readiness/poll" },
       timeout: "5s",
     });
-    if (res && res.status === 200) {
+    if (res?.status === 200) {
       try {
         const body = res.json();
         lastSize = body.size || 0;
@@ -123,7 +122,7 @@ export function waitForReadiness(coordinatorUrl, runId, target, timeoutMs) {
     tags: { name: "readiness/missing" },
     timeout: "5s",
   });
-  if (listRes && listRes.status === 200) {
+  if (listRes?.status === 200) {
     try {
       const body = listRes.json();
       missing = body.missing || [];

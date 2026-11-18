@@ -26,6 +26,92 @@ export interface AuthSlice {
   refreshAccessToken: () => Promise<string | null>;
 }
 
+function getStoredGuestCredentials(nickname: string): {
+  guestSecret?: string;
+  avatar?: string;
+} {
+  if (typeof window === "undefined") return {};
+  try {
+    const guestSecret = localStorage.getItem(`guestSecret:${nickname.trim()}`);
+    const storedAvatar = localStorage.getItem("avatarSeed");
+    return {
+      guestSecret: guestSecret || undefined,
+      avatar: storedAvatar || undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function persistGuestAuthData(data: AuthResponse, nickname: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem("userId", data.user.id);
+    localStorage.setItem("callsign", data.user.username);
+    if (data.guestSecret) {
+      const trimmedNickname = nickname.trim();
+      if (trimmedNickname) {
+        localStorage.setItem(
+          `guestSecret:${trimmedNickname}`,
+          data.guestSecret,
+        );
+      }
+      if (data.user.username && data.user.username !== trimmedNickname) {
+        localStorage.setItem(
+          `guestSecret:${data.user.username}`,
+          data.guestSecret,
+        );
+      }
+    }
+  } catch {
+    // ignore storage error
+  }
+}
+
+async function extractAuthErrorMessage(response: Response): Promise<string> {
+  try {
+    const errorData = await response.json();
+    const parsed = parseErrorPayload(errorData);
+    if (parsed) {
+      return parsed;
+    }
+  } catch {
+    // Ignore JSON parse failure
+  }
+  return "Authentication failed";
+}
+
+async function requestGuestLogin(
+  nickname: string,
+  credentials: { guestSecret?: string; avatar?: string },
+): Promise<AuthResponse> {
+  const response = await apiFetch("/api/v1/auth/guest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: nickname,
+      guestSecret: credentials.guestSecret,
+      avatar: credentials.avatar,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorMessage = await extractAuthErrorMessage(response);
+    throw new Error(errorMessage);
+  }
+
+  const raw = (await response.json()) as {
+    data?: AuthResponse;
+  } & AuthResponse;
+  const data = raw.data || raw;
+
+  if (!data.user) {
+    throw new Error("Invalid authentication response");
+  }
+
+  return data;
+}
+
 export const createAuthSlice: StateCreator<SocketState, [], [], AuthSlice> = (
   set,
   get,
@@ -120,75 +206,11 @@ export const createAuthSlice: StateCreator<SocketState, [], [], AuthSlice> = (
   authenticate: async (nickname: string): Promise<void> => {
     requireSocket(get().socket);
 
-    let guestSecret: string | null = null;
-    let storedAvatar: string | null = null;
-    if (typeof window !== "undefined") {
-      try {
-        guestSecret = localStorage.getItem(`guestSecret:${nickname.trim()}`);
-        storedAvatar = localStorage.getItem("avatarSeed");
-      } catch {
-        // ignore storage error
-      }
-    }
-
+    const credentials = getStoredGuestCredentials(nickname);
     let token: string;
     try {
-      const response = await apiFetch("/api/v1/auth/guest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: nickname,
-          guestSecret: guestSecret || undefined,
-          avatar: storedAvatar || undefined,
-        }),
-      });
-
-      if (!response.ok) {
-        let errorMessage = "Authentication failed";
-        try {
-          const errorData = await response.json();
-          const parsed = parseErrorPayload(errorData);
-          if (parsed) {
-            errorMessage = parsed;
-          }
-        } catch {
-          // Ignore JSON parse failure
-        }
-        throw new Error(errorMessage);
-      }
-
-      const raw = (await response.json()) as {
-        data?: AuthResponse;
-      } & AuthResponse;
-      const data = raw.data || raw;
-
-      if (!data.user) {
-        throw new Error("Invalid authentication response");
-      }
-
-      if (typeof window !== "undefined") {
-        try {
-          localStorage.setItem("userId", data.user.id);
-          localStorage.setItem("callsign", data.user.username);
-          if (data.guestSecret) {
-            const trimmedNickname = nickname.trim();
-            if (trimmedNickname) {
-              localStorage.setItem(
-                `guestSecret:${trimmedNickname}`,
-                data.guestSecret,
-              );
-            }
-            if (data.user.username && data.user.username !== trimmedNickname) {
-              localStorage.setItem(
-                `guestSecret:${data.user.username}`,
-                data.guestSecret,
-              );
-            }
-          }
-        } catch {
-          // ignore storage error
-        }
-      }
+      const data = await requestGuestLogin(nickname, credentials);
+      persistGuestAuthData(data, nickname);
 
       set({
         accessToken: data.accessToken,

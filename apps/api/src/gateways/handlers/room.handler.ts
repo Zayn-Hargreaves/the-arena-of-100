@@ -13,15 +13,12 @@ import {
   type RoomPlayerLeftPayload,
   RoomError,
   ERROR_MESSAGE_KEYS,
-  asRoomType,
 } from "@arena/shared";
 import { RoomService } from "../../modules/room/room.service";
 import { PresenceService } from "../../modules/match/presence.service";
 import { GameLoopService } from "../../modules/match/game-loop.service";
 import { LobbyCountdownService } from "../../modules/match/lobby-countdown.service";
 import { BaseHandler } from "./base.handler";
-
-const asRoomStatus = (value: string): RoomStatus => value as RoomStatus;
 
 @Injectable()
 export class RoomHandler extends BaseHandler {
@@ -49,7 +46,15 @@ export class RoomHandler extends BaseHandler {
           payload.category,
         );
 
-        client.join(`room:${room.id}`);
+        // Leave any previous room socket channels to maintain 1 active room subscription
+        for (const roomName of Array.from(client.rooms ?? [])) {
+          if (roomName === client.id) continue;
+          if (roomName.startsWith("room:") && roomName !== `room:${room.id}`) {
+            void client.leave(roomName);
+          }
+        }
+
+        await client.join(`room:${room.id}`);
 
         // Same as handleJoinRoom: the presence sweep only sees the host
         // as online once this key exists. Without it, a host who creates
@@ -72,7 +77,7 @@ export class RoomHandler extends BaseHandler {
           roomId: room.id,
           code: room.code,
           hostId: room.hostId,
-          roomType: asRoomType(room.type),
+          roomType: room.type,
           roomStatus: RoomStatus.WAITING,
           maxPlayers: room.maxPlayers,
           currentMatchId: null,
@@ -123,7 +128,15 @@ export class RoomHandler extends BaseHandler {
         // call maybeStartPublicCountdown (spectators never start a match).
         const isSpectator = room.joinedAs === "SPECTATOR";
 
-        client.join(`room:${room.id}`);
+        // Leave any previous room socket channels to maintain 1 active room subscription
+        for (const roomName of Array.from(client.rooms ?? [])) {
+          if (roomName === client.id) continue;
+          if (roomName.startsWith("room:") && roomName !== `room:${room.id}`) {
+            void client.leave(roomName);
+          }
+        }
+
+        await client.join(`room:${room.id}`);
 
         // The presence sweep (every 5s) only sees a player as online once
         // this key exists — otherwise a player who joins and is still
@@ -153,8 +166,8 @@ export class RoomHandler extends BaseHandler {
           roomId: room.id,
           code: room.code,
           hostId: room.hostId,
-          roomType: asRoomType(room.type),
-          roomStatus: asRoomStatus(room.status),
+          roomType: room.type,
+          roomStatus: room.status,
           maxPlayers: room.maxPlayers,
           currentMatchId: room.currentMatchId,
           countdownEndsAt: await this.lobbyCountdownService.getCountdownEnd(
@@ -252,7 +265,7 @@ export class RoomHandler extends BaseHandler {
           payload.roomId,
           userId,
         );
-        client.leave(`room:${payload.roomId}`);
+        void client.leave(`room:${payload.roomId}`);
 
         // Two diverging paths:
         //

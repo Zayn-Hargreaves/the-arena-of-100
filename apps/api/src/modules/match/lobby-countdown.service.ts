@@ -54,7 +54,7 @@ export type LobbyLauncher = (
 @Injectable()
 export class LobbyCountdownService implements OnModuleInit {
   private readonly logger = new Logger(LobbyCountdownService.name);
-  private lobbyCountdowns = new Map<string, LobbyCountdownEntry>();
+  private readonly lobbyCountdowns = new Map<string, LobbyCountdownEntry>();
   private server?: Server;
   private recoveryInFlight = false;
   // C4 fix: when onModuleInit runs before setServer has been called
@@ -63,7 +63,7 @@ export class LobbyCountdownService implements OnModuleInit {
   // stuck in COUNTDOWN forever. As soon as setServer is invoked we drain
   // the buffer and re-arm the timers.
   private pendingRecovery: PendingRecoveryEntry[] = [];
-  private activeRecoveryRetries = new Set<string>();
+  private readonly activeRecoveryRetries = new Set<string>();
   private launch: LobbyLauncher = async () => undefined;
 
   constructor(
@@ -156,74 +156,18 @@ export class LobbyCountdownService implements OnModuleInit {
       );
       const now = Date.now();
 
-      for (const roomId of roomIds) {
-        try {
-          const result = await readPersistedCountdownEnd(client, roomId);
-          if (result.kind === "missing") {
-            await removeStaleCountdownIndexEntry(client, roomId);
-            continue;
+      await Promise.all(
+        roomIds.map(async (roomId) => {
+          try {
+            await this.recoverRoomCountdown(client, roomId, now);
+          } catch (error) {
+            this.logger.error(
+              `Failed to recover countdown for room ${roomId}:`,
+              error,
+            );
           }
-          const countdownEndsAt = result.value;
-          /* c8 ignore next 6 */
-          if (!Number.isFinite(countdownEndsAt)) {
-            await clearPersistedCountdown(client, roomId);
-            continue;
-          }
-          const remaining = Math.max(countdownEndsAt - now, 0);
-          if (remaining === 0) {
-            // Countdown already expired while the process was down.
-            //
-            // C4 fix: if the Socket.io server is not wired up yet (the
-            // gateway's afterInit hook runs AFTER onModuleInit), DO NOT
-            // silently clear the persisted entry — buffer the recovery;
-            // setServer() will drain the buffer once the server exists.
-            if (this.server) {
-              const cleared = await this.clearPersistedCountdown(roomId);
-              if (!cleared) {
-                this.logger.warn(
-                  `Recovery clear failed for room ${roomId}: persisted countdown was not cleared; re-queueing with retry`,
-                );
-                this.scheduleRecoveryRetry(
-                  makePendingRecoveryEntry(roomId, countdownEndsAt, true),
-                );
-                continue;
-              }
-              void this.launch(roomId, this.server).catch((error) => {
-                this.logger.error(
-                  `Recovery launch failed for room ${roomId}:`,
-                  error,
-                );
-              });
-            } else {
-              this.logger.warn(
-                `Cannot launch recovered match for room ${roomId} yet: server not ready; deferring`,
-              );
-              this.pendingRecovery.push(
-                makePendingRecoveryEntry(roomId, countdownEndsAt, true),
-              );
-            }
-          } else {
-            // C4 fix: armLobbyCountdownTimer requires a server. If the
-            // gateway hasn't wired us up yet, buffer the entry instead
-            // of dropping the Redis key.
-            if (this.server) {
-              this.armLobbyCountdownTimer(roomId, countdownEndsAt, this.server);
-            } else {
-              this.logger.warn(
-                `Cannot arm recovered countdown for room ${roomId} yet: server not ready; deferring`,
-              );
-              this.pendingRecovery.push(
-                makePendingRecoveryEntry(roomId, countdownEndsAt, false),
-              );
-            }
-          }
-        } catch (error) {
-          this.logger.error(
-            `Failed to recover countdown for room ${roomId}:`,
-            error,
-          );
-        }
-      }
+        }),
+      );
     } catch (error) {
       this.logger.error("Lobby countdown recovery failed:", error);
     } finally {
@@ -231,13 +175,90 @@ export class LobbyCountdownService implements OnModuleInit {
     }
   }
 
+  private async recoverRoomCountdown(
+    client: ReturnType<RedisService["getClient"]>,
+    roomId: string,
+    now: number,
+  ): Promise<void> {
+    const result = await readPersistedCountdownEnd(client, roomId);
+    if (result.kind === "missing") {
+      await removeStaleCountdownIndexEntry(client, roomId);
+      return;
+    }
+    const countdownEndsAt = result.value;
+    /* c8 ignore next 6 */
+    if (!Number.isFinite(countdownEndsAt)) {
+      await clearPersistedCountdown(client, roomId);
+      return;
+    }
+    const remaining = Math.max(countdownEndsAt - now, 0);
+    if (remaining === 0) {
+      // Countdown already expired while the process was down.
+      //
+      // C4 fix: if the Socket.io server is not wired up yet (the
+      // gateway's afterInit hook runs AFTER onModuleInit), DO NOT
+      // silently clear the persisted entry — buffer the recovery;
+      // setServer() will drain the buffer once the server exists.
+      if (this.server) {
+        const cleared = await this.clearPersistedCountdown(roomId);
+        if (!cleared) {
+          this.logger.warn(
+            `Recovery clear failed for room ${roomId}: persisted countdown was not cleared; re-queueing with retry`,
+          );
+          this.scheduleRecoveryRetry(
+            makePendingRecoveryEntry(roomId, countdownEndsAt, true),
+          );
+          return;
+        }
+        void this.launch(roomId, this.server).catch((error) => {
+          this.logger.error(
+            `Recovery launch failed for room ${roomId}:`,
+            error,
+          );
+        });
+      } else {
+        this.logger.warn(
+          `Cannot launch recovered match for room ${roomId} yet: server not ready; deferring`,
+        );
+        this.pendingRecovery.push(
+          makePendingRecoveryEntry(roomId, countdownEndsAt, true),
+        );
+      }
+    } else if (this.server) {
+      // C4 fix: armLobbyCountdownTimer requires a server. If the
+      // gateway hasn't wired us up yet, buffer the entry instead
+      // of dropping the Redis key.
+      this.armLobbyCountdownTimer(roomId, countdownEndsAt, this.server);
+    } else {
+      this.logger.warn(
+        `Cannot arm recovered countdown for room ${roomId} yet: server not ready; deferring`,
+      );
+      this.pendingRecovery.push(
+        makePendingRecoveryEntry(roomId, countdownEndsAt, false),
+      );
+    }
+  }
+
+  private canStartPublicCountdown(
+    room: Awaited<ReturnType<RoomService["getRoom"]>>,
+  ): boolean {
+    return (
+      room.type === "PUBLIC" &&
+      room.status === (RoomStatus.WAITING as unknown) &&
+      room.players.length >= GAME_CONFIG.MIN_PLAYERS_TO_START
+    );
+  }
+
   async maybeStartPublicCountdown(roomId: string, server: Server) {
-    const room = await this.roomService.getRoom(roomId);
-    if (room.type !== "PUBLIC") return null;
-    if (room.status !== RoomStatus.WAITING) return null;
-    if (room.players.length < GAME_CONFIG.MIN_PLAYERS_TO_START) return null;
+    // 1. Fast-path: Check RAM first - return existing countdown immediately without I/O
     if (this.lobbyCountdowns.has(roomId)) {
       return this.lobbyCountdowns.get(roomId) ?? null;
+    }
+
+    // 2. I/O-path: Query room state only when room is not yet counting down
+    const room = await this.roomService.getRoom(roomId);
+    if (!this.canStartPublicCountdown(room)) {
+      return null;
     }
 
     // Reserve the slot atomically before any await to prevent race conditions
@@ -372,17 +393,19 @@ export class LobbyCountdownService implements OnModuleInit {
       this.logger.log(
         `Sweeping ${roomIds.length} dead-letter room(s) from Redis...`,
       );
-      for (const roomId of roomIds) {
-        const exists = await client.exists(
-          `room:recovery:dead-letter:${roomId}`,
-        );
-        if (exists === 0) {
-          this.logger.log(
-            `Removing expired dead-letter room ${roomId} from set`,
+      await Promise.all(
+        roomIds.map(async (roomId) => {
+          const exists = await client.exists(
+            `room:recovery:dead-letter:${roomId}`,
           );
-          await client.srem("room:recovery:dead-letter", roomId);
-        }
-      }
+          if (exists === 0) {
+            this.logger.log(
+              `Removing expired dead-letter room ${roomId} from set`,
+            );
+            await client.srem("room:recovery:dead-letter", roomId);
+          }
+        }),
+      );
     } catch (error) {
       this.logger.error("Failed to sweep dead-letter rooms:", error);
     }
